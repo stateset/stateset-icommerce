@@ -108,6 +108,7 @@ struct OrderData {
     fulfillment_status: String,
     tracking_number: Option<String>,
     notes: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -179,6 +180,7 @@ struct ReturnData {
     status: String,
     reason: String,
     reason_details: Option<String>,
+    version: i32,
     created_at: String,
 }
 
@@ -200,6 +202,7 @@ struct PaymentData {
     currency: String,
     status: String,
     payment_method: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -224,6 +227,7 @@ struct ShipmentData {
     status: String,
     shipped_at: Option<String>,
     delivered_at: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -326,6 +330,7 @@ struct WorkOrderData {
     priority: String,
     scheduled_start: Option<String>,
     scheduled_end: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -455,6 +460,7 @@ struct JsOrder {
     fulfillment_status: String,
     tracking_number: Option<String>,
     items: Vec<JsOrderItem>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -573,6 +579,7 @@ struct JsReturn {
     status: String,
     reason: String,
     reason_details: Option<String>,
+    version: i32,
     created_at: String,
 }
 
@@ -584,6 +591,7 @@ impl From<&ReturnData> for JsReturn {
             status: data.status.clone(),
             reason: data.reason.clone(),
             reason_details: data.reason_details.clone(),
+            version: data.version,
             created_at: data.created_at.clone(),
         }
     }
@@ -600,6 +608,7 @@ struct JsPayment {
     currency: String,
     status: String,
     payment_method: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -615,6 +624,7 @@ impl From<&PaymentData> for JsPayment {
             currency: data.currency.clone(),
             status: data.status.clone(),
             payment_method: data.payment_method.clone(),
+            version: data.version,
             created_at: data.created_at.clone(),
             updated_at: data.updated_at.clone(),
         }
@@ -656,6 +666,7 @@ struct JsShipment {
     status: String,
     shipped_at: Option<String>,
     delivered_at: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -671,6 +682,7 @@ impl From<&ShipmentData> for JsShipment {
             status: data.status.clone(),
             shipped_at: data.shipped_at.clone(),
             delivered_at: data.delivered_at.clone(),
+            version: data.version,
             created_at: data.created_at.clone(),
             updated_at: data.updated_at.clone(),
         }
@@ -893,6 +905,7 @@ struct JsWorkOrder {
     priority: String,
     scheduled_start: Option<String>,
     scheduled_end: Option<String>,
+    version: i32,
     created_at: String,
     updated_at: String,
 }
@@ -909,6 +922,7 @@ impl From<&WorkOrderData> for JsWorkOrder {
             priority: data.priority.clone(),
             scheduled_start: data.scheduled_start.clone(),
             scheduled_end: data.scheduled_end.clone(),
+            version: data.version,
             created_at: data.created_at.clone(),
             updated_at: data.updated_at.clone(),
         }
@@ -1447,6 +1461,7 @@ impl Orders {
             fulfillment_status: "unfulfilled".to_string(),
             tracking_number: None,
             notes: input.notes,
+            version: 1,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -1467,6 +1482,7 @@ impl Orders {
             fulfillment_status: data.fulfillment_status,
             tracking_number: data.tracking_number,
             items: js_items,
+            version: data.version,
             created_at: data.created_at,
             updated_at: data.updated_at,
         };
@@ -1495,6 +1511,7 @@ impl Orders {
                     fulfillment_status: data.fulfillment_status.clone(),
                     tracking_number: data.tracking_number.clone(),
                     items: js_items,
+                    version: data.version,
                     created_at: data.created_at.clone(),
                     updated_at: data.updated_at.clone(),
                 };
@@ -1546,6 +1563,7 @@ impl Orders {
                     fulfillment_status: data.fulfillment_status.clone(),
                     tracking_number: data.tracking_number.clone(),
                     items: js_items,
+                    version: data.version,
                     created_at: data.created_at.clone(),
                     updated_at: data.updated_at.clone(),
                 }
@@ -1588,6 +1606,7 @@ impl Orders {
             fulfillment_status: data.fulfillment_status.clone(),
             tracking_number: data.tracking_number.clone(),
             items: js_items,
+            version: data.version,
             created_at: data.created_at.clone(),
             updated_at: data.updated_at.clone(),
         };
@@ -1629,6 +1648,7 @@ impl Orders {
             fulfillment_status: data.fulfillment_status.clone(),
             tracking_number: data.tracking_number.clone(),
             items: js_items,
+            version: data.version,
             created_at: data.created_at.clone(),
             updated_at: data.updated_at.clone(),
         };
@@ -1960,6 +1980,7 @@ impl Returns {
             status: "requested".to_string(),
             reason: input.reason,
             reason_details: input.reason_details,
+            version: 1,
             created_at: now,
         };
 
@@ -2077,6 +2098,7 @@ impl Payments {
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             status: "pending".to_string(),
             payment_method: input.payment_method,
+            version: 1,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -2194,6 +2216,7 @@ impl Shipments {
             status: "pending".to_string(),
             shipped_at: None,
             delivered_at: None,
+            version: 1,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -2834,6 +2857,7 @@ impl WorkOrders {
             priority: input.priority.unwrap_or_else(|| "normal".to_string()),
             scheduled_start: input.scheduled_start,
             scheduled_end: input.scheduled_end,
+            version: 1,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3282,6 +3306,7 @@ impl Carts {
             fulfillment_status: "unfulfilled".to_string(),
             tracking_number: None,
             notes,
+            version: 1,
             created_at: now.clone(),
             updated_at: now,
         };

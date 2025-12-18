@@ -315,6 +315,7 @@ pub struct OrderOutput {
     pub fulfillment_status: String,
     pub tracking_number: Option<String>,
     pub items: Vec<OrderItemOutput>,
+    pub version: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -343,6 +344,7 @@ impl From<stateset_core::Order> for OrderOutput {
                     total: i.total.to_string().parse().unwrap_or(0.0),
                 })
                 .collect(),
+            version: o.version,
             created_at: o.created_at.to_rfc3339(),
             updated_at: o.updated_at.to_rfc3339(),
         }
@@ -867,6 +869,7 @@ pub struct ReturnOutput {
     pub order_id: String,
     pub status: String,
     pub reason: String,
+    pub version: i32,
     pub created_at: String,
 }
 
@@ -877,6 +880,7 @@ impl From<stateset_core::Return> for ReturnOutput {
             order_id: r.order_id.to_string(),
             status: format!("{}", r.status),
             reason: format!("{}", r.reason),
+            version: r.version,
             created_at: r.created_at.to_rfc3339(),
         }
     }
@@ -1030,6 +1034,7 @@ pub struct PaymentOutput {
     pub amount: f64,
     pub currency: String,
     pub status: String,
+    pub version: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1045,6 +1050,7 @@ impl From<stateset_core::Payment> for PaymentOutput {
             amount: p.amount.to_string().parse().unwrap_or(0.0),
             currency: p.currency,
             status: format!("{}", p.status),
+            version: p.version,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -1277,6 +1283,7 @@ pub struct ShipmentOutput {
     pub tracking_url: Option<String>,
     pub recipient_name: String,
     pub shipping_address: String,
+    pub version: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1294,6 +1301,7 @@ impl From<stateset_core::Shipment> for ShipmentOutput {
             tracking_url: s.tracking_url,
             recipient_name: s.recipient_name,
             shipping_address: s.shipping_address,
+            version: s.version,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -2387,6 +2395,7 @@ pub struct WorkOrderOutput {
     pub priority: String,
     pub quantity_to_build: f64,
     pub quantity_completed: f64,
+    pub version: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2402,6 +2411,7 @@ impl From<stateset_core::WorkOrder> for WorkOrderOutput {
             priority: format!("{}", wo.priority),
             quantity_to_build: wo.quantity_to_build.to_string().parse().unwrap_or(0.0),
             quantity_completed: wo.quantity_completed.to_string().parse().unwrap_or(0.0),
+            version: wo.version,
             created_at: wo.created_at.to_rfc3339(),
             updated_at: wo.updated_at.to_rfc3339(),
         }

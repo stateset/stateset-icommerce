@@ -409,6 +409,8 @@ pub struct Order {
     #[pyo3(get)]
     items: Vec<OrderItem>,
     #[pyo3(get)]
+    version: i32,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -454,6 +456,7 @@ impl From<stateset_core::Order> for Order {
                     total: i.total.to_string().parse().unwrap_or(0.0),
                 })
                 .collect(),
+            version: o.version,
             created_at: o.created_at.to_rfc3339(),
             updated_at: o.updated_at.to_rfc3339(),
         }
@@ -1240,6 +1243,8 @@ pub struct Return {
     #[pyo3(get)]
     reason: String,
     #[pyo3(get)]
+    version: i32,
+    #[pyo3(get)]
     created_at: String,
 }
 
@@ -1257,6 +1262,7 @@ impl From<stateset_core::Return> for Return {
             order_id: r.order_id.to_string(),
             status: format!("{}", r.status),
             reason: format!("{}", r.reason),
+            version: r.version,
             created_at: r.created_at.to_rfc3339(),
         }
     }
@@ -1483,6 +1489,8 @@ pub struct Payment {
     #[pyo3(get)]
     payment_method: String,
     #[pyo3(get)]
+    version: i32,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -1510,6 +1518,7 @@ impl From<stateset_core::Payment> for Payment {
             currency: p.currency,
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
+            version: p.version,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -1750,6 +1759,8 @@ pub struct Shipment {
     #[pyo3(get)]
     shipping_address: String,
     #[pyo3(get)]
+    version: i32,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -1778,6 +1789,7 @@ impl From<stateset_core::Shipment> for Shipment {
             tracking_url: s.tracking_url,
             recipient_name: s.recipient_name,
             shipping_address: s.shipping_address,
+            version: s.version,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -2963,6 +2975,8 @@ pub struct WorkOrder {
     #[pyo3(get)]
     quantity_completed: f64,
     #[pyo3(get)]
+    version: i32,
+    #[pyo3(get)]
     created_at: String,
     #[pyo3(get)]
     updated_at: String,
@@ -2989,6 +3003,7 @@ impl From<stateset_core::WorkOrder> for WorkOrder {
             priority: format!("{}", wo.priority),
             quantity_to_build: wo.quantity_to_build.to_string().parse().unwrap_or(0.0),
             quantity_completed: wo.quantity_completed.to_string().parse().unwrap_or(0.0),
+            version: wo.version,
             created_at: wo.created_at.to_rfc3339(),
             updated_at: wo.updated_at.to_rfc3339(),
         }
