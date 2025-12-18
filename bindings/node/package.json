@@ -18,7 +18,7 @@
     "rust",
     "napi"
   ],
-  "author": "StateSet <hello@stateset.io>",
+  "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
   "engines": {
     "node": ">= 18"
@@ -40,7 +40,6 @@
     "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "prepublishOnly": "napi prepublish -t npm",
     "test": "node --test test/*.js",
     "universal": "napi universal",
     "version": "napi version"

@@ -39,7 +39,7 @@
     "mcp",
     "agentic"
   ],
-  "author": "StateSet <hello@stateset.io>",
+  "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
   "engines": {
     "node": ">=18.0.0"
