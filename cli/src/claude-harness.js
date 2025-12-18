@@ -6,6 +6,9 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
+import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
+import { PermissionGate, createPermissionGate, PERMISSION_LEVELS } from './permissions.js';
+import { RichOutput, ICONS } from './output.js';
 
 // ============================================================================
 // Agent Configurations
@@ -279,6 +282,71 @@ Provide insights into sales performance, customer behavior, inventory health, an
 4. Suggest actionable recommendations
 
 Note: All analytics tools are read-only. No --apply flag needed.`
+  },
+
+  // Storefront creation specialist
+  'storefront': {
+    name: 'Storefront Agent',
+    description: 'Creates e-commerce storefront websites using StateSet iCommerce',
+    tools: [
+      'mcp__stateset-scaffold__list_templates',
+      'mcp__stateset-scaffold__list_page_templates',
+      'mcp__stateset-scaffold__list_component_templates',
+      'mcp__stateset-scaffold__create_project',
+      'mcp__stateset-scaffold__add_page',
+      'mcp__stateset-scaffold__add_component',
+      'mcp__stateset-scaffold__add_hook',
+      'mcp__stateset-scaffold__add_api_route',
+      'mcp__stateset-scaffold__write_file',
+      'mcp__stateset-scaffold__read_file',
+      'mcp__stateset-scaffold__list_files',
+      'mcp__stateset-scaffold__run_command',
+      'mcp__stateset-scaffold__seed_database'
+    ],
+    systemPrompt: `You are a storefront creation specialist for StateSet iCommerce. You help users create complete, production-ready e-commerce websites.
+
+## Your Role
+Create e-commerce storefronts using @stateset/embedded as the commerce backend. You can scaffold entire projects, add pages, components, hooks, and API routes.
+
+## Available Templates
+- nextjs: Full-stack Next.js 14 with App Router, SSR, Tailwind (recommended)
+- nextjs-minimal: Minimal Next.js setup
+- vite-react: Client-side SPA with WASM
+- astro: Static-first with Islands
+
+## Workflow
+1. Ask about store name and requirements
+2. Create project with create_project
+3. Add needed pages (products, cart, checkout)
+4. Add components (ProductCard, AddToCart, etc.)
+5. Set up API routes for commerce operations
+6. Seed database with sample products
+7. Provide instructions to run the store
+
+## Available Tools
+- list_templates - Show project templates
+- create_project - Initialize new storefront (requires --apply)
+- add_page - Add a page (requires --apply)
+- add_component - Add a component (requires --apply)
+- add_hook - Add a React hook (requires --apply)
+- add_api_route - Add an API route (requires --apply)
+- write_file - Write any file (requires --apply)
+- read_file - Read file contents
+- list_files - List project files
+- run_command - Run npm commands (requires --apply)
+- seed_database - Create sample data (requires --apply)
+
+## Best Practices
+1. Use TypeScript for type safety
+2. Use Server Components where possible
+3. Style with Tailwind CSS
+4. Create API routes to proxy commerce operations
+5. Store database path in environment variables
+
+## Safety
+- Preview mode shows what would be created
+- --apply flag enables write operations
+- Never overwrite files without confirmation`
   }
 };
 
@@ -294,7 +362,8 @@ const AGENT_KEYWORDS = {
   'orders': ['order', 'ship', 'shipping', 'tracking', 'fulfill', 'deliver'],
   'inventory': ['stock', 'inventory', 'restock', 'warehouse', 'reserve', 'allocation', 'on-hand', 'available'],
   'returns': ['return', 'rma', 'refund', 'exchange', 'defective', 'damaged'],
-  'analytics': ['analytics', 'sales', 'revenue', 'best seller', 'top product', 'forecast', 'predict', 'trend', 'metrics', 'performance', 'how is business', 'how are sales', 'top customer', 'vip', 'lifetime value', 'aov', 'demand', 'low stock', 'out of stock', 'report', 'insight', 'dashboard']
+  'analytics': ['analytics', 'sales', 'revenue', 'best seller', 'top product', 'forecast', 'predict', 'trend', 'metrics', 'performance', 'how is business', 'how are sales', 'top customer', 'vip', 'lifetime value', 'aov', 'demand', 'low stock', 'out of stock', 'report', 'insight', 'dashboard'],
+  'storefront': ['create store', 'new store', 'storefront', 'website', 'scaffold', 'generate', 'build store', 'create website', 'nextjs', 'react', 'ecommerce site', 'e-commerce site', 'online store', 'shop website']
 };
 
 /**
@@ -303,21 +372,53 @@ const AGENT_KEYWORDS = {
  * @returns {string} - Agent name
  */
 export function routeToAgent(request) {
+  const result = routeToAgentWithConfidence(request);
+  return result.primary.agent;
+}
+
+/**
+ * Determine which agent is best suited with confidence scoring
+ * @param {string} request - User's request
+ * @returns {object} - { primary: { agent, score, confidence }, alternatives: [...], ambiguous: boolean }
+ */
+export function routeToAgentWithConfidence(request) {
   const lower = request.toLowerCase();
 
   // Score each agent based on keyword matches
   const scores = {};
   for (const [agent, keywords] of Object.entries(AGENT_KEYWORDS)) {
-    scores[agent] = keywords.filter(kw => lower.includes(kw)).length;
+    const matchedKeywords = keywords.filter(kw => lower.includes(kw));
+    const score = matchedKeywords.length;
+    const confidence = keywords.length > 0 ? score / keywords.length : 0;
+
+    scores[agent] = {
+      agent,
+      score,
+      confidence,
+      matchedKeywords
+    };
   }
 
-  // Find highest scoring agent
-  const best = Object.entries(scores)
-    .filter(([_, score]) => score > 0)
-    .sort((a, b) => b[1] - a[1])[0];
+  // Rank agents by score
+  const ranked = Object.values(scores)
+    .sort((a, b) => b.score - a.score || b.confidence - a.confidence);
 
-  // Return best match or default to customer-service
-  return best ? best[0] : 'customer-service';
+  // Determine if routing is ambiguous
+  const topScore = ranked[0]?.score || 0;
+  const secondScore = ranked[1]?.score || 0;
+  const ambiguous = topScore > 0 && topScore === secondScore;
+
+  // Default to customer-service if no matches
+  const primary = topScore > 0
+    ? ranked[0]
+    : { agent: 'customer-service', score: 0, confidence: 0, matchedKeywords: [] };
+
+  return {
+    primary,
+    alternatives: ranked.slice(1, 4),
+    ambiguous,
+    allScores: scores
+  };
 }
 
 // ============================================================================
@@ -336,6 +437,11 @@ export function routeToAgent(request) {
  * @param {string} options.agent - Specific agent to use (optional, auto-routes if not specified)
  * @param {Function} options.onToolCall - Callback for tool invocations
  * @param {Function} options.onMessage - Callback for assistant messages
+ * @param {boolean} options.verbose - Enable verbose telemetry output
+ * @param {Object} options.guardrails - Custom guardrails configuration
+ * @param {Function} options.onConfirmRequired - Callback for confirmation prompts
+ * @param {AgentTelemetry} options.telemetry - Custom telemetry instance
+ * @param {PermissionGate} options.permissionGate - Custom permission gate instance
  */
 export async function runAgentLoop({
   request,
@@ -346,17 +452,47 @@ export async function runAgentLoop({
   resumeSessionId,
   agent,
   onToolCall,
-  onMessage
+  onMessage,
+  verbose = false,
+  guardrails = {},
+  onConfirmRequired = null,
+  telemetry = null,
+  permissionGate = null
 }) {
+  // Initialize telemetry
+  const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
+  const mainSpan = telem.startSpan('agent_run', { request: request.slice(0, 100), agent });
+
+  // Initialize permission gate
+  const gate = permissionGate || createPermissionGate({
+    apply: allowApply,
+    guardrails,
+    onConfirmRequired
+  });
+
   // Initialize commerce instance
   const commerce = new Commerce(dbPath);
 
-  // Create MCP server
-  const mcpServer = createStatesetMcpServer({ commerce, allowApply });
+  // Create MCP server with telemetry and permissions
+  const mcpServer = createStatesetMcpServer({
+    commerce,
+    allowApply,
+    telemetry: telem,
+    permissionGate: gate
+  });
 
   // Determine which agent to use
-  const agentName = agent || routeToAgent(request);
+  const routingResult = routeToAgentWithConfidence(request);
+  const agentName = agent || routingResult.primary.agent;
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+
+  // Log routing decision
+  telem.logAgentRouting(
+    request,
+    agentName,
+    routingResult.primary.confidence,
+    routingResult.alternatives
+  );
 
   // Build options
   const options = {
@@ -396,7 +532,8 @@ export async function runAgentLoop({
               const toolCall = {
                 id: block.id,
                 name: block.name,
-                input: block.input
+                input: block.input,
+                startTime: Date.now()
               };
               toolResults.push({ toolCall, result: null });
               if (onToolCall) {
@@ -412,21 +549,42 @@ export async function runAgentLoop({
         const pending = toolResults.find(tr => tr.result === null);
         if (pending) {
           pending.result = message.content;
+          pending.endTime = Date.now();
+          pending.duration = pending.endTime - pending.toolCall.startTime;
+
+          // Log to telemetry
+          telem.logToolCall(
+            pending.toolCall.name,
+            pending.toolCall.input,
+            pending.result,
+            pending.duration
+          );
         }
       }
     }
+
+    // Log assistant response
+    telem.logAssistantMessage(response);
 
     if (onMessage) {
       onMessage(response);
     }
 
+    // End main span
+    telem.endSpanRef(mainSpan, 'ok', { toolCallCount: toolResults.length });
+
     return {
       response,
       toolResults,
       sessionId,
-      agent: agentName
+      agent: agentName,
+      routing: routingResult,
+      telemetry: telem.getSummary(),
+      traceId: telem.traceId
     };
   } catch (error) {
+    telem.logError(error, { agent: agentName, request: request.slice(0, 100) });
+    telem.endSpanRef(mainSpan, 'error', { error: error.message });
     throw new Error(`Agent error: ${error.message}`);
   }
 }
@@ -539,3 +697,11 @@ export function listAgents() {
     toolCount: config.tools.length
   }));
 }
+
+// ============================================================================
+// Re-exports for convenience
+// ============================================================================
+
+export { AgentTelemetry, noOpTelemetry } from './telemetry.js';
+export { PermissionGate, createPermissionGate, PERMISSION_LEVELS, TOOL_PERMISSIONS } from './permissions.js';
+export { RichOutput, ICONS, createOutput } from './output.js';

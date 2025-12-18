@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -11,7 +11,8 @@
     "stateset-orders": "./bin/stateset-orders.js",
     "stateset-inventory": "./bin/stateset-inventory.js",
     "stateset-returns": "./bin/stateset-returns.js",
-    "stateset-analytics": "./bin/stateset-analytics.js"
+    "stateset-analytics": "./bin/stateset-analytics.js",
+    "stateset-create": "./bin/stateset-create.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -37,7 +38,11 @@
     "ai",
     "claude",
     "mcp",
-    "agentic"
+    "agentic",
+    "storefront",
+    "scaffold",
+    "generator",
+    "nextjs"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",

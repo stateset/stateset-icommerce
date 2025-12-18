@@ -31,8 +31,30 @@ This CLI provides natural language access to commerce operations:
 | `stateset-inventory` | inventory | Stock & reservation management |
 | `stateset-returns` | returns | RMA & refund processing |
 | `stateset-analytics` | analytics | Sales metrics & forecasting |
+| `stateset-create` | storefront | Create e-commerce storefronts |
 
 Use specialized commands for focused workflows with domain-specific tooling and prompts.
+
+### Storefront Creation
+
+The `stateset-create` command scaffolds complete e-commerce websites:
+
+```bash
+# Preview what would be created
+stateset-create "create a store called Urban Thread"
+
+# Actually create the project
+stateset-create --apply "create a nextjs storefront for my coffee shop"
+
+# Create in a specific directory
+stateset-create --apply --dir ~/projects "build an online bookstore"
+```
+
+Available templates:
+- `nextjs` - Full-stack Next.js 14 with App Router, SSR, Tailwind (recommended)
+- `nextjs-minimal` - Minimal Next.js setup
+- `vite-react` - Client-side SPA with WASM
+- `astro` - Static-first with Islands
 
 ## Safety Architecture
 

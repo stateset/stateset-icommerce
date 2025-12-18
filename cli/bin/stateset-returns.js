@@ -98,7 +98,7 @@ async function main() {
   }
 
   if (values.version) {
-    console.log('@stateset/cli returns-agent v0.1.0');
+    console.log('@stateset/cli returns-agent v0.1.2');
     process.exit(0);
   }
 

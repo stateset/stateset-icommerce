@@ -8,9 +8,10 @@
  *   stateset --apply "create a customer with email alice@example.com"
  *   stateset --db ./mystore.db "list all orders"
  *   stateset --resume <session-id> "now ship that order"
+ *   stateset --verbose "debug agent routing"
  */
 
-import { runAgentLoop } from '../src/claude-harness.js';
+import { runAgentLoop, RichOutput, ICONS, AgentTelemetry } from '../src/claude-harness.js';
 import { parseArgs } from 'node:util';
 
 const HELP = `
@@ -25,6 +26,8 @@ OPTIONS:
   --model <model>    Claude model to use (default: claude-sonnet-4-20250514)
   --resume <id>      Resume a previous session
   --json             Output as JSON
+  --verbose, -V      Enable verbose output with telemetry
+  --stats            Show execution statistics after completion
   --help, -h         Show this help message
   --version, -v      Show version
 
@@ -77,11 +80,16 @@ async function main() {
       model: { type: 'string', default: 'claude-sonnet-4-20250514' },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
+      verbose: { type: 'boolean', short: 'V', default: false },
+      stats: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false }
     },
     allowPositionals: true
   });
+
+  // Initialize output formatter
+  const output = new RichOutput({ color: !values.json });
 
   // Handle help
   if (values.help) {
@@ -91,7 +99,7 @@ async function main() {
 
   // Handle version
   if (values.version) {
-    console.log('@stateset/cli v0.1.0');
+    console.log('@stateset/cli v0.1.2');
     process.exit(0);
   }
 
@@ -106,11 +114,14 @@ async function main() {
 
   // Show mode indicator
   if (!values.json) {
-    console.log(`\n📦 StateSet iCommerce CLI`);
-    console.log(`   Database: ${values.db}`);
-    console.log(`   Mode: ${values.apply ? '✏️  Write enabled' : '👁️  Preview only'}`);
+    console.log(`\n${ICONS.order} StateSet iCommerce CLI`);
+    console.log(`   ${output.dim('Database:')} ${values.db}`);
+    console.log(`   ${output.dim('Mode:')}     ${values.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    if (values.verbose) {
+      console.log(`   ${output.dim('Verbose:')}  ${output.cyan('Enabled')}`);
+    }
     if (values.resume) {
-      console.log(`   Session: ${values.resume}`);
+      console.log(`   ${output.dim('Session:')}  ${values.resume}`);
     }
     console.log();
   }
@@ -122,34 +133,65 @@ async function main() {
       model: values.model,
       allowApply: values.apply,
       resumeSessionId: values.resume,
+      verbose: values.verbose,
       onToolCall: (toolCall) => {
-        if (!values.json) {
-          const toolName = toolCall.name.replace('mcp__stateset-commerce__', '');
-          console.log(`🔧 ${toolName}(${JSON.stringify(toolCall.input)})`);
+        if (!values.json && !values.verbose) {
+          // Standard tool call display (verbose mode handles its own output)
+          console.log(output.toolCall(toolCall.name, toolCall.input));
         }
       }
     });
 
     if (values.json) {
-      // JSON output
+      // JSON output with extended telemetry
       console.log(JSON.stringify({
         request,
         allowApply: values.apply,
         sessionId: result.sessionId,
+        traceId: result.traceId,
+        agent: result.agent,
+        routing: result.routing ? {
+          agent: result.routing.primary.agent,
+          confidence: result.routing.primary.confidence,
+          ambiguous: result.routing.ambiguous
+        } : undefined,
         response: result.response,
         toolResults: result.toolResults.map(tr => ({
           tool: tr.toolCall.name,
           input: tr.toolCall.input,
-          result: tr.result
-        }))
+          result: tr.result,
+          duration: tr.duration
+        })),
+        telemetry: values.stats || values.verbose ? result.telemetry : undefined
       }, null, 2));
     } else {
       // Human-readable output
       console.log('\n' + result.response);
 
+      // Show routing info in verbose mode
+      if (values.verbose && result.routing) {
+        console.log(`\n${output.dim('Agent:')} ${result.agent} (${Math.round(result.routing.primary.confidence * 100)}% confidence)`);
+        if (result.routing.ambiguous) {
+          console.log(output.yellow('  Note: Routing was ambiguous, consider using a specialized agent'));
+        }
+      }
+
+      // Show stats if requested
+      if ((values.stats || values.verbose) && result.telemetry) {
+        const stats = result.telemetry;
+        console.log(`\n${output.dim('─'.repeat(40))}`);
+        console.log(`${ICONS.analytics} ${output.bold('Execution Stats')}`);
+        console.log(`   ${output.dim('Trace ID:')}    ${result.traceId}`);
+        console.log(`   ${output.dim('Duration:')}    ${stats.duration}ms`);
+        console.log(`   ${output.dim('Tool Calls:')}  ${stats.toolCalls?.total || 0} (${stats.toolCalls?.successRate || 'N/A'} success)`);
+        if (stats.avgToolDuration > 0) {
+          console.log(`   ${output.dim('Avg Latency:')} ${stats.avgToolDuration}ms per tool`);
+        }
+      }
+
       if (result.sessionId) {
-        console.log(`\n💾 Session ID: ${result.sessionId}`);
-        console.log(`   Use --resume ${result.sessionId} to continue this conversation`);
+        console.log(`\n${ICONS.session} ${output.dim('Session ID:')} ${result.sessionId}`);
+        console.log(`   ${output.dim('Use')} --resume ${result.sessionId} ${output.dim('to continue this conversation')}`);
       }
     }
 
@@ -158,7 +200,7 @@ async function main() {
     if (values.json) {
       console.log(JSON.stringify({ error: error.message }));
     } else {
-      console.error(`\n❌ Error: ${error.message}`);
+      console.error(`\n${output.status('error', error.message)}`);
     }
     process.exit(1);
   }

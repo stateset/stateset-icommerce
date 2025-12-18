@@ -11,7 +11,7 @@
  *   stateset-chat --apply
  */
 
-import { runAgentLoop } from '../src/claude-harness.js';
+import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
 
@@ -25,12 +25,14 @@ OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
   --apply            Enable write operations
   --model <model>    Claude model to use
+  --verbose, -V      Enable verbose telemetry
   --help, -h         Show this help message
 
 IN-CHAT COMMANDS:
   /help              Show available commands
   /status            Show current settings
   /apply on|off      Toggle apply mode
+  /verbose on|off    Toggle verbose mode
   /db <path>         Switch database
   /new               Start new session (clear context)
   /exit, /quit       Exit chat
@@ -42,6 +44,7 @@ async function main() {
       db: { type: 'string', default: './store.db' },
       apply: { type: 'boolean', default: false },
       model: { type: 'string', default: 'claude-sonnet-4-20250514' },
+      verbose: { type: 'boolean', short: 'V', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },
     allowPositionals: true
@@ -52,10 +55,14 @@ async function main() {
     process.exit(0);
   }
 
+  // Initialize output formatter
+  const output = new RichOutput({ color: true });
+
   // State
   let dbPath = values.db;
   let allowApply = values.apply;
   let model = values.model;
+  let verbose = values.verbose;
   let sessionId = null;
 
   // Create readline interface
@@ -70,25 +77,27 @@ async function main() {
   };
 
   const showStatus = () => {
-    console.log(`\n📊 Current Settings:`);
-    console.log(`   Database: ${dbPath}`);
-    console.log(`   Mode: ${allowApply ? 'Write enabled' : 'Preview only'}`);
-    console.log(`   Model: ${model}`);
-    console.log(`   Session: ${sessionId || '(none)'}`);
+    console.log(`\n${ICONS.analytics} ${output.bold('Current Settings:')}`);
+    console.log(`   ${output.dim('Database:')} ${dbPath}`);
+    console.log(`   ${output.dim('Mode:')}     ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(`   ${output.dim('Verbose:')}  ${verbose ? output.cyan('On') : 'Off'}`);
+    console.log(`   ${output.dim('Model:')}    ${model}`);
+    console.log(`   ${output.dim('Session:')}  ${sessionId || output.dim('(none)')}`);
     console.log();
   };
 
   const showHelp = () => {
     console.log(`
-📖 Available Commands:
+${output.bold('Available Commands:')}
    /help              Show this help
    /status            Show current settings
    /apply on|off      Toggle write mode
+   /verbose on|off    Toggle verbose mode
    /db <path>         Switch database
    /new               Start new session
    /exit, /quit       Exit chat
 
-💡 Example Queries:
+${output.bold('Example Queries:')}
    "show me all customers"
    "how much stock do we have of WIDGET-001?"
    "create a customer named Bob with email bob@example.com"
@@ -123,13 +132,26 @@ async function main() {
         case 'apply':
           if (args[0] === 'on') {
             allowApply = true;
-            console.log('✏️  Write mode enabled');
+            console.log(output.status('success', 'Write mode enabled'));
           } else if (args[0] === 'off') {
             allowApply = false;
-            console.log('👁️  Preview mode enabled');
+            console.log(output.status('info', 'Preview mode enabled'));
           } else {
             console.log(`Apply mode: ${allowApply ? 'on' : 'off'}`);
             console.log('Use /apply on or /apply off to change');
+          }
+          break;
+
+        case 'verbose':
+          if (args[0] === 'on') {
+            verbose = true;
+            console.log(output.status('success', 'Verbose mode enabled'));
+          } else if (args[0] === 'off') {
+            verbose = false;
+            console.log(output.status('info', 'Verbose mode disabled'));
+          } else {
+            console.log(`Verbose mode: ${verbose ? 'on' : 'off'}`);
+            console.log('Use /verbose on or /verbose off to change');
           }
           break;
 
@@ -173,10 +195,13 @@ async function main() {
         dbPath,
         model,
         allowApply,
+        verbose,
         resumeSessionId: sessionId,
         onToolCall: (toolCall) => {
-          const toolName = toolCall.name.replace('mcp__stateset-commerce__', '');
-          console.log(`🔧 ${toolName}`);
+          if (!verbose) {
+            // Standard tool call display (verbose mode handles its own output)
+            console.log(output.toolCall(toolCall.name, toolCall.input));
+          }
         }
       });
 
@@ -186,10 +211,18 @@ async function main() {
       }
 
       console.log('\n' + result.response);
+
+      // Show stats in verbose mode
+      if (verbose && result.telemetry) {
+        const stats = result.telemetry;
+        console.log(`\n${output.dim('─'.repeat(40))}`);
+        console.log(`${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms`);
+      }
+
       console.log();
 
     } catch (error) {
-      console.error(`\n❌ Error: ${error.message}\n`);
+      console.error(`\n${output.status('error', error.message)}\n`);
     }
 
     prompt();
@@ -198,10 +231,10 @@ async function main() {
   // Welcome message
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║           📦 StateSet iCommerce - Interactive Chat           ║
+║        ${ICONS.order} ${output.bold('StateSet iCommerce - Interactive Chat')}          ║
 ╠════════════════════════════════════════════════════════════╣
 ║  Type your request in natural language.                    ║
-║  Use /help for commands, /exit to quit.                    ║
+║  Use ${output.cyan('/help')} for commands, ${output.cyan('/exit')} to quit.                    ║
 ╚════════════════════════════════════════════════════════════╝
 `);
   showStatus();

@@ -11,8 +11,55 @@ import { z } from 'zod';
  * @param {Object} options
  * @param {import('@stateset/embedded').Commerce} options.commerce - Commerce instance
  * @param {boolean} options.allowApply - Whether to allow destructive operations
+ * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
+ * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
  */
-export function createStatesetMcpServer({ commerce, allowApply = false }) {
+export function createStatesetMcpServer({ commerce, allowApply = false, telemetry = null, permissionGate = null }) {
+  // Helper to check permissions before executing
+  const checkPermission = async (toolName, params) => {
+    if (!permissionGate) return { allowed: allowApply || isReadOnly(toolName) };
+    return permissionGate.checkPermission(toolName, params);
+  };
+
+  // Helper to determine if a tool is read-only
+  const isReadOnly = (toolName) => {
+    const readOnlyTools = [
+      'list_customers', 'get_customer',
+      'list_orders', 'get_order',
+      'list_products', 'get_product', 'get_product_variant',
+      'get_stock',
+      'list_returns', 'get_return',
+      'list_carts', 'get_cart', 'get_shipping_rates', 'get_abandoned_carts',
+      'get_sales_summary', 'get_top_products', 'get_customer_metrics',
+      'get_top_customers', 'get_inventory_health', 'get_low_stock_items',
+      'get_demand_forecast', 'get_revenue_forecast', 'get_order_status_breakdown',
+      'get_return_metrics', 'get_exchange_rate', 'list_exchange_rates',
+      'convert_currency', 'get_currency_settings', 'format_currency'
+    ];
+    return readOnlyTools.includes(toolName);
+  };
+
+  // Helper to wrap tool execution with telemetry
+  const wrapWithTelemetry = (toolName, fn) => {
+    return async (params) => {
+      const startTime = Date.now();
+      try {
+        const result = await fn(params);
+        if (telemetry) {
+          const duration = Date.now() - startTime;
+          telemetry.logToolCall(toolName, params, result, duration);
+        }
+        return result;
+      } catch (error) {
+        if (telemetry) {
+          const duration = Date.now() - startTime;
+          telemetry.logToolCall(toolName, params, { error: error.message }, duration);
+        }
+        throw error;
+      }
+    };
+  };
+
   return createSdkMcpServer({
     name: 'stateset-commerce',
     version: '1.0.0',
