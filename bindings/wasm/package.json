@@ -1,0 +1,35 @@
+{
+  "name": "@stateset/embedded-wasm",
+  "version": "0.1.0",
+  "description": "StateSet Embedded Commerce for browsers (WebAssembly)",
+  "main": "pkg/stateset_embedded.js",
+  "module": "pkg/stateset_embedded.js",
+  "types": "pkg/stateset_embedded.d.ts",
+  "files": [
+    "pkg/*"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg",
+    "build:node": "wasm-pack build --target nodejs --out-dir pkg-node",
+    "build:bundler": "wasm-pack build --target bundler --out-dir pkg-bundler",
+    "test": "wasm-pack test --headless --chrome"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce"
+  },
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "wasm",
+    "webassembly",
+    "browser",
+    "embedded"
+  ],
+  "author": "StateSet <support@stateset.io>",
+  "license": "MIT OR Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/stateset/stateset-icommerce/issues"
+  },
+  "homepage": "https://github.com/stateset/stateset-icommerce#readme"
+}

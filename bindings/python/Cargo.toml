@@ -1,0 +1,19 @@
+[package]
+name = "stateset-embedded-python"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for StateSet Embedded Commerce"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/stateset/stateset-icommerce"
+keywords = ["commerce", "ecommerce", "python", "pyo3"]
+categories = ["api-bindings"]
+
+[lib]
+name = "stateset_embedded"
+crate-type = ["cdylib"]
+
+[dependencies]
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded" }
+stateset-core = { path = "../../crates/stateset-core" }
+pyo3 = { version = "0.22", features = ["extension-module"] }
+rust_decimal = { version = "1.36", features = ["serde"] }

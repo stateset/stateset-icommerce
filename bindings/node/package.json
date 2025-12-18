@@ -1,0 +1,59 @@
+{
+  "name": "@stateset/embedded",
+  "version": "0.1.0",
+  "description": "The SQLite of commerce - embeddable commerce library powered by Rust",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce"
+  },
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "orders",
+    "inventory",
+    "embedded",
+    "sqlite",
+    "rust",
+    "napi"
+  ],
+  "author": "StateSet <hello@stateset.io>",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  },
+  "napi": {
+    "name": "stateset-embedded",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc"
+      ]
+    }
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "node --test test/*.js",
+    "universal": "napi universal",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

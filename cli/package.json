@@ -1,0 +1,60 @@
+{
+  "name": "@stateset/cli",
+  "version": "0.1.0",
+  "description": "AI-powered command-line interface for StateSet Commerce",
+  "type": "module",
+  "bin": {
+    "stateset": "./bin/stateset.js",
+    "stateset-chat": "./bin/stateset-chat.js",
+    "stateset-direct": "./bin/stateset-direct.js",
+    "stateset-checkout": "./bin/stateset-checkout.js",
+    "stateset-orders": "./bin/stateset-orders.js",
+    "stateset-inventory": "./bin/stateset-inventory.js",
+    "stateset-returns": "./bin/stateset-returns.js",
+    "stateset-analytics": "./bin/stateset-analytics.js"
+  },
+  "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce"
+  },
+  "homepage": "https://stateset.com",
+  "bugs": {
+    "url": "https://github.com/stateset/stateset-icommerce/issues"
+  },
+  "scripts": {
+    "test": "node --test test/*.js",
+    "prepublishOnly": "echo 'Ready to publish @stateset/cli'"
+  },
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "orders",
+    "inventory",
+    "checkout",
+    "returns",
+    "cli",
+    "ai",
+    "claude",
+    "mcp",
+    "agentic"
+  ],
+  "author": "StateSet <hello@stateset.io>",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    ".claude/"
+  ],
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.70",
+    "@stateset/embedded": "^0.1.0",
+    "zod": "^3.25.76"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
