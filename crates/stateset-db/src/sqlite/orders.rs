@@ -108,7 +108,8 @@ impl SqliteOrderRepository {
 
 impl OrderRepository for SqliteOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
@@ -135,7 +136,7 @@ impl OrderRepository for SqliteOrderRepository {
             .as_ref()
             .map(|a| serde_json::to_string(a).unwrap_or_default());
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
                                  currency, payment_status, fulfillment_status, payment_method,
                                  shipping_method, notes, shipping_address, billing_address,
@@ -173,7 +174,7 @@ impl OrderRepository for SqliteOrderRepository {
                 item.tax_amount.unwrap_or_default(),
             );
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
                                           quantity, unit_price, discount, tax_amount, total)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -207,6 +208,8 @@ impl OrderRepository for SqliteOrderRepository {
                 total: item_total,
             });
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(Order {
             id,
@@ -382,16 +385,20 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
-        conn.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])
+        tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
     fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let item_id = Uuid::new_v4();
         let item_total = OrderItem::calculate_total(
             item.quantity,
@@ -400,7 +407,7 @@ impl OrderRepository for SqliteOrderRepository {
             item.tax_amount.unwrap_or_default(),
         );
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
                                       quantity, unit_price, discount, tax_amount, total)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -421,7 +428,8 @@ impl OrderRepository for SqliteOrderRepository {
         .map_err(map_db_error)?;
 
         // Update order total
-        self.update_order_total(&conn, order_id)?;
+        self.update_order_total(&tx, order_id)?;
+        tx.commit().map_err(map_db_error)?;
 
         Ok(OrderItem {
             id: item_id,
@@ -439,14 +447,16 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        tx.execute(
             "DELETE FROM order_items WHERE id = ? AND order_id = ?",
             [item_id.to_string(), order_id.to_string()],
         )
         .map_err(map_db_error)?;
 
-        self.update_order_total(&conn, order_id)?;
+        self.update_order_total(&tx, order_id)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -476,7 +486,7 @@ impl OrderRepository for SqliteOrderRepository {
 impl SqliteOrderRepository {
     fn update_order_total(
         &self,
-        conn: &r2d2::PooledConnection<SqliteConnectionManager>,
+        conn: &rusqlite::Connection,
         order_id: Uuid,
     ) -> Result<()> {
         let total: String = conn

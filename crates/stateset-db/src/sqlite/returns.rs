@@ -6,8 +6,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateReturn, CreateReturnItem, ItemCondition, Result, Return, ReturnFilter,
-    ReturnItem, ReturnReason, ReturnRepository, ReturnStatus, UpdateReturn,
+    CommerceError, CreateReturn, ItemCondition, Result, Return, ReturnFilter, ReturnItem,
+    ReturnReason, ReturnRepository, ReturnStatus, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -77,12 +77,13 @@ impl SqliteReturnRepository {
 
 impl ReturnRepository for SqliteReturnRepository {
     fn create(&self, input: CreateReturn) -> Result<Return> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
         // Get order to get customer_id
-        let customer_id: String = conn
+        let customer_id: String = tx
             .query_row(
                 "SELECT customer_id FROM orders WHERE id = ?",
                 [input.order_id.to_string()],
@@ -90,7 +91,7 @@ impl ReturnRepository for SqliteReturnRepository {
             )
             .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
              VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?)",
             rusqlite::params![
@@ -111,7 +112,7 @@ impl ReturnRepository for SqliteReturnRepository {
             let item_id = Uuid::new_v4();
 
             // Get order item details
-            let (sku, name, unit_price): (String, String, String) = conn
+            let (sku, name, unit_price): (String, String, String) = tx
                 .query_row(
                     "SELECT sku, name, unit_price FROM order_items WHERE id = ?",
                     [item.order_item_id.to_string()],
@@ -121,7 +122,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
             let refund_amount = parse_decimal(&unit_price) * Decimal::from(item.quantity);
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
@@ -139,7 +140,7 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         // Calculate total refund amount
-        let total_refund: f64 = conn
+        let total_refund: f64 = tx
             .query_row(
                 "SELECT COALESCE(SUM(CAST(refund_amount AS REAL)), 0) FROM return_items WHERE return_id = ?",
                 [id.to_string()],
@@ -147,51 +148,52 @@ impl ReturnRepository for SqliteReturnRepository {
             )
             .map_err(map_db_error)?;
 
-        conn.execute(
+        tx.execute(
             "UPDATE returns SET refund_amount = ? WHERE id = ?",
             rusqlite::params![total_refund.to_string(), id.to_string()],
         )
         .map_err(map_db_error)?;
 
-        // Inline the get logic to avoid connection pool deadlock
-        let result = conn.query_row(
-            "SELECT * FROM returns WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_return,
-        );
+        // Build the return with items using the same transaction.
+        let mut ret = tx
+            .query_row(
+                "SELECT * FROM returns WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_return,
+            )
+            .map_err(map_db_error)?;
 
-        match result {
-            Ok(mut ret) => {
-                // Inline load_return_items to use same connection
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
-                         FROM return_items WHERE return_id = ?",
-                    )
-                    .map_err(map_db_error)?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                     FROM return_items WHERE return_id = ?",
+                )
+                .map_err(map_db_error)?;
 
-                ret.items = stmt
-                    .query_map([id.to_string()], |row| {
-                        Ok(ReturnItem {
-                            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                            return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                            order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
-                            sku: row.get("sku")?,
-                            name: row.get("name")?,
-                            quantity: row.get("quantity")?,
-                            condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                            refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
-                        })
+            ret.items = stmt
+                .query_map([id.to_string()], |row| {
+                    Ok(ReturnItem {
+                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
+                        order_item_id: row.get::<_, String>("order_item_id")?
+                            .parse()
+                            .unwrap_or_default(),
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        quantity: row.get("quantity")?,
+                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
                     })
-                    .map_err(map_db_error)?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .map_err(map_db_error)?;
-
-                Ok(ret)
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::ReturnNotFound(id)),
-            Err(e) => Err(map_db_error(e)),
+                })
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?;
         }
+
+        tx.commit().map_err(map_db_error)?;
+
+        Ok(ret)
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Return>> {

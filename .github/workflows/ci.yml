@@ -23,6 +23,9 @@ jobs:
       - name: Test
         run: cargo test -p stateset-core -p stateset-db -p stateset-embedded
 
+      - name: Check (PostgreSQL feature)
+        run: cargo check -p stateset-db --no-default-features --features postgres
+
   node-bindings:
     name: Node Bindings
     runs-on: ubuntu-latest

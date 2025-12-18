@@ -71,7 +71,8 @@ impl SqliteProductRepository {
 
 impl ProductRepository for SqliteProductRepository {
     fn create(&self, input: CreateProduct) -> Result<Product> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
@@ -82,7 +83,7 @@ impl ProductRepository for SqliteProductRepository {
         let seo = input.seo.clone();
 
         // Check slug uniqueness
-        let exists: i32 = conn
+        let exists: i32 = tx
             .query_row(
                 "SELECT COUNT(*) FROM products WHERE slug = ?",
                 [&slug],
@@ -97,7 +98,7 @@ impl ProductRepository for SqliteProductRepository {
         let attributes_json = serde_json::to_string(&attributes).unwrap_or_default();
         let seo_json = seo.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default());
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
              VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
             rusqlite::params![
@@ -120,7 +121,7 @@ impl ProductRepository for SqliteProductRepository {
                 let variant_id = Uuid::new_v4();
 
                 // Check SKU uniqueness
-                let sku_exists: i32 = conn
+                let sku_exists: i32 = tx
                     .query_row(
                         "SELECT COUNT(*) FROM product_variants WHERE sku = ?",
                         [&variant.sku],
@@ -134,7 +135,7 @@ impl ProductRepository for SqliteProductRepository {
 
                 let options_json = serde_json::to_string(&variant.options.clone().unwrap_or_default()).unwrap_or_default();
 
-                conn.execute(
+                tx.execute(
                     "INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
                                                    barcode, weight, weight_unit, options, is_default, is_active,
                                                    created_at, updated_at)
@@ -159,6 +160,8 @@ impl ProductRepository for SqliteProductRepository {
                 .map_err(map_db_error)?;
             }
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(Product {
             id,

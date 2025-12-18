@@ -8,6 +8,7 @@ mod inventory;
 mod orders;
 mod products;
 mod returns;
+mod unsupported;
 mod work_orders;
 
 pub use bom::*;
@@ -16,6 +17,7 @@ pub use inventory::*;
 pub use orders::*;
 pub use products::*;
 pub use returns::*;
+pub use unsupported::*;
 pub use work_orders::*;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};

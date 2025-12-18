@@ -395,18 +395,19 @@ impl CustomerRepository for SqliteCustomerRepository {
     }
 
     fn set_default_address(&self, customer_id: Uuid, address_id: Uuid, address_type: AddressType) -> Result<()> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
         // Clear other defaults
-        conn.execute(
+        tx.execute(
             "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?",
             [customer_id.to_string()],
         )
         .map_err(map_db_error)?;
 
         // Set new default
-        conn.execute(
+        tx.execute(
             "UPDATE customer_addresses SET is_default = 1 WHERE id = ?",
             [address_id.to_string()],
         )
@@ -415,27 +416,29 @@ impl CustomerRepository for SqliteCustomerRepository {
         // Update customer
         match address_type {
             AddressType::Shipping => {
-                conn.execute(
+                tx.execute(
                     "UPDATE customers SET default_shipping_address_id = ?, updated_at = ? WHERE id = ?",
                     rusqlite::params![address_id.to_string(), now.to_rfc3339(), customer_id.to_string()],
                 )
                 .map_err(map_db_error)?;
             }
             AddressType::Billing => {
-                conn.execute(
+                tx.execute(
                     "UPDATE customers SET default_billing_address_id = ?, updated_at = ? WHERE id = ?",
                     rusqlite::params![address_id.to_string(), now.to_rfc3339(), customer_id.to_string()],
                 )
                 .map_err(map_db_error)?;
             }
             AddressType::Both => {
-                conn.execute(
+                tx.execute(
                     "UPDATE customers SET default_shipping_address_id = ?, default_billing_address_id = ?, updated_at = ? WHERE id = ?",
                     rusqlite::params![address_id.to_string(), address_id.to_string(), now.to_rfc3339(), customer_id.to_string()],
                 )
                 .map_err(map_db_error)?;
             }
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }

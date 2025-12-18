@@ -171,7 +171,7 @@ impl SqliteCartRepository {
 
     fn update_cart_totals(
         &self,
-        conn: &r2d2::PooledConnection<SqliteConnectionManager>,
+        conn: &rusqlite::Connection,
         cart_id: Uuid,
     ) -> Result<()> {
         // Calculate subtotal from items
@@ -216,7 +216,8 @@ impl SqliteCartRepository {
 
 impl CartRepository for SqliteCartRepository {
     fn create(&self, input: CreateCart) -> Result<Cart> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let cart_number = Self::generate_cart_number();
         let now = Utc::now();
@@ -239,7 +240,7 @@ impl CartRepository for SqliteCartRepository {
             .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO carts (id, cart_number, customer_id, status, currency,
                                subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
                                customer_email, customer_name, shipping_address, billing_address,
@@ -273,11 +274,13 @@ impl CartRepository for SqliteCartRepository {
         let mut items = vec![];
         if let Some(input_items) = &input.items {
             for item_input in input_items {
-                let item = self.add_item_internal(&conn, id, item_input.clone())?;
+                let item = self.add_item_internal(&tx, id, item_input.clone())?;
                 items.push(item);
             }
-            self.update_cart_totals(&conn, id)?;
+            self.update_cart_totals(&tx, id)?;
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         let mut cart = Cart {
             id,
@@ -502,27 +505,32 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute("DELETE FROM cart_items WHERE cart_id = ?", [id.to_string()])
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        tx.execute("DELETE FROM cart_items WHERE cart_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
-        conn.execute("DELETE FROM carts WHERE id = ?", [id.to_string()])
+        tx.execute("DELETE FROM carts WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
     fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
-        let conn = self.conn()?;
-        let result = self.add_item_internal(&conn, cart_id, item)?;
-        self.update_cart_totals(&conn, cart_id)?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let result = self.add_item_internal(&tx, cart_id, item)?;
+        self.update_cart_totals(&tx, cart_id)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(result)
     }
 
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get cart_id for this item
-        let cart_id: String = conn
+        let cart_id: String = tx
             .query_row(
                 "SELECT cart_id FROM cart_items WHERE id = ?",
                 [item_id.to_string()],
@@ -550,11 +558,11 @@ impl CartRepository for SqliteCartRepository {
 
         let sql = format!("UPDATE cart_items SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
+        tx.execute(&sql, params_refs.as_slice())
             .map_err(map_db_error)?;
 
         // Recalculate item total
-        let (qty, unit_price, discount, tax): (i32, String, String, String) = conn
+        let (qty, unit_price, discount, tax): (i32, String, String, String) = tx
             .query_row(
                 "SELECT quantity, unit_price, discount_amount, tax_amount FROM cart_items WHERE id = ?",
                 [item_id.to_string()],
@@ -569,7 +577,7 @@ impl CartRepository for SqliteCartRepository {
             parse_decimal(&tax),
         );
 
-        conn.execute(
+        tx.execute(
             "UPDATE cart_items SET total = ? WHERE id = ?",
             rusqlite::params![total.to_string(), item_id.to_string()],
         )
@@ -577,10 +585,10 @@ impl CartRepository for SqliteCartRepository {
 
         // Update cart totals
         let cart_uuid: Uuid = cart_id.parse().unwrap_or_default();
-        self.update_cart_totals(&conn, cart_uuid)?;
+        self.update_cart_totals(&tx, cart_uuid)?;
 
         // Return updated item
-        let item = conn
+        let item = tx
             .query_row(
                 "SELECT * FROM cart_items WHERE id = ?",
                 [item_id.to_string()],
@@ -625,14 +633,17 @@ impl CartRepository for SqliteCartRepository {
             )
             .map_err(map_db_error)?;
 
+        tx.commit().map_err(map_db_error)?;
+
         Ok(item)
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
 
         // Get cart_id before deleting
-        let cart_id: String = conn
+        let cart_id: String = tx
             .query_row(
                 "SELECT cart_id FROM cart_items WHERE id = ?",
                 [item_id.to_string()],
@@ -640,14 +651,15 @@ impl CartRepository for SqliteCartRepository {
             )
             .map_err(map_db_error)?;
 
-        conn.execute(
+        tx.execute(
             "DELETE FROM cart_items WHERE id = ?",
             [item_id.to_string()],
         )
         .map_err(map_db_error)?;
 
         let cart_uuid: Uuid = cart_id.parse().unwrap_or_default();
-        self.update_cart_totals(&conn, cart_uuid)?;
+        self.update_cart_totals(&tx, cart_uuid)?;
+        tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }
@@ -658,13 +670,15 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn clear_items(&self, cart_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        tx.execute(
             "DELETE FROM cart_items WHERE cart_id = ?",
             [cart_id.to_string()],
         )
         .map_err(map_db_error)?;
-        self.update_cart_totals(&conn, cart_id)?;
+        self.update_cart_totals(&tx, cart_id)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1019,7 +1033,7 @@ impl CartRepository for SqliteCartRepository {
 impl SqliteCartRepository {
     fn add_item_internal(
         &self,
-        conn: &r2d2::PooledConnection<SqliteConnectionManager>,
+        conn: &rusqlite::Connection,
         cart_id: Uuid,
         item: AddCartItem,
     ) -> Result<CartItem> {

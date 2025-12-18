@@ -171,43 +171,37 @@ impl Database for PostgresDatabase {
     }
 
     fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
-        // TODO: Implement PostgreSQL shipment repository
-        unimplemented!("PostgreSQL shipments not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("shipments"))
     }
 
     fn payments(&self) -> Box<dyn PaymentRepository + '_> {
-        // TODO: Implement PostgreSQL payment repository
-        unimplemented!("PostgreSQL payments not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("payments"))
     }
 
     fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
-        // TODO: Implement PostgreSQL warranty repository
-        unimplemented!("PostgreSQL warranties not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("warranties"))
     }
 
     fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
-        // TODO: Implement PostgreSQL purchase order repository
-        unimplemented!("PostgreSQL purchase_orders not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new(
+            "purchase_orders",
+        ))
     }
 
     fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
-        // TODO: Implement PostgreSQL invoice repository
-        unimplemented!("PostgreSQL invoices not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("invoices"))
     }
 
     fn carts(&self) -> Box<dyn CartRepository + '_> {
-        // TODO: Implement PostgreSQL cart repository
-        unimplemented!("PostgreSQL carts not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("carts"))
     }
 
     fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
-        // TODO: Implement PostgreSQL analytics repository
-        unimplemented!("PostgreSQL analytics not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("analytics"))
     }
 
     fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
-        // TODO: Implement PostgreSQL currency repository
-        unimplemented!("PostgreSQL currency not yet implemented")
+        Box::new(crate::postgres::UnsupportedPostgresRepository::new("currency"))
     }
 }
 
