@@ -7,7 +7,7 @@ use rust_decimal::Decimal;
 use rusqlite::{params, Row};
 use stateset_core::{
     CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
-    InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType,
+    InvoiceItem, InvoiceRepository, InvoiceStatus,
     RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number,
 };
 use uuid::Uuid;
@@ -19,6 +19,12 @@ pub struct SqliteInvoiceRepository {
 impl SqliteInvoiceRepository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
+    }
+
+    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn row_to_invoice(row: &Row) -> rusqlite::Result<Invoice> {
@@ -83,10 +89,16 @@ impl SqliteInvoiceRepository {
         })
     }
 
-    fn get_invoice_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn.prepare("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order").map_err(map_db_error)?;
-        let rows = stmt.query_map([invoice_id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)?;
+    fn get_invoice_items_with_conn(
+        conn: &rusqlite::Connection,
+        invoice_id: Uuid,
+    ) -> Result<Vec<InvoiceItem>> {
+        let mut stmt = conn
+            .prepare("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order")
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([invoice_id.to_string()], Self::row_to_invoice_item)
+            .map_err(map_db_error)?;
 
         let mut items = Vec::new();
         for row in rows {
@@ -94,11 +106,73 @@ impl SqliteInvoiceRepository {
         }
         Ok(items)
     }
+
+    fn get_invoice_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<Option<Invoice>> {
+        let result = conn.query_row(
+            "SELECT * FROM invoices WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_invoice,
+        );
+
+        match result {
+            Ok(mut invoice) => {
+                invoice.items = Self::get_invoice_items_with_conn(conn, id)?;
+                Ok(Some(invoice))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    fn recalculate_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<()> {
+        // Calculate subtotal from items
+        let subtotal: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CAST(line_total AS REAL)), 0) FROM invoice_items WHERE invoice_id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        let (discount_amount, tax_amount, shipping_amount, amount_paid): (String, String, String, String) = conn
+            .query_row(
+                "SELECT discount_amount, tax_amount, shipping_amount, amount_paid FROM invoices WHERE id = ?",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(map_db_error)?;
+
+        let subtotal_dec = Decimal::from_f64_retain(subtotal).unwrap_or_default();
+        let total = subtotal_dec - parse_decimal(&discount_amount)
+            + parse_decimal(&tax_amount)
+            + parse_decimal(&shipping_amount);
+        let balance_due = total - parse_decimal(&amount_paid);
+
+        conn.execute(
+            "UPDATE invoices SET subtotal = ?, total = ?, balance_due = ?, updated_at = ? WHERE id = ?",
+            params![
+                subtotal_dec.to_string(),
+                total.to_string(),
+                balance_due.to_string(),
+                chrono::Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    fn get_invoice_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
+        let conn = self.conn()?;
+        Self::get_invoice_items_with_conn(&conn, invoice_id)
+    }
 }
 
 impl InvoiceRepository for SqliteInvoiceRepository {
     fn create(&self, input: CreateInvoice) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let invoice_number = generate_invoice_number();
@@ -107,7 +181,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
         });
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO invoices (id, invoice_number, customer_id, order_id, status, invoice_type,
              invoice_date, due_date, payment_terms, currency, billing_name, billing_email,
              billing_address, billing_city, billing_state, billing_postal_code, billing_country,
@@ -152,38 +226,66 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         // Add items
         for (i, item) in input.items.into_iter().enumerate() {
+            let item_id = Uuid::new_v4();
             let mut item_with_order = item;
             if item_with_order.sort_order.is_none() {
                 item_with_order.sort_order = Some(i as i32);
             }
-            self.add_item(id, item_with_order)?;
+
+            let line_total = item_with_order.quantity * item_with_order.unit_price
+                - item_with_order.discount_amount.unwrap_or_default()
+                + item_with_order.tax_amount.unwrap_or_default();
+
+            tx.execute(
+                "INSERT INTO invoice_items (id, invoice_id, order_item_id, product_id, sku, description,
+                 quantity, unit_of_measure, unit_price, discount_amount, tax_amount, line_total,
+                 sort_order, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    item_id.to_string(),
+                    id.to_string(),
+                    item_with_order.order_item_id.map(|id| id.to_string()),
+                    item_with_order.product_id.map(|id| id.to_string()),
+                    item_with_order.sku,
+                    item_with_order.description,
+                    item_with_order.quantity.to_string(),
+                    item_with_order.unit_of_measure,
+                    item_with_order.unit_price.to_string(),
+                    item_with_order.discount_amount.unwrap_or_default().to_string(),
+                    item_with_order.tax_amount.unwrap_or_default().to_string(),
+                    line_total.to_string(),
+                    item_with_order.sort_order.unwrap_or(0),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
         }
 
         // Recalculate totals
-        self.recalculate(id)
+        Self::recalculate_with_conn(&tx, id)?;
+
+        tx.commit().map_err(map_db_error)?;
+
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn.prepare("SELECT * FROM invoices WHERE id = ?").map_err(map_db_error)?;
-        let result = stmt.query_row([id.to_string()], Self::row_to_invoice);
-        match result {
-            Ok(mut invoice) => {
-                invoice.items = self.get_invoice_items(id)?;
-                Ok(Some(invoice))
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
-        }
+        let conn = self.conn()?;
+        Self::get_invoice_with_conn(&conn, id)
     }
 
     fn get_by_number(&self, invoice_number: &str) -> Result<Option<Invoice>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let mut stmt = conn.prepare("SELECT * FROM invoices WHERE invoice_number = ?").map_err(map_db_error)?;
-        let result = stmt.query_row([invoice_number], Self::row_to_invoice);
+        let conn = self.conn()?;
+        let result = conn.query_row(
+            "SELECT * FROM invoices WHERE invoice_number = ?",
+            [invoice_number],
+            Self::row_to_invoice,
+        );
+
         match result {
             Ok(mut invoice) => {
-                invoice.items = self.get_invoice_items(invoice.id)?;
+                invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
                 Ok(Some(invoice))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -192,11 +294,18 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
-        let invoice = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        let invoice = tx
+            .query_row(
+                "SELECT * FROM invoices WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_invoice,
+            )
+            .map_err(map_db_error)?;
 
-        conn.execute(
+        tx.execute(
             "UPDATE invoices SET due_date = ?, payment_terms = ?, billing_name = ?, billing_email = ?,
              billing_address = ?, billing_city = ?, billing_state = ?, billing_postal_code = ?,
              billing_country = ?, discount_amount = ?, discount_percent = ?, tax_amount = ?,
@@ -226,11 +335,14 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             ],
         ).map_err(map_db_error)?;
 
-        self.recalculate(id)
+        Self::recalculate_with_conn(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
+
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn list(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
 
         let mut sql = "SELECT * FROM invoices WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -267,7 +379,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut invoices = Vec::new();
         for row in rows {
             let mut invoice = row.map_err(map_db_error)?;
-            invoice.items = self.get_invoice_items(invoice.id)?;
+            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
             invoices.push(invoice);
         }
         Ok(invoices)
@@ -282,20 +394,31 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let invoice = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
 
-        if invoice.status != InvoiceStatus::Draft {
+        let status: String = tx
+            .query_row(
+                "SELECT status FROM invoices WHERE id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
             return Err(CommerceError::ValidationError("Can only delete draft invoices".to_string()));
         }
 
-        conn.execute("DELETE FROM invoice_items WHERE invoice_id = ?", [id.to_string()]).map_err(map_db_error)?;
-        conn.execute("DELETE FROM invoices WHERE id = ?", [id.to_string()]).map_err(map_db_error)?;
+        tx.execute("DELETE FROM invoice_items WHERE invoice_id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
+        tx.execute("DELETE FROM invoices WHERE id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
     fn send(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
@@ -303,11 +426,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params![InvoiceStatus::Sent.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
@@ -316,16 +439,27 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params![now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
 
-        let invoice = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        let new_amount_paid = invoice.amount_paid + payment.amount;
-        let new_balance = invoice.total - new_amount_paid;
+        let (total, amount_paid): (String, String) = tx
+            .query_row(
+                "SELECT total, amount_paid FROM invoices WHERE id = ?",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
+
+        let total_dec = parse_decimal(&total);
+        let amount_paid_dec = parse_decimal(&amount_paid);
+
+        let new_amount_paid = amount_paid_dec + payment.amount;
+        let new_balance = total_dec - new_amount_paid;
 
         let new_status = if new_balance <= Decimal::ZERO {
             InvoiceStatus::Paid
@@ -339,7 +473,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             None
         };
 
-        conn.execute(
+        tx.execute(
             "UPDATE invoices SET amount_paid = ?, balance_due = ?, status = ?,
              paid_at = COALESCE(?, paid_at), updated_at = ? WHERE id = ?",
             params![
@@ -352,11 +486,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             ],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        tx.commit().map_err(map_db_error)?;
+
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn void(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
@@ -364,11 +500,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params![InvoiceStatus::Voided.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
@@ -376,11 +512,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params![InvoiceStatus::WrittenOff.to_string(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self.conn()?;
         let now = chrono::Utc::now();
 
         conn.execute(
@@ -388,7 +524,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params![InvoiceStatus::Disputed.to_string(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
@@ -464,27 +600,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = chrono::Utc::now();
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
 
-        // Calculate subtotal from items
-        let subtotal: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(line_total AS REAL)), 0) FROM invoice_items WHERE invoice_id = ?",
-            [id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        Self::recalculate_with_conn(&tx, id)?;
+        tx.commit().map_err(map_db_error)?;
 
-        let invoice = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        let subtotal_dec = Decimal::from_f64_retain(subtotal).unwrap_or_default();
-        let total = subtotal_dec - invoice.discount_amount + invoice.tax_amount + invoice.shipping_amount;
-        let balance_due = total - invoice.amount_paid;
-
-        conn.execute(
-            "UPDATE invoices SET subtotal = ?, total = ?, balance_due = ?, updated_at = ? WHERE id = ?",
-            params![subtotal_dec.to_string(), total.to_string(), balance_due.to_string(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
-
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_overdue(&self) -> Result<Vec<Invoice>> {

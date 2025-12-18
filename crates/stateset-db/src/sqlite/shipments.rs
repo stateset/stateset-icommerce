@@ -181,14 +181,17 @@ impl ShipmentRepository for SqliteShipmentRepository {
             .as_ref()
             .and_then(|tn| carrier.tracking_url(tn));
 
-        // Insert shipment in a scoped block
+        let mut items = Vec::new();
         {
-            let conn = self
+            let mut conn = self
                 .pool
                 .get()
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn
+                .transaction()
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO shipments (id, shipment_number, order_id, status, carrier, shipping_method,
                  tracking_number, tracking_url, recipient_name, recipient_email, recipient_phone,
                  shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
@@ -218,15 +221,44 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 ],
             )
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        }
 
-        // Add items if provided
-        let mut items = Vec::new();
-        if let Some(item_inputs) = input.items {
-            for item_input in item_inputs {
-                let item = self.add_item(id, item_input)?;
-                items.push(item);
+            if let Some(item_inputs) = &input.items {
+                for item_input in item_inputs {
+                    let item_id = Uuid::new_v4();
+
+                    tx.execute(
+                        "INSERT INTO shipment_items (id, shipment_id, order_item_id, product_id, sku, name, quantity, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            item_id.to_string(),
+                            id.to_string(),
+                            item_input.order_item_id.map(|u| u.to_string()),
+                            item_input.product_id.map(|u| u.to_string()),
+                            item_input.sku,
+                            item_input.name,
+                            item_input.quantity,
+                            now.to_rfc3339(),
+                            now.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+                    items.push(ShipmentItem {
+                        id: item_id,
+                        shipment_id: id,
+                        order_item_id: item_input.order_item_id,
+                        product_id: item_input.product_id,
+                        sku: item_input.sku.clone(),
+                        name: item_input.name.clone(),
+                        quantity: item_input.quantity,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
             }
+
+            tx.commit()
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         }
 
         Ok(Shipment {

@@ -9,7 +9,7 @@ description = "Local-first embedded commerce library for Python"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 authors = [
-    { name = "StateSet", email = "support@stateset.io" }
+    { name = "StateSet", email = "support@stateset.com" }
 ]
 keywords = ["commerce", "ecommerce", "embedded", "sqlite", "local-first"]
 classifiers = [
@@ -31,7 +31,7 @@ requires-python = ">=3.8"
 [project.urls]
 Homepage = "https://github.com/stateset/stateset-icommerce"
 Repository = "https://github.com/stateset/stateset-icommerce"
-Documentation = "https://docs.stateset.io"
+Documentation = "https://docs.stateset.com"
 
 [project.optional-dependencies]
 dev = [
