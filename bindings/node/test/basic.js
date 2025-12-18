@@ -16,6 +16,16 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(commerce.products, 'products API should exist');
     assert.ok(commerce.inventory, 'inventory API should exist');
     assert.ok(commerce.returns, 'returns API should exist');
+    assert.ok(commerce.carts, 'carts API should exist');
+    assert.ok(commerce.payments, 'payments API should exist');
+    assert.ok(commerce.shipments, 'shipments API should exist');
+    assert.ok(commerce.warranties, 'warranties API should exist');
+    assert.ok(commerce.purchaseOrders, 'purchaseOrders API should exist');
+    assert.ok(commerce.invoices, 'invoices API should exist');
+    assert.ok(commerce.bom, 'bom API should exist');
+    assert.ok(commerce.workOrders, 'workOrders API should exist');
+    assert.ok(commerce.analytics, 'analytics API should exist');
+    assert.ok(commerce.currency, 'currency API should exist');
   });
 
   await t.test('should create and retrieve a customer', async () => {
@@ -193,6 +203,23 @@ test('Commerce: basic operations', async (t) => {
     // Count returns
     const count = await commerce.returns.count();
     assert.strictEqual(count, 1);
+  });
+
+  await t.test('should run analytics and currency operations', async () => {
+    const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
+    assert.ok(summary, 'sales summary should be returned');
+    assert.strictEqual(summary.orderCount, 0);
+
+    // Seed a rate and convert
+    await commerce.currency.setRate({
+      baseCurrency: 'USD',
+      quoteCurrency: 'EUR',
+      rate: 0.9,
+      source: 'test'
+    });
+
+    const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });
+    assert.ok(Math.abs(conversion.convertedAmount - 90) < 1e-6);
   });
 
   console.log('\n✅ All tests passed!');

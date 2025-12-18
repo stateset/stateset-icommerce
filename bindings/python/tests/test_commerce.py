@@ -653,3 +653,53 @@ class TestRepr:
         repr_str = repr(ret)
         assert "Return" in repr_str
         assert "defective" in repr_str
+
+
+class TestAnalyticsAndCurrency:
+    def test_sales_summary_empty(self, commerce):
+        summary = commerce.analytics.sales_summary(period="last30days")
+        assert summary.order_count == 0
+        assert summary.total_revenue == 0.0
+
+    def test_currency_set_rate_and_convert(self, commerce):
+        commerce.currency.set_rate("USD", "EUR", 0.9, source="test")
+        result = commerce.currency.convert("USD", "EUR", 100.0)
+        assert abs(result.converted_amount - 90.0) < 1e-6
+
+
+class TestCartsExtended:
+    def test_update_and_set_shipping(self, commerce):
+        cart = commerce.carts.create(customer_email="cart@example.com")
+
+        updated = commerce.carts.update(
+            cart.id,
+            customer_email="updated@example.com",
+            shipping_method="standard",
+            notes="test",
+        )
+        assert updated.customer_email == "updated@example.com"
+        assert updated.shipping_method == "standard"
+        assert updated.notes == "test"
+
+        from stateset_embedded import CartAddress
+
+        address = CartAddress(
+            first_name="Alice",
+            last_name="Smith",
+            line1="123 Main St",
+            city="San Francisco",
+            postal_code="94105",
+            country="US",
+        )
+
+        shipped = commerce.carts.set_shipping(
+            updated.id,
+            address,
+            shipping_method="standard",
+            shipping_carrier="ups",
+            shipping_amount=9.99,
+        )
+        assert shipped.shipping_method == "standard"
+        assert shipped.shipping_address is not None
+        assert shipped.shipping_address.city == "San Francisco"
+        assert abs(shipped.shipping_amount - 9.99) < 1e-6

@@ -177,7 +177,7 @@ impl SqliteCartRepository {
         // Calculate subtotal from items
         let subtotal: String = conn
             .query_row(
-                "SELECT COALESCE(SUM(CAST(total AS REAL)), 0) FROM cart_items WHERE cart_id = ?",
+                "SELECT COALESCE(CAST(SUM(CAST(total AS REAL)) AS TEXT), '0') FROM cart_items WHERE cart_id = ?",
                 [cart_id.to_string()],
                 |row| row.get(0),
             )
@@ -364,7 +364,6 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
-        let conn = self.conn()?;
         let now = Utc::now();
 
         let mut updates = vec!["updated_at = ?"];
@@ -427,11 +426,13 @@ impl CartRepository for SqliteCartRepository {
 
         let sql = format!("UPDATE carts SET {} WHERE id = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(&sql, params_refs.as_slice())
+                .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn list(&self, filter: CartFilter) -> Result<Vec<Cart>> {
@@ -683,51 +684,55 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        let conn = self.conn()?;
         let address_json = serde_json::to_string(&address).unwrap_or_default();
 
-        conn.execute(
-            "UPDATE carts SET shipping_address = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET shipping_address = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        let conn = self.conn()?;
         let address_json = serde_json::to_string(&address).unwrap_or_default();
 
-        conn.execute(
-            "UPDATE carts SET billing_address = ?, billing_same_as_shipping = 0, updated_at = ? WHERE id = ?",
-            rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET billing_address = ?, billing_same_as_shipping = 0, updated_at = ? WHERE id = ?",
+                rusqlite::params![address_json, Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
-        let conn = self.conn()?;
         let address_json = serde_json::to_string(&shipping.shipping_address).unwrap_or_default();
         let shipping_amount = shipping.shipping_amount.unwrap_or_default();
 
-        conn.execute(
-            "UPDATE carts SET shipping_address = ?, shipping_method = ?, shipping_carrier = ?,
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET shipping_address = ?, shipping_method = ?, shipping_carrier = ?,
              shipping_amount = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                address_json,
-                shipping.shipping_method,
-                shipping.shipping_carrier,
-                shipping_amount.to_string(),
-                Utc::now().to_rfc3339(),
-                id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
+                rusqlite::params![
+                    address_json,
+                    shipping.shipping_method,
+                    shipping.shipping_carrier,
+                    shipping_amount.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
         // Recalculate grand total
         self.recalculate(id)
@@ -771,8 +776,6 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        let conn = self.conn()?;
-
         let billing_update = if let Some(addr) = &payment.billing_address {
             let json = serde_json::to_string(addr).unwrap_or_default();
             format!(", billing_address = '{}'", json)
@@ -780,50 +783,53 @@ impl CartRepository for SqliteCartRepository {
             String::new()
         };
 
-        conn.execute(
-            &format!(
-                "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                &format!(
+                    "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
                  updated_at = ?{} WHERE id = ?",
-                billing_update
-            ),
-            rusqlite::params![
-                payment.payment_method,
-                payment.payment_token,
-                Utc::now().to_rfc3339(),
-                id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
+                    billing_update
+                ),
+                rusqlite::params![
+                    payment.payment_method,
+                    payment.payment_token,
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        let conn = self.conn()?;
-
         // In a real implementation, this would validate the coupon
         // and calculate the discount amount
         // For now, we'll just store the coupon code
-        conn.execute(
-            "UPDATE carts SET coupon_code = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![coupon_code, Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET coupon_code = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![coupon_code, Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn remove_discount(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-
-        conn.execute(
-            "UPDATE carts SET coupon_code = NULL, discount_amount = '0', discount_description = NULL,
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET coupon_code = NULL, discount_amount = '0', discount_description = NULL,
              updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.recalculate(id)
     }
@@ -838,27 +844,29 @@ impl CartRepository for SqliteCartRepository {
             ));
         }
 
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET status = 'ready_for_payment', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'ready_for_payment', updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET status = 'payment_pending', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'payment_pending', updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
@@ -898,86 +906,94 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn cancel(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET status = 'cancelled', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'cancelled', updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn abandon(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET status = 'abandoned', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'abandoned', updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn expire(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET status = 'expired', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'expired', updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
         let reservation_expires = Utc::now() + Duration::minutes(15);
 
-        conn.execute(
-            "UPDATE carts SET inventory_reserved = 1, reservation_expires_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                reservation_expires.to_rfc3339(),
-                Utc::now().to_rfc3339(),
-                id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET inventory_reserved = 1, reservation_expires_at = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    reservation_expires.to_rfc3339(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn release_inventory(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET inventory_reserved = 0, reservation_expires_at = NULL, updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET inventory_reserved = 0, reservation_expires_at = NULL, updated_at = ? WHERE id = ?",
+                rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn recalculate(&self, id: Uuid) -> Result<Cart> {
-        let conn = self.conn()?;
-        self.update_cart_totals(&conn, id)?;
+        {
+            let conn = self.conn()?;
+            self.update_cart_totals(&conn, id)?;
+        }
 
-        self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
     }
 
     fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.recalculate(id)
     }
@@ -990,15 +1006,17 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn get_expired(&self) -> Result<Vec<Cart>> {
-        let conn = self.conn()?;
         let now = Utc::now();
 
         // Also mark expired carts
-        conn.execute(
-            "UPDATE carts SET status = 'expired' WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < ?",
-            [now.to_rfc3339()],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'expired' WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < ?",
+                [now.to_rfc3339()],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.list(CartFilter {
             status: Some(CartStatus::Expired),

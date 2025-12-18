@@ -6,7 +6,7 @@ The SQLite of commerce - an embeddable commerce library powered by Rust.
 
 - **Zero configuration** - Just point to a file path and start selling
 - **Offline-first** - Works without network connectivity
-- **Full-featured** - Customers, orders, products, inventory, and returns
+- **Full-featured** - Customers, orders, products, inventory, carts, payments, returns, analytics, and currency
 - **Type-safe** - Full TypeScript support with auto-generated types
 - **Fast** - Native Rust performance via N-API bindings
 
@@ -65,6 +65,20 @@ const order = await commerce.orders.create({
 
 // Ship the order
 await commerce.orders.ship(order.id, 'TRACK123456');
+
+// Analytics
+const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
+console.log(`Revenue: $${summary.totalRevenue}`);
+
+// Currency conversion (set a rate, then convert)
+await commerce.currency.setRate({
+  baseCurrency: 'USD',
+  quoteCurrency: 'EUR',
+  rate: 0.92,
+  source: 'manual'
+});
+const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });
+console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
 ```
 
 ## API Reference
@@ -214,6 +228,88 @@ const returns = await commerce.returns.list();
 
 // Count returns
 const count = await commerce.returns.count();
+```
+
+### Carts / Checkout
+
+```typescript
+// Create a cart
+const cart = await commerce.carts.create({
+  customerEmail: 'alice@example.com',
+  currency: 'USD'
+});
+
+// Add items
+await commerce.carts.addItem(cart.id, {
+  sku: 'SKU-001',
+  name: 'Widget',
+  quantity: 2,
+  unitPrice: 29.99
+});
+
+// Set shipping (address + selection)
+await commerce.carts.setShipping(cart.id, {
+  shippingAddress: {
+    firstName: 'Alice',
+    lastName: 'Smith',
+    line1: '123 Main St',
+    city: 'San Francisco',
+    postalCode: '94105',
+    country: 'US'
+  },
+  shippingMethod: 'standard',
+  shippingCarrier: 'ups',
+  shippingAmount: 9.99
+});
+
+// Reserve/release inventory for cart items
+await commerce.carts.reserveInventory(cart.id);
+await commerce.carts.releaseInventory(cart.id);
+
+// Complete checkout (creates an order)
+const result = await commerce.carts.complete(cart.id);
+console.log(result.orderNumber);
+
+// Expire + query expired carts
+await commerce.carts.expire(cart.id);
+const expired = await commerce.carts.getExpired();
+```
+
+### Analytics
+
+```typescript
+// Sales summary
+const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
+
+// Top products
+const topProducts = await commerce.analytics.topProducts({ period: 'this_month', limit: 10 });
+
+// Product performance + inventory movement
+const perf = await commerce.analytics.productPerformance({ period: 'last30days' });
+const movement = await commerce.analytics.inventoryMovement({ period: 'last30days' });
+
+// Forecasting
+const demand = await commerce.analytics.demandForecast(['SKU-001'], 30);
+const revenue = await commerce.analytics.revenueForecast(3, 'month');
+```
+
+### Currency
+
+```typescript
+// Set an exchange rate
+await commerce.currency.setRate({
+  baseCurrency: 'USD',
+  quoteCurrency: 'EUR',
+  rate: 0.92,
+  source: 'manual'
+});
+
+// Convert currency
+const conversion = await commerce.currency.convert({ from: 'USD', to: 'EUR', amount: 100 });
+
+// List rates + store settings
+const rates = await commerce.currency.listRates({ baseCurrency: 'USD' });
+const settings = await commerce.currency.getSettings();
 ```
 
 ## TypeScript

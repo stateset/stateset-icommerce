@@ -97,9 +97,9 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .prepare(
                 r#"
                 SELECT
-                    COALESCE(SUM(total_amount), 0) as revenue,
+                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
                     COUNT(*) as order_count,
-                    COALESCE(SUM(total_amount) / NULLIF(COUNT(*), 0), 0) as avg_order,
+                    CAST(COALESCE(SUM(total_amount) / NULLIF(COUNT(*), 0), 0) AS TEXT) as avg_order,
                     COUNT(DISTINCT customer_id) as unique_customers
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2

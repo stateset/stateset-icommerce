@@ -153,6 +153,22 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Get the analytics API.
+    #[getter]
+    fn analytics(&self) -> Analytics {
+        Analytics {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the currency API.
+    #[getter]
+    fn currency(&self) -> CurrencyOperations {
+        CurrencyOperations {
+            commerce: self.inner.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -3665,6 +3681,52 @@ impl Carts {
         Ok(cart.map(|c| c.into()))
     }
 
+    /// Update a cart.
+    ///
+    /// Args:
+    ///     id: Cart UUID
+    ///     customer_email: Customer email (optional)
+    ///     customer_phone: Customer phone (optional)
+    ///     customer_name: Customer name (optional)
+    ///     shipping_method: Shipping method string (optional)
+    ///     coupon_code: Coupon code (optional)
+    ///     notes: Notes (optional)
+    ///
+    /// Returns:
+    ///     Cart: Updated cart
+    #[pyo3(signature = (id, customer_email=None, customer_phone=None, customer_name=None, shipping_method=None, coupon_code=None, notes=None))]
+    fn update(
+        &self,
+        id: String,
+        customer_email: Option<String>,
+        customer_phone: Option<String>,
+        customer_name: Option<String>,
+        shipping_method: Option<String>,
+        coupon_code: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<Cart> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let cart = commerce
+            .carts()
+            .update(uuid, stateset_core::UpdateCart {
+                customer_email,
+                customer_phone,
+                customer_name,
+                shipping_method,
+                coupon_code,
+                notes,
+                ..Default::default()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update cart: {}", e)))?;
+
+        Ok(cart.into())
+    }
+
     /// List all carts.
     ///
     /// Returns:
@@ -3906,6 +3968,53 @@ impl Carts {
     }
 
     // === Shipping Operations ===
+
+    /// Set shipping selection (address + method/carrier/amount).
+    ///
+    /// Args:
+    ///     id: Cart UUID
+    ///     address: CartAddress
+    ///     shipping_method: Shipping method (optional)
+    ///     shipping_carrier: Shipping carrier (optional)
+    ///     shipping_amount: Shipping amount (optional)
+    ///
+    /// Returns:
+    ///     Cart: Updated cart
+    #[pyo3(signature = (id, address, shipping_method=None, shipping_carrier=None, shipping_amount=None))]
+    fn set_shipping(
+        &self,
+        id: String,
+        address: CartAddress,
+        shipping_method: Option<String>,
+        shipping_carrier: Option<String>,
+        shipping_amount: Option<f64>,
+    ) -> PyResult<Cart> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let amount_dec = match shipping_amount {
+            Some(v) => Some(
+                Decimal::from_f64_retain(v)
+                    .ok_or_else(|| PyValueError::new_err("Invalid shipping amount"))?,
+            ),
+            None => None,
+        };
+
+        let cart = commerce
+            .carts()
+            .set_shipping(uuid, stateset_core::SetCartShipping {
+                shipping_address: (&address).into(),
+                shipping_method,
+                shipping_carrier,
+                shipping_amount: amount_dec,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set shipping: {}", e)))?;
+
+        Ok(cart.into())
+    }
 
     /// Get available shipping rates for the cart.
     ///
@@ -4286,6 +4395,1191 @@ impl Carts {
 }
 
 // ============================================================================
+// Analytics Types
+// ============================================================================
+
+fn dec_to_f64(d: &Decimal) -> f64 {
+    d.to_string().parse().unwrap_or(0.0)
+}
+
+fn parse_time_period(period: &str) -> stateset_core::TimePeriod {
+    match period.to_lowercase().as_str() {
+        "today" => stateset_core::TimePeriod::Today,
+        "yesterday" => stateset_core::TimePeriod::Yesterday,
+        "last7days" | "last_7_days" => stateset_core::TimePeriod::Last7Days,
+        "last30days" | "last_30_days" => stateset_core::TimePeriod::Last30Days,
+        "this_month" | "thismonth" => stateset_core::TimePeriod::ThisMonth,
+        "last_month" | "lastmonth" => stateset_core::TimePeriod::LastMonth,
+        "this_quarter" | "thisquarter" => stateset_core::TimePeriod::ThisQuarter,
+        "last_quarter" | "lastquarter" => stateset_core::TimePeriod::LastQuarter,
+        "this_year" | "thisyear" => stateset_core::TimePeriod::ThisYear,
+        "last_year" | "lastyear" => stateset_core::TimePeriod::LastYear,
+        "all_time" | "alltime" | "all" => stateset_core::TimePeriod::AllTime,
+        _ => stateset_core::TimePeriod::Last30Days,
+    }
+}
+
+fn parse_time_granularity(granularity: &str) -> stateset_core::TimeGranularity {
+    match granularity.to_lowercase().as_str() {
+        "hour" | "hourly" => stateset_core::TimeGranularity::Hour,
+        "day" | "daily" => stateset_core::TimeGranularity::Day,
+        "week" | "weekly" => stateset_core::TimeGranularity::Week,
+        "month" | "monthly" => stateset_core::TimeGranularity::Month,
+        "quarter" | "quarterly" => stateset_core::TimeGranularity::Quarter,
+        "year" | "yearly" => stateset_core::TimeGranularity::Year,
+        _ => stateset_core::TimeGranularity::Day,
+    }
+}
+
+fn build_analytics_query(
+    period: Option<String>,
+    granularity: Option<String>,
+    limit: Option<u32>,
+) -> stateset_core::AnalyticsQuery {
+    let mut q = stateset_core::AnalyticsQuery::new();
+    if let Some(p) = period {
+        q = q.period(parse_time_period(&p));
+    }
+    if let Some(g) = granularity {
+        q = q.granularity(parse_time_granularity(&g));
+    }
+    if let Some(l) = limit {
+        q = q.limit(l);
+    }
+    q
+}
+
+/// Sales summary metrics.
+#[pyclass]
+#[derive(Clone)]
+pub struct SalesSummary {
+    #[pyo3(get)]
+    total_revenue: f64,
+    #[pyo3(get)]
+    order_count: u32,
+    #[pyo3(get)]
+    average_order_value: f64,
+    #[pyo3(get)]
+    items_sold: u32,
+    #[pyo3(get)]
+    unique_customers: u32,
+}
+
+impl From<stateset_core::SalesSummary> for SalesSummary {
+    fn from(s: stateset_core::SalesSummary) -> Self {
+        Self {
+            total_revenue: dec_to_f64(&s.total_revenue),
+            order_count: s.order_count as u32,
+            average_order_value: dec_to_f64(&s.average_order_value),
+            items_sold: s.items_sold as u32,
+            unique_customers: s.unique_customers as u32,
+        }
+    }
+}
+
+/// Revenue metrics grouped by time period.
+#[pyclass]
+#[derive(Clone)]
+pub struct RevenueByPeriod {
+    #[pyo3(get)]
+    period: String,
+    #[pyo3(get)]
+    revenue: f64,
+    #[pyo3(get)]
+    order_count: u32,
+    #[pyo3(get)]
+    period_start: String,
+}
+
+impl From<stateset_core::RevenueByPeriod> for RevenueByPeriod {
+    fn from(r: stateset_core::RevenueByPeriod) -> Self {
+        Self {
+            period: r.period,
+            revenue: dec_to_f64(&r.revenue),
+            order_count: r.order_count as u32,
+            period_start: r.period_start.to_rfc3339(),
+        }
+    }
+}
+
+/// Top selling product metrics.
+#[pyclass]
+#[derive(Clone)]
+pub struct TopProduct {
+    #[pyo3(get)]
+    product_id: Option<String>,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    units_sold: u32,
+    #[pyo3(get)]
+    revenue: f64,
+    #[pyo3(get)]
+    order_count: u32,
+}
+
+impl From<stateset_core::TopProduct> for TopProduct {
+    fn from(p: stateset_core::TopProduct) -> Self {
+        Self {
+            product_id: p.product_id.map(|id| id.to_string()),
+            sku: p.sku,
+            name: p.name,
+            units_sold: p.units_sold as u32,
+            revenue: dec_to_f64(&p.revenue),
+            order_count: p.order_count as u32,
+        }
+    }
+}
+
+/// Product performance with period comparison.
+#[pyclass]
+#[derive(Clone)]
+pub struct ProductPerformance {
+    #[pyo3(get)]
+    product_id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    units_sold: u32,
+    #[pyo3(get)]
+    revenue: f64,
+    #[pyo3(get)]
+    previous_units_sold: u32,
+    #[pyo3(get)]
+    previous_revenue: f64,
+    #[pyo3(get)]
+    units_growth_percent: f64,
+    #[pyo3(get)]
+    revenue_growth_percent: f64,
+}
+
+impl From<stateset_core::ProductPerformance> for ProductPerformance {
+    fn from(p: stateset_core::ProductPerformance) -> Self {
+        Self {
+            product_id: p.product_id.to_string(),
+            sku: p.sku,
+            name: p.name,
+            units_sold: p.units_sold as u32,
+            revenue: dec_to_f64(&p.revenue),
+            previous_units_sold: p.previous_units_sold as u32,
+            previous_revenue: dec_to_f64(&p.previous_revenue),
+            units_growth_percent: dec_to_f64(&p.units_growth_percent),
+            revenue_growth_percent: dec_to_f64(&p.revenue_growth_percent),
+        }
+    }
+}
+
+/// Customer segment metrics.
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomerMetrics {
+    #[pyo3(get)]
+    total_customers: u32,
+    #[pyo3(get)]
+    new_customers: u32,
+    #[pyo3(get)]
+    returning_customers: u32,
+    #[pyo3(get)]
+    average_lifetime_value: f64,
+    #[pyo3(get)]
+    average_orders_per_customer: f64,
+}
+
+impl From<stateset_core::CustomerMetrics> for CustomerMetrics {
+    fn from(m: stateset_core::CustomerMetrics) -> Self {
+        Self {
+            total_customers: m.total_customers as u32,
+            new_customers: m.new_customers as u32,
+            returning_customers: m.returning_customers as u32,
+            average_lifetime_value: dec_to_f64(&m.average_lifetime_value),
+            average_orders_per_customer: dec_to_f64(&m.average_orders_per_customer),
+        }
+    }
+}
+
+/// Top customer by spend.
+#[pyclass]
+#[derive(Clone)]
+pub struct TopCustomer {
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    email: String,
+    #[pyo3(get)]
+    order_count: u32,
+    #[pyo3(get)]
+    total_spent: f64,
+    #[pyo3(get)]
+    average_order_value: f64,
+}
+
+impl From<stateset_core::TopCustomer> for TopCustomer {
+    fn from(c: stateset_core::TopCustomer) -> Self {
+        Self {
+            customer_id: c.customer_id.to_string(),
+            name: c.name,
+            email: c.email,
+            order_count: c.order_count as u32,
+            total_spent: dec_to_f64(&c.total_spent),
+            average_order_value: dec_to_f64(&c.average_order_value),
+        }
+    }
+}
+
+/// Inventory health summary.
+#[pyclass]
+#[derive(Clone)]
+pub struct InventoryHealth {
+    #[pyo3(get)]
+    total_skus: u32,
+    #[pyo3(get)]
+    in_stock_skus: u32,
+    #[pyo3(get)]
+    low_stock_skus: u32,
+    #[pyo3(get)]
+    out_of_stock_skus: u32,
+    #[pyo3(get)]
+    total_value: f64,
+}
+
+impl From<stateset_core::InventoryHealth> for InventoryHealth {
+    fn from(h: stateset_core::InventoryHealth) -> Self {
+        Self {
+            total_skus: h.total_skus as u32,
+            in_stock_skus: h.in_stock_skus as u32,
+            low_stock_skus: h.low_stock_skus as u32,
+            out_of_stock_skus: h.out_of_stock_skus as u32,
+            total_value: dec_to_f64(&h.total_value),
+        }
+    }
+}
+
+/// Low stock item.
+#[pyclass]
+#[derive(Clone)]
+pub struct LowStockItem {
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    on_hand: f64,
+    #[pyo3(get)]
+    allocated: f64,
+    #[pyo3(get)]
+    available: f64,
+    #[pyo3(get)]
+    reorder_point: Option<f64>,
+    #[pyo3(get)]
+    average_daily_sales: Option<f64>,
+    #[pyo3(get)]
+    days_of_stock: Option<f64>,
+}
+
+impl From<stateset_core::LowStockItem> for LowStockItem {
+    fn from(i: stateset_core::LowStockItem) -> Self {
+        Self {
+            sku: i.sku,
+            name: i.name,
+            on_hand: dec_to_f64(&i.on_hand),
+            allocated: dec_to_f64(&i.allocated),
+            available: dec_to_f64(&i.available),
+            reorder_point: i.reorder_point.as_ref().map(dec_to_f64),
+            average_daily_sales: i.average_daily_sales.as_ref().map(dec_to_f64),
+            days_of_stock: i.days_of_stock.as_ref().map(dec_to_f64),
+        }
+    }
+}
+
+/// Inventory movement summary.
+#[pyclass]
+#[derive(Clone)]
+pub struct InventoryMovement {
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    units_sold: u32,
+    #[pyo3(get)]
+    units_received: u32,
+    #[pyo3(get)]
+    units_returned: u32,
+    #[pyo3(get)]
+    units_adjusted: i32,
+    #[pyo3(get)]
+    net_change: i32,
+}
+
+impl From<stateset_core::InventoryMovement> for InventoryMovement {
+    fn from(m: stateset_core::InventoryMovement) -> Self {
+        Self {
+            sku: m.sku,
+            name: m.name,
+            units_sold: m.units_sold as u32,
+            units_received: m.units_received as u32,
+            units_returned: m.units_returned as u32,
+            units_adjusted: m.units_adjusted as i32,
+            net_change: m.net_change as i32,
+        }
+    }
+}
+
+/// Order status breakdown.
+#[pyclass]
+#[derive(Clone)]
+pub struct OrderStatusBreakdown {
+    #[pyo3(get)]
+    pending: u32,
+    #[pyo3(get)]
+    confirmed: u32,
+    #[pyo3(get)]
+    processing: u32,
+    #[pyo3(get)]
+    shipped: u32,
+    #[pyo3(get)]
+    delivered: u32,
+    #[pyo3(get)]
+    cancelled: u32,
+    #[pyo3(get)]
+    refunded: u32,
+}
+
+impl From<stateset_core::OrderStatusBreakdown> for OrderStatusBreakdown {
+    fn from(b: stateset_core::OrderStatusBreakdown) -> Self {
+        Self {
+            pending: b.pending as u32,
+            confirmed: b.confirmed as u32,
+            processing: b.processing as u32,
+            shipped: b.shipped as u32,
+            delivered: b.delivered as u32,
+            cancelled: b.cancelled as u32,
+            refunded: b.refunded as u32,
+        }
+    }
+}
+
+/// Order fulfillment metrics.
+#[pyclass]
+#[derive(Clone)]
+pub struct FulfillmentMetrics {
+    #[pyo3(get)]
+    avg_time_to_ship_hours: Option<f64>,
+    #[pyo3(get)]
+    avg_time_to_deliver_hours: Option<f64>,
+    #[pyo3(get)]
+    on_time_shipping_percent: Option<f64>,
+    #[pyo3(get)]
+    on_time_delivery_percent: Option<f64>,
+    #[pyo3(get)]
+    shipped_today: u32,
+    #[pyo3(get)]
+    awaiting_shipment: u32,
+}
+
+impl From<stateset_core::FulfillmentMetrics> for FulfillmentMetrics {
+    fn from(m: stateset_core::FulfillmentMetrics) -> Self {
+        Self {
+            avg_time_to_ship_hours: m.avg_time_to_ship_hours.as_ref().map(dec_to_f64),
+            avg_time_to_deliver_hours: m.avg_time_to_deliver_hours.as_ref().map(dec_to_f64),
+            on_time_shipping_percent: m.on_time_shipping_percent.as_ref().map(dec_to_f64),
+            on_time_delivery_percent: m.on_time_delivery_percent.as_ref().map(dec_to_f64),
+            shipped_today: m.shipped_today as u32,
+            awaiting_shipment: m.awaiting_shipment as u32,
+        }
+    }
+}
+
+/// Return metrics.
+#[pyclass]
+#[derive(Clone)]
+pub struct ReturnMetrics {
+    #[pyo3(get)]
+    total_returns: u32,
+    #[pyo3(get)]
+    return_rate_percent: f64,
+    #[pyo3(get)]
+    total_refunded: f64,
+}
+
+impl From<stateset_core::ReturnMetrics> for ReturnMetrics {
+    fn from(m: stateset_core::ReturnMetrics) -> Self {
+        Self {
+            total_returns: m.total_returns as u32,
+            return_rate_percent: dec_to_f64(&m.return_rate_percent),
+            total_refunded: dec_to_f64(&m.total_refunded),
+        }
+    }
+}
+
+fn trend_to_string(t: &stateset_core::Trend) -> String {
+    match t {
+        stateset_core::Trend::Rising => "rising".to_string(),
+        stateset_core::Trend::Stable => "stable".to_string(),
+        stateset_core::Trend::Falling => "falling".to_string(),
+    }
+}
+
+/// Demand forecast for a SKU.
+#[pyclass]
+#[derive(Clone)]
+pub struct DemandForecast {
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    average_daily_demand: f64,
+    #[pyo3(get)]
+    forecasted_demand: f64,
+    #[pyo3(get)]
+    confidence: f64,
+    #[pyo3(get)]
+    current_stock: f64,
+    #[pyo3(get)]
+    days_until_stockout: Option<i32>,
+    #[pyo3(get)]
+    recommended_reorder_qty: Option<f64>,
+    #[pyo3(get)]
+    trend: String,
+}
+
+impl From<stateset_core::DemandForecast> for DemandForecast {
+    fn from(f: stateset_core::DemandForecast) -> Self {
+        Self {
+            sku: f.sku,
+            name: f.name,
+            average_daily_demand: dec_to_f64(&f.average_daily_demand),
+            forecasted_demand: dec_to_f64(&f.forecasted_demand),
+            confidence: dec_to_f64(&f.confidence),
+            current_stock: dec_to_f64(&f.current_stock),
+            days_until_stockout: f.days_until_stockout,
+            recommended_reorder_qty: f.recommended_reorder_qty.as_ref().map(dec_to_f64),
+            trend: trend_to_string(&f.trend),
+        }
+    }
+}
+
+/// Revenue forecast.
+#[pyclass]
+#[derive(Clone)]
+pub struct RevenueForecast {
+    #[pyo3(get)]
+    period: String,
+    #[pyo3(get)]
+    forecasted_revenue: f64,
+    #[pyo3(get)]
+    lower_bound: f64,
+    #[pyo3(get)]
+    upper_bound: f64,
+    #[pyo3(get)]
+    confidence_level: f64,
+    #[pyo3(get)]
+    based_on_periods: u32,
+}
+
+impl From<stateset_core::RevenueForecast> for RevenueForecast {
+    fn from(f: stateset_core::RevenueForecast) -> Self {
+        Self {
+            period: f.period,
+            forecasted_revenue: dec_to_f64(&f.forecasted_revenue),
+            lower_bound: dec_to_f64(&f.lower_bound),
+            upper_bound: dec_to_f64(&f.upper_bound),
+            confidence_level: dec_to_f64(&f.confidence_level),
+            based_on_periods: f.based_on_periods,
+        }
+    }
+}
+
+// ============================================================================
+// Analytics API
+// ============================================================================
+
+/// Business intelligence and forecasting operations.
+#[pyclass]
+pub struct Analytics {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl Analytics {
+    /// Get sales summary.
+    #[pyo3(signature = (period=None, limit=None))]
+    fn sales_summary(&self, period: Option<String>, limit: Option<u32>) -> PyResult<SalesSummary> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, limit);
+        let summary = commerce
+            .analytics()
+            .sales_summary(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get sales summary: {}", e)))?;
+
+        Ok(summary.into())
+    }
+
+    /// Get revenue by period.
+    #[pyo3(signature = (period=None, granularity=None))]
+    fn revenue_by_period(
+        &self,
+        period: Option<String>,
+        granularity: Option<String>,
+    ) -> PyResult<Vec<RevenueByPeriod>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, granularity, None);
+        let rows = commerce
+            .analytics()
+            .revenue_by_period(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get revenue: {}", e)))?;
+
+        Ok(rows.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Get top selling products.
+    #[pyo3(signature = (period=None, limit=None))]
+    fn top_products(&self, period: Option<String>, limit: Option<u32>) -> PyResult<Vec<TopProduct>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, limit);
+        let rows = commerce
+            .analytics()
+            .top_products(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get top products: {}", e)))?;
+
+        Ok(rows.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Get product performance with period comparison.
+    #[pyo3(signature = (period=None, limit=None))]
+    fn product_performance(&self, period: Option<String>, limit: Option<u32>) -> PyResult<Vec<ProductPerformance>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, limit);
+        let rows = commerce
+            .analytics()
+            .product_performance(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get product performance: {}", e)))?;
+
+        Ok(rows.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Get customer metrics.
+    #[pyo3(signature = (period=None))]
+    fn customer_metrics(&self, period: Option<String>) -> PyResult<CustomerMetrics> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, None);
+        let metrics = commerce
+            .analytics()
+            .customer_metrics(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get customer metrics: {}", e)))?;
+
+        Ok(metrics.into())
+    }
+
+    /// Get top customers by spend.
+    #[pyo3(signature = (period=None, limit=None))]
+    fn top_customers(&self, period: Option<String>, limit: Option<u32>) -> PyResult<Vec<TopCustomer>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, limit);
+        let rows = commerce
+            .analytics()
+            .top_customers(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get top customers: {}", e)))?;
+
+        Ok(rows.into_iter().map(|c| c.into()).collect())
+    }
+
+    /// Get inventory health summary.
+    fn inventory_health(&self) -> PyResult<InventoryHealth> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let health = commerce
+            .analytics()
+            .inventory_health()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get inventory health: {}", e)))?;
+
+        Ok(health.into())
+    }
+
+    /// Get low stock items.
+    #[pyo3(signature = (threshold=None))]
+    fn low_stock_items(&self, threshold: Option<f64>) -> PyResult<Vec<LowStockItem>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let threshold_dec = match threshold {
+            Some(v) => Some(
+                Decimal::from_f64_retain(v)
+                    .ok_or_else(|| PyValueError::new_err("Invalid threshold"))?,
+            ),
+            None => None,
+        };
+
+        let rows = commerce
+            .analytics()
+            .low_stock_items(threshold_dec)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get low stock items: {}", e)))?;
+
+        Ok(rows.into_iter().map(|i| i.into()).collect())
+    }
+
+    /// Get inventory movement summary.
+    #[pyo3(signature = (period=None))]
+    fn inventory_movement(&self, period: Option<String>) -> PyResult<Vec<InventoryMovement>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, None);
+        let rows = commerce
+            .analytics()
+            .inventory_movement(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get inventory movement: {}", e)))?;
+
+        Ok(rows.into_iter().map(|m| m.into()).collect())
+    }
+
+    /// Get order status breakdown.
+    #[pyo3(signature = (period=None))]
+    fn order_status_breakdown(&self, period: Option<String>) -> PyResult<OrderStatusBreakdown> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, None);
+        let breakdown = commerce
+            .analytics()
+            .order_status_breakdown(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get order status breakdown: {}", e)))?;
+
+        Ok(breakdown.into())
+    }
+
+    /// Get fulfillment metrics.
+    #[pyo3(signature = (period=None))]
+    fn fulfillment_metrics(&self, period: Option<String>) -> PyResult<FulfillmentMetrics> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, None);
+        let metrics = commerce
+            .analytics()
+            .fulfillment_metrics(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get fulfillment metrics: {}", e)))?;
+
+        Ok(metrics.into())
+    }
+
+    /// Get return metrics.
+    #[pyo3(signature = (period=None))]
+    fn return_metrics(&self, period: Option<String>) -> PyResult<ReturnMetrics> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let q = build_analytics_query(period, None, None);
+        let metrics = commerce
+            .analytics()
+            .return_metrics(q)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get return metrics: {}", e)))?;
+
+        Ok(metrics.into())
+    }
+
+    /// Get demand forecast.
+    #[pyo3(signature = (skus=None, days_ahead=None))]
+    fn demand_forecast(
+        &self,
+        skus: Option<Vec<String>>,
+        days_ahead: Option<u32>,
+    ) -> PyResult<Vec<DemandForecast>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let forecasts = commerce
+            .analytics()
+            .demand_forecast(skus, days_ahead.unwrap_or(30))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get demand forecast: {}", e)))?;
+
+        Ok(forecasts.into_iter().map(|f| f.into()).collect())
+    }
+
+    /// Get revenue forecast.
+    #[pyo3(signature = (periods_ahead=None, granularity=None))]
+    fn revenue_forecast(
+        &self,
+        periods_ahead: Option<u32>,
+        granularity: Option<String>,
+    ) -> PyResult<Vec<RevenueForecast>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let gran = granularity
+            .as_deref()
+            .map(parse_time_granularity)
+            .unwrap_or(stateset_core::TimeGranularity::Month);
+
+        let forecasts = commerce
+            .analytics()
+            .revenue_forecast(periods_ahead.unwrap_or(3), gran)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get revenue forecast: {}", e)))?;
+
+        Ok(forecasts.into_iter().map(|f| f.into()).collect())
+    }
+}
+
+// ============================================================================
+// Currency Types + API
+// ============================================================================
+
+fn parse_currency(code: &str) -> PyResult<stateset_core::Currency> {
+    use std::str::FromStr;
+    stateset_core::Currency::from_str(code)
+        .map_err(|e| PyValueError::new_err(format!("Invalid currency code '{}': {}", code, e)))
+}
+
+fn parse_rounding_mode(mode: &str) -> stateset_core::RoundingMode {
+    match mode.to_lowercase().as_str() {
+        "half_down" => stateset_core::RoundingMode::HalfDown,
+        "up" => stateset_core::RoundingMode::Up,
+        "down" => stateset_core::RoundingMode::Down,
+        "half_even" => stateset_core::RoundingMode::HalfEven,
+        _ => stateset_core::RoundingMode::HalfUp,
+    }
+}
+
+fn rounding_mode_to_string(mode: &stateset_core::RoundingMode) -> String {
+    match mode {
+        stateset_core::RoundingMode::HalfUp => "half_up".to_string(),
+        stateset_core::RoundingMode::HalfDown => "half_down".to_string(),
+        stateset_core::RoundingMode::Up => "up".to_string(),
+        stateset_core::RoundingMode::Down => "down".to_string(),
+        stateset_core::RoundingMode::HalfEven => "half_even".to_string(),
+    }
+}
+
+/// Exchange rate between currencies.
+#[pyclass]
+#[derive(Clone)]
+pub struct ExchangeRate {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    base_currency: String,
+    #[pyo3(get)]
+    quote_currency: String,
+    #[pyo3(get)]
+    rate: f64,
+    #[pyo3(get)]
+    source: String,
+    #[pyo3(get)]
+    rate_at: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::ExchangeRate> for ExchangeRate {
+    fn from(r: stateset_core::ExchangeRate) -> Self {
+        Self {
+            id: r.id.to_string(),
+            base_currency: r.base_currency.code().to_string(),
+            quote_currency: r.quote_currency.code().to_string(),
+            rate: dec_to_f64(&r.rate),
+            source: r.source,
+            rate_at: r.rate_at.to_rfc3339(),
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Result of a currency conversion.
+#[pyclass]
+#[derive(Clone)]
+pub struct ConversionResult {
+    #[pyo3(get)]
+    original_amount: f64,
+    #[pyo3(get)]
+    original_currency: String,
+    #[pyo3(get)]
+    converted_amount: f64,
+    #[pyo3(get)]
+    target_currency: String,
+    #[pyo3(get)]
+    rate: f64,
+    #[pyo3(get)]
+    inverse_rate: f64,
+    #[pyo3(get)]
+    rate_at: String,
+}
+
+impl From<stateset_core::ConversionResult> for ConversionResult {
+    fn from(r: stateset_core::ConversionResult) -> Self {
+        Self {
+            original_amount: dec_to_f64(&r.original_amount),
+            original_currency: r.original_currency.code().to_string(),
+            converted_amount: dec_to_f64(&r.converted_amount),
+            target_currency: r.target_currency.code().to_string(),
+            rate: dec_to_f64(&r.rate),
+            inverse_rate: dec_to_f64(&r.inverse_rate),
+            rate_at: r.rate_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Store currency settings.
+#[pyclass]
+#[derive(Clone)]
+pub struct StoreCurrencySettings {
+    #[pyo3(get)]
+    base_currency: String,
+    #[pyo3(get)]
+    enabled_currencies: Vec<String>,
+    #[pyo3(get)]
+    auto_convert: bool,
+    #[pyo3(get)]
+    rounding_mode: String,
+}
+
+impl From<stateset_core::StoreCurrencySettings> for StoreCurrencySettings {
+    fn from(s: stateset_core::StoreCurrencySettings) -> Self {
+        Self {
+            base_currency: s.base_currency.code().to_string(),
+            enabled_currencies: s.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
+            auto_convert: s.auto_convert,
+            rounding_mode: rounding_mode_to_string(&s.rounding_mode),
+        }
+    }
+}
+
+/// Input for setting an exchange rate.
+#[pyclass]
+#[derive(Clone)]
+pub struct SetExchangeRateInput {
+    #[pyo3(get, set)]
+    base_currency: String,
+    #[pyo3(get, set)]
+    quote_currency: String,
+    #[pyo3(get, set)]
+    rate: f64,
+    #[pyo3(get, set)]
+    source: Option<String>,
+}
+
+#[pymethods]
+impl SetExchangeRateInput {
+    #[new]
+    #[pyo3(signature = (base_currency, quote_currency, rate, source=None))]
+    fn new(
+        base_currency: String,
+        quote_currency: String,
+        rate: f64,
+        source: Option<String>,
+    ) -> Self {
+        Self {
+            base_currency,
+            quote_currency,
+            rate,
+            source,
+        }
+    }
+}
+
+/// Currency and exchange rate operations.
+#[pyclass]
+pub struct CurrencyOperations {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl CurrencyOperations {
+    /// Get exchange rate between two currencies.
+    fn get_rate(&self, from_currency: String, to_currency: String) -> PyResult<Option<ExchangeRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let rate = commerce
+            .currency()
+            .get_rate(parse_currency(&from_currency)?, parse_currency(&to_currency)?)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get rate: {}", e)))?;
+
+        Ok(rate.map(|r| r.into()))
+    }
+
+    /// Get all exchange rates for a base currency.
+    fn get_rates_for(&self, base_currency: String) -> PyResult<Vec<ExchangeRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let rates = commerce
+            .currency()
+            .get_rates_for(parse_currency(&base_currency)?)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get rates: {}", e)))?;
+
+        Ok(rates.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// List exchange rates with optional filtering.
+    #[pyo3(signature = (base_currency=None, quote_currency=None))]
+    fn list_rates(
+        &self,
+        base_currency: Option<String>,
+        quote_currency: Option<String>,
+    ) -> PyResult<Vec<ExchangeRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let base = match base_currency {
+            Some(c) => Some(parse_currency(&c)?),
+            None => None,
+        };
+        let quote = match quote_currency {
+            Some(c) => Some(parse_currency(&c)?),
+            None => None,
+        };
+
+        let rates = commerce
+            .currency()
+            .list_rates(stateset_core::ExchangeRateFilter {
+                base_currency: base,
+                quote_currency: quote,
+                ..Default::default()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list rates: {}", e)))?;
+
+        Ok(rates.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Set an exchange rate.
+    #[pyo3(signature = (base_currency, quote_currency, rate, source=None))]
+    fn set_rate(
+        &self,
+        base_currency: String,
+        quote_currency: String,
+        rate: f64,
+        source: Option<String>,
+    ) -> PyResult<ExchangeRate> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let rate_dec = Decimal::from_f64_retain(rate)
+            .ok_or_else(|| PyValueError::new_err("Invalid exchange rate"))?;
+
+        let rate = commerce
+            .currency()
+            .set_rate(stateset_core::SetExchangeRate {
+                base_currency: parse_currency(&base_currency)?,
+                quote_currency: parse_currency(&quote_currency)?,
+                rate: rate_dec,
+                source,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set rate: {}", e)))?;
+
+        Ok(rate.into())
+    }
+
+    /// Set multiple exchange rates.
+    fn set_rates(&self, rates: Vec<SetExchangeRateInput>) -> PyResult<Vec<ExchangeRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let mut inputs = Vec::with_capacity(rates.len());
+        for r in rates {
+            let rate_dec = Decimal::from_f64_retain(r.rate)
+                .ok_or_else(|| PyValueError::new_err("Invalid exchange rate"))?;
+
+            inputs.push(stateset_core::SetExchangeRate {
+                base_currency: parse_currency(&r.base_currency)?,
+                quote_currency: parse_currency(&r.quote_currency)?,
+                rate: rate_dec,
+                source: r.source,
+            });
+        }
+
+        let results = commerce
+            .currency()
+            .set_rates(inputs)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set rates: {}", e)))?;
+
+        Ok(results.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Delete an exchange rate by ID.
+    fn delete_rate(&self, id: String) -> PyResult<()> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        commerce
+            .currency()
+            .delete_rate(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete rate: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Convert an amount from one currency to another.
+    fn convert(&self, from_currency: String, to_currency: String, amount: f64) -> PyResult<ConversionResult> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let amount_dec = Decimal::from_f64_retain(amount)
+            .ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
+
+        let result = commerce
+            .currency()
+            .convert(stateset_core::ConvertCurrency {
+                from: parse_currency(&from_currency)?,
+                to: parse_currency(&to_currency)?,
+                amount: amount_dec,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert currency: {}", e)))?;
+
+        Ok(result.into())
+    }
+
+    /// Get store currency settings.
+    fn get_settings(&self) -> PyResult<StoreCurrencySettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let settings = commerce
+            .currency()
+            .get_settings()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Update store currency settings.
+    #[pyo3(signature = (base_currency, enabled_currencies, auto_convert=None, rounding_mode=None))]
+    fn update_settings(
+        &self,
+        base_currency: String,
+        enabled_currencies: Vec<String>,
+        auto_convert: Option<bool>,
+        rounding_mode: Option<String>,
+    ) -> PyResult<StoreCurrencySettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let mut enabled = Vec::with_capacity(enabled_currencies.len());
+        for c in &enabled_currencies {
+            enabled.push(parse_currency(c)?);
+        }
+
+        let settings = commerce
+            .currency()
+            .update_settings(stateset_core::StoreCurrencySettings {
+                base_currency: parse_currency(&base_currency)?,
+                enabled_currencies: enabled,
+                auto_convert: auto_convert.unwrap_or(true),
+                rounding_mode: rounding_mode.as_deref().map(parse_rounding_mode).unwrap_or_default(),
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Set the store's base currency.
+    fn set_base_currency(&self, currency_code: String) -> PyResult<StoreCurrencySettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let settings = commerce
+            .currency()
+            .set_base_currency(parse_currency(&currency_code)?)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set base currency: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Enable currencies for the store.
+    fn enable_currencies(&self, currency_codes: Vec<String>) -> PyResult<StoreCurrencySettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let mut currencies = Vec::with_capacity(currency_codes.len());
+        for c in &currency_codes {
+            currencies.push(parse_currency(c)?);
+        }
+
+        let settings = commerce
+            .currency()
+            .enable_currencies(currencies)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to enable currencies: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Check if a currency is enabled for the store.
+    fn is_enabled(&self, currency_code: String) -> PyResult<bool> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        commerce
+            .currency()
+            .is_enabled(parse_currency(&currency_code)?)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to check currency: {}", e)))
+    }
+
+    /// Get the store's base currency code.
+    fn base_currency(&self) -> PyResult<String> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let currency = commerce
+            .currency()
+            .base_currency()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get base currency: {}", e)))?;
+
+        Ok(currency.code().to_string())
+    }
+
+    /// Get enabled currency codes.
+    fn enabled_currencies(&self) -> PyResult<Vec<String>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let currencies = commerce
+            .currency()
+            .enabled_currencies()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get enabled currencies: {}", e)))?;
+
+        Ok(currencies.iter().map(|c| c.code().to_string()).collect())
+    }
+
+    /// Format an amount with currency symbol.
+    fn format(&self, amount: f64, currency_code: String) -> PyResult<String> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let amount_dec = Decimal::from_f64_retain(amount)
+            .ok_or_else(|| PyValueError::new_err("Invalid amount"))?;
+
+        Ok(commerce
+            .currency()
+            .format(amount_dec, parse_currency(&currency_code)?))
+    }
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
@@ -4362,6 +5656,30 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AddCartItemInput>()?;
     m.add_class::<ShippingRate>()?;
     m.add_class::<CheckoutResult>()?;
+
+    // Analytics
+    m.add_class::<Analytics>()?;
+    m.add_class::<SalesSummary>()?;
+    m.add_class::<RevenueByPeriod>()?;
+    m.add_class::<TopProduct>()?;
+    m.add_class::<ProductPerformance>()?;
+    m.add_class::<CustomerMetrics>()?;
+    m.add_class::<TopCustomer>()?;
+    m.add_class::<InventoryHealth>()?;
+    m.add_class::<LowStockItem>()?;
+    m.add_class::<InventoryMovement>()?;
+    m.add_class::<OrderStatusBreakdown>()?;
+    m.add_class::<FulfillmentMetrics>()?;
+    m.add_class::<ReturnMetrics>()?;
+    m.add_class::<DemandForecast>()?;
+    m.add_class::<RevenueForecast>()?;
+
+    // Currency
+    m.add_class::<CurrencyOperations>()?;
+    m.add_class::<ExchangeRate>()?;
+    m.add_class::<ConversionResult>()?;
+    m.add_class::<StoreCurrencySettings>()?;
+    m.add_class::<SetExchangeRateInput>()?;
 
     Ok(())
 }

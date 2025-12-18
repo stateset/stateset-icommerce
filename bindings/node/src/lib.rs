@@ -2612,6 +2612,15 @@ pub struct SetCartPaymentInput {
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
+pub struct SetCartShippingInput {
+    pub shipping_address: CartAddressInput,
+    pub shipping_method: Option<String>,
+    pub shipping_carrier: Option<String>,
+    pub shipping_amount: Option<f64>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CartItemOutput {
     pub id: String,
     pub cart_id: String,
@@ -2927,6 +2936,22 @@ impl Carts {
         Ok(carts.into_iter().map(|c| c.into()).collect())
     }
 
+    /// List carts for a customer
+    #[napi]
+    pub async fn for_customer(&self, customer_id: String) -> Result<Vec<CartOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+
+        let carts = commerce
+            .carts()
+            .for_customer(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get customer carts: {}", e)))?;
+
+        Ok(carts.into_iter().map(|c| c.into()).collect())
+    }
+
     /// Delete a cart
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
@@ -3064,6 +3089,35 @@ impl Carts {
             .carts()
             .set_shipping_address(uuid, input_to_cart_address(address))
             .map_err(|e| Error::from_reason(format!("Failed to set shipping address: {}", e)))?;
+
+        Ok(cart.into())
+    }
+
+    /// Set shipping selection (address + method/carrier/amount)
+    #[napi]
+    pub async fn set_shipping(&self, id: String, input: SetCartShippingInput) -> Result<CartOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let shipping_amount = match input.shipping_amount {
+            Some(amount) => Some(
+                Decimal::from_f64_retain(amount)
+                    .ok_or_else(|| Error::from_reason("Invalid shipping amount"))?,
+            ),
+            None => None,
+        };
+
+        let cart = commerce
+            .carts()
+            .set_shipping(uuid, stateset_core::SetCartShipping {
+                shipping_address: input_to_cart_address(input.shipping_address),
+                shipping_method: input.shipping_method,
+                shipping_carrier: input.shipping_carrier,
+                shipping_amount,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to set shipping: {}", e)))?;
 
         Ok(cart.into())
     }
@@ -3232,6 +3286,54 @@ impl Carts {
         Ok(cart.into())
     }
 
+    /// Mark cart as expired
+    #[napi]
+    pub async fn expire(&self, id: String) -> Result<CartOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let cart = commerce
+            .carts()
+            .expire(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to expire cart: {}", e)))?;
+
+        Ok(cart.into())
+    }
+
+    /// Reserve inventory for cart items
+    #[napi]
+    pub async fn reserve_inventory(&self, id: String) -> Result<CartOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let cart = commerce
+            .carts()
+            .reserve_inventory(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
+
+        Ok(cart.into())
+    }
+
+    /// Release reserved inventory for cart items
+    #[napi]
+    pub async fn release_inventory(&self, id: String) -> Result<CartOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let cart = commerce
+            .carts()
+            .release_inventory(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to release inventory: {}", e)))?;
+
+        Ok(cart.into())
+    }
+
     /// Recalculate cart totals
     #[napi]
     pub async fn recalculate(&self, id: String) -> Result<CartOutput> {
@@ -3276,6 +3378,18 @@ impl Carts {
         Ok(carts.into_iter().map(|c| c.into()).collect())
     }
 
+    /// Get expired carts
+    #[napi]
+    pub async fn get_expired(&self) -> Result<Vec<CartOutput>> {
+        let commerce = self.commerce.lock().await;
+        let carts = commerce
+            .carts()
+            .get_expired()
+            .map_err(|e| Error::from_reason(format!("Failed to get expired carts: {}", e)))?;
+
+        Ok(carts.into_iter().map(|c| c.into()).collect())
+    }
+
     /// Count carts
     #[napi]
     pub async fn count(&self) -> Result<u32> {
@@ -3296,9 +3410,10 @@ impl Carts {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AnalyticsQueryInput {
-    /// Time period: today, last7days, last30days, this_month, last_month, this_year, all_time
+    /// Time period: today, yesterday, last7days, last30days, this_month, last_month, this_quarter,
+    /// last_quarter, this_year, last_year, all_time
     pub period: Option<String>,
-    /// Granularity: day, week, month
+    /// Granularity: hour, day, week, month, quarter, year
     pub granularity: Option<String>,
     /// Maximum results
     pub limit: Option<u32>,
@@ -3332,6 +3447,20 @@ pub struct TopProductOutput {
     pub units_sold: u32,
     pub revenue: f64,
     pub order_count: u32,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct ProductPerformanceOutput {
+    pub product_id: String,
+    pub sku: String,
+    pub name: String,
+    pub units_sold: u32,
+    pub revenue: f64,
+    pub previous_units_sold: u32,
+    pub previous_revenue: f64,
+    pub units_growth_percent: f64,
+    pub revenue_growth_percent: f64,
 }
 
 #[napi(object)]
@@ -3380,6 +3509,18 @@ pub struct LowStockItemOutput {
 
 #[napi(object)]
 #[derive(Serialize, Clone)]
+pub struct InventoryMovementOutput {
+    pub sku: String,
+    pub name: String,
+    pub units_sold: u32,
+    pub units_received: u32,
+    pub units_returned: u32,
+    pub units_adjusted: i32,
+    pub net_change: i32,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
 pub struct DemandForecastOutput {
     pub sku: String,
     pub name: String,
@@ -3417,6 +3558,17 @@ pub struct OrderStatusBreakdownOutput {
 
 #[napi(object)]
 #[derive(Serialize, Clone)]
+pub struct FulfillmentMetricsOutput {
+    pub avg_time_to_ship_hours: Option<f64>,
+    pub avg_time_to_deliver_hours: Option<f64>,
+    pub on_time_shipping_percent: Option<f64>,
+    pub on_time_delivery_percent: Option<f64>,
+    pub shipped_today: u32,
+    pub awaiting_shipment: u32,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
 pub struct ReturnMetricsOutput {
     pub total_returns: u32,
     pub return_rate_percent: f64,
@@ -3432,20 +3584,29 @@ pub struct Analytics {
 fn parse_period(period: &str) -> stateset_embedded::TimePeriod {
     match period.to_lowercase().as_str() {
         "today" => stateset_embedded::TimePeriod::Today,
+        "yesterday" => stateset_embedded::TimePeriod::Yesterday,
         "last7days" | "last_7_days" => stateset_embedded::TimePeriod::Last7Days,
         "last30days" | "last_30_days" => stateset_embedded::TimePeriod::Last30Days,
         "this_month" | "thismonth" => stateset_embedded::TimePeriod::ThisMonth,
         "last_month" | "lastmonth" => stateset_embedded::TimePeriod::LastMonth,
+        "this_quarter" | "thisquarter" => stateset_embedded::TimePeriod::ThisQuarter,
+        "last_quarter" | "lastquarter" => stateset_embedded::TimePeriod::LastQuarter,
         "this_year" | "thisyear" => stateset_embedded::TimePeriod::ThisYear,
-        _ => stateset_embedded::TimePeriod::AllTime,
+        "last_year" | "lastyear" => stateset_embedded::TimePeriod::LastYear,
+        "all_time" | "alltime" | "all" => stateset_embedded::TimePeriod::AllTime,
+        _ => stateset_embedded::TimePeriod::Last30Days,
     }
 }
 
 fn parse_granularity(granularity: &str) -> stateset_embedded::TimeGranularity {
     match granularity.to_lowercase().as_str() {
+        "hour" | "hourly" => stateset_embedded::TimeGranularity::Hour,
         "day" | "daily" => stateset_embedded::TimeGranularity::Day,
         "week" | "weekly" => stateset_embedded::TimeGranularity::Week,
-        _ => stateset_embedded::TimeGranularity::Month,
+        "month" | "monthly" => stateset_embedded::TimeGranularity::Month,
+        "quarter" | "quarterly" => stateset_embedded::TimeGranularity::Quarter,
+        "year" | "yearly" => stateset_embedded::TimeGranularity::Year,
+        _ => stateset_embedded::TimeGranularity::Day,
     }
 }
 
@@ -3536,6 +3697,42 @@ impl Analytics {
             revenue: p.revenue.to_string().parse().unwrap_or(0.0),
             order_count: p.order_count as u32,
         }).collect())
+    }
+
+    /// Get product performance with period comparison
+    #[napi]
+    pub async fn product_performance(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<ProductPerformanceOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let mut q = stateset_embedded::AnalyticsQuery::new();
+        if let Some(ref input) = query {
+            if let Some(ref period) = input.period {
+                q = q.period(parse_period(period));
+            }
+            if let Some(limit) = input.limit {
+                q = q.limit(limit);
+            }
+        }
+
+        let perf = commerce
+            .analytics()
+            .product_performance(q)
+            .map_err(|e| Error::from_reason(format!("Failed to get product performance: {}", e)))?;
+
+        Ok(perf
+            .into_iter()
+            .map(|p| ProductPerformanceOutput {
+                product_id: p.product_id.to_string(),
+                sku: p.sku,
+                name: p.name,
+                units_sold: p.units_sold as u32,
+                revenue: p.revenue.to_string().parse().unwrap_or(0.0),
+                previous_units_sold: p.previous_units_sold as u32,
+                previous_revenue: p.previous_revenue.to_string().parse().unwrap_or(0.0),
+                units_growth_percent: p.units_growth_percent.to_string().parse().unwrap_or(0.0),
+                revenue_growth_percent: p.revenue_growth_percent.to_string().parse().unwrap_or(0.0),
+            })
+            .collect())
     }
 
     /// Get customer metrics
@@ -3637,6 +3834,37 @@ impl Analytics {
         }).collect())
     }
 
+    /// Get inventory movement summary
+    #[napi]
+    pub async fn inventory_movement(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<InventoryMovementOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let mut q = stateset_embedded::AnalyticsQuery::new();
+        if let Some(ref input) = query {
+            if let Some(ref period) = input.period {
+                q = q.period(parse_period(period));
+            }
+        }
+
+        let movements = commerce
+            .analytics()
+            .inventory_movement(q)
+            .map_err(|e| Error::from_reason(format!("Failed to get inventory movement: {}", e)))?;
+
+        Ok(movements
+            .into_iter()
+            .map(|m| InventoryMovementOutput {
+                sku: m.sku,
+                name: m.name,
+                units_sold: m.units_sold as u32,
+                units_received: m.units_received as u32,
+                units_returned: m.units_returned as u32,
+                units_adjusted: m.units_adjusted as i32,
+                net_change: m.net_change as i32,
+            })
+            .collect())
+    }
+
     /// Get demand forecast for inventory items
     #[napi]
     pub async fn demand_forecast(&self, skus: Option<Vec<String>>, days_ahead: Option<u32>) -> Result<Vec<DemandForecastOutput>> {
@@ -3707,6 +3935,41 @@ impl Analytics {
             delivered: breakdown.delivered as u32,
             cancelled: breakdown.cancelled as u32,
             refunded: breakdown.refunded as u32,
+        })
+    }
+
+    /// Get fulfillment metrics
+    #[napi]
+    pub async fn fulfillment_metrics(&self, query: Option<AnalyticsQueryInput>) -> Result<FulfillmentMetricsOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let mut q = stateset_embedded::AnalyticsQuery::new();
+        if let Some(ref input) = query {
+            if let Some(ref period) = input.period {
+                q = q.period(parse_period(period));
+            }
+        }
+
+        let metrics = commerce
+            .analytics()
+            .fulfillment_metrics(q)
+            .map_err(|e| Error::from_reason(format!("Failed to get fulfillment metrics: {}", e)))?;
+
+        Ok(FulfillmentMetricsOutput {
+            avg_time_to_ship_hours: metrics
+                .avg_time_to_ship_hours
+                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+            avg_time_to_deliver_hours: metrics
+                .avg_time_to_deliver_hours
+                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+            on_time_shipping_percent: metrics
+                .on_time_shipping_percent
+                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+            on_time_delivery_percent: metrics
+                .on_time_delivery_percent
+                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+            shipped_today: metrics.shipped_today as u32,
+            awaiting_shipment: metrics.awaiting_shipment as u32,
         })
     }
 

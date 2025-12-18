@@ -68,6 +68,15 @@ print(f"Order {order.order_number}: ${order.total_amount}")
 
 # Ship the order
 commerce.orders.ship(order.id, tracking_number="1Z999AA10123456784")
+
+# Analytics
+summary = commerce.analytics.sales_summary(period="last30days")
+print(f"Revenue: ${summary.total_revenue}")
+
+# Currency conversion (set a rate, then convert)
+commerce.currency.set_rate("USD", "EUR", 0.92, source="manual")
+conversion = commerce.currency.convert("USD", "EUR", 100.0)
+print(f"$100 USD = €{conversion.converted_amount} EUR")
 ```
 
 ## Features
@@ -76,6 +85,7 @@ commerce.orders.ship(order.id, tracking_number="1Z999AA10123456784")
 - **Zero Dependencies**: Single native extension, no external services
 - **Type Safe**: Full type hints and IDE support
 - **Fast**: Native Rust performance
+- **Analytics + Currency**: Built-in reporting/forecasting and multi-currency operations
 
 ## API Reference
 
@@ -245,6 +255,81 @@ ret = commerce.returns.reject(return_id, "Item was used")
 
 # List all returns
 returns = commerce.returns.list()
+```
+
+### Carts / Checkout
+
+```python
+from stateset_embedded import CartAddress, AddCartItemInput
+
+# Create a cart (guest checkout)
+cart = commerce.carts.create(customer_email="alice@example.com", currency="USD")
+
+# Add items
+commerce.carts.add_item(
+    cart_id=cart.id,
+    item=AddCartItemInput(
+        sku="SKU-001",
+        name="Widget",
+        quantity=2,
+        unit_price=29.99,
+    ),
+)
+
+# Set shipping (address + selection)
+address = CartAddress(
+    first_name="Alice",
+    last_name="Smith",
+    line1="123 Main St",
+    city="San Francisco",
+    postal_code="94105",
+    country="US",
+)
+cart = commerce.carts.set_shipping(
+    cart.id,
+    address,
+    shipping_method="standard",
+    shipping_carrier="ups",
+    shipping_amount=9.99,
+)
+
+# Reserve inventory for cart items (optional)
+cart = commerce.carts.reserve_inventory(cart.id)
+
+# Complete checkout (creates an order)
+result = commerce.carts.complete(cart.id)
+print(result.order_number)
+```
+
+### Analytics
+
+```python
+# Sales summary
+summary = commerce.analytics.sales_summary(period="last30days")
+print(summary.total_revenue, summary.order_count)
+
+# Top products / customers
+top_products = commerce.analytics.top_products(period="this_month", limit=10)
+top_customers = commerce.analytics.top_customers(period="all_time", limit=10)
+
+# Forecasting
+forecasts = commerce.analytics.demand_forecast(days_ahead=30)
+revenue = commerce.analytics.revenue_forecast(periods_ahead=3, granularity="month")
+```
+
+### Currency
+
+```python
+# Set an exchange rate
+commerce.currency.set_rate("USD", "EUR", 0.92, source="manual")
+
+# Convert currency
+conversion = commerce.currency.convert("USD", "EUR", 100.0)
+print(conversion.converted_amount)
+
+# Store settings
+settings = commerce.currency.get_settings()
+settings = commerce.currency.enable_currencies(["USD", "EUR", "GBP"])
 ```
 
 ## Order Statuses

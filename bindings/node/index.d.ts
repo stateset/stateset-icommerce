@@ -394,6 +394,12 @@ export interface SetCartPaymentInput {
   paymentMethod: string
   paymentToken?: string
 }
+export interface SetCartShippingInput {
+  shippingAddress: CartAddressInput
+  shippingMethod?: string
+  shippingCarrier?: string
+  shippingAmount?: number
+}
 export interface CartItemOutput {
   id: string
   cartId: string
@@ -473,6 +479,252 @@ export interface ShippingRateOutput {
   currency: string
   estimatedDays?: number
 }
+export interface AnalyticsQueryInput {
+  /**
+   * Time period: today, yesterday, last7days, last30days, this_month, last_month, this_quarter,
+   * last_quarter, this_year, last_year, all_time
+   */
+  period?: string
+  /** Granularity: hour, day, week, month, quarter, year */
+  granularity?: string
+  /** Maximum results */
+  limit?: number
+}
+export interface SalesSummaryOutput {
+  totalRevenue: number
+  orderCount: number
+  averageOrderValue: number
+  itemsSold: number
+  uniqueCustomers: number
+}
+export interface RevenueByPeriodOutput {
+  period: string
+  revenue: number
+  orderCount: number
+  periodStart: string
+}
+export interface TopProductOutput {
+  productId?: string
+  sku: string
+  name: string
+  unitsSold: number
+  revenue: number
+  orderCount: number
+}
+export interface ProductPerformanceOutput {
+  productId: string
+  sku: string
+  name: string
+  unitsSold: number
+  revenue: number
+  previousUnitsSold: number
+  previousRevenue: number
+  unitsGrowthPercent: number
+  revenueGrowthPercent: number
+}
+export interface CustomerMetricsOutput {
+  totalCustomers: number
+  newCustomers: number
+  returningCustomers: number
+  averageLifetimeValue: number
+  averageOrdersPerCustomer: number
+}
+export interface TopCustomerOutput {
+  customerId: string
+  name: string
+  email: string
+  orderCount: number
+  totalSpent: number
+  averageOrderValue: number
+}
+export interface InventoryHealthOutput {
+  totalSkus: number
+  inStockSkus: number
+  lowStockSkus: number
+  outOfStockSkus: number
+  totalValue: number
+}
+export interface LowStockItemOutput {
+  sku: string
+  name: string
+  onHand: number
+  allocated: number
+  available: number
+  reorderPoint?: number
+  averageDailySales?: number
+  daysOfStock?: number
+}
+export interface InventoryMovementOutput {
+  sku: string
+  name: string
+  unitsSold: number
+  unitsReceived: number
+  unitsReturned: number
+  unitsAdjusted: number
+  netChange: number
+}
+export interface DemandForecastOutput {
+  sku: string
+  name: string
+  averageDailyDemand: number
+  forecastedDemand: number
+  confidence: number
+  currentStock: number
+  daysUntilStockout?: number
+  recommendedReorderQty?: number
+  trend: string
+}
+export interface RevenueForecastOutput {
+  period: string
+  forecastedRevenue: number
+  lowerBound: number
+  upperBound: number
+  confidenceLevel: number
+  basedOnPeriods: number
+}
+export interface OrderStatusBreakdownOutput {
+  pending: number
+  confirmed: number
+  processing: number
+  shipped: number
+  delivered: number
+  cancelled: number
+  refunded: number
+}
+export interface FulfillmentMetricsOutput {
+  avgTimeToShipHours?: number
+  avgTimeToDeliverHours?: number
+  onTimeShippingPercent?: number
+  onTimeDeliveryPercent?: number
+  shippedToday: number
+  awaitingShipment: number
+}
+export interface ReturnMetricsOutput {
+  totalReturns: number
+  returnRatePercent: number
+  totalRefunded: number
+}
+export declare class Analytics {
+  /** Get sales summary for a time period */
+  salesSummary(query?: AnalyticsQueryInput | undefined | null): Promise<SalesSummaryOutput>
+  /** Get revenue by period */
+  revenueByPeriod(query?: AnalyticsQueryInput | undefined | null): Promise<Array<RevenueByPeriodOutput>>
+  /** Get top selling products */
+  topProducts(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopProductOutput>>
+  /** Get product performance with period comparison */
+  productPerformance(query?: AnalyticsQueryInput | undefined | null): Promise<Array<ProductPerformanceOutput>>
+  /** Get customer metrics */
+  customerMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<CustomerMetricsOutput>
+  /** Get top customers by spend */
+  topCustomers(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopCustomerOutput>>
+  /** Get inventory health summary */
+  inventoryHealth(): Promise<InventoryHealthOutput>
+  /** Get low stock items */
+  lowStockItems(threshold?: number | undefined | null): Promise<Array<LowStockItemOutput>>
+  /** Get inventory movement summary */
+  inventoryMovement(query?: AnalyticsQueryInput | undefined | null): Promise<Array<InventoryMovementOutput>>
+  /** Get demand forecast for inventory items */
+  demandForecast(skus?: Array<string> | undefined | null, daysAhead?: number | undefined | null): Promise<Array<DemandForecastOutput>>
+  /** Get revenue forecast */
+  revenueForecast(periodsAhead?: number | undefined | null, granularity?: string | undefined | null): Promise<Array<RevenueForecastOutput>>
+  /** Get order status breakdown */
+  orderStatusBreakdown(query?: AnalyticsQueryInput | undefined | null): Promise<OrderStatusBreakdownOutput>
+  /** Get fulfillment metrics */
+  fulfillmentMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<FulfillmentMetricsOutput>
+  /** Get return metrics */
+  returnMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<ReturnMetricsOutput>
+}
+export interface SetExchangeRateInput {
+  /** Base currency code (e.g., "USD") */
+  baseCurrency: string
+  /** Quote currency code (e.g., "EUR") */
+  quoteCurrency: string
+  /** Exchange rate (e.g., 0.92 for USD to EUR) */
+  rate: number
+  /** Optional source of the rate (e.g., "manual", "api") */
+  source?: string
+}
+export interface ConvertCurrencyInput {
+  /** Source currency code */
+  from: string
+  /** Target currency code */
+  to: string
+  /** Amount to convert */
+  amount: number
+}
+export interface ExchangeRateFilterInput {
+  /** Filter by base currency */
+  baseCurrency?: string
+  /** Filter by quote currency */
+  quoteCurrency?: string
+}
+export interface ExchangeRateOutput {
+  id: string
+  baseCurrency: string
+  quoteCurrency: string
+  rate: number
+  source: string
+  rateAt: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ConversionResultOutput {
+  originalAmount: number
+  originalCurrency: string
+  convertedAmount: number
+  targetCurrency: string
+  rate: number
+  inverseRate: number
+  rateAt: string
+}
+export interface StoreCurrencySettingsInput {
+  /** Base currency for the store */
+  baseCurrency: string
+  /** List of enabled currency codes */
+  enabledCurrencies: Array<string>
+  /** Whether to auto-convert prices */
+  autoConvert?: boolean
+  /** Rounding mode: "half_up", "half_down", "up", "down", "half_even" */
+  roundingMode?: string
+}
+export interface StoreCurrencySettingsOutput {
+  baseCurrency: string
+  enabledCurrencies: Array<string>
+  autoConvert: boolean
+  roundingMode: string
+}
+export declare class CurrencyOperations {
+  /** Get exchange rate between two currencies */
+  getRate(from: string, to: string): Promise<ExchangeRateOutput | null>
+  /** Get all exchange rates for a base currency */
+  getRatesFor(baseCurrency: string): Promise<Array<ExchangeRateOutput>>
+  /** List exchange rates */
+  listRates(filter?: ExchangeRateFilterInput | undefined | null): Promise<Array<ExchangeRateOutput>>
+  /** Set an exchange rate */
+  setRate(input: SetExchangeRateInput): Promise<ExchangeRateOutput>
+  /** Set multiple exchange rates */
+  setRates(rates: Array<SetExchangeRateInput>): Promise<Array<ExchangeRateOutput>>
+  /** Delete an exchange rate */
+  deleteRate(id: string): Promise<void>
+  /** Convert currency */
+  convert(input: ConvertCurrencyInput): Promise<ConversionResultOutput>
+  /** Get store currency settings */
+  getSettings(): Promise<StoreCurrencySettingsOutput>
+  /** Update store currency settings */
+  updateSettings(input: StoreCurrencySettingsInput): Promise<StoreCurrencySettingsOutput>
+  /** Set the store's base currency */
+  setBaseCurrency(currencyCode: string): Promise<StoreCurrencySettingsOutput>
+  /** Enable currencies for the store */
+  enableCurrencies(currencyCodes: Array<string>): Promise<StoreCurrencySettingsOutput>
+  /** Check if a currency is enabled */
+  isEnabled(currencyCode: string): Promise<boolean>
+  /** Get the store's base currency */
+  getBaseCurrency(): Promise<string>
+  /** Get all enabled currencies */
+  getEnabledCurrencies(): Promise<Array<string>>
+  /** Format an amount with currency symbol */
+  format(amount: number, currencyCode: string): Promise<string>
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -506,6 +758,10 @@ export declare class Commerce {
   get workOrders(): WorkOrders
   /** Get the carts/checkout API */
   get carts(): Carts
+  /** Get the analytics API */
+  get analytics(): Analytics
+  /** Get the currency API */
+  get currency(): CurrencyOperations
 }
 export declare class Customers {
   create(input: CreateCustomerInput): Promise<CustomerOutput>
@@ -627,6 +883,8 @@ export declare class Carts {
   update(id: string, input: UpdateCartInput): Promise<CartOutput>
   /** List all carts */
   list(): Promise<Array<CartOutput>>
+  /** List carts for a customer */
+  forCustomer(customerId: string): Promise<Array<CartOutput>>
   /** Delete a cart */
   delete(id: string): Promise<void>
   /** Add an item to the cart */
@@ -641,6 +899,8 @@ export declare class Carts {
   clearItems(cartId: string): Promise<void>
   /** Set the shipping address */
   setShippingAddress(id: string, address: CartAddressInput): Promise<CartOutput>
+  /** Set shipping selection (address + method/carrier/amount) */
+  setShipping(id: string, input: SetCartShippingInput): Promise<CartOutput>
   /** Set the billing address */
   setBillingAddress(id: string, address: CartAddressInput): Promise<CartOutput>
   /** Get available shipping rates */
@@ -661,12 +921,20 @@ export declare class Carts {
   cancel(id: string): Promise<CartOutput>
   /** Mark cart as abandoned */
   abandon(id: string): Promise<CartOutput>
+  /** Mark cart as expired */
+  expire(id: string): Promise<CartOutput>
+  /** Reserve inventory for cart items */
+  reserveInventory(id: string): Promise<CartOutput>
+  /** Release reserved inventory for cart items */
+  releaseInventory(id: string): Promise<CartOutput>
   /** Recalculate cart totals */
   recalculate(id: string): Promise<CartOutput>
   /** Set tax amount */
   setTax(id: string, taxAmount: number): Promise<CartOutput>
   /** Get abandoned carts */
   getAbandoned(): Promise<Array<CartOutput>>
+  /** Get expired carts */
+  getExpired(): Promise<Array<CartOutput>>
   /** Count carts */
   count(): Promise<number>
 }

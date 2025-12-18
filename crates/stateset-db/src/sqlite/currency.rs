@@ -201,48 +201,50 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     }
 
     fn set_rate(&self, input: SetExchangeRate) -> Result<ExchangeRate> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
         let id = Uuid::new_v4();
         let now = Utc::now();
         let source = input.source.unwrap_or_else(|| "manual".into());
 
-        // Upsert the rate
-        conn.execute(
-            "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
-                rate = excluded.rate,
-                source = excluded.source,
-                rate_at = excluded.rate_at,
-                updated_at = excluded.updated_at",
-            params![
-                id.to_string(),
-                input.base_currency.code(),
-                input.quote_currency.code(),
-                input.rate.to_string(),
-                source,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                now.to_rfc3339()
-            ],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // Record in history
-        conn.execute(
-            "INSERT INTO exchange_rate_history (id, base_currency, quote_currency, rate, source, rate_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![
-                Uuid::new_v4().to_string(),
-                input.base_currency.code(),
-                input.quote_currency.code(),
-                input.rate.to_string(),
-                source,
-                now.to_rfc3339()
-            ],
-        )
-        .map_err(map_db_error)?;
+            // Upsert the rate
+            conn.execute(
+                "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
+                    rate = excluded.rate,
+                    source = excluded.source,
+                    rate_at = excluded.rate_at,
+                    updated_at = excluded.updated_at",
+                params![
+                    id.to_string(),
+                    input.base_currency.code(),
+                    input.quote_currency.code(),
+                    input.rate.to_string(),
+                    source,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339()
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Record in history
+            conn.execute(
+                "INSERT INTO exchange_rate_history (id, base_currency, quote_currency, rate, source, rate_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    input.base_currency.code(),
+                    input.quote_currency.code(),
+                    input.rate.to_string(),
+                    source,
+                    now.to_rfc3339()
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
         // Fetch and return the rate
         self.get_rate(input.base_currency, input.quote_currency)?
@@ -346,8 +348,6 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
     }
 
     fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
         let enabled_json = serde_json::to_string(&settings.enabled_currencies)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -359,23 +359,27 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
             RoundingMode::HalfEven => "half_even",
         };
 
-        conn.execute(
-            "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)
-             VALUES ('default', ?, ?, ?, ?, datetime('now'))
-             ON CONFLICT (id) DO UPDATE SET
-                base_currency = excluded.base_currency,
-                enabled_currencies = excluded.enabled_currencies,
-                auto_convert = excluded.auto_convert,
-                rounding_mode = excluded.rounding_mode,
-                updated_at = excluded.updated_at",
-            params![
-                settings.base_currency.code(),
-                enabled_json,
-                settings.auto_convert as i32,
-                rounding_str
-            ],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)
+                 VALUES ('default', ?, ?, ?, ?, datetime('now'))
+                 ON CONFLICT (id) DO UPDATE SET
+                    base_currency = excluded.base_currency,
+                    enabled_currencies = excluded.enabled_currencies,
+                    auto_convert = excluded.auto_convert,
+                    rounding_mode = excluded.rounding_mode,
+                    updated_at = excluded.updated_at",
+                params![
+                    settings.base_currency.code(),
+                    enabled_json,
+                    settings.auto_convert as i32,
+                    rounding_str
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.get_settings()
     }
