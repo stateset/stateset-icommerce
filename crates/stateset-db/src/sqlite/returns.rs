@@ -40,6 +40,7 @@ impl SqliteReturnRepository {
             tracking_number: row.get("tracking_number")?,
             items: vec![], // Loaded separately
             notes: row.get("notes")?,
+            version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
             created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
             updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
         })

@@ -291,24 +291,45 @@ impl PgInventoryRepository {
 
         let item_id = item.0;
 
-        // Update balance
-        sqlx::query(
+        // Get current version for optimistic locking
+        let balance: (i32,) = sqlx::query_as(
+            "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        )
+        .bind(item_id)
+        .bind(location_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let current_version = balance.0;
+
+        // Update balance with optimistic locking
+        let result = sqlx::query(
             r#"
             UPDATE inventory_balances
             SET quantity_on_hand = quantity_on_hand + $1,
                 quantity_available = quantity_on_hand + $1 - quantity_allocated,
                 version = version + 1,
                 updated_at = $2
-            WHERE item_id = $3 AND location_id = $4
+            WHERE item_id = $3 AND location_id = $4 AND version = $5
             "#,
         )
         .bind(input.quantity)
         .bind(now)
         .bind(item_id)
         .bind(location_id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item_id, location_id),
+                expected_version: current_version,
+            });
+        }
 
         // Record transaction
         let tx_type = if input.quantity >= Decimal::ZERO {
@@ -365,9 +386,9 @@ impl PgInventoryRepository {
 
         let item_id = item.0;
 
-        // Check availability
-        let balance: (Decimal,) = sqlx::query_as(
-            "SELECT quantity_available FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        // Check availability and get current version for optimistic locking
+        let balance: (Decimal, i32) = sqlx::query_as(
+            "SELECT quantity_available, version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
         )
         .bind(item_id)
         .bind(location_id)
@@ -375,11 +396,13 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        if balance.0 < input.quantity {
+        let (available, current_version) = balance;
+
+        if available < input.quantity {
             return Err(CommerceError::InsufficientStock {
                 sku: input.sku,
                 requested: input.quantity.to_string(),
-                available: balance.0.to_string(),
+                available: available.to_string(),
             });
         }
 
@@ -408,24 +431,33 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Update allocation
-        sqlx::query(
+        // Update allocation with optimistic locking
+        let result = sqlx::query(
             r#"
             UPDATE inventory_balances
             SET quantity_allocated = quantity_allocated + $1,
                 quantity_available = quantity_on_hand - quantity_allocated - $1,
                 version = version + 1,
                 updated_at = $2
-            WHERE item_id = $3 AND location_id = $4
+            WHERE item_id = $3 AND location_id = $4 AND version = $5
             "#,
         )
         .bind(input.quantity)
         .bind(now)
         .bind(item_id)
         .bind(location_id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item_id, location_id),
+                expected_version: current_version,
+            });
+        }
 
         Ok(InventoryReservation {
             id,
@@ -458,24 +490,45 @@ impl PgInventoryRepository {
             return Ok(());
         }
 
-        // Release allocation
-        sqlx::query(
+        // Get current version for optimistic locking
+        let balance: (i32,) = sqlx::query_as(
+            "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        )
+        .bind(res.item_id)
+        .bind(res.location_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let current_version = balance.0;
+
+        // Release allocation with optimistic locking
+        let result = sqlx::query(
             r#"
             UPDATE inventory_balances
             SET quantity_allocated = quantity_allocated - $1,
                 quantity_available = quantity_on_hand - quantity_allocated + $1,
                 version = version + 1,
                 updated_at = $2
-            WHERE item_id = $3 AND location_id = $4
+            WHERE item_id = $3 AND location_id = $4 AND version = $5
             "#,
         )
         .bind(res.quantity)
         .bind(now)
         .bind(res.item_id)
         .bind(res.location_id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", res.item_id, res.location_id),
+                expected_version: current_version,
+            });
+        }
 
         // Update reservation status
         sqlx::query("UPDATE inventory_reservations SET status = 'released' WHERE id = $1")

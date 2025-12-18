@@ -29,6 +29,7 @@ struct ReturnRow {
     refund_method: Option<String>,
     tracking_number: Option<String>,
     notes: Option<String>,
+    version: i32,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -63,6 +64,7 @@ impl PgReturnRepository {
             tracking_number: row.tracking_number,
             items,
             notes: row.notes,
+            version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -133,6 +135,7 @@ impl PgReturnRepository {
             tracking_number: None,
             items,
             notes: input.notes,
+            version: 1,
             created_at: now,
             updated_at: now,
         })

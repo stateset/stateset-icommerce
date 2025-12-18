@@ -35,11 +35,12 @@ pub use sqlite::SqliteDatabase;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;
 
+
 use stateset_core::{
-    AnalyticsRepository, BomRepository, CartRepository, CurrencyRepository, CustomerRepository,
-    InventoryRepository, InvoiceRepository, OrderRepository, PaymentRepository, ProductRepository,
-    PurchaseOrderRepository, ReturnRepository, ShipmentRepository, WarrantyRepository,
-    WorkOrderRepository,
+    AnalyticsRepository, BomRepository, CartRepository, CommerceError, CurrencyRepository,
+    CustomerRepository, InventoryRepository, InvoiceRepository, OrderRepository, PaymentRepository,
+    ProductRepository, PurchaseOrderRepository, Result, ReturnRepository, ShipmentRepository,
+    WarrantyRepository, WorkOrderRepository,
 };
 
 /// Unified database trait that both SQLite and PostgreSQL implement.
@@ -75,6 +76,36 @@ pub trait Database: Send + Sync {
     fn analytics(&self) -> Box<dyn AnalyticsRepository + '_>;
     /// Get the currency repository
     fn currency(&self) -> Box<dyn CurrencyRepository + '_>;
+}
+
+/// Extension trait for database transaction support.
+///
+/// Provides closure-based transaction management with automatic commit/rollback.
+/// Note: This is a simplified transaction API. For complex transactions spanning
+/// multiple repositories, use the raw connection approach via `SqliteDatabase::conn()`.
+///
+/// # Example
+/// ```ignore
+/// use stateset_db::{SqliteDatabase, DatabaseExt};
+///
+/// let db = SqliteDatabase::in_memory()?;
+///
+/// // Simple transaction using raw SQL
+/// db.with_transaction(|conn| {
+///     conn.execute("UPDATE inventory_balances SET quantity_on_hand = 100 WHERE item_id = 1", [])?;
+///     conn.execute("INSERT INTO inventory_transactions (...) VALUES (...)", [...])?;
+///     Ok(())
+/// })?;
+/// ```
+#[cfg(feature = "sqlite")]
+pub trait DatabaseExt {
+    /// Execute a closure within a database transaction.
+    ///
+    /// The transaction is automatically committed if the closure returns `Ok`,
+    /// and rolled back if it returns `Err` or panics.
+    fn with_transaction<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>;
 }
 
 #[cfg(feature = "sqlite")]
@@ -171,37 +202,35 @@ impl Database for PostgresDatabase {
     }
 
     fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("shipments"))
+        Box::new(self.shipments())
     }
 
     fn payments(&self) -> Box<dyn PaymentRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("payments"))
+        Box::new(self.payments())
     }
 
     fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("warranties"))
+        Box::new(self.warranties())
     }
 
     fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new(
-            "purchase_orders",
-        ))
+        Box::new(self.purchase_orders())
     }
 
     fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("invoices"))
+        Box::new(self.invoices())
     }
 
     fn carts(&self) -> Box<dyn CartRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("carts"))
+        Box::new(self.carts())
     }
 
     fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("analytics"))
+        Box::new(self.analytics())
     }
 
     fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
-        Box::new(crate::postgres::UnsupportedPostgresRepository::new("currency"))
+        Box::new(self.currency())
     }
 }
 

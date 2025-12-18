@@ -604,36 +604,6 @@ export interface ReturnMetricsOutput {
   returnRatePercent: number
   totalRefunded: number
 }
-export declare class Analytics {
-  /** Get sales summary for a time period */
-  salesSummary(query?: AnalyticsQueryInput | undefined | null): Promise<SalesSummaryOutput>
-  /** Get revenue by period */
-  revenueByPeriod(query?: AnalyticsQueryInput | undefined | null): Promise<Array<RevenueByPeriodOutput>>
-  /** Get top selling products */
-  topProducts(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopProductOutput>>
-  /** Get product performance with period comparison */
-  productPerformance(query?: AnalyticsQueryInput | undefined | null): Promise<Array<ProductPerformanceOutput>>
-  /** Get customer metrics */
-  customerMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<CustomerMetricsOutput>
-  /** Get top customers by spend */
-  topCustomers(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopCustomerOutput>>
-  /** Get inventory health summary */
-  inventoryHealth(): Promise<InventoryHealthOutput>
-  /** Get low stock items */
-  lowStockItems(threshold?: number | undefined | null): Promise<Array<LowStockItemOutput>>
-  /** Get inventory movement summary */
-  inventoryMovement(query?: AnalyticsQueryInput | undefined | null): Promise<Array<InventoryMovementOutput>>
-  /** Get demand forecast for inventory items */
-  demandForecast(skus?: Array<string> | undefined | null, daysAhead?: number | undefined | null): Promise<Array<DemandForecastOutput>>
-  /** Get revenue forecast */
-  revenueForecast(periodsAhead?: number | undefined | null, granularity?: string | undefined | null): Promise<Array<RevenueForecastOutput>>
-  /** Get order status breakdown */
-  orderStatusBreakdown(query?: AnalyticsQueryInput | undefined | null): Promise<OrderStatusBreakdownOutput>
-  /** Get fulfillment metrics */
-  fulfillmentMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<FulfillmentMetricsOutput>
-  /** Get return metrics */
-  returnMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<ReturnMetricsOutput>
-}
 export interface SetExchangeRateInput {
   /** Base currency code (e.g., "USD") */
   baseCurrency: string
@@ -692,38 +662,6 @@ export interface StoreCurrencySettingsOutput {
   enabledCurrencies: Array<string>
   autoConvert: boolean
   roundingMode: string
-}
-export declare class CurrencyOperations {
-  /** Get exchange rate between two currencies */
-  getRate(from: string, to: string): Promise<ExchangeRateOutput | null>
-  /** Get all exchange rates for a base currency */
-  getRatesFor(baseCurrency: string): Promise<Array<ExchangeRateOutput>>
-  /** List exchange rates */
-  listRates(filter?: ExchangeRateFilterInput | undefined | null): Promise<Array<ExchangeRateOutput>>
-  /** Set an exchange rate */
-  setRate(input: SetExchangeRateInput): Promise<ExchangeRateOutput>
-  /** Set multiple exchange rates */
-  setRates(rates: Array<SetExchangeRateInput>): Promise<Array<ExchangeRateOutput>>
-  /** Delete an exchange rate */
-  deleteRate(id: string): Promise<void>
-  /** Convert currency */
-  convert(input: ConvertCurrencyInput): Promise<ConversionResultOutput>
-  /** Get store currency settings */
-  getSettings(): Promise<StoreCurrencySettingsOutput>
-  /** Update store currency settings */
-  updateSettings(input: StoreCurrencySettingsInput): Promise<StoreCurrencySettingsOutput>
-  /** Set the store's base currency */
-  setBaseCurrency(currencyCode: string): Promise<StoreCurrencySettingsOutput>
-  /** Enable currencies for the store */
-  enableCurrencies(currencyCodes: Array<string>): Promise<StoreCurrencySettingsOutput>
-  /** Check if a currency is enabled */
-  isEnabled(currencyCode: string): Promise<boolean>
-  /** Get the store's base currency */
-  getBaseCurrency(): Promise<string>
-  /** Get all enabled currencies */
-  getEnabledCurrencies(): Promise<Array<string>>
-  /** Format an amount with currency symbol */
-  format(amount: number, currencyCode: string): Promise<string>
 }
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
@@ -937,4 +875,68 @@ export declare class Carts {
   getExpired(): Promise<Array<CartOutput>>
   /** Count carts */
   count(): Promise<number>
+}
+/** Analytics and forecasting API */
+export declare class Analytics {
+  /** Get sales summary for a time period */
+  salesSummary(query?: AnalyticsQueryInput | undefined | null): Promise<SalesSummaryOutput>
+  /** Get revenue broken down by time periods */
+  revenueByPeriod(query?: AnalyticsQueryInput | undefined | null): Promise<Array<RevenueByPeriodOutput>>
+  /** Get top selling products */
+  topProducts(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopProductOutput>>
+  /** Get product performance with period comparison */
+  productPerformance(query?: AnalyticsQueryInput | undefined | null): Promise<Array<ProductPerformanceOutput>>
+  /** Get customer metrics */
+  customerMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<CustomerMetricsOutput>
+  /** Get top customers by spend */
+  topCustomers(query?: AnalyticsQueryInput | undefined | null): Promise<Array<TopCustomerOutput>>
+  /** Get inventory health summary */
+  inventoryHealth(): Promise<InventoryHealthOutput>
+  /** Get low stock items */
+  lowStockItems(threshold?: number | undefined | null): Promise<Array<LowStockItemOutput>>
+  /** Get inventory movement summary */
+  inventoryMovement(query?: AnalyticsQueryInput | undefined | null): Promise<Array<InventoryMovementOutput>>
+  /** Get demand forecast for inventory items */
+  demandForecast(skus?: Array<string> | undefined | null, daysAhead?: number | undefined | null): Promise<Array<DemandForecastOutput>>
+  /** Get revenue forecast */
+  revenueForecast(periodsAhead?: number | undefined | null, granularity?: string | undefined | null): Promise<Array<RevenueForecastOutput>>
+  /** Get order status breakdown */
+  orderStatusBreakdown(query?: AnalyticsQueryInput | undefined | null): Promise<OrderStatusBreakdownOutput>
+  /** Get fulfillment metrics */
+  fulfillmentMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<FulfillmentMetricsOutput>
+  /** Get return metrics */
+  returnMetrics(query?: AnalyticsQueryInput | undefined | null): Promise<ReturnMetricsOutput>
+}
+/** Currency and exchange rate operations API */
+export declare class CurrencyOperations {
+  /** Get exchange rate between two currencies */
+  getRate(from: string, to: string): Promise<ExchangeRateOutput | null>
+  /** Get all exchange rates for a base currency */
+  getRatesFor(baseCurrency: string): Promise<Array<ExchangeRateOutput>>
+  /** List exchange rates with optional filtering */
+  listRates(filter?: ExchangeRateFilterInput | undefined | null): Promise<Array<ExchangeRateOutput>>
+  /** Set an exchange rate */
+  setRate(input: SetExchangeRateInput): Promise<ExchangeRateOutput>
+  /** Set multiple exchange rates at once */
+  setRates(inputs: Array<SetExchangeRateInput>): Promise<Array<ExchangeRateOutput>>
+  /** Delete an exchange rate by ID */
+  deleteRate(id: string): Promise<boolean>
+  /** Convert an amount from one currency to another */
+  convert(input: ConvertCurrencyInput): Promise<ConversionResultOutput>
+  /** Get store currency settings */
+  getSettings(): Promise<StoreCurrencySettingsOutput>
+  /** Update store currency settings */
+  updateSettings(input: StoreCurrencySettingsInput): Promise<StoreCurrencySettingsOutput>
+  /** Set the store's base currency */
+  setBaseCurrency(currencyCode: string): Promise<StoreCurrencySettingsOutput>
+  /** Enable currencies for the store */
+  enableCurrencies(currencyCodes: Array<string>): Promise<StoreCurrencySettingsOutput>
+  /** Check if a currency is enabled */
+  isEnabled(currencyCode: string): Promise<boolean>
+  /** Get the store's base currency */
+  getBaseCurrency(): Promise<string>
+  /** Get all enabled currencies */
+  getEnabledCurrencies(): Promise<Array<string>>
+  /** Format an amount with currency symbol */
+  format(amount: number, currencyCode: string): Promise<string>
 }

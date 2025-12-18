@@ -12,6 +12,7 @@
  */
 
 import { runAgentLoop, RichOutput, ICONS, AgentTelemetry } from '../src/claude-harness.js';
+import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
 import { parseArgs } from 'node:util';
 
 const HELP = `
@@ -23,7 +24,7 @@ USAGE:
 OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
   --apply            Enable write operations (create, update, delete)
-  --model <model>    Claude model to use (default: claude-sonnet-4-20250514)
+  --model <model>    Claude model to use (default: see config.js)
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --verbose, -V      Enable verbose output with telemetry
@@ -77,7 +78,7 @@ async function main() {
     options: {
       db: { type: 'string', default: './store.db' },
       apply: { type: 'boolean', default: false },
-      model: { type: 'string', default: 'claude-sonnet-4-20250514' },
+      model: { type: 'string', default: DEFAULT_MODEL },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'V', default: false },
@@ -99,7 +100,7 @@ async function main() {
 
   // Handle version
   if (values.version) {
-    console.log('@stateset/cli v0.1.2');
+    console.log(`@stateset/cli v${CLI_VERSION}`);
     process.exit(0);
   }
 

@@ -4,6 +4,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { DEFAULT_MODEL } from './config.js';
 import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
@@ -446,7 +447,7 @@ export function routeToAgentWithConfidence(request) {
 export async function runAgentLoop({
   request,
   dbPath = './store.db',
-  model = 'claude-sonnet-4-20250514',
+  model = DEFAULT_MODEL,
   allowApply = false,
   maxTurns = 10,
   resumeSessionId,
@@ -595,7 +596,7 @@ export async function runAgentLoop({
 export async function* runAgentStream({
   request,
   dbPath = './store.db',
-  model = 'claude-sonnet-4-20250514',
+  model = DEFAULT_MODEL,
   allowApply = false,
   maxTurns = 10,
   resumeSessionId,
@@ -632,7 +633,7 @@ export async function* runAgentStream({
  */
 export function createAgentSession({
   dbPath = './store.db',
-  model = 'claude-sonnet-4-20250514',
+  model = DEFAULT_MODEL,
   allowApply = false,
   maxTurns = 10,
   agent,

@@ -299,6 +299,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             notes: input.notes,
             tasks,
             materials: vec![],
+            version: 1,
             created_at: now,
             updated_at: now,
         })
@@ -390,6 +391,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                     notes,
                     tasks,
                     materials,
+                    version: 1, // Default to 1 for backwards compatibility
                     created_at: Self::parse_datetime(&created_at),
                     updated_at: Self::parse_datetime(&updated_at),
                 }))

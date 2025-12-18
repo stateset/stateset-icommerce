@@ -285,6 +285,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             notes: input.notes,
             items,
             events: vec![],
+            version: 1,
             created_at: now,
             updated_at: now,
         })
@@ -395,6 +396,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     notes,
                     items,
                     events,
+                    version: 1, // Default to 1 for backwards compatibility
                     created_at: Self::parse_datetime(&created_at),
                     updated_at: Self::parse_datetime(&updated_at),
                 }))

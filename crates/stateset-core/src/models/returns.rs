@@ -19,6 +19,8 @@ pub struct Return {
     pub tracking_number: Option<String>,
     pub items: Vec<ReturnItem>,
     pub notes: Option<String>,
+    /// Version for optimistic locking
+    pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -12,6 +12,7 @@
  */
 
 import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
+import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
 
@@ -43,7 +44,7 @@ async function main() {
     options: {
       db: { type: 'string', default: './store.db' },
       apply: { type: 'boolean', default: false },
-      model: { type: 'string', default: 'claude-sonnet-4-20250514' },
+      model: { type: 'string', default: DEFAULT_MODEL },
       verbose: { type: 'boolean', short: 'V', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },

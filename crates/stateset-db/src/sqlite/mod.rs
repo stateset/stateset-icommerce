@@ -189,3 +189,29 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
 pub(crate) fn parse_decimal(s: &str) -> rust_decimal::Decimal {
     s.parse().unwrap_or_default()
 }
+
+// Transaction support implementation
+use crate::DatabaseExt;
+
+impl DatabaseExt for SqliteDatabase {
+    fn with_transaction<F, T>(&self, f: F) -> stateset_core::Result<T>
+    where
+        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
+    {
+        let mut conn = self.pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        match f(&tx) {
+            Ok(result) => {
+                tx.commit().map_err(map_db_error)?;
+                Ok(result)
+            }
+            Err(e) => {
+                // Transaction is automatically rolled back on drop
+                Err(map_db_error(e))
+            }
+        }
+    }
+}

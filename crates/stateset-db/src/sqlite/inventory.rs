@@ -348,19 +348,29 @@ impl InventoryRepository for SqliteInventoryRepository {
             });
         }
 
-        // Update balance
-        conn.execute(
+        // Update balance with optimistic locking
+        let current_version = balance.version;
+        let rows_affected = conn.execute(
             "UPDATE inventory_balances SET quantity_on_hand = ?, quantity_available = ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ?",
+             WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
                 new_on_hand.to_string(),
                 new_available.to_string(),
                 now.to_rfc3339(),
                 item.id,
-                location_id
+                location_id,
+                current_version
             ],
         )
         .map_err(map_db_error)?;
+
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item.id, location_id),
+                expected_version: current_version,
+            });
+        }
 
         // Record transaction
         let tx_type = if input.quantity >= Decimal::ZERO { "receipt" } else { "adjustment" };
@@ -482,22 +492,32 @@ impl InventoryRepository for SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update balance
+        // Update balance with optimistic locking
         let new_allocated = balance.quantity_allocated + input.quantity;
         let new_available = balance.quantity_on_hand - new_allocated;
+        let current_version = balance.version;
 
-        conn.execute(
+        let rows_affected = conn.execute(
             "UPDATE inventory_balances SET quantity_allocated = ?, quantity_available = ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ?",
+             WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
                 new_allocated.to_string(),
                 new_available.to_string(),
                 now.to_rfc3339(),
                 item.id,
-                location_id
+                location_id,
+                current_version
             ],
         )
         .map_err(map_db_error)?;
+
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item.id, location_id),
+                expected_version: current_version,
+            });
+        }
 
         Ok(InventoryReservation {
             id: reservation_id,
@@ -549,20 +569,37 @@ impl InventoryRepository for SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
-        // Update balance
-        conn.execute(
+        // Get current balance version for optimistic locking
+        let current_version: i32 = conn.query_row(
+            "SELECT version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+            rusqlite::params![item_id, location_id],
+            |row| row.get(0),
+        )
+        .map_err(map_db_error)?;
+
+        // Update balance with optimistic locking
+        let rows_affected = conn.execute(
             "UPDATE inventory_balances SET quantity_allocated = quantity_allocated - ?,
              quantity_available = quantity_available + ?, version = version + 1, updated_at = ?
-             WHERE item_id = ? AND location_id = ?",
+             WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
                 quantity.to_string(),
                 quantity.to_string(),
                 now.to_rfc3339(),
                 item_id,
-                location_id
+                location_id,
+                current_version
             ],
         )
         .map_err(map_db_error)?;
+
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item_id, location_id),
+                expected_version: current_version,
+            });
+        }
 
         Ok(())
     }

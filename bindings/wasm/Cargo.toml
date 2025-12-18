@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-wasm"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "WASM bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"

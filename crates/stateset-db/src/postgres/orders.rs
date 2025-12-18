@@ -34,6 +34,7 @@ struct OrderRow {
     notes: Option<String>,
     shipping_address: Option<serde_json::Value>,
     billing_address: Option<serde_json::Value>,
+    version: i32,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -77,6 +78,7 @@ impl PgOrderRepository {
             shipping_address: row.shipping_address.and_then(|v| serde_json::from_value(v).ok()),
             billing_address: row.billing_address.and_then(|v| serde_json::from_value(v).ok()),
             items,
+            version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -222,6 +224,7 @@ impl PgOrderRepository {
             shipping_address: input.shipping_address,
             billing_address: input.billing_address,
             items,
+            version: 1,
             created_at: now,
             updated_at: now,
         })

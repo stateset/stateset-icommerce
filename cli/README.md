@@ -95,7 +95,7 @@ stateset [options] "<request>"
 Options:
   --db <path>     Database path (default: ./store.db)
   --apply         Enable write operations
-  --model <name>  Claude model (default: claude-sonnet-4-20250514)
+  --model <name>  Claude model (default: see src/config.js)
   --resume <id>   Resume previous session
   --json          JSON output
   --help          Show help

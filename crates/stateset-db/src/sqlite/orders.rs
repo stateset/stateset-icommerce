@@ -57,6 +57,7 @@ impl SqliteOrderRepository {
             shipping_address: shipping_addr.and_then(|s| serde_json::from_str(&s).ok()),
             billing_address: billing_addr.and_then(|s| serde_json::from_str(&s).ok()),
             items: vec![], // Loaded separately
+            version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
             created_at: row
                 .get::<_, String>("created_at")?
                 .parse()
@@ -228,6 +229,7 @@ impl OrderRepository for SqliteOrderRepository {
             shipping_address: input.shipping_address,
             billing_address: input.billing_address,
             items,
+            version: 1,
             created_at: now,
             updated_at: now,
         })

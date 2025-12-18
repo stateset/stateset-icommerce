@@ -15,6 +15,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createScaffoldMcpServer, SCAFFOLD_TOOL_NAMES } from '../src/scaffold-server.js';
 import { AgentTelemetry, noOpTelemetry } from '../src/telemetry.js';
 import { RichOutput, ICONS } from '../src/output.js';
+import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import { AGENTS } from '../src/claude-harness.js';
 import path from 'node:path';
@@ -28,7 +29,7 @@ USAGE:
 OPTIONS:
   --dir <path>       Directory for new projects (default: current directory)
   --apply            Enable write operations (create files, run commands)
-  --model <model>    Claude model to use (default: claude-sonnet-4-20250514)
+  --model <model>    Claude model to use (default: see config.js)
   --verbose, -V      Enable verbose output with telemetry
   --stats            Show execution statistics
   --json             Output as JSON
@@ -69,7 +70,7 @@ async function main() {
     options: {
       dir: { type: 'string', default: process.cwd() },
       apply: { type: 'boolean', default: false },
-      model: { type: 'string', default: 'claude-sonnet-4-20250514' },
+      model: { type: 'string', default: DEFAULT_MODEL },
       verbose: { type: 'boolean', short: 'V', default: false },
       stats: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
@@ -88,7 +89,7 @@ async function main() {
   }
 
   if (values.version) {
-    console.log('@stateset/cli create v0.1.2');
+    console.log(`@stateset/cli create v${CLI_VERSION}`);
     process.exit(0);
   }
 
@@ -132,35 +133,53 @@ async function main() {
     const toolResults = [];
 
     // Run the agent
+    const mcpTools = SCAFFOLD_TOOL_NAMES.map(t => `mcp__stateset-scaffold__${t}`);
     for await (const message of query({
-      prompt: { prompt: request },
+      prompt: request,
       options: {
         model: values.model,
         systemPrompt: agentConfig.systemPrompt,
         mcpServers: {
           'stateset-scaffold': mcpServer
         },
-        allowedTools: SCAFFOLD_TOOL_NAMES.map(t => `mcp__stateset-scaffold__${t}`),
+        // Restrict to only MCP scaffold tools
+        tools: mcpTools,
+        // Auto-allow all MCP tools without permission prompts
+        allowedTools: mcpTools,
         maxTurns: 15
       }
     })) {
-      if (message.type === 'assistant' && message.content) {
-        for (const block of message.content) {
-          if (block.type === 'tool_use') {
-            const toolCall = {
-              name: block.name,
-              input: block.input,
-              startTime: Date.now()
-            };
-            toolResults.push({ toolCall, result: null });
+      // Debug: log all message types
+      if (values.verbose) {
+        console.log(`[DEBUG] Message type: ${message.type}`);
+        if (message.type === 'system') {
+          console.log(`[DEBUG] System message:`, JSON.stringify(message).slice(0, 500));
+        }
+        if (message.type === 'assistant') {
+          console.log(`[DEBUG] Assistant content:`, JSON.stringify(message.content || message).slice(0, 300));
+        }
+      }
+      if (message.type === 'assistant') {
+        // Handle nested message structure from SDK
+        const content = message.message?.content || message.content;
+        if (content) {
+          for (const block of content) {
+            if (block.type === 'tool_use') {
+              const toolCall = {
+                name: block.name,
+                input: block.input,
+                startTime: Date.now()
+              };
+              toolResults.push({ toolCall, result: null });
 
-            if (!values.json && !values.verbose) {
-              const shortName = block.name.replace('mcp__stateset-scaffold__', '');
-              console.log(output.toolCall(block.name, block.input));
-            }
-          } else if (block.type === 'text') {
-            if (!values.json) {
-              console.log('\n' + block.text);
+              if (!values.json) {
+                const shortName = block.name.replace('mcp__stateset-scaffold__', '');
+                console.log(output.toolCall(shortName, block.input));
+              }
+            } else if (block.type === 'text' && block.text) {
+              if (!values.json) {
+                console.log('\n' + block.text);
+              }
             }
           }
         }

@@ -11,6 +11,7 @@
  */
 
 import { runAgentLoop, AGENTS } from '../src/claude-harness.js';
+import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
 import { parseArgs } from 'node:util';
 
 const agentConfig = AGENTS['inventory'];
@@ -25,7 +26,7 @@ USAGE:
 OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
   --apply            Enable write operations
-  --model <model>    Claude model to use (default: claude-sonnet-4-20250514)
+  --model <model>    Claude model to use (default: see config.js)
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --help, -h         Show this help message
@@ -75,7 +76,7 @@ async function main() {
     options: {
       db: { type: 'string', default: './store.db' },
       apply: { type: 'boolean', default: false },
-      model: { type: 'string', default: 'claude-sonnet-4-20250514' },
+      model: { type: 'string', default: DEFAULT_MODEL },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
@@ -90,7 +91,7 @@ async function main() {
   }
 
   if (values.version) {
-    console.log('@stateset/cli inventory-agent v0.1.2');
+    console.log(`@stateset/cli inventory-agent v${CLI_VERSION}`);
     process.exit(0);
   }
 

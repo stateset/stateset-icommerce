@@ -24,6 +24,8 @@ pub struct Order {
     pub shipping_address: Option<Address>,
     pub billing_address: Option<Address>,
     pub items: Vec<OrderItem>,
+    /// Version for optimistic locking
+    pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

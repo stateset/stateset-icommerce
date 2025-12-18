@@ -95,6 +95,13 @@ pub enum CommerceError {
     #[error("Optimistic lock failure: record was modified")]
     OptimisticLockFailure,
 
+    #[error("Version conflict on {entity} {id}: expected version {expected_version}")]
+    VersionConflict {
+        entity: String,
+        id: String,
+        expected_version: i32,
+    },
+
     // General errors
     #[error("Internal error: {0}")]
     Internal(String),
@@ -133,6 +140,7 @@ impl CommerceError {
             self,
             Self::Conflict(_)
                 | Self::OptimisticLockFailure
+                | Self::VersionConflict { .. }
                 | Self::DuplicateSku(_)
                 | Self::DuplicateSlug(_)
                 | Self::EmailAlreadyExists(_)

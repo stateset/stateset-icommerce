@@ -47,6 +47,7 @@ impl SqlitePaymentRepository {
             failure_code: row.get("failure_code")?,
             metadata: row.get("metadata")?,
             paid_at: row.get::<_, Option<String>>("paid_at")?.and_then(|s| s.parse().ok()),
+            version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
             created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
             updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
         })

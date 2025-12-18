@@ -35,6 +35,7 @@ struct WorkOrderRow {
     actual_start: Option<DateTime<Utc>>,
     actual_end: Option<DateTime<Utc>>,
     notes: Option<String>,
+    version: i32,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -124,6 +125,7 @@ impl PgWorkOrderRepository {
             notes: row.notes,
             tasks,
             materials,
+            version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -267,6 +269,7 @@ impl PgWorkOrderRepository {
             notes: input.notes,
             tasks,
             materials: vec![],
+            version: 1,
             created_at: now,
             updated_at: now,
         })

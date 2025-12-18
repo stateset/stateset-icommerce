@@ -2,22 +2,38 @@
 //!
 //! This module provides async PostgreSQL support for production deployments.
 
+mod analytics;
 mod bom;
+mod carts;
+mod currency;
 mod customers;
 mod inventory;
+mod invoices;
 mod orders;
+mod payments;
 mod products;
+mod purchase_orders;
 mod returns;
+mod shipments;
 mod unsupported;
+mod warranties;
 mod work_orders;
 
+pub use analytics::*;
 pub use bom::*;
+pub use carts::*;
+pub use currency::*;
 pub use customers::*;
 pub use inventory::*;
+pub use invoices::*;
 pub use orders::*;
+pub use payments::*;
 pub use products::*;
+pub use purchase_orders::*;
 pub use returns::*;
+pub use shipments::*;
 pub use unsupported::*;
+pub use warranties::*;
 pub use work_orders::*;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -77,6 +93,14 @@ impl PostgresDatabase {
             ("002_inventory", include_str!("migrations/002_inventory.sql")),
             ("003_returns", include_str!("migrations/003_returns.sql")),
             ("004_manufacturing", include_str!("migrations/004_manufacturing.sql")),
+            ("005_currency", include_str!("migrations/005_currency.sql")),
+            ("006_shipments", include_str!("migrations/006_shipments.sql")),
+            ("007_payments", include_str!("migrations/007_payments.sql")),
+            ("008_warranties", include_str!("migrations/008_warranties.sql")),
+            ("009_purchase_orders", include_str!("migrations/009_purchase_orders.sql")),
+            ("010_invoices", include_str!("migrations/010_invoices.sql")),
+            ("011_carts", include_str!("migrations/011_carts.sql")),
+            ("012_versioning", include_str!("migrations/012_versioning.sql")),
         ];
 
         for (name, sql) in migrations {
@@ -141,6 +165,46 @@ impl PostgresDatabase {
     /// Get work order repository
     pub fn work_orders(&self) -> PgWorkOrderRepository {
         PgWorkOrderRepository::new(self.pool.clone())
+    }
+
+    /// Get currency repository
+    pub fn currency(&self) -> PgCurrencyRepository {
+        PgCurrencyRepository::new(self.pool.clone())
+    }
+
+    /// Get shipment repository
+    pub fn shipments(&self) -> PgShipmentRepository {
+        PgShipmentRepository::new(self.pool.clone())
+    }
+
+    /// Get payment repository
+    pub fn payments(&self) -> PgPaymentRepository {
+        PgPaymentRepository::new(self.pool.clone())
+    }
+
+    /// Get warranty repository
+    pub fn warranties(&self) -> PgWarrantyRepository {
+        PgWarrantyRepository::new(self.pool.clone())
+    }
+
+    /// Get purchase order repository
+    pub fn purchase_orders(&self) -> PgPurchaseOrderRepository {
+        PgPurchaseOrderRepository::new(self.pool.clone())
+    }
+
+    /// Get invoice repository
+    pub fn invoices(&self) -> PgInvoiceRepository {
+        PgInvoiceRepository::new(self.pool.clone())
+    }
+
+    /// Get cart repository
+    pub fn carts(&self) -> PgCartRepository {
+        PgCartRepository::new(self.pool.clone())
+    }
+
+    /// Get analytics repository
+    pub fn analytics(&self) -> PgAnalyticsRepository {
+        PgAnalyticsRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

@@ -123,7 +123,7 @@ function ensureDir(dirPath) {
   }
 }
 
-function writeFile(filePath, content) {
+function writeFileSync(filePath, content) {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, content, 'utf8');
 }
@@ -132,8 +132,22 @@ function fileExists(filePath) {
   return fs.existsSync(filePath);
 }
 
-function readFile(filePath) {
+function readFileSync(filePath) {
   return fs.readFileSync(filePath, 'utf8');
+}
+
+// Helper to create MCP CallToolResult
+function result(data) {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }]
+  };
+}
+
+function errorResult(message) {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }, null, 2) }],
+    isError: true
+  };
 }
 
 // ============================================================================
@@ -155,12 +169,12 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
       // Project Management Tools
       // ========================================
 
-      tool({
-        name: 'list_templates',
-        description: 'List available storefront project templates',
-        schema: z.object({}),
-        handler: async () => {
-          return {
+      tool(
+        'list_templates',
+        'List available storefront project templates',
+        {},
+        async () => {
+          return result({
             success: true,
             templates: Object.entries(TEMPLATES).map(([id, t]) => ({
               id,
@@ -169,16 +183,16 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
               framework: t.framework,
               features: t.features,
             })),
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'list_page_templates',
-        description: 'List available page templates',
-        schema: z.object({}),
-        handler: async () => {
-          return {
+      tool(
+        'list_page_templates',
+        'List available page templates',
+        {},
+        async () => {
+          return result({
             success: true,
             pages: Object.entries(PAGE_TEMPLATES).map(([id, p]) => ({
               id,
@@ -186,16 +200,16 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
               description: p.description,
               path: p.path,
             })),
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'list_component_templates',
-        description: 'List available component templates',
-        schema: z.object({}),
-        handler: async () => {
-          return {
+      tool(
+        'list_component_templates',
+        'List available component templates',
+        {},
+        async () => {
+          return result({
             success: true,
             components: Object.entries(COMPONENT_TEMPLATES).map(([id, c]) => ({
               id,
@@ -203,56 +217,52 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
               description: c.description,
               path: c.path,
             })),
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'create_project',
-        description: 'Create a new storefront project with the specified template. This initializes the full project structure.',
-        schema: z.object({
+      tool(
+        'create_project',
+        'Create a new storefront project with the specified template. This initializes the full project structure.',
+        {
           name: z.string().describe('Project name (used for directory and package name)'),
           template: z.enum(['nextjs', 'nextjs-minimal', 'vite-react', 'astro']).describe('Project template to use'),
           directory: z.string().optional().describe('Directory to create project in (defaults to current directory)'),
-          features: z.array(z.string()).optional().describe('Additional features to enable'),
-        }),
-        handler: async ({ name, template, directory, features = [] }) => {
+        },
+        async ({ name, template, directory }) => {
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would create ${template} project "${name}" in ${directory || workDir}/${name}`,
               template: TEMPLATES[template],
-            };
+            });
           }
 
           const projectDir = path.join(directory || workDir, name);
 
           if (fs.existsSync(projectDir)) {
-            return {
-              success: false,
-              error: `Directory ${projectDir} already exists`,
-            };
+            return errorResult(`Directory ${projectDir} already exists`);
           }
 
           ensureDir(projectDir);
 
           // Create package.json
-          const packageJson = createPackageJson(name, template, features);
-          writeFile(path.join(projectDir, 'package.json'), JSON.stringify(packageJson, null, 2));
+          const packageJson = createPackageJson(name, template, []);
+          writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify(packageJson, null, 2));
 
           // Create TypeScript config
-          writeFile(path.join(projectDir, 'tsconfig.json'), createTsConfig(template));
+          writeFileSync(path.join(projectDir, 'tsconfig.json'), createTsConfig(template));
 
           // Create Next.js config (if applicable)
           if (template.startsWith('next')) {
-            writeFile(path.join(projectDir, 'next.config.js'), createNextConfig());
+            writeFileSync(path.join(projectDir, 'next.config.js'), createNextConfig());
           }
 
           // Create Tailwind config
-          if (TEMPLATES[template].features.includes('tailwind') || features.includes('tailwind')) {
-            writeFile(path.join(projectDir, 'tailwind.config.ts'), createTailwindConfig());
-            writeFile(path.join(projectDir, 'postcss.config.js'), createPostCssConfig());
+          if (TEMPLATES[template].features.includes('tailwind')) {
+            writeFileSync(path.join(projectDir, 'tailwind.config.ts'), createTailwindConfig());
+            writeFileSync(path.join(projectDir, 'postcss.config.js'), createPostCssConfig());
           }
 
           // Create directory structure
@@ -277,15 +287,15 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           }
 
           // Create base files
-          writeFile(path.join(projectDir, 'lib/commerce.ts'), createCommerceLib());
-          writeFile(path.join(projectDir, 'app/layout.tsx'), createRootLayout(name));
-          writeFile(path.join(projectDir, 'app/page.tsx'), createHomePage());
-          writeFile(path.join(projectDir, 'styles/globals.css'), createGlobalStyles());
-          writeFile(path.join(projectDir, '.gitignore'), createGitignore());
-          writeFile(path.join(projectDir, '.env.local'), createEnvLocal());
-          writeFile(path.join(projectDir, 'README.md'), createReadme(name, template));
+          writeFileSync(path.join(projectDir, 'lib/commerce.ts'), createCommerceLib());
+          writeFileSync(path.join(projectDir, 'app/layout.tsx'), createRootLayout(name));
+          writeFileSync(path.join(projectDir, 'app/page.tsx'), createHomePage());
+          writeFileSync(path.join(projectDir, 'styles/globals.css'), createGlobalStyles());
+          writeFileSync(path.join(projectDir, '.gitignore'), createGitignore());
+          writeFileSync(path.join(projectDir, '.env.local'), createEnvLocal());
+          writeFileSync(path.join(projectDir, 'README.md'), createReadme(name, template));
 
-          return {
+          return result({
             success: true,
             message: `Created ${template} project "${name}"`,
             projectDir,
@@ -294,318 +304,304 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
               'npm install',
               'npm run dev',
             ],
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'add_page',
-        description: 'Add a page to the storefront project',
-        schema: z.object({
+      tool(
+        'add_page',
+        'Add a page to the storefront project',
+        {
           pageType: z.enum(['product-listing', 'product-detail', 'cart', 'checkout', 'account', 'orders', 'custom']).describe('Type of page to add'),
           customPath: z.string().optional().describe('Custom path for the page (only for custom type)'),
           customName: z.string().optional().describe('Custom name for the page (only for custom type)'),
-        }),
-        handler: async ({ pageType, customPath, customName }) => {
+        },
+        async ({ pageType, customPath, customName }) => {
           const template = PAGE_TEMPLATES[pageType];
           const pagePath = pageType === 'custom' ? customPath : template?.path;
 
           if (!pagePath) {
-            return { success: false, error: 'Invalid page type or missing custom path' };
+            return errorResult('Invalid page type or missing custom path');
           }
 
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would create page at ${pagePath}`,
               template: template?.name || customName,
-            };
+            });
           }
 
           const fullPath = path.join(workDir, pagePath);
           const content = generatePageContent(pageType, customName);
 
-          writeFile(fullPath, content);
+          writeFileSync(fullPath, content);
 
-          return {
+          return result({
             success: true,
             message: `Created ${template?.name || customName} page`,
             path: pagePath,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'add_component',
-        description: 'Add a component to the storefront project',
-        schema: z.object({
+      tool(
+        'add_component',
+        'Add a component to the storefront project',
+        {
           componentType: z.enum(['product-card', 'product-grid', 'cart-drawer', 'add-to-cart', 'checkout-form', 'header', 'footer', 'custom']).describe('Type of component to add'),
           customPath: z.string().optional().describe('Custom path for the component (only for custom type)'),
           customName: z.string().optional().describe('Custom name for the component (only for custom type)'),
-        }),
-        handler: async ({ componentType, customPath, customName }) => {
+        },
+        async ({ componentType, customPath, customName }) => {
           const template = COMPONENT_TEMPLATES[componentType];
           const componentPath = componentType === 'custom' ? customPath : template?.path;
 
           if (!componentPath) {
-            return { success: false, error: 'Invalid component type or missing custom path' };
+            return errorResult('Invalid component type or missing custom path');
           }
 
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would create component at ${componentPath}`,
               template: template?.name || customName,
-            };
+            });
           }
 
           const fullPath = path.join(workDir, componentPath);
           const content = generateComponentContent(componentType, customName);
 
-          writeFile(fullPath, content);
+          writeFileSync(fullPath, content);
 
-          return {
+          return result({
             success: true,
             message: `Created ${template?.name || customName} component`,
             path: componentPath,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'add_hook',
-        description: 'Add a React hook to the storefront project',
-        schema: z.object({
+      tool(
+        'add_hook',
+        'Add a React hook to the storefront project',
+        {
           hookName: z.enum(['useCart', 'useProducts', 'useCheckout', 'useCustomer', 'custom']).describe('Name of the hook to add'),
           customName: z.string().optional().describe('Custom hook name (only for custom type)'),
-        }),
-        handler: async ({ hookName, customName }) => {
+        },
+        async ({ hookName, customName }) => {
           const name = hookName === 'custom' ? customName : hookName;
           if (!name) {
-            return { success: false, error: 'Hook name is required' };
+            return errorResult('Hook name is required');
           }
 
           const hookPath = `hooks/${name}.ts`;
 
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would create hook at ${hookPath}`,
-            };
+            });
           }
 
           const fullPath = path.join(workDir, hookPath);
           const content = generateHookContent(hookName, customName);
 
-          writeFile(fullPath, content);
+          writeFileSync(fullPath, content);
 
-          return {
+          return result({
             success: true,
             message: `Created ${name} hook`,
             path: hookPath,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'add_api_route',
-        description: 'Add an API route to the storefront project',
-        schema: z.object({
+      tool(
+        'add_api_route',
+        'Add an API route to the storefront project',
+        {
           routePath: z.string().describe('API route path (e.g., "products", "cart", "checkout")'),
           methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])).describe('HTTP methods to support'),
-        }),
-        handler: async ({ routePath, methods }) => {
+        },
+        async ({ routePath, methods }) => {
           const apiPath = `app/api/${routePath}/route.ts`;
 
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would create API route at ${apiPath}`,
               methods,
-            };
+            });
           }
 
           const fullPath = path.join(workDir, apiPath);
           const content = generateApiRouteContent(routePath, methods);
 
-          writeFile(fullPath, content);
+          writeFileSync(fullPath, content);
 
-          return {
+          return result({
             success: true,
             message: `Created API route at ${apiPath}`,
             path: apiPath,
             methods,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'write_file',
-        description: 'Write content to a file in the project',
-        schema: z.object({
+      tool(
+        'write_file',
+        'Write content to a file in the project',
+        {
           filePath: z.string().describe('Path to the file relative to project root'),
           content: z.string().describe('Content to write to the file'),
           overwrite: z.boolean().optional().describe('Whether to overwrite existing file'),
-        }),
-        handler: async ({ filePath, content, overwrite = false }) => {
+        },
+        async ({ filePath, content, overwrite }) => {
           const fullPath = path.join(workDir, filePath);
 
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would write ${content.length} characters to ${filePath}`,
-            };
+            });
           }
 
           if (fileExists(fullPath) && !overwrite) {
-            return {
-              success: false,
-              error: `File ${filePath} already exists. Set overwrite: true to replace.`,
-            };
+            return errorResult(`File ${filePath} already exists. Set overwrite: true to replace.`);
           }
 
-          writeFile(fullPath, content);
+          writeFileSync(fullPath, content);
 
-          return {
+          return result({
             success: true,
             message: `Wrote ${content.length} characters to ${filePath}`,
             path: filePath,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'read_file',
-        description: 'Read content from a file in the project',
-        schema: z.object({
+      tool(
+        'read_file',
+        'Read content from a file in the project',
+        {
           filePath: z.string().describe('Path to the file relative to project root'),
-        }),
-        handler: async ({ filePath }) => {
+        },
+        async ({ filePath }) => {
           const fullPath = path.join(workDir, filePath);
 
           if (!fileExists(fullPath)) {
-            return {
-              success: false,
-              error: `File ${filePath} does not exist`,
-            };
+            return errorResult(`File ${filePath} does not exist`);
           }
 
-          const content = readFile(fullPath);
+          const content = readFileSync(fullPath);
 
-          return {
+          return result({
             success: true,
             path: filePath,
             content,
             size: content.length,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'list_files',
-        description: 'List files in a directory',
-        schema: z.object({
+      tool(
+        'list_files',
+        'List files in a directory',
+        {
           directory: z.string().optional().describe('Directory path relative to project root'),
           recursive: z.boolean().optional().describe('Whether to list files recursively'),
-        }),
-        handler: async ({ directory = '.', recursive = false }) => {
+        },
+        async ({ directory = '.', recursive = false }) => {
           const fullPath = path.join(workDir, directory);
 
           if (!fs.existsSync(fullPath)) {
-            return {
-              success: false,
-              error: `Directory ${directory} does not exist`,
-            };
+            return errorResult(`Directory ${directory} does not exist`);
           }
 
           const files = listFilesInDir(fullPath, recursive);
 
-          return {
+          return result({
             success: true,
             directory,
             files: files.map(f => path.relative(workDir, f)),
             count: files.length,
-          };
-        },
-      }),
+          });
+        }
+      ),
 
-      tool({
-        name: 'run_command',
-        description: 'Run a shell command in the project directory (npm install, npm run dev, etc.)',
-        schema: z.object({
+      tool(
+        'run_command',
+        'Run a shell command in the project directory (npm install, npm run dev, etc.)',
+        {
           command: z.string().describe('Command to run'),
           background: z.boolean().optional().describe('Run in background'),
-        }),
-        handler: async ({ command, background = false }) => {
+        },
+        async ({ command, background = false }) => {
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would run: ${command}`,
-            };
+            });
           }
 
           try {
             if (background) {
               const child = spawn(command, { shell: true, cwd: workDir, detached: true, stdio: 'ignore' });
               child.unref();
-              return {
+              return result({
                 success: true,
                 message: `Started in background: ${command}`,
                 pid: child.pid,
-              };
+              });
             }
 
             const output = execSync(command, { cwd: workDir, encoding: 'utf8', timeout: 120000 });
-            return {
+            return result({
               success: true,
               command,
-              output: output.slice(0, 5000), // Limit output size
-            };
+              output: output.slice(0, 5000),
+            });
           } catch (error) {
-            return {
-              success: false,
-              command,
-              error: error.message,
-              output: error.stdout?.slice(0, 2000),
-            };
+            return errorResult(error.message);
           }
-        },
-      }),
+        }
+      ),
 
-      tool({
-        name: 'seed_database',
-        description: 'Seed the commerce database with sample products and data',
-        schema: z.object({
+      tool(
+        'seed_database',
+        'Seed the commerce database with sample products and data',
+        {
           dbPath: z.string().optional().describe('Path to database file'),
           productCount: z.number().optional().describe('Number of sample products to create'),
-        }),
-        handler: async ({ dbPath = './store.db', productCount = 10 }) => {
+        },
+        async ({ dbPath = './store.db', productCount = 10 }) => {
           if (!allowWrite) {
-            return {
+            return result({
               success: false,
               preview: true,
               message: `Would seed database at ${dbPath} with ${productCount} products`,
-            };
+            });
           }
 
           const seedScript = generateSeedScript(dbPath, productCount);
           const seedPath = path.join(workDir, 'scripts/seed.js');
 
-          writeFile(seedPath, seedScript);
+          writeFileSync(seedPath, seedScript);
 
-          return {
+          return result({
             success: true,
             message: `Created seed script at scripts/seed.js`,
             nextSteps: ['Run: node scripts/seed.js'],
-          };
-        },
-      }),
+          });
+        }
+      ),
     ],
   });
 }
@@ -616,7 +612,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
 
 function createPackageJson(name, template, features) {
   const base = {
-    name: name.toLowerCase().replace(/\s+/g, '-'),
+    name: name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
     version: '0.1.0',
     private: true,
     scripts: {
@@ -640,7 +636,7 @@ function createPackageJson(name, template, features) {
     },
   };
 
-  if (template.includes('tailwind') || features.includes('tailwind')) {
+  if (TEMPLATES[template]?.features.includes('tailwind') || features.includes('tailwind')) {
     base.devDependencies.autoprefixer = '^10';
     base.devDependencies.postcss = '^8';
     base.devDependencies.tailwindcss = '^3';
@@ -743,7 +739,6 @@ export async function getProduct(id: string) {
 
 export async function getProductBySlug(slug: string) {
   const commerce = getCommerce();
-  // Note: You may need to implement this method based on your schema
   const products = await commerce.products.list();
   return products.products?.find(p => p.slug === slug);
 }
@@ -824,7 +819,7 @@ export default async function HomePage() {
               <div className="aspect-square bg-gray-100 rounded-lg mb-4" />
               <h3 className="font-medium group-hover:underline">{product.name}</h3>
               <p className="text-gray-600">
-                ${'{'}product.variants?.[0]?.price ? \`$\${product.variants[0].price.toFixed(2)}\` : 'Price TBD'{'}'}
+                {product.variants?.[0]?.price ? \`$\${product.variants[0].price.toFixed(2)}\` : 'Price TBD'}
               </p>
             </Link>
           ))}
@@ -1007,7 +1002,7 @@ export default async function ProductPage({ params }: Props) {
         <div>
           <h1 className="text-3xl font-bold">{product.name}</h1>
           <p className="text-2xl font-semibold mt-4">
-            ${'{'}product.variants?.[0]?.price?.toFixed(2) || 'Price TBD'{'}'}
+            {product.variants?.[0]?.price?.toFixed(2) || 'Price TBD'}
           </p>
           <p className="mt-4 text-gray-600">{product.description}</p>
           <button className="mt-6 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800">

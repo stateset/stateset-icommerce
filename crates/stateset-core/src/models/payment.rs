@@ -282,6 +282,8 @@ pub struct Payment {
     pub metadata: Option<String>,
     /// When payment was completed
     pub paid_at: Option<DateTime<Utc>>,
+    /// Version for optimistic locking
+    pub version: i32,
     /// When payment was created
     pub created_at: DateTime<Utc>,
     /// When payment was last updated

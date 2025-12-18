@@ -310,24 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const {
-  Commerce,
-  Customers,
-  Orders,
-  Products,
-  Inventory,
-  Returns,
-  Payments,
-  Shipments,
-  Warranties,
-  PurchaseOrders,
-  Invoices,
-  Bom,
-  WorkOrders,
-  Carts,
-  Analytics,
-  CurrencyOperations
-} = nativeBinding
+const { Commerce, Customers, Orders, Products, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations } = nativeBinding
 
 module.exports.Commerce = Commerce
 module.exports.Customers = Customers

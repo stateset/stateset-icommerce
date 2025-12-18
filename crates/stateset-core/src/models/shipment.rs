@@ -222,6 +222,8 @@ pub struct Shipment {
     pub items: Vec<ShipmentItem>,
     /// Tracking events/history
     pub events: Vec<ShipmentEvent>,
+    /// Version for optimistic locking
+    pub version: i32,
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -189,6 +189,8 @@ pub struct WorkOrder {
     pub materials: Vec<WorkOrderMaterial>,
     /// Notes
     pub notes: Option<String>,
+    /// Version for optimistic locking
+    pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
