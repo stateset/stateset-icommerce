@@ -81,6 +81,17 @@ impl Default for ProductType {
     }
 }
 
+impl std::fmt::Display for ProductType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Simple => write!(f, "simple"),
+            Self::Variable => write!(f, "variable"),
+            Self::Bundle => write!(f, "bundle"),
+            Self::Digital => write!(f, "digital"),
+        }
+    }
+}
+
 /// Product attribute
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductAttribute {

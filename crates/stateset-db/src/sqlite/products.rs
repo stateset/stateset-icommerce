@@ -105,7 +105,7 @@ impl ProductRepository for SqliteProductRepository {
                 &name,
                 &slug,
                 &description,
-                format!("{:?}", product_type).to_lowercase(),
+                product_type.to_string(),
                 attributes_json,
                 seo_json,
                 now.to_rfc3339(),
@@ -225,7 +225,7 @@ impl ProductRepository for SqliteProductRepository {
         }
         if let Some(status) = &input.status {
             updates.push("status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
         if let Some(attributes) = &input.attributes {
             updates.push("attributes = ?");
@@ -265,11 +265,11 @@ impl ProductRepository for SqliteProductRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
         if let Some(product_type) = &filter.product_type {
             sql.push_str(" AND product_type = ?");
-            params.push(Box::new(format!("{:?}", product_type).to_lowercase()));
+            params.push(Box::new(product_type.to_string()));
         }
         if let Some(search) = &filter.search {
             sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
@@ -474,7 +474,7 @@ impl ProductRepository for SqliteProductRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * StateSet Commerce CLI - Direct Mode (No AI)
+ * StateSet iCommerce CLI - Direct Mode (No AI)
  *
  * Simple command-line interface for common commerce operations
  * without AI interpretation.
@@ -16,7 +16,7 @@ import { Commerce } from '@stateset/embedded';
 import { parseArgs } from 'node:util';
 
 const HELP = `
-StateSet Commerce CLI - Direct Mode
+StateSet iCommerce CLI - Direct Mode
 
 USAGE:
   stateset-direct [global-options] <resource> <action> [args]

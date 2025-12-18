@@ -304,7 +304,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             rusqlite::params![
                 id.to_string(),
                 input.customer_id.to_string(),
-                format!("{:?}", input.address_type.unwrap_or_default()).to_lowercase(),
+                input.address_type.unwrap_or_default().to_string(),
                 input.first_name,
                 input.last_name,
                 input.company,

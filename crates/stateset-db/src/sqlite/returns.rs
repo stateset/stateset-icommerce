@@ -97,7 +97,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 id.to_string(),
                 input.order_id.to_string(),
                 customer_id,
-                format!("{:?}", input.reason).to_lowercase(),
+                input.reason.to_string(),
                 input.reason_details,
                 input.notes,
                 now.to_rfc3339(),
@@ -131,7 +131,7 @@ impl ReturnRepository for SqliteReturnRepository {
                     sku,
                     name,
                     item.quantity,
-                    format!("{:?}", item.condition.unwrap_or_default()).to_lowercase(),
+                    item.condition.unwrap_or_default().to_string(),
                     refund_amount.to_string(),
                 ],
             )
@@ -245,7 +245,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
         if let Some(status) = &input.status {
             updates.push("status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
         if let Some(tracking) = &input.tracking_number {
             updates.push("tracking_number = ?");
@@ -328,11 +328,11 @@ impl ReturnRepository for SqliteReturnRepository {
         }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
         if let Some(reason) = &filter.reason {
             sql.push_str(" AND reason = ?");
-            params.push(Box::new(format!("{:?}", reason).to_lowercase()));
+            params.push(Box::new(reason.to_string()));
         }
         if let Some(from) = &filter.from_date {
             sql.push_str(" AND created_at >= ?");
@@ -451,7 +451,7 @@ impl ReturnRepository for SqliteReturnRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -468,7 +468,7 @@ fn parse_return_status(s: &str) -> ReturnStatus {
         "requested" => ReturnStatus::Requested,
         "approved" => ReturnStatus::Approved,
         "rejected" => ReturnStatus::Rejected,
-        "in_transit" => ReturnStatus::InTransit,
+        "in_transit" | "intransit" => ReturnStatus::InTransit,
         "received" => ReturnStatus::Received,
         "inspecting" => ReturnStatus::Inspecting,
         "completed" => ReturnStatus::Completed,
@@ -480,11 +480,11 @@ fn parse_return_status(s: &str) -> ReturnStatus {
 fn parse_return_reason(s: &str) -> ReturnReason {
     match s {
         "defective" => ReturnReason::Defective,
-        "wrong_item" => ReturnReason::WrongItem,
-        "not_as_described" => ReturnReason::NotAsDescribed,
-        "changed_mind" => ReturnReason::ChangedMind,
-        "better_price_found" => ReturnReason::BetterPriceFound,
-        "no_longer_needed" => ReturnReason::NoLongerNeeded,
+        "wrong_item" | "wrongitem" => ReturnReason::WrongItem,
+        "not_as_described" | "notasdescribed" => ReturnReason::NotAsDescribed,
+        "changed_mind" | "changedmind" => ReturnReason::ChangedMind,
+        "better_price_found" | "betterpricefound" => ReturnReason::BetterPriceFound,
+        "no_longer_needed" | "nolongerneeded" => ReturnReason::NoLongerNeeded,
         "damaged" => ReturnReason::Damaged,
         "other" => ReturnReason::Other,
         _ => ReturnReason::Other,
@@ -499,5 +499,29 @@ fn parse_item_condition(s: &str) -> ItemCondition {
         "damaged" => ItemCondition::Damaged,
         "defective" => ItemCondition::Defective,
         _ => ItemCondition::New,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_return_status_snake_case_and_legacy() {
+        assert_eq!(parse_return_status("in_transit"), ReturnStatus::InTransit);
+        assert_eq!(parse_return_status("intransit"), ReturnStatus::InTransit);
+    }
+
+    #[test]
+    fn parses_return_reason_snake_case_and_legacy() {
+        assert_eq!(parse_return_reason("wrong_item"), ReturnReason::WrongItem);
+        assert_eq!(parse_return_reason("wrongitem"), ReturnReason::WrongItem);
+        assert_eq!(
+            parse_return_reason("not_as_described"),
+            ReturnReason::NotAsDescribed
+        );
+        assert_eq!(parse_return_reason("notasdescribed"), ReturnReason::NotAsDescribed);
+        assert_eq!(parse_return_reason("no_longer_needed"), ReturnReason::NoLongerNeeded);
+        assert_eq!(parse_return_reason("nolongerneeded"), ReturnReason::NoLongerNeeded);
     }
 }

@@ -29,7 +29,7 @@ impl SqliteOrderRepository {
 
     fn generate_order_number() -> String {
         let timestamp = Utc::now().timestamp();
-        let random: u32 = rand::random::<u32>() % 10000;
+        let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
         format!("ORD-{}-{:04}", timestamp, random)
     }
 
@@ -280,11 +280,11 @@ impl OrderRepository for SqliteOrderRepository {
         }
         if let Some(payment_status) = &input.payment_status {
             updates.push("payment_status = ?");
-            params.push(Box::new(format!("{:?}", payment_status).to_lowercase()));
+            params.push(Box::new(payment_status.to_string()));
         }
         if let Some(fulfillment_status) = &input.fulfillment_status {
             updates.push("fulfillment_status = ?");
-            params.push(Box::new(format!("{:?}", fulfillment_status).to_lowercase()));
+            params.push(Box::new(fulfillment_status.to_string()));
         }
         if let Some(tracking) = &input.tracking_number {
             updates.push("tracking_number = ?");
@@ -515,9 +515,9 @@ fn parse_payment_status(s: &str) -> PaymentStatus {
         "pending" => PaymentStatus::Pending,
         "authorized" => PaymentStatus::Authorized,
         "paid" => PaymentStatus::Paid,
-        "partially_paid" => PaymentStatus::PartiallyPaid,
+        "partially_paid" | "partiallypaid" => PaymentStatus::PartiallyPaid,
         "refunded" => PaymentStatus::Refunded,
-        "partially_refunded" => PaymentStatus::PartiallyRefunded,
+        "partially_refunded" | "partiallyrefunded" => PaymentStatus::PartiallyRefunded,
         "failed" => PaymentStatus::Failed,
         _ => PaymentStatus::Pending,
     }
@@ -526,7 +526,7 @@ fn parse_payment_status(s: &str) -> PaymentStatus {
 fn parse_fulfillment_status(s: &str) -> FulfillmentStatus {
     match s {
         "unfulfilled" => FulfillmentStatus::Unfulfilled,
-        "partially_fulfilled" => FulfillmentStatus::PartiallyFulfilled,
+        "partially_fulfilled" | "partiallyfulfilled" => FulfillmentStatus::PartiallyFulfilled,
         "fulfilled" => FulfillmentStatus::Fulfilled,
         "shipped" => FulfillmentStatus::Shipped,
         "delivered" => FulfillmentStatus::Delivered,
@@ -534,18 +534,33 @@ fn parse_fulfillment_status(s: &str) -> FulfillmentStatus {
     }
 }
 
-// Add rand for order number generation
-mod rand {
-    pub fn random<T>() -> T
-    where
-        T: Default,
-        std::num::Wrapping<T>: std::ops::Add<Output = std::num::Wrapping<T>>,
-    {
-        // Simple pseudo-random using time
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
-        unsafe { std::mem::transmute_copy(&nanos) }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_payment_status_snake_case_and_legacy() {
+        assert_eq!(parse_payment_status("partially_paid"), PaymentStatus::PartiallyPaid);
+        assert_eq!(parse_payment_status("partiallypaid"), PaymentStatus::PartiallyPaid);
+        assert_eq!(
+            parse_payment_status("partially_refunded"),
+            PaymentStatus::PartiallyRefunded
+        );
+        assert_eq!(
+            parse_payment_status("partiallyrefunded"),
+            PaymentStatus::PartiallyRefunded
+        );
+    }
+
+    #[test]
+    fn parses_fulfillment_status_snake_case_and_legacy() {
+        assert_eq!(
+            parse_fulfillment_status("partially_fulfilled"),
+            FulfillmentStatus::PartiallyFulfilled
+        );
+        assert_eq!(
+            parse_fulfillment_status("partiallyfulfilled"),
+            FulfillmentStatus::PartiallyFulfilled
+        );
     }
 }

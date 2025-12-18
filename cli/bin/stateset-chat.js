@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * StateSet Commerce CLI - Interactive Chat Mode
+ * StateSet iCommerce CLI - Interactive Chat Mode
  *
  * Multi-turn conversational interface for commerce operations.
  *
@@ -16,7 +16,7 @@ import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
 
 const HELP = `
-StateSet Commerce CLI - Interactive Chat
+StateSet iCommerce CLI - Interactive Chat
 
 USAGE:
   stateset-chat [options]
@@ -198,7 +198,7 @@ async function main() {
   // Welcome message
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║           📦 StateSet Commerce - Interactive Chat           ║
+║           📦 StateSet iCommerce - Interactive Chat           ║
 ╠════════════════════════════════════════════════════════════╣
 ║  Type your request in natural language.                    ║
 ║  Use /help for commands, /exit to quit.                    ║

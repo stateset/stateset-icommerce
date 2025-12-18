@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * StateSet Checkout Agent - Shopping cart and checkout flow specialist
+ * StateSet iCheckout Agent - Shopping cart and checkout flow specialist
  *
  * Implements the Agentic Commerce Protocol (ACP) for AI-powered checkout.
  *

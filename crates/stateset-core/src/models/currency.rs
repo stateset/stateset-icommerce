@@ -411,7 +411,7 @@ impl Money {
             format!(
                 "{}{}",
                 self.currency.symbol(),
-                rounded.amount.round_dp(places as u32)
+                Self::format_amount_fixed(rounded.amount, places)
             )
         }
     }
@@ -422,9 +422,35 @@ impl Money {
         let places = self.currency.decimal_places();
         format!(
             "{} {}",
-            rounded.amount.round_dp(places as u32),
+            Self::format_amount_fixed(rounded.amount, places),
             self.currency.code()
         )
+    }
+
+    fn format_amount_fixed(amount: Decimal, places: u8) -> String {
+        if places == 0 {
+            return amount.to_string();
+        }
+
+        let mut s = amount.to_string();
+        let places = places as usize;
+
+        match s.find('.') {
+            Some(dot) => {
+                let fractional_len = s.len().saturating_sub(dot + 1);
+                if fractional_len < places {
+                    s.push_str(&"0".repeat(places - fractional_len));
+                } else if fractional_len > places {
+                    s.truncate(dot + 1 + places);
+                }
+            }
+            None => {
+                s.push('.');
+                s.push_str(&"0".repeat(places));
+            }
+        }
+
+        s
     }
 }
 

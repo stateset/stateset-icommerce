@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * StateSet Commerce CLI - AI-powered commerce operations
+ * StateSet iCommerce CLI - AI-powered commerce operations
  *
  * Usage:
  *   stateset "show me all customers"
@@ -14,7 +14,7 @@ import { runAgentLoop } from '../src/claude-harness.js';
 import { parseArgs } from 'node:util';
 
 const HELP = `
-StateSet Commerce CLI - AI-powered commerce operations
+StateSet iCommerce CLI - AI-powered commerce operations
 
 USAGE:
   stateset [options] "<request>"
@@ -106,7 +106,7 @@ async function main() {
 
   // Show mode indicator
   if (!values.json) {
-    console.log(`\n📦 StateSet Commerce CLI`);
+    console.log(`\n📦 StateSet iCommerce CLI`);
     console.log(`   Database: ${values.db}`);
     console.log(`   Mode: ${values.apply ? '✏️  Write enabled' : '👁️  Preview only'}`);
     if (values.resume) {

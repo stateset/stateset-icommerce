@@ -54,13 +54,10 @@ CREATE TABLE IF NOT EXISTS product_currency_prices (
 CREATE INDEX IF NOT EXISTS idx_product_currency_prices_product ON product_currency_prices(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_currency_prices_currency ON product_currency_prices(currency);
 
--- Add currency column to orders (order currency)
-ALTER TABLE orders ADD COLUMN currency TEXT DEFAULT 'USD';
+-- Orders already include `currency` (see initial schema).
+-- Add additional multi-currency metadata to orders.
 ALTER TABLE orders ADD COLUMN exchange_rate TEXT;  -- Rate at time of order
 ALTER TABLE orders ADD COLUMN base_currency_total TEXT;  -- Total in store's base currency
-
--- Add currency column to carts
-ALTER TABLE carts ADD COLUMN currency TEXT DEFAULT 'USD';
 
 -- Add currency to order items (for multi-currency orders)
 ALTER TABLE order_items ADD COLUMN currency TEXT DEFAULT 'USD';

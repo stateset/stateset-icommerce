@@ -1,4 +1,4 @@
-# StateSet Commerce CLI - Project Guidance
+# StateSet iCommerce CLI - Project Guidance
 
 An AI-powered command-line interface for commerce operations using the Claude Agent SDK.
 

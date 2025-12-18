@@ -1,8 +1,8 @@
 #!/bin/bash
-# StateSet Commerce CLI Installer
+# StateSet iCommerce CLI Installer
 # Usage: curl -fsSL https://stateset.com/install.sh | bash
 #
-# This script installs the StateSet Commerce CLI with AI-powered agents
+# This script installs the StateSet iCommerce CLI with AI-powered agents
 # for orders, inventory, checkout, and returns management.
 
 set -e
@@ -29,7 +29,7 @@ print_banner() {
   ____) | || (_| | ||  __/____) |  __/ |_
  |_____/ \__\__,_|\__\___|_____/ \___|\__|
 
-         Commerce CLI Installer
+         iCommerce CLI Installer
 EOF
     echo -e "${NC}"
 }
@@ -147,7 +147,7 @@ verify_installation() {
     fi
 
     VERSION=$(stateset --version 2>/dev/null || echo "unknown")
-    success "StateSet CLI installed: $VERSION"
+    success "StateSet iCommerce CLI installed: $VERSION"
 }
 
 # Print post-install instructions

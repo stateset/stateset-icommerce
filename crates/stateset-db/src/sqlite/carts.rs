@@ -30,7 +30,7 @@ impl SqliteCartRepository {
 
     fn generate_cart_number() -> String {
         let timestamp = Utc::now().timestamp();
-        let random: u32 = rand::random::<u32>() % 10000;
+        let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
         format!("CART-{}-{:04}", timestamp, random)
     }
 
@@ -854,7 +854,11 @@ impl CartRepository for SqliteCartRepository {
         let conn = self.conn()?;
         let now = Utc::now();
         let order_id = Uuid::new_v4();
-        let order_number = format!("ORD-{}-{:04}", now.timestamp(), rand::random::<u32>() % 10000);
+        let order_number = format!(
+            "ORD-{}-{:04}",
+            now.timestamp(),
+            (Uuid::new_v4().as_u128() % 10000) as u32
+        );
 
         conn.execute(
             "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
@@ -1120,20 +1124,5 @@ fn parse_fulfillment_type(s: &str) -> FulfillmentType {
         "pickup" => FulfillmentType::Pickup,
         "digital" => FulfillmentType::Digital,
         _ => FulfillmentType::Shipping,
-    }
-}
-
-// Simple random number generation
-mod rand {
-    pub fn random<T>() -> T
-    where
-        T: Default,
-        std::num::Wrapping<T>: std::ops::Add<Output = std::num::Wrapping<T>>,
-    {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
-        unsafe { std::mem::transmute_copy(&nanos) }
     }
 }

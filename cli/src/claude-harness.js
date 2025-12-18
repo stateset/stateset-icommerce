@@ -1,5 +1,5 @@
 /**
- * Claude Agent SDK integration for StateSet Commerce CLI
+ * Claude Agent SDK integration for StateSet iCommerce CLI
  * Supports multiple specialized agents with domain-specific tools and prompts
  */
 

@@ -113,6 +113,24 @@ pub struct CartAddress {
     pub email: Option<String>,
 }
 
+impl Default for CartAddress {
+    fn default() -> Self {
+        Self {
+            first_name: String::new(),
+            last_name: String::new(),
+            company: None,
+            line1: String::new(),
+            line2: None,
+            city: String::new(),
+            state: None,
+            postal_code: String::new(),
+            country: String::new(),
+            phone: None,
+            email: None,
+        }
+    }
+}
+
 impl From<CartAddress> for Address {
     fn from(addr: CartAddress) -> Self {
         Address {
