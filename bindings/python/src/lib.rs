@@ -169,6 +169,30 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Get the subscriptions API.
+    #[getter]
+    fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the promotions API.
+    #[getter]
+    fn promotions(&self) -> PromotionsApi {
+        PromotionsApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the tax API.
+    #[getter]
+    fn tax(&self) -> TaxApi {
+        TaxApi {
+            commerce: self.inner.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -5595,6 +5619,2036 @@ impl CurrencyOperations {
 }
 
 // ============================================================================
+// Subscription Types
+// ============================================================================
+
+/// Subscription plan data.
+#[pyclass]
+#[derive(Clone)]
+pub struct SubscriptionPlan {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    billing_interval: String,
+    #[pyo3(get)]
+    billing_interval_count: i32,
+    #[pyo3(get)]
+    price: f64,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    setup_fee: f64,
+    #[pyo3(get)]
+    trial_days: i32,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
+    fn from(p: stateset_core::SubscriptionPlan) -> Self {
+        Self {
+            id: p.id.to_string(),
+            code: p.code,
+            name: p.name,
+            description: p.description,
+            billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
+            billing_interval_count: 1, // Default to 1 since core doesn't have this field
+            price: p.price.try_into().unwrap_or(0.0),
+            currency: p.currency,
+            setup_fee: p.setup_fee.map(|d| d.try_into().unwrap_or(0.0)).unwrap_or(0.0),
+            trial_days: p.trial_days,
+            status: format!("{:?}", p.status).to_lowercase(),
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Subscription data.
+#[pyclass]
+#[derive(Clone)]
+pub struct Subscription {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    subscription_number: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    plan_id: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    current_period_start: String,
+    #[pyo3(get)]
+    current_period_end: String,
+    #[pyo3(get)]
+    trial_ends_at: Option<String>,
+    #[pyo3(get)]
+    cancelled_at: Option<String>,
+    #[pyo3(get)]
+    ends_at: Option<String>,
+    #[pyo3(get)]
+    price: f64,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Subscription> for Subscription {
+    fn from(s: stateset_core::Subscription) -> Self {
+        Self {
+            id: s.id.to_string(),
+            subscription_number: s.subscription_number,
+            customer_id: s.customer_id.to_string(),
+            plan_id: s.plan_id.to_string(),
+            status: format!("{:?}", s.status).to_lowercase(),
+            current_period_start: s.current_period_start.to_rfc3339(),
+            current_period_end: s.current_period_end.to_rfc3339(),
+            trial_ends_at: s.trial_ends_at.map(|d| d.to_rfc3339()),
+            cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
+            ends_at: s.ends_at.map(|d| d.to_rfc3339()),
+            price: s.price.try_into().unwrap_or(0.0),
+            currency: s.currency,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Billing cycle data.
+#[pyclass]
+#[derive(Clone)]
+pub struct BillingCycle {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    cycle_number: i32,
+    #[pyo3(get)]
+    subscription_id: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    period_start: String,
+    #[pyo3(get)]
+    period_end: String,
+    #[pyo3(get)]
+    total: f64,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    payment_id: Option<String>,
+    #[pyo3(get)]
+    invoice_id: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::BillingCycle> for BillingCycle {
+    fn from(c: stateset_core::BillingCycle) -> Self {
+        Self {
+            id: c.id.to_string(),
+            cycle_number: c.cycle_number,
+            subscription_id: c.subscription_id.to_string(),
+            status: format!("{:?}", c.status).to_lowercase(),
+            period_start: c.period_start.to_rfc3339(),
+            period_end: c.period_end.to_rfc3339(),
+            total: c.total.try_into().unwrap_or(0.0),
+            currency: c.currency,
+            payment_id: c.payment_id,
+            invoice_id: c.invoice_id.map(|id| id.to_string()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Subscription event data.
+#[pyclass]
+#[derive(Clone)]
+pub struct SubscriptionEvent {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    subscription_id: String,
+    #[pyo3(get)]
+    event_type: String,
+    #[pyo3(get)]
+    description: String,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::SubscriptionEvent> for SubscriptionEvent {
+    fn from(e: stateset_core::SubscriptionEvent) -> Self {
+        Self {
+            id: e.id.to_string(),
+            subscription_id: e.subscription_id.to_string(),
+            event_type: format!("{:?}", e.event_type).to_lowercase(),
+            description: e.description,
+            created_at: e.created_at.to_rfc3339(),
+        }
+    }
+}
+
+// ============================================================================
+// Subscriptions API
+// ============================================================================
+
+/// Subscriptions API for subscription management.
+#[pyclass]
+pub struct Subscriptions {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+fn parse_billing_interval(s: &str) -> PyResult<stateset_core::BillingInterval> {
+    match s.to_lowercase().as_str() {
+        "weekly" => Ok(stateset_core::BillingInterval::Weekly),
+        "biweekly" => Ok(stateset_core::BillingInterval::Biweekly),
+        "monthly" => Ok(stateset_core::BillingInterval::Monthly),
+        "quarterly" => Ok(stateset_core::BillingInterval::Quarterly),
+        "annual" | "yearly" => Ok(stateset_core::BillingInterval::Annual),
+        _ => Err(PyValueError::new_err(format!("Invalid billing interval: {}", s))),
+    }
+}
+
+#[pymethods]
+impl Subscriptions {
+    // ========================================================================
+    // Subscription Plans
+    // ========================================================================
+
+    /// Create a subscription plan.
+    #[pyo3(signature = (code, name, price, billing_interval=None, billing_interval_count=None, description=None, currency=None, setup_fee=None, trial_days=None))]
+    fn create_plan(
+        &self,
+        code: String,
+        name: String,
+        price: f64,
+        billing_interval: Option<String>,
+        billing_interval_count: Option<i32>,
+        description: Option<String>,
+        currency: Option<String>,
+        setup_fee: Option<f64>,
+        trial_days: Option<i32>,
+    ) -> PyResult<SubscriptionPlan> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let interval = billing_interval.as_deref()
+            .map(parse_billing_interval)
+            .transpose()?
+            .unwrap_or(stateset_core::BillingInterval::Monthly);
+
+        let plan = commerce
+            .subscriptions()
+            .create_plan(stateset_core::CreateSubscriptionPlan {
+                code: Some(code),
+                name,
+                description,
+                billing_interval: interval,
+                custom_interval_days: None,
+                price: Decimal::from_f64_retain(price).ok_or_else(|| PyValueError::new_err("Invalid price"))?,
+                currency: Some(currency.unwrap_or_else(|| "USD".to_string())),
+                setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
+                trial_days: trial_days,
+                ..Default::default()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    /// Get a subscription plan by ID.
+    fn get_plan(&self, id: String) -> PyResult<Option<SubscriptionPlan>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let plan = commerce
+            .subscriptions()
+            .get_plan(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get plan: {}", e)))?;
+
+        Ok(plan.map(|p| p.into()))
+    }
+
+    /// List all subscription plans.
+    #[pyo3(signature = (status=None, billing_interval=None, limit=None, offset=None))]
+    fn list_plans(
+        &self,
+        status: Option<String>,
+        billing_interval: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<SubscriptionPlan>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let interval = billing_interval.as_deref()
+            .map(parse_billing_interval)
+            .transpose()?;
+
+        let plan_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
+            "draft" => stateset_core::PlanStatus::Draft,
+            "active" => stateset_core::PlanStatus::Active,
+            "archived" => stateset_core::PlanStatus::Archived,
+            _ => stateset_core::PlanStatus::Draft,
+        });
+
+        let plans = commerce
+            .subscriptions()
+            .list_plans(stateset_core::SubscriptionPlanFilter {
+                status: plan_status,
+                billing_interval: interval,
+                search: None,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list plans: {}", e)))?;
+
+        Ok(plans.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Activate a subscription plan.
+    fn activate_plan(&self, id: String) -> PyResult<SubscriptionPlan> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let plan = commerce
+            .subscriptions()
+            .activate_plan(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    /// Archive a subscription plan.
+    fn archive_plan(&self, id: String) -> PyResult<SubscriptionPlan> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let plan = commerce
+            .subscriptions()
+            .archive_plan(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to archive plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    // ========================================================================
+    // Subscriptions
+    // ========================================================================
+
+    /// Subscribe a customer to a plan.
+    #[pyo3(signature = (customer_id, plan_id, skip_trial=None, price=None))]
+    fn subscribe(
+        &self,
+        customer_id: String,
+        plan_id: String,
+        skip_trial: Option<bool>,
+        price: Option<f64>,
+    ) -> PyResult<Subscription> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let cust_uuid = customer_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let plan_uuid = plan_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid plan UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .subscribe(stateset_core::CreateSubscription {
+                customer_id: cust_uuid,
+                plan_id: plan_uuid,
+                skip_trial,
+                price: price.and_then(|p| Decimal::from_f64_retain(p)),
+                ..Default::default()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Get a subscription by ID.
+    fn get(&self, id: String) -> PyResult<Option<Subscription>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .get(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get subscription: {}", e)))?;
+
+        Ok(subscription.map(|s| s.into()))
+    }
+
+    /// Get a subscription by number.
+    fn get_by_number(&self, number: String) -> PyResult<Option<Subscription>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .get_by_number(&number)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get subscription: {}", e)))?;
+
+        Ok(subscription.map(|s| s.into()))
+    }
+
+    /// List subscriptions.
+    #[pyo3(signature = (customer_id=None, plan_id=None, status=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        customer_id: Option<String>,
+        plan_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<Subscription>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let cust_uuid = customer_id.map(|id| id.parse()).transpose()
+            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let p_uuid = plan_id.map(|id| id.parse()).transpose()
+            .map_err(|_| PyValueError::new_err("Invalid plan UUID"))?;
+
+        let sub_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
+            "pending" => stateset_core::SubscriptionStatus::Pending,
+            "trial" | "trialing" => stateset_core::SubscriptionStatus::Trial,
+            "active" => stateset_core::SubscriptionStatus::Active,
+            "paused" => stateset_core::SubscriptionStatus::Paused,
+            "past_due" | "pastdue" => stateset_core::SubscriptionStatus::PastDue,
+            "cancelled" | "canceled" => stateset_core::SubscriptionStatus::Cancelled,
+            "expired" => stateset_core::SubscriptionStatus::Expired,
+            _ => stateset_core::SubscriptionStatus::Active,
+        });
+
+        let subscriptions = commerce
+            .subscriptions()
+            .list(stateset_core::SubscriptionFilter {
+                customer_id: cust_uuid,
+                plan_id: p_uuid,
+                status: sub_status,
+                from_date: None,
+                to_date: None,
+                search: None,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list subscriptions: {}", e)))?;
+
+        Ok(subscriptions.into_iter().map(|s| s.into()).collect())
+    }
+
+    /// Pause a subscription.
+    #[pyo3(signature = (id, reason=None))]
+    fn pause(&self, id: String, reason: Option<String>) -> PyResult<Subscription> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .pause(uuid, stateset_core::PauseSubscription {
+                reason,
+                resume_at: None,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to pause subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Resume a paused subscription.
+    fn resume(&self, id: String) -> PyResult<Subscription> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .resume(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to resume subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Cancel a subscription.
+    #[pyo3(signature = (id, immediate=None, reason=None))]
+    fn cancel(&self, id: String, immediate: Option<bool>, reason: Option<String>) -> PyResult<Subscription> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .cancel(uuid, stateset_core::CancelSubscription {
+                immediate,
+                reason: reason.clone(),
+                feedback: None,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to cancel subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Skip the next billing cycle.
+    #[pyo3(signature = (id, reason=None))]
+    fn skip_next_cycle(&self, id: String, reason: Option<String>) -> PyResult<Subscription> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .skip_next_cycle(uuid, stateset_core::SkipBillingCycle { reason })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to skip billing cycle: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    // ========================================================================
+    // Billing Cycles
+    // ========================================================================
+
+    /// List billing cycles.
+    #[pyo3(signature = (subscription_id=None, status=None, limit=None, offset=None))]
+    fn list_billing_cycles(
+        &self,
+        subscription_id: Option<String>,
+        status: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<BillingCycle>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let sub_uuid = subscription_id.map(|id| id.parse()).transpose()
+            .map_err(|_| PyValueError::new_err("Invalid subscription UUID"))?;
+
+        let cycle_status = status.as_deref().map(|s| match s.to_lowercase().as_str() {
+            "scheduled" | "pending" => stateset_core::BillingCycleStatus::Scheduled,
+            "processing" => stateset_core::BillingCycleStatus::Processing,
+            "paid" => stateset_core::BillingCycleStatus::Paid,
+            "failed" => stateset_core::BillingCycleStatus::Failed,
+            "skipped" => stateset_core::BillingCycleStatus::Skipped,
+            "refunded" => stateset_core::BillingCycleStatus::Refunded,
+            "voided" => stateset_core::BillingCycleStatus::Voided,
+            _ => stateset_core::BillingCycleStatus::Scheduled,
+        });
+
+        let cycles = commerce
+            .subscriptions()
+            .list_billing_cycles(stateset_core::BillingCycleFilter {
+                subscription_id: sub_uuid,
+                status: cycle_status,
+                from_date: None,
+                to_date: None,
+                limit,
+                offset,
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list billing cycles: {}", e)))?;
+
+        Ok(cycles.into_iter().map(|c| c.into()).collect())
+    }
+
+    /// Get a billing cycle by ID.
+    fn get_billing_cycle(&self, id: String) -> PyResult<Option<BillingCycle>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let cycle = commerce
+            .subscriptions()
+            .get_billing_cycle(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get billing cycle: {}", e)))?;
+
+        Ok(cycle.map(|c| c.into()))
+    }
+
+    // ========================================================================
+    // Events
+    // ========================================================================
+
+    /// Get events for a subscription.
+    #[pyo3(signature = (subscription_id, limit=None))]
+    fn get_events(&self, subscription_id: String, limit: Option<u32>) -> PyResult<Vec<SubscriptionEvent>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = subscription_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let events = commerce
+            .subscriptions()
+            .get_events(uuid, limit)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get events: {}", e)))?;
+
+        Ok(events.into_iter().map(|e| e.into()).collect())
+    }
+}
+
+// ============================================================================
+// Promotions Types
+// ============================================================================
+
+/// Promotion output
+#[pyclass]
+#[derive(Clone)]
+pub struct Promotion {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    promotion_type: String,
+    #[pyo3(get)]
+    trigger: String,
+    #[pyo3(get)]
+    target: String,
+    #[pyo3(get)]
+    stacking: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    percentage_off: Option<f64>,
+    #[pyo3(get)]
+    fixed_amount_off: Option<f64>,
+    #[pyo3(get)]
+    max_discount_amount: Option<f64>,
+    #[pyo3(get)]
+    buy_quantity: Option<i32>,
+    #[pyo3(get)]
+    get_quantity: Option<i32>,
+    #[pyo3(get)]
+    starts_at: String,
+    #[pyo3(get)]
+    ends_at: Option<String>,
+    #[pyo3(get)]
+    total_usage_limit: Option<i32>,
+    #[pyo3(get)]
+    per_customer_limit: Option<i32>,
+    #[pyo3(get)]
+    usage_count: i32,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    priority: i32,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::Promotion> for Promotion {
+    fn from(p: stateset_core::Promotion) -> Self {
+        Self {
+            id: p.id.to_string(),
+            code: p.code,
+            name: p.name,
+            description: p.description,
+            promotion_type: format!("{:?}", p.promotion_type).to_lowercase(),
+            trigger: format!("{:?}", p.trigger).to_lowercase(),
+            target: format!("{:?}", p.target).to_lowercase(),
+            stacking: format!("{:?}", p.stacking).to_lowercase(),
+            status: format!("{:?}", p.status).to_lowercase(),
+            percentage_off: p.percentage_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            fixed_amount_off: p.fixed_amount_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            max_discount_amount: p.max_discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            buy_quantity: p.buy_quantity,
+            get_quantity: p.get_quantity,
+            starts_at: p.starts_at.to_rfc3339(),
+            ends_at: p.ends_at.map(|d| d.to_rfc3339()),
+            total_usage_limit: p.total_usage_limit,
+            per_customer_limit: p.per_customer_limit,
+            usage_count: p.usage_count,
+            currency: p.currency,
+            priority: p.priority,
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Coupon code output
+#[pyclass]
+#[derive(Clone)]
+pub struct Coupon {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    promotion_id: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    usage_limit: Option<i32>,
+    #[pyo3(get)]
+    per_customer_limit: Option<i32>,
+    #[pyo3(get)]
+    usage_count: i32,
+    #[pyo3(get)]
+    starts_at: Option<String>,
+    #[pyo3(get)]
+    ends_at: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::CouponCode> for Coupon {
+    fn from(c: stateset_core::CouponCode) -> Self {
+        Self {
+            id: c.id.to_string(),
+            promotion_id: c.promotion_id.to_string(),
+            code: c.code,
+            status: format!("{:?}", c.status).to_lowercase(),
+            usage_limit: c.usage_limit,
+            per_customer_limit: c.per_customer_limit,
+            usage_count: c.usage_count,
+            starts_at: c.starts_at.map(|d| d.to_rfc3339()),
+            ends_at: c.ends_at.map(|d| d.to_rfc3339()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Result of applying promotions
+#[pyclass]
+#[derive(Clone)]
+pub struct ApplyPromotionsResult {
+    #[pyo3(get)]
+    original_subtotal: f64,
+    #[pyo3(get)]
+    total_discount: f64,
+    #[pyo3(get)]
+    discounted_subtotal: f64,
+    #[pyo3(get)]
+    original_shipping: f64,
+    #[pyo3(get)]
+    shipping_discount: f64,
+    #[pyo3(get)]
+    final_shipping: f64,
+    #[pyo3(get)]
+    grand_total: f64,
+    #[pyo3(get)]
+    applied_promotions: Vec<AppliedPromotion>,
+}
+
+impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
+    fn from(r: stateset_core::ApplyPromotionsResult) -> Self {
+        Self {
+            original_subtotal: r.original_subtotal.to_string().parse().unwrap_or(0.0),
+            total_discount: r.total_discount.to_string().parse().unwrap_or(0.0),
+            discounted_subtotal: r.discounted_subtotal.to_string().parse().unwrap_or(0.0),
+            original_shipping: r.original_shipping.to_string().parse().unwrap_or(0.0),
+            shipping_discount: r.shipping_discount.to_string().parse().unwrap_or(0.0),
+            final_shipping: r.final_shipping.to_string().parse().unwrap_or(0.0),
+            grand_total: r.grand_total.to_string().parse().unwrap_or(0.0),
+            applied_promotions: r.applied_promotions.into_iter().map(|a| a.into()).collect(),
+        }
+    }
+}
+
+/// An applied promotion
+#[pyclass]
+#[derive(Clone)]
+pub struct AppliedPromotion {
+    #[pyo3(get)]
+    promotion_id: String,
+    #[pyo3(get)]
+    promotion_name: String,
+    #[pyo3(get)]
+    coupon_code: Option<String>,
+    #[pyo3(get)]
+    discount_amount: f64,
+    #[pyo3(get)]
+    discount_type: String,
+}
+
+impl From<stateset_core::AppliedPromotion> for AppliedPromotion {
+    fn from(a: stateset_core::AppliedPromotion) -> Self {
+        Self {
+            promotion_id: a.promotion_id.to_string(),
+            promotion_name: a.promotion_name,
+            coupon_code: a.coupon_code,
+            discount_amount: a.discount_amount.to_string().parse().unwrap_or(0.0),
+            discount_type: format!("{:?}", a.discount_type).to_lowercase(),
+        }
+    }
+}
+
+/// Promotion usage record
+#[pyclass]
+#[derive(Clone)]
+pub struct PromotionUsage {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    promotion_id: String,
+    #[pyo3(get)]
+    coupon_id: Option<String>,
+    #[pyo3(get)]
+    customer_id: Option<String>,
+    #[pyo3(get)]
+    order_id: Option<String>,
+    #[pyo3(get)]
+    cart_id: Option<String>,
+    #[pyo3(get)]
+    discount_amount: f64,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    used_at: String,
+}
+
+impl From<stateset_core::PromotionUsage> for PromotionUsage {
+    fn from(u: stateset_core::PromotionUsage) -> Self {
+        Self {
+            id: u.id.to_string(),
+            promotion_id: u.promotion_id.to_string(),
+            coupon_id: u.coupon_id.map(|id| id.to_string()),
+            customer_id: u.customer_id.map(|id| id.to_string()),
+            order_id: u.order_id.map(|id| id.to_string()),
+            cart_id: u.cart_id.map(|id| id.to_string()),
+            discount_amount: u.discount_amount.to_string().parse().unwrap_or(0.0),
+            currency: u.currency,
+            used_at: u.used_at.to_rfc3339(),
+        }
+    }
+}
+
+// ============================================================================
+// Promotions API
+// ============================================================================
+
+fn parse_promotion_type(s: &str) -> stateset_core::PromotionType {
+    match s.to_lowercase().as_str() {
+        "percentage_off" => stateset_core::PromotionType::PercentageOff,
+        "fixed_amount_off" => stateset_core::PromotionType::FixedAmountOff,
+        "buy_x_get_y" | "bogo" => stateset_core::PromotionType::BuyXGetY,
+        "free_shipping" => stateset_core::PromotionType::FreeShipping,
+        "tiered_discount" => stateset_core::PromotionType::TieredDiscount,
+        "bundle_discount" => stateset_core::PromotionType::BundleDiscount,
+        _ => stateset_core::PromotionType::PercentageOff,
+    }
+}
+
+fn parse_promotion_trigger(s: &str) -> stateset_core::PromotionTrigger {
+    match s.to_lowercase().as_str() {
+        "automatic" => stateset_core::PromotionTrigger::Automatic,
+        "coupon_code" => stateset_core::PromotionTrigger::CouponCode,
+        "both" => stateset_core::PromotionTrigger::Both,
+        _ => stateset_core::PromotionTrigger::Automatic,
+    }
+}
+
+fn parse_promotion_target(s: &str) -> stateset_core::PromotionTarget {
+    match s.to_lowercase().as_str() {
+        "order" => stateset_core::PromotionTarget::Order,
+        "product" => stateset_core::PromotionTarget::Product,
+        "category" => stateset_core::PromotionTarget::Category,
+        "shipping" => stateset_core::PromotionTarget::Shipping,
+        "line_item" => stateset_core::PromotionTarget::LineItem,
+        _ => stateset_core::PromotionTarget::Order,
+    }
+}
+
+fn parse_stacking_behavior(s: &str) -> stateset_core::StackingBehavior {
+    match s.to_lowercase().as_str() {
+        "stackable" => stateset_core::StackingBehavior::Stackable,
+        "exclusive" => stateset_core::StackingBehavior::Exclusive,
+        "selective_stack" => stateset_core::StackingBehavior::SelectiveStack,
+        _ => stateset_core::StackingBehavior::Stackable,
+    }
+}
+
+fn parse_promotion_status(s: &str) -> stateset_core::PromotionStatus {
+    match s.to_lowercase().as_str() {
+        "draft" => stateset_core::PromotionStatus::Draft,
+        "scheduled" => stateset_core::PromotionStatus::Scheduled,
+        "active" => stateset_core::PromotionStatus::Active,
+        "paused" => stateset_core::PromotionStatus::Paused,
+        "expired" => stateset_core::PromotionStatus::Expired,
+        "exhausted" => stateset_core::PromotionStatus::Exhausted,
+        "archived" => stateset_core::PromotionStatus::Archived,
+        _ => stateset_core::PromotionStatus::Draft,
+    }
+}
+
+fn parse_coupon_status(s: &str) -> stateset_core::CouponStatus {
+    match s.to_lowercase().as_str() {
+        "active" => stateset_core::CouponStatus::Active,
+        "disabled" => stateset_core::CouponStatus::Disabled,
+        "exhausted" => stateset_core::CouponStatus::Exhausted,
+        "expired" => stateset_core::CouponStatus::Expired,
+        _ => stateset_core::CouponStatus::Active,
+    }
+}
+
+/// Promotions API for managing discounts and coupon codes
+#[pyclass]
+pub struct PromotionsApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl PromotionsApi {
+    /// Create a new promotion.
+    #[pyo3(signature = (name, promotion_type=None, trigger=None, target=None, stacking=None,
+                        percentage_off=None, fixed_amount_off=None, max_discount_amount=None,
+                        buy_quantity=None, get_quantity=None, starts_at=None, ends_at=None,
+                        total_usage_limit=None, per_customer_limit=None, currency=None, priority=None))]
+    fn create(
+        &self,
+        name: String,
+        promotion_type: Option<String>,
+        trigger: Option<String>,
+        target: Option<String>,
+        stacking: Option<String>,
+        percentage_off: Option<f64>,
+        fixed_amount_off: Option<f64>,
+        max_discount_amount: Option<f64>,
+        buy_quantity: Option<i32>,
+        get_quantity: Option<i32>,
+        starts_at: Option<String>,
+        ends_at: Option<String>,
+        total_usage_limit: Option<i32>,
+        per_customer_limit: Option<i32>,
+        currency: Option<String>,
+        priority: Option<i32>,
+    ) -> PyResult<Promotion> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let create = stateset_core::CreatePromotion {
+            code: None,
+            name,
+            description: None,
+            internal_notes: None,
+            promotion_type: promotion_type.map(|s| parse_promotion_type(&s)).unwrap_or_default(),
+            trigger: trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
+            target: target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
+            stacking: stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
+            percentage_off: percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount_off: fixed_amount_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            max_discount_amount: max_discount_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            buy_quantity,
+            get_quantity,
+            get_discount_percent: None,
+            tiers: None,
+            bundle_product_ids: None,
+            bundle_discount: None,
+            starts_at: starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            ends_at: ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            total_usage_limit,
+            per_customer_limit,
+            conditions: None,
+            applicable_product_ids: None,
+            applicable_category_ids: None,
+            applicable_skus: None,
+            excluded_product_ids: None,
+            excluded_category_ids: None,
+            eligible_customer_ids: None,
+            eligible_customer_groups: None,
+            currency,
+            priority,
+            metadata: None,
+        };
+
+        let promo = commerce.promotions().create(create)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Get a promotion by ID.
+    fn get(&self, id: String) -> PyResult<Option<Promotion>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let promo = commerce.promotions().get(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get promotion: {}", e)))?;
+
+        Ok(promo.map(|p| p.into()))
+    }
+
+    /// Get a promotion by its internal code.
+    fn get_by_code(&self, code: String) -> PyResult<Option<Promotion>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let promo = commerce.promotions().get_by_code(&code)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get promotion: {}", e)))?;
+
+        Ok(promo.map(|p| p.into()))
+    }
+
+    /// List promotions with optional filtering.
+    #[pyo3(signature = (status=None, promotion_type=None, is_active=None, limit=None, offset=None))]
+    fn list(
+        &self,
+        status: Option<String>,
+        promotion_type: Option<String>,
+        is_active: Option<bool>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> PyResult<Vec<Promotion>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let filter = stateset_core::PromotionFilter {
+            status: status.map(|s| parse_promotion_status(&s)),
+            promotion_type: promotion_type.map(|s| parse_promotion_type(&s)),
+            trigger: None,
+            is_active,
+            search: None,
+            limit: limit.map(|v| v as u32),
+            offset: offset.map(|v| v as u32),
+        };
+
+        let promos = commerce.promotions().list(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list promotions: {}", e)))?;
+
+        Ok(promos.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Activate a promotion.
+    fn activate(&self, id: String) -> PyResult<Promotion> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let promo = commerce.promotions().activate(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to activate promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Deactivate (pause) a promotion.
+    fn deactivate(&self, id: String) -> PyResult<Promotion> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let promo = commerce.promotions().deactivate(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to deactivate promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Delete a promotion.
+    fn delete(&self, id: String) -> PyResult<()> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        commerce.promotions().delete(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete promotion: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get all active promotions.
+    fn get_active(&self) -> PyResult<Vec<Promotion>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let promos = commerce.promotions().get_active()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get active promotions: {}", e)))?;
+
+        Ok(promos.into_iter().map(|p| p.into()).collect())
+    }
+
+    // ========================================================================
+    // Coupon Codes
+    // ========================================================================
+
+    /// Create a coupon code for a promotion.
+    #[pyo3(signature = (promotion_id, code, usage_limit=None, per_customer_limit=None, starts_at=None, ends_at=None))]
+    fn create_coupon(
+        &self,
+        promotion_id: String,
+        code: String,
+        usage_limit: Option<i32>,
+        per_customer_limit: Option<i32>,
+        starts_at: Option<String>,
+        ends_at: Option<String>,
+    ) -> PyResult<Coupon> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let promo_uuid = promotion_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
+
+        let create = stateset_core::CreateCouponCode {
+            promotion_id: promo_uuid,
+            code,
+            usage_limit,
+            per_customer_limit,
+            starts_at: starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            ends_at: ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            metadata: None,
+        };
+
+        let coupon = commerce.promotions().create_coupon(create)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create coupon: {}", e)))?;
+
+        Ok(coupon.into())
+    }
+
+    /// Get a coupon by ID.
+    fn get_coupon(&self, id: String) -> PyResult<Option<Coupon>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let coupon = commerce.promotions().get_coupon(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    /// Get a coupon by its code.
+    fn get_coupon_by_code(&self, code: String) -> PyResult<Option<Coupon>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let coupon = commerce.promotions().get_coupon_by_code(&code)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    /// List coupons with optional filtering.
+    #[pyo3(signature = (promotion_id=None, status=None, limit=None, offset=None))]
+    fn list_coupons(
+        &self,
+        promotion_id: Option<String>,
+        status: Option<String>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> PyResult<Vec<Coupon>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let filter = stateset_core::CouponFilter {
+            promotion_id: promotion_id.and_then(|s| s.parse().ok()),
+            status: status.map(|s| parse_coupon_status(&s)),
+            search: None,
+            limit: limit.map(|v| v as u32),
+            offset: offset.map(|v| v as u32),
+        };
+
+        let coupons = commerce.promotions().list_coupons(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list coupons: {}", e)))?;
+
+        Ok(coupons.into_iter().map(|c| c.into()).collect())
+    }
+
+    /// Validate a coupon code.
+    fn validate_coupon(&self, code: String) -> PyResult<Option<Coupon>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let coupon = commerce.promotions().validate_coupon(&code)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to validate coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    // ========================================================================
+    // Apply Promotions
+    // ========================================================================
+
+    /// Apply promotions to cart/order items.
+    #[pyo3(signature = (subtotal, coupon_codes=None, shipping_amount=None, currency=None))]
+    fn apply(
+        &self,
+        subtotal: f64,
+        coupon_codes: Option<Vec<String>>,
+        shipping_amount: Option<f64>,
+        currency: Option<String>,
+    ) -> PyResult<ApplyPromotionsResult> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let request = stateset_core::ApplyPromotionsRequest {
+            cart_id: None,
+            customer_id: None,
+            coupon_codes: coupon_codes.unwrap_or_default(),
+            line_items: vec![],
+            subtotal: Decimal::from_f64_retain(subtotal).unwrap_or_default(),
+            shipping_amount: Decimal::from_f64_retain(shipping_amount.unwrap_or(0.0)).unwrap_or_default(),
+            shipping_country: None,
+            shipping_state: None,
+            currency: currency.unwrap_or_else(|| "USD".to_string()),
+            is_first_order: false,
+        };
+
+        let result = commerce.promotions().apply(request)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply promotions: {}", e)))?;
+
+        Ok(result.into())
+    }
+
+    /// Record promotion usage (after order completion).
+    #[pyo3(signature = (promotion_id, discount_amount, currency, coupon_id=None, customer_id=None, order_id=None, cart_id=None))]
+    fn record_usage(
+        &self,
+        promotion_id: String,
+        discount_amount: f64,
+        currency: String,
+        coupon_id: Option<String>,
+        customer_id: Option<String>,
+        order_id: Option<String>,
+        cart_id: Option<String>,
+    ) -> PyResult<PromotionUsage> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let promo_uuid = promotion_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid promotion UUID"))?;
+
+        let usage = commerce.promotions().record_usage(
+            promo_uuid,
+            coupon_id.and_then(|s| s.parse().ok()),
+            customer_id.and_then(|s| s.parse().ok()),
+            order_id.and_then(|s| s.parse().ok()),
+            cart_id.and_then(|s| s.parse().ok()),
+            Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
+            &currency,
+        ).map_err(|e| PyRuntimeError::new_err(format!("Failed to record usage: {}", e)))?;
+
+        Ok(usage.into())
+    }
+}
+
+// ============================================================================
+// Tax API
+// ============================================================================
+
+/// Tax jurisdiction data.
+#[pyclass]
+#[derive(Clone)]
+pub struct TaxJurisdiction {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    parent_id: Option<String>,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    level: String,
+    #[pyo3(get)]
+    country_code: String,
+    #[pyo3(get)]
+    state_code: Option<String>,
+    #[pyo3(get)]
+    county: Option<String>,
+    #[pyo3(get)]
+    city: Option<String>,
+    #[pyo3(get)]
+    postal_codes: Vec<String>,
+    #[pyo3(get)]
+    active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::TaxJurisdiction> for TaxJurisdiction {
+    fn from(j: stateset_core::TaxJurisdiction) -> Self {
+        Self {
+            id: j.id.to_string(),
+            parent_id: j.parent_id.map(|u| u.to_string()),
+            name: j.name,
+            code: j.code,
+            level: format!("{:?}", j.level).to_lowercase(),
+            country_code: j.country_code,
+            state_code: j.state_code,
+            county: j.county,
+            city: j.city,
+            postal_codes: j.postal_codes,
+            active: j.active,
+            created_at: j.created_at.to_rfc3339(),
+            updated_at: j.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Tax rate data.
+#[pyclass]
+#[derive(Clone)]
+pub struct TaxRate {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    jurisdiction_id: String,
+    #[pyo3(get)]
+    tax_type: String,
+    #[pyo3(get)]
+    product_category: String,
+    #[pyo3(get)]
+    rate: f64,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    description: Option<String>,
+    #[pyo3(get)]
+    is_compound: bool,
+    #[pyo3(get)]
+    priority: i32,
+    #[pyo3(get)]
+    effective_from: String,
+    #[pyo3(get)]
+    effective_to: Option<String>,
+    #[pyo3(get)]
+    active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::TaxRate> for TaxRate {
+    fn from(r: stateset_core::TaxRate) -> Self {
+        Self {
+            id: r.id.to_string(),
+            jurisdiction_id: r.jurisdiction_id.to_string(),
+            tax_type: r.tax_type.as_str().to_string(),
+            product_category: r.product_category.as_str().to_string(),
+            rate: r.rate.to_string().parse().unwrap_or(0.0),
+            name: r.name,
+            description: r.description,
+            is_compound: r.is_compound,
+            priority: r.priority,
+            effective_from: r.effective_from.to_string(),
+            effective_to: r.effective_to.map(|d| d.to_string()),
+            active: r.active,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Tax exemption data.
+#[pyclass]
+#[derive(Clone)]
+pub struct TaxExemption {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    exemption_type: String,
+    #[pyo3(get)]
+    certificate_number: Option<String>,
+    #[pyo3(get)]
+    issuing_authority: Option<String>,
+    #[pyo3(get)]
+    jurisdiction_ids: Vec<String>,
+    #[pyo3(get)]
+    exempt_categories: Vec<String>,
+    #[pyo3(get)]
+    effective_from: String,
+    #[pyo3(get)]
+    expires_at: Option<String>,
+    #[pyo3(get)]
+    verified: bool,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    active: bool,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::TaxExemption> for TaxExemption {
+    fn from(e: stateset_core::TaxExemption) -> Self {
+        Self {
+            id: e.id.to_string(),
+            customer_id: e.customer_id.to_string(),
+            exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
+            certificate_number: e.certificate_number,
+            issuing_authority: e.issuing_authority,
+            jurisdiction_ids: e.jurisdiction_ids.iter().map(|u| u.to_string()).collect(),
+            exempt_categories: e.exempt_categories.iter().map(|c| c.as_str().to_string()).collect(),
+            effective_from: e.effective_from.to_string(),
+            expires_at: e.expires_at.map(|d| d.to_string()),
+            verified: e.verified,
+            notes: e.notes,
+            active: e.active,
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Tax settings data.
+#[pyclass]
+#[derive(Clone)]
+pub struct TaxSettings {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    enabled: bool,
+    #[pyo3(get)]
+    calculation_method: String,
+    #[pyo3(get)]
+    compound_method: String,
+    #[pyo3(get)]
+    tax_shipping: bool,
+    #[pyo3(get)]
+    tax_handling: bool,
+    #[pyo3(get)]
+    tax_gift_wrap: bool,
+    #[pyo3(get)]
+    default_product_category: String,
+    #[pyo3(get)]
+    rounding_mode: String,
+    #[pyo3(get)]
+    decimal_places: i32,
+    #[pyo3(get)]
+    validate_addresses: bool,
+    #[pyo3(get)]
+    tax_provider: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+}
+
+impl From<stateset_core::TaxSettings> for TaxSettings {
+    fn from(s: stateset_core::TaxSettings) -> Self {
+        Self {
+            id: s.id.to_string(),
+            enabled: s.enabled,
+            calculation_method: format!("{:?}", s.calculation_method).to_lowercase(),
+            compound_method: format!("{:?}", s.compound_method).to_lowercase(),
+            tax_shipping: s.tax_shipping,
+            tax_handling: s.tax_handling,
+            tax_gift_wrap: s.tax_gift_wrap,
+            default_product_category: s.default_product_category.as_str().to_string(),
+            rounding_mode: s.rounding_mode,
+            decimal_places: s.decimal_places,
+            validate_addresses: s.validate_addresses,
+            tax_provider: s.tax_provider,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Tax calculation result.
+#[pyclass]
+#[derive(Clone)]
+pub struct TaxCalculationResult {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    total_tax: f64,
+    #[pyo3(get)]
+    subtotal: f64,
+    #[pyo3(get)]
+    total: f64,
+    #[pyo3(get)]
+    shipping_tax: f64,
+    #[pyo3(get)]
+    exemptions_applied: bool,
+    #[pyo3(get)]
+    calculated_at: String,
+    #[pyo3(get)]
+    is_estimate: bool,
+}
+
+impl From<stateset_core::TaxCalculationResult> for TaxCalculationResult {
+    fn from(r: stateset_core::TaxCalculationResult) -> Self {
+        Self {
+            id: r.id.to_string(),
+            total_tax: r.total_tax.to_string().parse().unwrap_or(0.0),
+            subtotal: r.subtotal.to_string().parse().unwrap_or(0.0),
+            total: r.total.to_string().parse().unwrap_or(0.0),
+            shipping_tax: r.shipping_tax.to_string().parse().unwrap_or(0.0),
+            exemptions_applied: r.exemptions_applied,
+            calculated_at: r.calculated_at.to_rfc3339(),
+            is_estimate: r.is_estimate,
+        }
+    }
+}
+
+/// US state tax info.
+#[pyclass]
+#[derive(Clone)]
+pub struct UsStateTaxInfo {
+    #[pyo3(get)]
+    state_code: String,
+    #[pyo3(get)]
+    state_name: String,
+    #[pyo3(get)]
+    state_rate: f64,
+    #[pyo3(get)]
+    has_local_taxes: bool,
+    #[pyo3(get)]
+    origin_based: bool,
+    #[pyo3(get)]
+    tax_shipping: bool,
+    #[pyo3(get)]
+    tax_clothing: bool,
+    #[pyo3(get)]
+    tax_food: bool,
+    #[pyo3(get)]
+    tax_digital: bool,
+}
+
+impl From<stateset_core::UsStateTaxInfo> for UsStateTaxInfo {
+    fn from(i: stateset_core::UsStateTaxInfo) -> Self {
+        Self {
+            state_code: i.state_code,
+            state_name: i.state_name,
+            state_rate: i.state_rate.to_string().parse().unwrap_or(0.0),
+            has_local_taxes: i.has_local_taxes,
+            origin_based: i.origin_based,
+            tax_shipping: i.tax_shipping,
+            tax_clothing: i.tax_clothing,
+            tax_food: i.tax_food,
+            tax_digital: i.tax_digital,
+        }
+    }
+}
+
+/// EU VAT info.
+#[pyclass]
+#[derive(Clone)]
+pub struct EuVatInfo {
+    #[pyo3(get)]
+    country_code: String,
+    #[pyo3(get)]
+    country_name: String,
+    #[pyo3(get)]
+    standard_rate: f64,
+    #[pyo3(get)]
+    reduced_rate: Option<f64>,
+    #[pyo3(get)]
+    super_reduced_rate: Option<f64>,
+    #[pyo3(get)]
+    parking_rate: Option<f64>,
+}
+
+impl From<stateset_core::EuVatInfo> for EuVatInfo {
+    fn from(i: stateset_core::EuVatInfo) -> Self {
+        Self {
+            country_code: i.country_code,
+            country_name: i.country_name,
+            standard_rate: i.standard_rate.to_string().parse().unwrap_or(0.0),
+            reduced_rate: i.reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            super_reduced_rate: i.super_reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            parking_rate: i.parking_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+        }
+    }
+}
+
+/// Canadian tax info.
+#[pyclass]
+#[derive(Clone)]
+pub struct CanadianTaxInfo {
+    #[pyo3(get)]
+    province_code: String,
+    #[pyo3(get)]
+    province_name: String,
+    #[pyo3(get)]
+    gst_rate: f64,
+    #[pyo3(get)]
+    pst_rate: Option<f64>,
+    #[pyo3(get)]
+    hst_rate: Option<f64>,
+    #[pyo3(get)]
+    qst_rate: Option<f64>,
+    #[pyo3(get)]
+    total_rate: f64,
+}
+
+impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfo {
+    fn from(i: stateset_core::CanadianTaxInfo) -> Self {
+        Self {
+            province_code: i.province_code,
+            province_name: i.province_name,
+            gst_rate: i.gst_rate.to_string().parse().unwrap_or(0.0),
+            pst_rate: i.pst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            hst_rate: i.hst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            qst_rate: i.qst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            total_rate: i.total_rate.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+// --- Helper Functions ---
+
+fn parse_tax_type(s: &str) -> stateset_core::TaxType {
+    match s.to_lowercase().as_str() {
+        "sales_tax" => stateset_core::TaxType::SalesTax,
+        "vat" => stateset_core::TaxType::Vat,
+        "gst" => stateset_core::TaxType::Gst,
+        "hst" => stateset_core::TaxType::Hst,
+        "pst" => stateset_core::TaxType::Pst,
+        "qst" => stateset_core::TaxType::Qst,
+        "consumption_tax" => stateset_core::TaxType::ConsumptionTax,
+        "custom" => stateset_core::TaxType::Custom,
+        _ => stateset_core::TaxType::SalesTax,
+    }
+}
+
+fn parse_product_tax_category(s: &str) -> stateset_core::ProductTaxCategory {
+    match s.to_lowercase().as_str() {
+        "standard" => stateset_core::ProductTaxCategory::Standard,
+        "reduced" => stateset_core::ProductTaxCategory::Reduced,
+        "super_reduced" => stateset_core::ProductTaxCategory::SuperReduced,
+        "zero_rated" => stateset_core::ProductTaxCategory::ZeroRated,
+        "exempt" => stateset_core::ProductTaxCategory::Exempt,
+        "digital" => stateset_core::ProductTaxCategory::Digital,
+        "clothing" => stateset_core::ProductTaxCategory::Clothing,
+        "food" => stateset_core::ProductTaxCategory::Food,
+        "prepared_food" => stateset_core::ProductTaxCategory::PreparedFood,
+        "medical" => stateset_core::ProductTaxCategory::Medical,
+        "educational" => stateset_core::ProductTaxCategory::Educational,
+        "luxury" => stateset_core::ProductTaxCategory::Luxury,
+        _ => stateset_core::ProductTaxCategory::Standard,
+    }
+}
+
+fn parse_jurisdiction_level(s: &str) -> stateset_core::JurisdictionLevel {
+    match s.to_lowercase().as_str() {
+        "country" => stateset_core::JurisdictionLevel::Country,
+        "state" => stateset_core::JurisdictionLevel::State,
+        "county" => stateset_core::JurisdictionLevel::County,
+        "city" => stateset_core::JurisdictionLevel::City,
+        "district" => stateset_core::JurisdictionLevel::District,
+        "special" => stateset_core::JurisdictionLevel::Special,
+        _ => stateset_core::JurisdictionLevel::Country,
+    }
+}
+
+fn parse_exemption_type(s: &str) -> stateset_core::ExemptionType {
+    match s.to_lowercase().as_str() {
+        "resale" => stateset_core::ExemptionType::Resale,
+        "non_profit" | "nonprofit" => stateset_core::ExemptionType::NonProfit,
+        "government" => stateset_core::ExemptionType::Government,
+        "educational" => stateset_core::ExemptionType::Educational,
+        "religious" => stateset_core::ExemptionType::Religious,
+        "medical" => stateset_core::ExemptionType::Medical,
+        "manufacturing" => stateset_core::ExemptionType::Manufacturing,
+        "agricultural" => stateset_core::ExemptionType::Agricultural,
+        "export" => stateset_core::ExemptionType::Export,
+        "diplomatic" => stateset_core::ExemptionType::Diplomatic,
+        _ => stateset_core::ExemptionType::Other,
+    }
+}
+
+/// Tax operations API.
+#[pyclass]
+pub struct TaxApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl TaxApi {
+    // ========================================================================
+    // Jurisdiction Operations
+    // ========================================================================
+
+    /// Create a tax jurisdiction.
+    #[pyo3(signature = (name, code, country_code, parent_id=None, level=None, state_code=None, county=None, city=None, postal_codes=None))]
+    fn create_jurisdiction(
+        &self,
+        name: String,
+        code: String,
+        country_code: String,
+        parent_id: Option<String>,
+        level: Option<String>,
+        state_code: Option<String>,
+        county: Option<String>,
+        city: Option<String>,
+        postal_codes: Option<Vec<String>>,
+    ) -> PyResult<TaxJurisdiction> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let create = stateset_core::CreateTaxJurisdiction {
+            parent_id: parent_id.and_then(|s| s.parse().ok()),
+            name,
+            code,
+            level: level.map(|s| parse_jurisdiction_level(&s)).unwrap_or_default(),
+            country_code,
+            state_code,
+            county,
+            city,
+            postal_codes: postal_codes.unwrap_or_default(),
+        };
+
+        let jurisdiction = commerce.tax().create_jurisdiction(create)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.into())
+    }
+
+    /// Get a jurisdiction by ID.
+    fn get_jurisdiction(&self, id: String) -> PyResult<Option<TaxJurisdiction>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let jurisdiction = commerce.tax().get_jurisdiction(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.map(|j| j.into()))
+    }
+
+    /// Get a jurisdiction by code.
+    fn get_jurisdiction_by_code(&self, code: String) -> PyResult<Option<TaxJurisdiction>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let jurisdiction = commerce.tax().get_jurisdiction_by_code(&code)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.map(|j| j.into()))
+    }
+
+    /// List jurisdictions.
+    #[pyo3(signature = (country_code=None, state_code=None, level=None, active_only=None))]
+    fn list_jurisdictions(
+        &self,
+        country_code: Option<String>,
+        state_code: Option<String>,
+        level: Option<String>,
+        active_only: Option<bool>,
+    ) -> PyResult<Vec<TaxJurisdiction>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let filter = stateset_core::TaxJurisdictionFilter {
+            country_code,
+            state_code,
+            level: level.map(|s| parse_jurisdiction_level(&s)),
+            active_only: active_only.unwrap_or(false),
+        };
+
+        let jurisdictions = commerce.tax().list_jurisdictions(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list jurisdictions: {}", e)))?;
+
+        Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
+    }
+
+    // ========================================================================
+    // Tax Rate Operations
+    // ========================================================================
+
+    /// Create a tax rate.
+    #[pyo3(signature = (jurisdiction_id, rate, name, effective_from, tax_type=None, product_category=None, description=None, is_compound=None, priority=None, effective_to=None))]
+    fn create_rate(
+        &self,
+        jurisdiction_id: String,
+        rate: f64,
+        name: String,
+        effective_from: String,
+        tax_type: Option<String>,
+        product_category: Option<String>,
+        description: Option<String>,
+        is_compound: Option<bool>,
+        priority: Option<i32>,
+        effective_to: Option<String>,
+    ) -> PyResult<TaxRate> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let jid = jurisdiction_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid jurisdiction UUID"))?;
+
+        let eff_from = chrono::NaiveDate::parse_from_str(&effective_from, "%Y-%m-%d")
+            .map_err(|e| PyRuntimeError::new_err(format!("Invalid date format: {}", e)))?;
+
+        let create = stateset_core::CreateTaxRate {
+            jurisdiction_id: jid,
+            tax_type: tax_type.map(|s| parse_tax_type(&s)).unwrap_or_default(),
+            product_category: product_category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+            rate: Decimal::from_f64_retain(rate).unwrap_or_default(),
+            name,
+            description,
+            is_compound: is_compound.unwrap_or(false),
+            priority: priority.unwrap_or(0),
+            threshold_min: None,
+            threshold_max: None,
+            fixed_amount: None,
+            effective_from: eff_from,
+            effective_to: effective_to.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        };
+
+        let rate_result = commerce.tax().create_rate(create)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create rate: {}", e)))?;
+
+        Ok(rate_result.into())
+    }
+
+    /// Get a rate by ID.
+    fn get_rate(&self, id: String) -> PyResult<Option<TaxRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let rate = commerce.tax().get_rate(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get rate: {}", e)))?;
+
+        Ok(rate.map(|r| r.into()))
+    }
+
+    /// List tax rates.
+    #[pyo3(signature = (jurisdiction_id=None, tax_type=None, product_category=None, active_only=None))]
+    fn list_rates(
+        &self,
+        jurisdiction_id: Option<String>,
+        tax_type: Option<String>,
+        product_category: Option<String>,
+        active_only: Option<bool>,
+    ) -> PyResult<Vec<TaxRate>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let filter = stateset_core::TaxRateFilter {
+            jurisdiction_id: jurisdiction_id.and_then(|s| s.parse().ok()),
+            tax_type: tax_type.map(|s| parse_tax_type(&s)),
+            product_category: product_category.map(|s| parse_product_tax_category(&s)),
+            active_only: active_only.unwrap_or(false),
+            effective_date: None,
+        };
+
+        let rates = commerce.tax().list_rates(filter)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list rates: {}", e)))?;
+
+        Ok(rates.into_iter().map(|r| r.into()).collect())
+    }
+
+    // ========================================================================
+    // Exemption Operations
+    // ========================================================================
+
+    /// Create a tax exemption.
+    #[pyo3(signature = (customer_id, exemption_type, effective_from, certificate_number=None, issuing_authority=None, jurisdiction_ids=None, exempt_categories=None, expires_at=None, notes=None))]
+    fn create_exemption(
+        &self,
+        customer_id: String,
+        exemption_type: String,
+        effective_from: String,
+        certificate_number: Option<String>,
+        issuing_authority: Option<String>,
+        jurisdiction_ids: Option<Vec<String>>,
+        exempt_categories: Option<Vec<String>>,
+        expires_at: Option<String>,
+        notes: Option<String>,
+    ) -> PyResult<TaxExemption> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let cid = customer_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+
+        let eff_from = chrono::NaiveDate::parse_from_str(&effective_from, "%Y-%m-%d")
+            .map_err(|e| PyRuntimeError::new_err(format!("Invalid date format: {}", e)))?;
+
+        let create = stateset_core::CreateTaxExemption {
+            customer_id: cid,
+            exemption_type: parse_exemption_type(&exemption_type),
+            certificate_number,
+            issuing_authority,
+            jurisdiction_ids: jurisdiction_ids
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|s| s.parse().ok())
+                .collect(),
+            exempt_categories: exempt_categories
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| parse_product_tax_category(&s))
+                .collect(),
+            effective_from: eff_from,
+            expires_at: expires_at.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            notes,
+        };
+
+        let exemption = commerce.tax().create_exemption(create)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create exemption: {}", e)))?;
+
+        Ok(exemption.into())
+    }
+
+    /// Get an exemption by ID.
+    fn get_exemption(&self, id: String) -> PyResult<Option<TaxExemption>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let exemption = commerce.tax().get_exemption(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get exemption: {}", e)))?;
+
+        Ok(exemption.map(|e| e.into()))
+    }
+
+    /// Get exemptions for a customer.
+    fn get_customer_exemptions(&self, customer_id: String) -> PyResult<Vec<TaxExemption>> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let exemptions = commerce.tax().get_customer_exemptions(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get exemptions: {}", e)))?;
+
+        Ok(exemptions.into_iter().map(|e| e.into()).collect())
+    }
+
+    /// Check if a customer is tax exempt.
+    fn customer_is_exempt(&self, customer_id: String) -> PyResult<bool> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let is_exempt = commerce.tax().customer_is_exempt(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to check exemption: {}", e)))?;
+
+        Ok(is_exempt)
+    }
+
+    // ========================================================================
+    // Settings Operations
+    // ========================================================================
+
+    /// Get tax settings.
+    fn get_settings(&self) -> PyResult<TaxSettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let settings = commerce.tax().get_settings()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Enable or disable tax calculation.
+    fn set_enabled(&self, enabled: bool) -> PyResult<TaxSettings> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let settings = commerce.tax().set_enabled(enabled)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Check if tax calculation is enabled.
+    fn is_enabled(&self) -> PyResult<bool> {
+        let commerce = self.commerce.lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let enabled = commerce.tax().is_enabled()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to check settings: {}", e)))?;
+
+        Ok(enabled)
+    }
+
+    // ========================================================================
+    // Helper Methods
+    // ========================================================================
+
+    /// Get US state tax information.
+    #[staticmethod]
+    fn get_us_state_info(state_code: String) -> Option<UsStateTaxInfo> {
+        stateset_core::get_us_state_tax_info(&state_code).map(|i| i.into())
+    }
+
+    /// Get EU VAT information.
+    #[staticmethod]
+    fn get_eu_vat_info(country_code: String) -> Option<EuVatInfo> {
+        stateset_core::get_eu_vat_info(&country_code).map(|i| i.into())
+    }
+
+    /// Get Canadian tax information.
+    #[staticmethod]
+    fn get_canadian_tax_info(province_code: String) -> Option<CanadianTaxInfo> {
+        stateset_core::get_canadian_tax_info(&province_code).map(|i| i.into())
+    }
+
+    /// Check if a country is in the EU.
+    #[staticmethod]
+    fn is_eu_country(country_code: String) -> bool {
+        stateset_core::is_eu_member(&country_code)
+    }
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
@@ -5695,6 +7749,32 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ConversionResult>()?;
     m.add_class::<StoreCurrencySettings>()?;
     m.add_class::<SetExchangeRateInput>()?;
+
+    // Subscriptions
+    m.add_class::<Subscriptions>()?;
+    m.add_class::<SubscriptionPlan>()?;
+    m.add_class::<Subscription>()?;
+    m.add_class::<BillingCycle>()?;
+    m.add_class::<SubscriptionEvent>()?;
+
+    // Promotions
+    m.add_class::<PromotionsApi>()?;
+    m.add_class::<Promotion>()?;
+    m.add_class::<Coupon>()?;
+    m.add_class::<ApplyPromotionsResult>()?;
+    m.add_class::<AppliedPromotion>()?;
+    m.add_class::<PromotionUsage>()?;
+
+    // Tax
+    m.add_class::<TaxApi>()?;
+    m.add_class::<TaxJurisdiction>()?;
+    m.add_class::<TaxRate>()?;
+    m.add_class::<TaxExemption>()?;
+    m.add_class::<TaxSettings>()?;
+    m.add_class::<TaxCalculationResult>()?;
+    m.add_class::<UsStateTaxInfo>()?;
+    m.add_class::<EuVatInfo>()?;
+    m.add_class::<CanadianTaxInfo>()?;
 
     Ok(())
 }

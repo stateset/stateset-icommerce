@@ -34,7 +34,16 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       'get_top_customers', 'get_inventory_health', 'get_low_stock_items',
       'get_demand_forecast', 'get_revenue_forecast', 'get_order_status_breakdown',
       'get_return_metrics', 'get_exchange_rate', 'list_exchange_rates',
-      'convert_currency', 'get_currency_settings', 'format_currency'
+      'convert_currency', 'get_currency_settings', 'format_currency',
+      // Tax tools
+      'calculate_tax', 'get_tax_rate', 'list_tax_jurisdictions', 'list_tax_rates',
+      'get_tax_settings', 'get_us_state_tax_info', 'get_customer_tax_exemptions',
+      'calculate_cart_tax',
+      // Promotions tools (read-only)
+      'list_promotions', 'get_promotion', 'validate_coupon', 'list_coupons', 'get_active_promotions',
+      // Subscriptions tools (read-only)
+      'list_subscription_plans', 'get_subscription_plan', 'list_subscriptions', 'get_subscription',
+      'list_billing_cycles', 'get_billing_cycle', 'get_subscription_events'
     ];
     return readOnlyTools.includes(toolName);
   };
@@ -2351,6 +2360,1443 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
         }
+      ),
+
+      // ============================================================================
+      // Tax Calculation Tools
+      // ============================================================================
+      tool(
+        'calculate_tax',
+        'Calculate tax for a transaction based on shipping address and line items. Supports US sales tax, EU VAT, and Canadian GST/HST/PST.',
+        {
+          items: z.array(z.object({
+            id: z.string().describe('Line item identifier'),
+            unitPrice: z.number().describe('Unit price per item'),
+            quantity: z.number().describe('Quantity of items'),
+            taxCategory: z.string().optional().default('standard').describe('Tax category: standard, reduced, exempt, digital, food, clothing, medical')
+          })).describe('Line items to calculate tax for'),
+          shippingAddress: z.object({
+            country: z.string().describe('Country code (e.g., US, DE, CA)'),
+            state: z.string().optional().describe('State/Province code (e.g., CA, TX, ON)'),
+            city: z.string().optional().describe('City name'),
+            postalCode: z.string().optional().describe('Postal/ZIP code')
+          }).describe('Shipping address for tax jurisdiction determination'),
+          shippingAmount: z.number().optional().describe('Shipping amount (may be taxable)'),
+          customerId: z.string().optional().describe('Customer ID for exemption lookup')
+        },
+        async ({ items, shippingAddress, shippingAmount, customerId }) => {
+          try {
+            const result = await commerce.tax.calculate({
+              lineItems: items.map(item => ({
+                id: item.id,
+                unitPrice: item.unitPrice,
+                quantity: item.quantity,
+                discountAmount: 0,
+                taxCategory: item.taxCategory || 'standard'
+              })),
+              shippingAddress: {
+                country: shippingAddress.country,
+                state: shippingAddress.state,
+                city: shippingAddress.city,
+                postalCode: shippingAddress.postalCode
+              },
+              shippingAmount,
+              customerId
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  calculation: {
+                    subtotal: result.subtotal,
+                    totalTax: result.totalTax,
+                    shippingTax: result.shippingTax,
+                    total: result.total,
+                    exemptionsApplied: result.exemptionsApplied,
+                    taxBreakdown: result.taxBreakdown.map(b => ({
+                      jurisdictionName: b.jurisdictionName,
+                      taxType: b.taxType,
+                      rateName: b.rateName,
+                      rate: b.rate,
+                      taxableAmount: b.taxableAmount,
+                      taxAmount: b.taxAmount
+                    })),
+                    lineItemTaxes: result.lineItemTaxes.map(lit => ({
+                      lineItemId: lit.lineItemId,
+                      taxableAmount: lit.taxableAmount,
+                      taxAmount: lit.taxAmount,
+                      effectiveRate: lit.effectiveRate,
+                      isExempt: lit.isExempt
+                    }))
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_tax_rate',
+        'Get the effective tax rate for a shipping address and product category.',
+        {
+          country: z.string().describe('Country code (e.g., US, DE, CA)'),
+          state: z.string().optional().describe('State/Province code (e.g., CA, TX, ON)'),
+          city: z.string().optional().describe('City name'),
+          taxCategory: z.string().optional().default('standard').describe('Product tax category: standard, reduced, exempt, digital, food, clothing, medical')
+        },
+        async ({ country, state, city, taxCategory }) => {
+          try {
+            const rate = await commerce.tax.getEffectiveRate(
+              { country, state, city },
+              taxCategory || 'standard'
+            );
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  address: { country, state, city },
+                  taxCategory: taxCategory || 'standard',
+                  effectiveRate: rate,
+                  effectiveRatePercent: (rate * 100).toFixed(2) + '%'
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_tax_jurisdictions',
+        'List tax jurisdictions with optional filtering by country or level.',
+        {
+          countryCode: z.string().optional().describe('Filter by country code (e.g., US, DE, CA)'),
+          level: z.string().optional().describe('Filter by level: country, state, county, city, district')
+        },
+        async ({ countryCode, level }) => {
+          try {
+            const jurisdictions = await commerce.tax.listJurisdictions({
+              countryCode,
+              level,
+              activeOnly: true
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: jurisdictions.length,
+                  jurisdictions: jurisdictions.map(j => ({
+                    id: j.id,
+                    code: j.code,
+                    name: j.name,
+                    level: j.level,
+                    countryCode: j.countryCode,
+                    stateCode: j.stateCode
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_tax_rates',
+        'List tax rates for a jurisdiction or all active rates.',
+        {
+          jurisdictionId: z.string().optional().describe('Filter by jurisdiction ID'),
+          taxType: z.string().optional().describe('Filter by tax type: sales_tax, vat, gst, hst, pst, qst'),
+          productCategory: z.string().optional().describe('Filter by product category: standard, reduced, exempt, digital')
+        },
+        async ({ jurisdictionId, taxType, productCategory }) => {
+          try {
+            const rates = await commerce.tax.listRates({
+              jurisdictionId,
+              taxType,
+              productCategory,
+              activeOnly: true
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: rates.length,
+                  rates: rates.map(r => ({
+                    id: r.id,
+                    jurisdictionId: r.jurisdictionId,
+                    taxType: r.taxType,
+                    productCategory: r.productCategory,
+                    rate: r.rate,
+                    ratePercent: (r.rate * 100).toFixed(2) + '%',
+                    name: r.name,
+                    isCompound: r.isCompound,
+                    effectiveFrom: r.effectiveFrom
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_tax_settings',
+        'Get the store tax calculation settings.',
+        {},
+        async () => {
+          try {
+            const settings = await commerce.tax.getSettings();
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  settings: {
+                    enabled: settings.enabled,
+                    calculationMethod: settings.calculationMethod,
+                    compoundMethod: settings.compoundMethod,
+                    taxShipping: settings.taxShipping,
+                    taxHandling: settings.taxHandling,
+                    defaultProductCategory: settings.defaultProductCategory,
+                    roundingMode: settings.roundingMode,
+                    decimalPlaces: settings.decimalPlaces,
+                    taxProvider: settings.taxProvider
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_us_state_tax_info',
+        'Get pre-configured US state sales tax information including rates and rules.',
+        {
+          stateCode: z.string().describe('US state code (e.g., CA, TX, NY)')
+        },
+        async ({ stateCode }) => {
+          try {
+            // This is a static lookup, doesn't need commerce instance
+            const info = {
+              'CA': { stateCode: 'CA', stateName: 'California', stateRate: 0.0725, hasLocalTaxes: true, originBased: true, taxShipping: false, taxClothing: true, taxFood: false },
+              'TX': { stateCode: 'TX', stateName: 'Texas', stateRate: 0.0625, hasLocalTaxes: true, originBased: true, taxShipping: true, taxClothing: true, taxFood: false },
+              'NY': { stateCode: 'NY', stateName: 'New York', stateRate: 0.04, hasLocalTaxes: true, originBased: false, taxShipping: true, taxClothing: false, taxFood: false },
+              'FL': { stateCode: 'FL', stateName: 'Florida', stateRate: 0.06, hasLocalTaxes: true, originBased: false, taxShipping: true, taxClothing: true, taxFood: false },
+              'WA': { stateCode: 'WA', stateName: 'Washington', stateRate: 0.065, hasLocalTaxes: true, originBased: false, taxShipping: true, taxClothing: true, taxFood: false },
+              'OR': { stateCode: 'OR', stateName: 'Oregon', stateRate: 0, hasLocalTaxes: false, originBased: false, taxShipping: false, taxClothing: false, taxFood: false },
+              'DE': { stateCode: 'DE', stateName: 'Delaware', stateRate: 0, hasLocalTaxes: false, originBased: false, taxShipping: false, taxClothing: false, taxFood: false },
+              'MT': { stateCode: 'MT', stateName: 'Montana', stateRate: 0, hasLocalTaxes: false, originBased: false, taxShipping: false, taxClothing: false, taxFood: false },
+              'NH': { stateCode: 'NH', stateName: 'New Hampshire', stateRate: 0, hasLocalTaxes: false, originBased: false, taxShipping: false, taxClothing: false, taxFood: false },
+              'AK': { stateCode: 'AK', stateName: 'Alaska', stateRate: 0, hasLocalTaxes: true, originBased: false, taxShipping: false, taxClothing: false, taxFood: false }
+            };
+            const stateInfo = info[stateCode.toUpperCase()];
+            if (!stateInfo) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: false,
+                    error: `State ${stateCode} not found. Try: CA, TX, NY, FL, WA, OR, DE, MT, NH, AK`
+                  }, null, 2)
+                }]
+              };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  stateInfo: {
+                    ...stateInfo,
+                    stateRatePercent: (stateInfo.stateRate * 100).toFixed(2) + '%'
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_customer_tax_exemptions',
+        'Get active tax exemptions for a customer.',
+        {
+          customerId: z.string().describe('Customer ID')
+        },
+        async ({ customerId }) => {
+          try {
+            const exemptions = await commerce.tax.getCustomerExemptions(customerId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: exemptions.length,
+                  exemptions: exemptions.map(e => ({
+                    id: e.id,
+                    exemptionType: e.exemptionType,
+                    certificateNumber: e.certificateNumber,
+                    issuingAuthority: e.issuingAuthority,
+                    effectiveFrom: e.effectiveFrom,
+                    expiresAt: e.expiresAt,
+                    verified: e.verified
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_tax_exemption',
+        'Create a tax exemption certificate for a customer.',
+        {
+          customerId: z.string().describe('Customer ID'),
+          exemptionType: z.string().describe('Type: resale, non_profit, government, educational, religious, medical, manufacturing, agricultural, export, diplomatic'),
+          certificateNumber: z.string().optional().describe('Exemption certificate number'),
+          issuingAuthority: z.string().optional().describe('Issuing authority (e.g., state name)'),
+          expiresAt: z.string().optional().describe('Expiration date (YYYY-MM-DD)')
+        },
+        async ({ customerId, exemptionType, certificateNumber, issuingAuthority, expiresAt }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Write operations require --apply flag. Would create tax exemption for customer.',
+                  preview: { customerId, exemptionType, certificateNumber, issuingAuthority }
+                }, null, 2)
+              }]
+            };
+          }
+          try {
+            const today = new Date().toISOString().split('T')[0];
+            const exemption = await commerce.tax.createExemption({
+              customerId,
+              exemptionType,
+              certificateNumber,
+              issuingAuthority,
+              effectiveFrom: today,
+              expiresAt: expiresAt || null,
+              jurisdictionIds: [],
+              exemptCategories: []
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Tax exemption created for customer`,
+                  exemption: {
+                    id: exemption.id,
+                    customerId: exemption.customerId,
+                    exemptionType: exemption.exemptionType,
+                    certificateNumber: exemption.certificateNumber,
+                    effectiveFrom: exemption.effectiveFrom
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Cart Tax Calculation (Checkout Integration)
+      // ============================================================================
+      tool(
+        'calculate_cart_tax',
+        'Calculate and apply tax to a cart based on its shipping address. Must set shipping address first. Returns tax breakdown and updates cart totals.',
+        {
+          cartId: z.string().describe('Cart ID to calculate tax for')
+        },
+        async ({ cartId }) => {
+          try {
+            const result = await commerce.calculateCartTax(cartId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  cartId,
+                  tax: {
+                    subtotal: result.subtotal,
+                    totalTax: result.totalTax,
+                    total: result.total,
+                    taxInclusive: result.taxInclusive,
+                    breakdown: result.taxBreakdown?.map(b => ({
+                      jurisdiction: b.jurisdictionName,
+                      rate: `${(b.rate * 100).toFixed(2)}%`,
+                      taxAmount: b.taxAmount
+                    })) || []
+                  },
+                  lineItems: result.lineItemTaxes?.map(item => ({
+                    id: item.lineItemId,
+                    subtotal: item.subtotal,
+                    taxAmount: item.taxAmount,
+                    total: item.total
+                  })) || []
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Promotions & Discounts Tools
+      // ============================================================================
+      tool(
+        'list_promotions',
+        'List all promotions. Shows active, paused, and scheduled promotions with their discount details.',
+        {
+          status: z.enum(['active', 'paused', 'draft', 'expired', 'scheduled']).optional().describe('Filter by promotion status'),
+          type: z.enum(['percentage_off', 'fixed_amount_off', 'buy_x_get_y', 'free_shipping', 'tiered_discount']).optional().describe('Filter by promotion type')
+        },
+        async ({ status, type }) => {
+          try {
+            const filter = {};
+            if (status) filter.status = status;
+            if (type) filter.promotionType = type;
+
+            const promotions = await commerce.promotions().list(filter);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: promotions.length,
+                  promotions: promotions.map(p => ({
+                    id: p.id,
+                    code: p.code,
+                    name: p.name,
+                    type: p.promotionType,
+                    status: p.status,
+                    trigger: p.trigger,
+                    percentageOff: p.percentageOff,
+                    fixedAmountOff: p.fixedAmountOff,
+                    startsAt: p.startsAt,
+                    endsAt: p.endsAt,
+                    usageCount: p.usageCount
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_promotion',
+        'Get a promotion by ID or internal code.',
+        {
+          identifier: z.string().describe('Promotion ID (UUID) or internal code')
+        },
+        async ({ identifier }) => {
+          try {
+            let promotion;
+            // Try as UUID first, then as code
+            try {
+              promotion = await commerce.promotions().get(identifier);
+            } catch {
+              promotion = await commerce.promotions().getByCode(identifier);
+            }
+
+            if (!promotion) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Promotion not found' }) }] };
+            }
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  promotion: {
+                    id: promotion.id,
+                    code: promotion.code,
+                    name: promotion.name,
+                    description: promotion.description,
+                    type: promotion.promotionType,
+                    status: promotion.status,
+                    trigger: promotion.trigger,
+                    target: promotion.target,
+                    percentageOff: promotion.percentageOff,
+                    fixedAmountOff: promotion.fixedAmountOff,
+                    maxDiscount: promotion.maxDiscountAmount,
+                    startsAt: promotion.startsAt,
+                    endsAt: promotion.endsAt,
+                    usageCount: promotion.usageCount,
+                    usageLimit: promotion.totalUsageLimit,
+                    conditions: promotion.conditions
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_promotion',
+        'Create a new promotion. Supports percentage off, fixed amount off, BOGO, free shipping, and tiered discounts.',
+        {
+          name: z.string().describe('Promotion name (e.g., "Summer Sale")'),
+          type: z.enum(['percentage_off', 'fixed_amount_off', 'buy_x_get_y', 'free_shipping', 'tiered_discount']).describe('Type of discount'),
+          trigger: z.enum(['automatic', 'coupon_code', 'both']).default('automatic').describe('How the promotion is triggered'),
+          percentageOff: z.number().min(0).max(1).optional().describe('Percentage discount (0.20 = 20% off)'),
+          fixedAmountOff: z.number().optional().describe('Fixed amount discount in dollars'),
+          maxDiscountAmount: z.number().optional().describe('Maximum discount cap'),
+          description: z.string().optional().describe('Public description'),
+          startsAt: z.string().optional().describe('Start date (ISO 8601)'),
+          endsAt: z.string().optional().describe('End date (ISO 8601)')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Create operation not allowed. The --apply flag must be set to create promotions.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldCreate: args
+                })
+              }]
+            };
+          }
+
+          try {
+            // Map type to enum
+            const typeMap = {
+              'percentage_off': 'PercentageOff',
+              'fixed_amount_off': 'FixedAmountOff',
+              'buy_x_get_y': 'BuyXGetY',
+              'free_shipping': 'FreeShipping',
+              'tiered_discount': 'TieredDiscount'
+            };
+
+            const triggerMap = {
+              'automatic': 'Automatic',
+              'coupon_code': 'CouponCode',
+              'both': 'Both'
+            };
+
+            const promotion = await commerce.promotions().create({
+              name: args.name,
+              description: args.description,
+              promotionType: typeMap[args.type],
+              trigger: triggerMap[args.trigger],
+              target: 'Order',
+              stacking: 'Stackable',
+              percentageOff: args.percentageOff,
+              fixedAmountOff: args.fixedAmountOff,
+              maxDiscountAmount: args.maxDiscountAmount,
+              startsAt: args.startsAt ? new Date(args.startsAt) : null,
+              endsAt: args.endsAt ? new Date(args.endsAt) : null,
+              priority: 1
+            });
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Promotion created successfully (status: draft)',
+                  hint: 'Use activate_promotion to make it live',
+                  promotion: {
+                    id: promotion.id,
+                    code: promotion.code,
+                    name: promotion.name,
+                    type: promotion.promotionType,
+                    status: promotion.status
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'activate_promotion',
+        'Activate a promotion to make it available for use.',
+        {
+          promotionId: z.string().describe('Promotion ID to activate')
+        },
+        async ({ promotionId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Activate operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldActivate: promotionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const promotion = await commerce.promotions().activate(promotionId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Promotion activated',
+                  promotion: {
+                    id: promotion.id,
+                    name: promotion.name,
+                    status: promotion.status
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'deactivate_promotion',
+        'Pause/deactivate a promotion.',
+        {
+          promotionId: z.string().describe('Promotion ID to deactivate')
+        },
+        async ({ promotionId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Deactivate operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldDeactivate: promotionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const promotion = await commerce.promotions().deactivate(promotionId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Promotion deactivated',
+                  promotion: {
+                    id: promotion.id,
+                    name: promotion.name,
+                    status: promotion.status
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_coupon',
+        'Create a coupon code for a promotion.',
+        {
+          promotionId: z.string().describe('Promotion ID to create coupon for'),
+          code: z.string().describe('Coupon code (e.g., "SUMMER25")'),
+          usageLimit: z.number().optional().describe('Maximum number of times this coupon can be used'),
+          perCustomerLimit: z.number().optional().describe('Max uses per customer'),
+          startsAt: z.string().optional().describe('Coupon valid from (ISO 8601)'),
+          endsAt: z.string().optional().describe('Coupon valid until (ISO 8601)')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Create operation not allowed. The --apply flag must be set to create coupons.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldCreate: args
+                })
+              }]
+            };
+          }
+
+          try {
+            const coupon = await commerce.promotions().createCoupon({
+              promotionId: args.promotionId,
+              code: args.code.toUpperCase(),
+              usageLimit: args.usageLimit,
+              perCustomerLimit: args.perCustomerLimit,
+              startsAt: args.startsAt ? new Date(args.startsAt) : null,
+              endsAt: args.endsAt ? new Date(args.endsAt) : null
+            });
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Coupon code created',
+                  coupon: {
+                    id: coupon.id,
+                    code: coupon.code,
+                    promotionId: coupon.promotionId,
+                    usageLimit: coupon.usageLimit,
+                    usageCount: coupon.usageCount,
+                    status: coupon.status
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'validate_coupon',
+        'Check if a coupon code is valid and can be used.',
+        {
+          code: z.string().describe('Coupon code to validate')
+        },
+        async ({ code }) => {
+          try {
+            const coupon = await commerce.promotions().validateCoupon(code.toUpperCase());
+
+            if (!coupon) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    valid: false,
+                    message: 'Invalid or expired coupon code'
+                  }, null, 2)
+                }]
+              };
+            }
+
+            // Get the promotion to show discount details
+            const promotion = await commerce.promotions().get(coupon.promotionId);
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  valid: true,
+                  coupon: {
+                    code: coupon.code,
+                    promotionName: promotion?.name,
+                    discountType: promotion?.promotionType,
+                    percentageOff: promotion?.percentageOff,
+                    fixedAmountOff: promotion?.fixedAmountOff,
+                    usageRemaining: coupon.usageLimit ? coupon.usageLimit - coupon.usageCount : 'unlimited'
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_coupons',
+        'List coupon codes with optional filters.',
+        {
+          promotionId: z.string().optional().describe('Filter by promotion ID'),
+          status: z.enum(['active', 'expired', 'depleted', 'disabled']).optional().describe('Filter by status')
+        },
+        async ({ promotionId, status }) => {
+          try {
+            const filter = {};
+            if (promotionId) filter.promotionId = promotionId;
+            if (status) filter.status = status;
+
+            const coupons = await commerce.promotions().listCoupons(filter);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: coupons.length,
+                  coupons: coupons.map(c => ({
+                    id: c.id,
+                    code: c.code,
+                    promotionId: c.promotionId,
+                    status: c.status,
+                    usageCount: c.usageCount,
+                    usageLimit: c.usageLimit,
+                    startsAt: c.startsAt,
+                    endsAt: c.endsAt
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_active_promotions',
+        'Get all currently active promotions.',
+        {},
+        async () => {
+          try {
+            const promotions = await commerce.promotions().getActive();
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: promotions.length,
+                  promotions: promotions.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    code: p.code,
+                    type: p.promotionType,
+                    trigger: p.trigger,
+                    percentageOff: p.percentageOff,
+                    fixedAmountOff: p.fixedAmountOff,
+                    endsAt: p.endsAt
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'apply_cart_promotions',
+        'Calculate and apply all applicable promotions to a cart. Uses coupon codes on the cart and automatic promotions.',
+        {
+          cartId: z.string().describe('Cart ID to apply promotions to')
+        },
+        async ({ cartId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Apply operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldApplyTo: cartId
+                })
+              }]
+            };
+          }
+
+          try {
+            const result = await commerce.applyCartPromotions(cartId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  cartId,
+                  originalSubtotal: result.originalSubtotal,
+                  totalDiscount: result.totalDiscount,
+                  discountedSubtotal: result.discountedSubtotal,
+                  shippingDiscount: result.shippingDiscount,
+                  grandTotal: result.grandTotal,
+                  appliedPromotions: result.appliedPromotions.map(p => ({
+                    name: p.promotionName,
+                    type: p.discountType,
+                    discountAmount: p.discountAmount,
+                    description: p.description,
+                    couponCode: p.couponCode
+                  })),
+                  rejectedPromotions: result.rejectedPromotions?.map(p => ({
+                    name: p.promotionName,
+                    reason: p.rejectionReason
+                  })) || []
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Subscription Tools
+      // ============================================================================
+
+      tool(
+        'list_subscription_plans',
+        'List all subscription plans. Filter by status (draft, active, archived) or billing interval.',
+        {
+          status: z.enum(['draft', 'active', 'archived']).optional().describe('Filter by plan status'),
+          billingInterval: z.enum(['weekly', 'biweekly', 'monthly', 'bimonthly', 'quarterly', 'semiannual', 'annual']).optional().describe('Filter by billing interval')
+        },
+        async ({ status, billingInterval }) => {
+          try {
+            const plans = await commerce.listSubscriptionPlans({ status, billingInterval });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: plans.length,
+                  plans: plans.map(p => ({
+                    id: p.id,
+                    code: p.code,
+                    name: p.name,
+                    status: p.status,
+                    billingInterval: p.billingInterval,
+                    price: p.price,
+                    currency: p.currency,
+                    trialDays: p.trialDays
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_subscription_plan',
+        'Get details for a specific subscription plan.',
+        {
+          planId: z.string().describe('Plan ID or code')
+        },
+        async ({ planId }) => {
+          try {
+            const plan = await commerce.getSubscriptionPlan(planId);
+            if (!plan) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Plan not found' }) }] };
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(plan, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_subscription_plan',
+        'Create a new subscription plan. Requires --apply flag.',
+        {
+          name: z.string().describe('Plan name'),
+          billingInterval: z.enum(['weekly', 'biweekly', 'monthly', 'bimonthly', 'quarterly', 'semiannual', 'annual']).describe('Billing interval'),
+          price: z.number().describe('Price per billing cycle'),
+          currency: z.string().optional().describe('Currency code (default: USD)'),
+          trialDays: z.number().optional().describe('Trial period in days'),
+          description: z.string().optional().describe('Plan description'),
+          setupFee: z.number().optional().describe('One-time setup fee')
+        },
+        async ({ name, billingInterval, price, currency, trialDays, description, setupFee }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Create operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldCreate: { name, billingInterval, price }
+                })
+              }]
+            };
+          }
+
+          try {
+            const plan = await commerce.createSubscriptionPlan({
+              name,
+              billingInterval,
+              price: price.toString(),
+              currency,
+              trialDays,
+              description,
+              setupFee: setupFee?.toString()
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Created subscription plan "${plan.name}"`,
+                  plan
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'activate_subscription_plan',
+        'Activate a subscription plan (make it available for new subscriptions). Requires --apply flag.',
+        {
+          planId: z.string().describe('Plan ID to activate')
+        },
+        async ({ planId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Activate operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldActivate: planId
+                })
+              }]
+            };
+          }
+
+          try {
+            const plan = await commerce.activateSubscriptionPlan(planId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Plan "${plan.name}" activated`,
+                  plan
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'archive_subscription_plan',
+        'Archive a subscription plan (no new subscriptions, existing ones continue). Requires --apply flag.',
+        {
+          planId: z.string().describe('Plan ID to archive')
+        },
+        async ({ planId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Archive operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldArchive: planId
+                })
+              }]
+            };
+          }
+
+          try {
+            const plan = await commerce.archiveSubscriptionPlan(planId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Plan "${plan.name}" archived`,
+                  plan
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_subscriptions',
+        'List subscriptions. Filter by customer, plan, or status.',
+        {
+          customerId: z.string().optional().describe('Filter by customer ID'),
+          planId: z.string().optional().describe('Filter by plan ID'),
+          status: z.enum(['trial', 'active', 'paused', 'past_due', 'cancelled', 'expired', 'pending']).optional().describe('Filter by status')
+        },
+        async ({ customerId, planId, status }) => {
+          try {
+            const subscriptions = await commerce.listSubscriptions({ customerId, planId, status });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: subscriptions.length,
+                  subscriptions: subscriptions.map(s => ({
+                    id: s.id,
+                    subscriptionNumber: s.subscriptionNumber,
+                    customerId: s.customerId,
+                    planName: s.planName,
+                    status: s.status,
+                    price: s.price,
+                    currency: s.currency,
+                    nextBillingDate: s.nextBillingDate,
+                    billingCycleCount: s.billingCycleCount
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_subscription',
+        'Get details for a specific subscription.',
+        {
+          subscriptionId: z.string().describe('Subscription ID or number')
+        },
+        async ({ subscriptionId }) => {
+          try {
+            const subscription = await commerce.getSubscription(subscriptionId);
+            if (!subscription) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Subscription not found' }) }] };
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(subscription, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_subscription',
+        'Create a new subscription for a customer. Requires --apply flag.',
+        {
+          customerId: z.string().describe('Customer ID'),
+          planId: z.string().describe('Plan ID'),
+          paymentMethodId: z.string().optional().describe('Payment method ID from payment provider'),
+          skipTrial: z.boolean().optional().describe('Skip trial period'),
+          couponCode: z.string().optional().describe('Coupon code to apply')
+        },
+        async ({ customerId, planId, paymentMethodId, skipTrial, couponCode }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Subscribe operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldSubscribe: { customerId, planId }
+                })
+              }]
+            };
+          }
+
+          try {
+            const subscription = await commerce.createSubscription({
+              customerId,
+              planId,
+              paymentMethodId,
+              skipTrial,
+              couponCode
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Created subscription ${subscription.subscriptionNumber}`,
+                  subscription
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'pause_subscription',
+        'Pause a subscription (stops billing, can resume later). Requires --apply flag.',
+        {
+          subscriptionId: z.string().describe('Subscription ID'),
+          resumeAt: z.string().optional().describe('ISO date when to auto-resume'),
+          reason: z.string().optional().describe('Reason for pausing')
+        },
+        async ({ subscriptionId, resumeAt, reason }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Pause operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldPause: subscriptionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const subscription = await commerce.pauseSubscription(subscriptionId, {
+              resumeAt: resumeAt ? new Date(resumeAt).toISOString() : undefined,
+              reason
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Subscription ${subscription.subscriptionNumber} paused`,
+                  subscription
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'resume_subscription',
+        'Resume a paused subscription. Requires --apply flag.',
+        {
+          subscriptionId: z.string().describe('Subscription ID')
+        },
+        async ({ subscriptionId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Resume operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldResume: subscriptionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const subscription = await commerce.resumeSubscription(subscriptionId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Subscription ${subscription.subscriptionNumber} resumed`,
+                  subscription
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'cancel_subscription',
+        'Cancel a subscription. By default cancels at end of period. Requires --apply flag.',
+        {
+          subscriptionId: z.string().describe('Subscription ID'),
+          immediate: z.boolean().optional().describe('Cancel immediately (default: false, cancels at period end)'),
+          reason: z.string().optional().describe('Reason for cancellation')
+        },
+        async ({ subscriptionId, immediate, reason }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Cancel operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldCancel: subscriptionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const subscription = await commerce.cancelSubscription(subscriptionId, {
+              immediate,
+              reason
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: immediate
+                    ? `Subscription ${subscription.subscriptionNumber} cancelled immediately`
+                    : `Subscription ${subscription.subscriptionNumber} will cancel at period end`,
+                  subscription
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'skip_billing_cycle',
+        'Skip the next billing cycle for a subscription. Requires --apply flag.',
+        {
+          subscriptionId: z.string().describe('Subscription ID'),
+          reason: z.string().optional().describe('Reason for skipping')
+        },
+        async ({ subscriptionId, reason }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Skip operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldSkip: subscriptionId
+                })
+              }]
+            };
+          }
+
+          try {
+            const subscription = await commerce.skipBillingCycle(subscriptionId, { reason });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Next billing cycle skipped for ${subscription.subscriptionNumber}`,
+                  nextBillingDate: subscription.nextBillingDate,
+                  subscription
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_billing_cycles',
+        'List billing cycles for a subscription.',
+        {
+          subscriptionId: z.string().describe('Subscription ID'),
+          status: z.enum(['scheduled', 'processing', 'paid', 'failed', 'skipped', 'refunded', 'voided']).optional().describe('Filter by status')
+        },
+        async ({ subscriptionId, status }) => {
+          try {
+            const cycles = await commerce.listBillingCycles({ subscriptionId, status });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: cycles.length,
+                  cycles: cycles.map(c => ({
+                    id: c.id,
+                    cycleNumber: c.cycleNumber,
+                    status: c.status,
+                    periodStart: c.periodStart,
+                    periodEnd: c.periodEnd,
+                    total: c.total,
+                    currency: c.currency,
+                    billedAt: c.billedAt
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_billing_cycle',
+        'Get details for a specific billing cycle.',
+        {
+          cycleId: z.string().describe('Billing cycle ID')
+        },
+        async ({ cycleId }) => {
+          try {
+            const cycle = await commerce.getBillingCycle(cycleId);
+            if (!cycle) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Billing cycle not found' }) }] };
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(cycle, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_subscription_events',
+        'Get event history (audit log) for a subscription.',
+        {
+          subscriptionId: z.string().describe('Subscription ID'),
+          limit: z.number().optional().describe('Maximum events to return')
+        },
+        async ({ subscriptionId, limit }) => {
+          try {
+            const events = await commerce.getSubscriptionEvents(subscriptionId, limit);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: events.length,
+                  events: events.map(e => ({
+                    id: e.id,
+                    eventType: e.eventType,
+                    description: e.description,
+                    triggeredBy: e.triggeredBy,
+                    createdAt: e.createdAt
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
       )
     ]
   });
@@ -2420,5 +3866,42 @@ export const TOOL_NAMES = [
   'mcp__stateset-commerce__get_currency_settings',
   'mcp__stateset-commerce__set_base_currency',
   'mcp__stateset-commerce__enable_currencies',
-  'mcp__stateset-commerce__format_currency'
+  'mcp__stateset-commerce__format_currency',
+  // Tax
+  'mcp__stateset-commerce__calculate_tax',
+  'mcp__stateset-commerce__get_tax_rate',
+  'mcp__stateset-commerce__list_tax_jurisdictions',
+  'mcp__stateset-commerce__list_tax_rates',
+  'mcp__stateset-commerce__get_tax_settings',
+  'mcp__stateset-commerce__get_us_state_tax_info',
+  'mcp__stateset-commerce__get_customer_tax_exemptions',
+  'mcp__stateset-commerce__create_tax_exemption',
+  'mcp__stateset-commerce__calculate_cart_tax',
+  // Promotions & Discounts
+  'mcp__stateset-commerce__list_promotions',
+  'mcp__stateset-commerce__get_promotion',
+  'mcp__stateset-commerce__create_promotion',
+  'mcp__stateset-commerce__activate_promotion',
+  'mcp__stateset-commerce__deactivate_promotion',
+  'mcp__stateset-commerce__create_coupon',
+  'mcp__stateset-commerce__validate_coupon',
+  'mcp__stateset-commerce__list_coupons',
+  'mcp__stateset-commerce__get_active_promotions',
+  'mcp__stateset-commerce__apply_cart_promotions',
+  // Subscriptions
+  'mcp__stateset-commerce__list_subscription_plans',
+  'mcp__stateset-commerce__get_subscription_plan',
+  'mcp__stateset-commerce__create_subscription_plan',
+  'mcp__stateset-commerce__activate_subscription_plan',
+  'mcp__stateset-commerce__archive_subscription_plan',
+  'mcp__stateset-commerce__list_subscriptions',
+  'mcp__stateset-commerce__get_subscription',
+  'mcp__stateset-commerce__create_subscription',
+  'mcp__stateset-commerce__pause_subscription',
+  'mcp__stateset-commerce__resume_subscription',
+  'mcp__stateset-commerce__cancel_subscription',
+  'mcp__stateset-commerce__skip_billing_cycle',
+  'mcp__stateset-commerce__list_billing_cycles',
+  'mcp__stateset-commerce__get_billing_cycle',
+  'mcp__stateset-commerce__get_subscription_events'
 ];

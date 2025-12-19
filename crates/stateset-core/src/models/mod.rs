@@ -10,9 +10,12 @@ pub mod manufacturing;
 pub mod order;
 pub mod payment;
 pub mod product;
+pub mod promotion;
 pub mod purchase_order;
 pub mod returns;
 pub mod shipment;
+pub mod subscription;
+pub mod tax;
 pub mod warranty;
 
 pub use analytics::*;
@@ -25,9 +28,12 @@ pub use manufacturing::*;
 pub use order::*;
 pub use payment::*;
 pub use product::*;
+pub use promotion::*;
 pub use purchase_order::*;
 pub use returns::*;
 pub use shipment::*;
+pub use subscription::*;
+pub use tax::*;
 pub use warranty::*;
 
 /// Common ID type alias

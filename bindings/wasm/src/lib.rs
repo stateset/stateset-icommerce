@@ -62,6 +62,20 @@ struct Store {
     // Carts
     carts: HashMap<Uuid, CartData>,
     cart_items: HashMap<Uuid, Vec<CartItemData>>,
+    // Subscriptions
+    subscription_plans: HashMap<Uuid, SubscriptionPlanData>,
+    subscriptions: HashMap<Uuid, SubscriptionData>,
+    billing_cycles: HashMap<Uuid, BillingCycleData>,
+    subscription_events: HashMap<Uuid, Vec<SubscriptionEventData>>,
+    // Promotions
+    promotions: HashMap<Uuid, PromotionData>,
+    coupons: HashMap<Uuid, CouponData>,
+    promotion_usages: Vec<PromotionUsageData>,
+    // Tax
+    tax_jurisdictions: HashMap<Uuid, TaxJurisdictionData>,
+    tax_rates: HashMap<Uuid, TaxRateData>,
+    tax_exemptions: HashMap<Uuid, TaxExemptionData>,
+    tax_settings: Option<TaxSettingsData>,
     // Counters
     next_inventory_id: i64,
     next_order_number: u64,
@@ -75,6 +89,10 @@ struct Store {
     next_bom_number: u64,
     next_work_order_number: u64,
     next_cart_number: u64,
+    next_plan_number: u64,
+    next_subscription_number: u64,
+    next_billing_cycle_number: u64,
+    next_promotion_code_number: u64,
 }
 
 type StoreRef = Rc<RefCell<Store>>;
@@ -385,6 +403,125 @@ struct CartAddressData {
     state: Option<String>,
     phone: Option<String>,
     email: Option<String>,
+}
+
+// Subscription data types
+#[derive(Clone)]
+struct SubscriptionPlanData {
+    id: Uuid,
+    code: String,
+    name: String,
+    description: Option<String>,
+    billing_interval: String,
+    billing_interval_count: i32,
+    price: f64,
+    currency: String,
+    setup_fee: f64,
+    trial_days: i32,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct SubscriptionData {
+    id: Uuid,
+    subscription_number: String,
+    customer_id: Uuid,
+    plan_id: Uuid,
+    status: String,
+    current_period_start: String,
+    current_period_end: String,
+    trial_start: Option<String>,
+    trial_end: Option<String>,
+    cancelled_at: Option<String>,
+    cancel_at_period_end: bool,
+    pause_start: Option<String>,
+    pause_end: Option<String>,
+    price: f64,
+    currency: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct BillingCycleData {
+    id: Uuid,
+    cycle_number: String,
+    subscription_id: Uuid,
+    status: String,
+    period_start: String,
+    period_end: String,
+    amount: f64,
+    currency: String,
+    payment_id: Option<Uuid>,
+    invoice_id: Option<Uuid>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct SubscriptionEventData {
+    id: Uuid,
+    subscription_id: Uuid,
+    event_type: String,
+    description: String,
+    created_at: String,
+}
+
+#[derive(Clone)]
+struct PromotionData {
+    id: Uuid,
+    code: String,
+    name: String,
+    description: Option<String>,
+    promotion_type: String,
+    trigger: String,
+    target: String,
+    stacking: String,
+    status: String,
+    percentage_off: Option<f64>,
+    fixed_amount_off: Option<f64>,
+    max_discount_amount: Option<f64>,
+    buy_quantity: Option<i32>,
+    get_quantity: Option<i32>,
+    starts_at: String,
+    ends_at: Option<String>,
+    total_usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    usage_count: i32,
+    currency: String,
+    priority: i32,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct CouponData {
+    id: Uuid,
+    promotion_id: Uuid,
+    code: String,
+    status: String,
+    usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    usage_count: i32,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct PromotionUsageData {
+    id: Uuid,
+    promotion_id: Uuid,
+    coupon_id: Option<Uuid>,
+    customer_id: Option<Uuid>,
+    order_id: Option<Uuid>,
+    cart_id: Option<Uuid>,
+    discount_amount: f64,
+    currency: String,
+    used_at: String,
 }
 
 // ============================================================================
@@ -985,6 +1122,294 @@ struct JsCart {
     expires_at: Option<String>,
 }
 
+// Subscription JS types
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsSubscriptionPlan {
+    id: String,
+    code: String,
+    name: String,
+    description: Option<String>,
+    billing_interval: String,
+    billing_interval_count: i32,
+    price: f64,
+    currency: String,
+    setup_fee: f64,
+    trial_days: i32,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&SubscriptionPlanData> for JsSubscriptionPlan {
+    fn from(data: &SubscriptionPlanData) -> Self {
+        JsSubscriptionPlan {
+            id: data.id.to_string(),
+            code: data.code.clone(),
+            name: data.name.clone(),
+            description: data.description.clone(),
+            billing_interval: data.billing_interval.clone(),
+            billing_interval_count: data.billing_interval_count,
+            price: data.price,
+            currency: data.currency.clone(),
+            setup_fee: data.setup_fee,
+            trial_days: data.trial_days,
+            status: data.status.clone(),
+            created_at: data.created_at.clone(),
+            updated_at: data.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsSubscription {
+    id: String,
+    subscription_number: String,
+    customer_id: String,
+    plan_id: String,
+    status: String,
+    current_period_start: String,
+    current_period_end: String,
+    trial_start: Option<String>,
+    trial_end: Option<String>,
+    cancelled_at: Option<String>,
+    cancel_at_period_end: bool,
+    pause_start: Option<String>,
+    pause_end: Option<String>,
+    price: f64,
+    currency: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&SubscriptionData> for JsSubscription {
+    fn from(data: &SubscriptionData) -> Self {
+        JsSubscription {
+            id: data.id.to_string(),
+            subscription_number: data.subscription_number.clone(),
+            customer_id: data.customer_id.to_string(),
+            plan_id: data.plan_id.to_string(),
+            status: data.status.clone(),
+            current_period_start: data.current_period_start.clone(),
+            current_period_end: data.current_period_end.clone(),
+            trial_start: data.trial_start.clone(),
+            trial_end: data.trial_end.clone(),
+            cancelled_at: data.cancelled_at.clone(),
+            cancel_at_period_end: data.cancel_at_period_end,
+            pause_start: data.pause_start.clone(),
+            pause_end: data.pause_end.clone(),
+            price: data.price,
+            currency: data.currency.clone(),
+            created_at: data.created_at.clone(),
+            updated_at: data.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsBillingCycle {
+    id: String,
+    cycle_number: String,
+    subscription_id: String,
+    status: String,
+    period_start: String,
+    period_end: String,
+    amount: f64,
+    currency: String,
+    payment_id: Option<String>,
+    invoice_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&BillingCycleData> for JsBillingCycle {
+    fn from(data: &BillingCycleData) -> Self {
+        JsBillingCycle {
+            id: data.id.to_string(),
+            cycle_number: data.cycle_number.clone(),
+            subscription_id: data.subscription_id.to_string(),
+            status: data.status.clone(),
+            period_start: data.period_start.clone(),
+            period_end: data.period_end.clone(),
+            amount: data.amount,
+            currency: data.currency.clone(),
+            payment_id: data.payment_id.map(|id| id.to_string()),
+            invoice_id: data.invoice_id.map(|id| id.to_string()),
+            created_at: data.created_at.clone(),
+            updated_at: data.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsSubscriptionEvent {
+    id: String,
+    subscription_id: String,
+    event_type: String,
+    description: String,
+    created_at: String,
+}
+
+impl From<&SubscriptionEventData> for JsSubscriptionEvent {
+    fn from(data: &SubscriptionEventData) -> Self {
+        JsSubscriptionEvent {
+            id: data.id.to_string(),
+            subscription_id: data.subscription_id.to_string(),
+            event_type: data.event_type.clone(),
+            description: data.description.clone(),
+            created_at: data.created_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPromotion {
+    id: String,
+    code: String,
+    name: String,
+    description: Option<String>,
+    promotion_type: String,
+    trigger: String,
+    target: String,
+    stacking: String,
+    status: String,
+    percentage_off: Option<f64>,
+    fixed_amount_off: Option<f64>,
+    max_discount_amount: Option<f64>,
+    buy_quantity: Option<i32>,
+    get_quantity: Option<i32>,
+    starts_at: String,
+    ends_at: Option<String>,
+    total_usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    usage_count: i32,
+    currency: String,
+    priority: i32,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&PromotionData> for JsPromotion {
+    fn from(data: &PromotionData) -> Self {
+        JsPromotion {
+            id: data.id.to_string(),
+            code: data.code.clone(),
+            name: data.name.clone(),
+            description: data.description.clone(),
+            promotion_type: data.promotion_type.clone(),
+            trigger: data.trigger.clone(),
+            target: data.target.clone(),
+            stacking: data.stacking.clone(),
+            status: data.status.clone(),
+            percentage_off: data.percentage_off,
+            fixed_amount_off: data.fixed_amount_off,
+            max_discount_amount: data.max_discount_amount,
+            buy_quantity: data.buy_quantity,
+            get_quantity: data.get_quantity,
+            starts_at: data.starts_at.clone(),
+            ends_at: data.ends_at.clone(),
+            total_usage_limit: data.total_usage_limit,
+            per_customer_limit: data.per_customer_limit,
+            usage_count: data.usage_count,
+            currency: data.currency.clone(),
+            priority: data.priority,
+            created_at: data.created_at.clone(),
+            updated_at: data.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsCoupon {
+    id: String,
+    promotion_id: String,
+    code: String,
+    status: String,
+    usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    usage_count: i32,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&CouponData> for JsCoupon {
+    fn from(data: &CouponData) -> Self {
+        JsCoupon {
+            id: data.id.to_string(),
+            promotion_id: data.promotion_id.to_string(),
+            code: data.code.clone(),
+            status: data.status.clone(),
+            usage_limit: data.usage_limit,
+            per_customer_limit: data.per_customer_limit,
+            usage_count: data.usage_count,
+            starts_at: data.starts_at.clone(),
+            ends_at: data.ends_at.clone(),
+            created_at: data.created_at.clone(),
+            updated_at: data.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPromotionUsage {
+    id: String,
+    promotion_id: String,
+    coupon_id: Option<String>,
+    customer_id: Option<String>,
+    order_id: Option<String>,
+    cart_id: Option<String>,
+    discount_amount: f64,
+    currency: String,
+    used_at: String,
+}
+
+impl From<&PromotionUsageData> for JsPromotionUsage {
+    fn from(data: &PromotionUsageData) -> Self {
+        JsPromotionUsage {
+            id: data.id.to_string(),
+            promotion_id: data.promotion_id.to_string(),
+            coupon_id: data.coupon_id.map(|id| id.to_string()),
+            customer_id: data.customer_id.map(|id| id.to_string()),
+            order_id: data.order_id.map(|id| id.to_string()),
+            cart_id: data.cart_id.map(|id| id.to_string()),
+            discount_amount: data.discount_amount,
+            currency: data.currency.clone(),
+            used_at: data.used_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsApplyPromotionsResult {
+    original_subtotal: f64,
+    total_discount: f64,
+    discounted_subtotal: f64,
+    original_shipping: f64,
+    shipping_discount: f64,
+    final_shipping: f64,
+    grand_total: f64,
+    applied_promotions: Vec<JsAppliedPromotion>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsAppliedPromotion {
+    promotion_id: String,
+    promotion_name: String,
+    coupon_code: Option<String>,
+    discount_amount: f64,
+    discount_type: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsCheckoutResult {
@@ -1190,6 +1615,67 @@ struct SetCartPaymentInput {
     payment_token: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatePromotionInput {
+    code: Option<String>,
+    name: String,
+    description: Option<String>,
+    promotion_type: Option<String>,
+    trigger: Option<String>,
+    target: Option<String>,
+    stacking: Option<String>,
+    percentage_off: Option<f64>,
+    fixed_amount_off: Option<f64>,
+    max_discount_amount: Option<f64>,
+    buy_quantity: Option<i32>,
+    get_quantity: Option<i32>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    total_usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    currency: Option<String>,
+    priority: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePromotionInput {
+    name: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    percentage_off: Option<f64>,
+    fixed_amount_off: Option<f64>,
+    max_discount_amount: Option<f64>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+    total_usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    priority: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCouponInput {
+    promotion_id: String,
+    code: String,
+    usage_limit: Option<i32>,
+    per_customer_limit: Option<i32>,
+    starts_at: Option<String>,
+    ends_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyPromotionsInput {
+    cart_id: Option<String>,
+    customer_id: Option<String>,
+    coupon_codes: Option<Vec<String>>,
+    subtotal: f64,
+    shipping_amount: Option<f64>,
+    currency: Option<String>,
+}
+
 // ============================================================================
 // Commerce - Main Entry Point
 // ============================================================================
@@ -1311,6 +1797,30 @@ impl Commerce {
     #[wasm_bindgen(getter)]
     pub fn carts(&self) -> Carts {
         Carts {
+            store: Rc::clone(&self.store),
+        }
+    }
+
+    /// Get the subscriptions API.
+    #[wasm_bindgen(getter)]
+    pub fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            store: Rc::clone(&self.store),
+        }
+    }
+
+    /// Get the promotions API.
+    #[wasm_bindgen(getter)]
+    pub fn promotions(&self) -> Promotions {
+        Promotions {
+            store: Rc::clone(&self.store),
+        }
+    }
+
+    /// Get the tax API.
+    #[wasm_bindgen(getter)]
+    pub fn tax(&self) -> Tax {
+        Tax {
             store: Rc::clone(&self.store),
         }
     }
@@ -3441,5 +3951,2142 @@ impl Carts {
         store.cart_items.remove(&uuid);
 
         Ok(())
+    }
+}
+
+// ============================================================================
+// Subscriptions API
+// ============================================================================
+
+#[wasm_bindgen]
+pub struct Subscriptions {
+    store: StoreRef,
+}
+
+#[wasm_bindgen]
+impl Subscriptions {
+    // ========================================================================
+    // Subscription Plans
+    // ========================================================================
+
+    /// Create a subscription plan.
+    #[wasm_bindgen(js_name = createPlan)]
+    pub fn create_plan(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CreatePlanInput {
+            code: String,
+            name: String,
+            description: Option<String>,
+            billing_interval: Option<String>,
+            billing_interval_count: Option<i32>,
+            price: f64,
+            currency: Option<String>,
+            setup_fee: Option<f64>,
+            trial_days: Option<i32>,
+        }
+
+        let input: CreatePlanInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&format!("Invalid input: {}", e)))?;
+
+        let now = Utc::now().to_rfc3339();
+        let mut store = self.store.borrow_mut();
+
+        let id = Uuid::new_v4();
+        let plan = SubscriptionPlanData {
+            id,
+            code: input.code,
+            name: input.name,
+            description: input.description,
+            billing_interval: input.billing_interval.unwrap_or_else(|| "monthly".to_string()),
+            billing_interval_count: input.billing_interval_count.unwrap_or(1),
+            price: input.price,
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            setup_fee: input.setup_fee.unwrap_or(0.0),
+            trial_days: input.trial_days.unwrap_or(0),
+            status: "draft".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let js_plan: JsSubscriptionPlan = (&plan).into();
+        store.subscription_plans.insert(id, plan);
+
+        serde_wasm_bindgen::to_value(&js_plan).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a subscription plan by ID.
+    #[wasm_bindgen(js_name = getPlan)]
+    pub fn get_plan(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        match store.subscription_plans.get(&uuid) {
+            Some(plan) => {
+                let js_plan: JsSubscriptionPlan = plan.into();
+                serde_wasm_bindgen::to_value(&js_plan).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List all subscription plans.
+    #[wasm_bindgen(js_name = listPlans)]
+    pub fn list_plans(&self) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let plans: Vec<JsSubscriptionPlan> = store
+            .subscription_plans
+            .values()
+            .map(|p| p.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&plans).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Activate a subscription plan.
+    #[wasm_bindgen(js_name = activatePlan)]
+    pub fn activate_plan(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let plan = store
+            .subscription_plans
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Plan not found"))?;
+
+        plan.status = "active".to_string();
+        plan.updated_at = Utc::now().to_rfc3339();
+
+        let js_plan: JsSubscriptionPlan = (&*plan).into();
+        serde_wasm_bindgen::to_value(&js_plan).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Archive a subscription plan.
+    #[wasm_bindgen(js_name = archivePlan)]
+    pub fn archive_plan(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let plan = store
+            .subscription_plans
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Plan not found"))?;
+
+        plan.status = "archived".to_string();
+        plan.updated_at = Utc::now().to_rfc3339();
+
+        let js_plan: JsSubscriptionPlan = (&*plan).into();
+        serde_wasm_bindgen::to_value(&js_plan).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    // ========================================================================
+    // Subscriptions
+    // ========================================================================
+
+    /// Subscribe a customer to a plan.
+    pub fn subscribe(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SubscribeInput {
+            customer_id: String,
+            plan_id: String,
+            skip_trial: Option<bool>,
+            price: Option<f64>,
+        }
+
+        let input: SubscribeInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&format!("Invalid input: {}", e)))?;
+
+        let customer_id = Uuid::parse_str(&input.customer_id)
+            .map_err(|_| JsValue::from_str("Invalid customer UUID"))?;
+        let plan_id = Uuid::parse_str(&input.plan_id)
+            .map_err(|_| JsValue::from_str("Invalid plan UUID"))?;
+
+        let mut store = self.store.borrow_mut();
+
+        // Verify plan exists
+        let plan = store
+            .subscription_plans
+            .get(&plan_id)
+            .ok_or_else(|| JsValue::from_str("Plan not found"))?
+            .clone();
+
+        let now = Utc::now();
+        let skip_trial = input.skip_trial.unwrap_or(false);
+        let trial_days = if skip_trial { 0 } else { plan.trial_days };
+
+        // Calculate periods
+        let (status, trial_start, trial_end, period_start, period_end) = if trial_days > 0 {
+            let trial_end_dt = now + chrono::Duration::days(trial_days as i64);
+            (
+                "trialing".to_string(),
+                Some(now.to_rfc3339()),
+                Some(trial_end_dt.to_rfc3339()),
+                trial_end_dt.to_rfc3339(),
+                (trial_end_dt + chrono::Duration::days(30)).to_rfc3339(),
+            )
+        } else {
+            let period_end_dt = now + chrono::Duration::days(30);
+            (
+                "active".to_string(),
+                None,
+                None,
+                now.to_rfc3339(),
+                period_end_dt.to_rfc3339(),
+            )
+        };
+
+        let id = Uuid::new_v4();
+        store.next_subscription_number += 1;
+        let subscription_number = format!("SUB-{:06}", store.next_subscription_number);
+
+        let subscription = SubscriptionData {
+            id,
+            subscription_number,
+            customer_id,
+            plan_id,
+            status,
+            current_period_start: period_start,
+            current_period_end: period_end,
+            trial_start,
+            trial_end,
+            cancelled_at: None,
+            cancel_at_period_end: false,
+            pause_start: None,
+            pause_end: None,
+            price: input.price.unwrap_or(plan.price),
+            currency: plan.currency,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        // Add creation event
+        let event = SubscriptionEventData {
+            id: Uuid::new_v4(),
+            subscription_id: id,
+            event_type: "created".to_string(),
+            description: "Subscription created".to_string(),
+            created_at: now.to_rfc3339(),
+        };
+
+        let js_sub: JsSubscription = (&subscription).into();
+        store.subscriptions.insert(id, subscription);
+        store.subscription_events.entry(id).or_default().push(event);
+
+        serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a subscription by ID.
+    pub fn get(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        match store.subscriptions.get(&uuid) {
+            Some(sub) => {
+                let js_sub: JsSubscription = sub.into();
+                serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List all subscriptions.
+    pub fn list(&self) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let subs: Vec<JsSubscription> = store.subscriptions.values().map(|s| s.into()).collect();
+
+        serde_wasm_bindgen::to_value(&subs).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Pause a subscription.
+    pub fn pause(&self, id: &str, reason: Option<String>) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let sub = store
+            .subscriptions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
+
+        if sub.status != "active" && sub.status != "trialing" {
+            return Err(JsValue::from_str("Subscription cannot be paused in current state"));
+        }
+
+        let now = Utc::now();
+        sub.status = "paused".to_string();
+        sub.pause_start = Some(now.to_rfc3339());
+        sub.updated_at = now.to_rfc3339();
+
+        // Add pause event
+        let event = SubscriptionEventData {
+            id: Uuid::new_v4(),
+            subscription_id: uuid,
+            event_type: "paused".to_string(),
+            description: reason.map(|r| format!("Paused: {}", r)).unwrap_or_else(|| "Paused by customer".to_string()),
+            created_at: now.to_rfc3339(),
+        };
+
+        let js_sub: JsSubscription = (&*sub).into();
+        store.subscription_events.entry(uuid).or_default().push(event);
+
+        serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Resume a paused subscription.
+    pub fn resume(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let sub = store
+            .subscriptions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
+
+        if sub.status != "paused" {
+            return Err(JsValue::from_str("Subscription is not paused"));
+        }
+
+        let now = Utc::now();
+        sub.status = "active".to_string();
+        sub.pause_end = Some(now.to_rfc3339());
+        sub.updated_at = now.to_rfc3339();
+
+        // Add resume event
+        let event = SubscriptionEventData {
+            id: Uuid::new_v4(),
+            subscription_id: uuid,
+            event_type: "resumed".to_string(),
+            description: "Subscription resumed".to_string(),
+            created_at: now.to_rfc3339(),
+        };
+
+        let js_sub: JsSubscription = (&*sub).into();
+        store.subscription_events.entry(uuid).or_default().push(event);
+
+        serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Cancel a subscription.
+    pub fn cancel(&self, id: &str, at_period_end: Option<bool>, reason: Option<String>) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let sub = store
+            .subscriptions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
+
+        let now = Utc::now();
+        let at_period_end = at_period_end.unwrap_or(true);
+
+        if at_period_end {
+            sub.cancel_at_period_end = true;
+        } else {
+            sub.status = "cancelled".to_string();
+            sub.cancelled_at = Some(now.to_rfc3339());
+        }
+        sub.updated_at = now.to_rfc3339();
+
+        // Add cancel event
+        let description = if at_period_end {
+            reason.unwrap_or_else(|| "Scheduled to cancel at period end".to_string())
+        } else {
+            reason.unwrap_or_else(|| "Cancelled immediately".to_string())
+        };
+
+        let event = SubscriptionEventData {
+            id: Uuid::new_v4(),
+            subscription_id: uuid,
+            event_type: "cancelled".to_string(),
+            description,
+            created_at: now.to_rfc3339(),
+        };
+
+        let js_sub: JsSubscription = (&*sub).into();
+        store.subscription_events.entry(uuid).or_default().push(event);
+
+        serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Skip the next billing cycle.
+    #[wasm_bindgen(js_name = skipNextCycle)]
+    pub fn skip_next_cycle(&self, id: &str, reason: Option<String>) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let sub = store
+            .subscriptions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
+
+        let now = Utc::now();
+        // Extend the period by 30 days (simplified)
+        if let Ok(period_end) = chrono::DateTime::parse_from_rfc3339(&sub.current_period_end) {
+            let new_end = period_end + chrono::Duration::days(30);
+            sub.current_period_end = new_end.to_rfc3339();
+        }
+        sub.updated_at = now.to_rfc3339();
+
+        // Add skip event
+        let event = SubscriptionEventData {
+            id: Uuid::new_v4(),
+            subscription_id: uuid,
+            event_type: "billing_skipped".to_string(),
+            description: reason.unwrap_or_else(|| "Billing cycle skipped".to_string()),
+            created_at: now.to_rfc3339(),
+        };
+
+        let js_sub: JsSubscription = (&*sub).into();
+        store.subscription_events.entry(uuid).or_default().push(event);
+
+        serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    // ========================================================================
+    // Billing Cycles
+    // ========================================================================
+
+    /// Create a billing cycle for a subscription.
+    #[wasm_bindgen(js_name = createBillingCycle)]
+    pub fn create_billing_cycle(&self, subscription_id: &str) -> Result<JsValue, JsValue> {
+        let sub_uuid = Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        let sub = store
+            .subscriptions
+            .get(&sub_uuid)
+            .ok_or_else(|| JsValue::from_str("Subscription not found"))?
+            .clone();
+
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        store.next_billing_cycle_number += 1;
+        let cycle_number = format!("BC-{:06}", store.next_billing_cycle_number);
+
+        let cycle = BillingCycleData {
+            id,
+            cycle_number,
+            subscription_id: sub_uuid,
+            status: "pending".to_string(),
+            period_start: sub.current_period_start.clone(),
+            period_end: sub.current_period_end.clone(),
+            amount: sub.price,
+            currency: sub.currency,
+            payment_id: None,
+            invoice_id: None,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_cycle: JsBillingCycle = (&cycle).into();
+        store.billing_cycles.insert(id, cycle);
+
+        serde_wasm_bindgen::to_value(&js_cycle).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// List billing cycles for a subscription.
+    #[wasm_bindgen(js_name = listBillingCycles)]
+    pub fn list_billing_cycles(&self, subscription_id: Option<String>) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let sub_uuid = subscription_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+
+        let cycles: Vec<JsBillingCycle> = store
+            .billing_cycles
+            .values()
+            .filter(|c| sub_uuid.map_or(true, |id| c.subscription_id == id))
+            .map(|c| c.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&cycles).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a billing cycle by ID.
+    #[wasm_bindgen(js_name = getBillingCycle)]
+    pub fn get_billing_cycle(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        match store.billing_cycles.get(&uuid) {
+            Some(cycle) => {
+                let js_cycle: JsBillingCycle = cycle.into();
+                serde_wasm_bindgen::to_value(&js_cycle).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    // ========================================================================
+    // Events
+    // ========================================================================
+
+    /// Get events for a subscription.
+    #[wasm_bindgen(js_name = getEvents)]
+    pub fn get_events(&self, subscription_id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        let events: Vec<JsSubscriptionEvent> = store
+            .subscription_events
+            .get(&uuid)
+            .map(|evts| evts.iter().map(|e| e.into()).collect())
+            .unwrap_or_default();
+
+        serde_wasm_bindgen::to_value(&events).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Count subscription plans.
+    #[wasm_bindgen(js_name = countPlans)]
+    pub fn count_plans(&self) -> u32 {
+        self.store.borrow().subscription_plans.len() as u32
+    }
+
+    /// Count subscriptions.
+    #[wasm_bindgen(js_name = countSubscriptions)]
+    pub fn count_subscriptions(&self) -> u32 {
+        self.store.borrow().subscriptions.len() as u32
+    }
+}
+
+// ============================================================================
+// Promotions API
+// ============================================================================
+
+/// Promotions and discounts management.
+#[wasm_bindgen]
+pub struct Promotions {
+    store: StoreRef,
+}
+
+#[wasm_bindgen]
+impl Promotions {
+    /// Create a new Promotions instance (typically from Commerce.promotions()).
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Promotions {
+        Promotions {
+            store: Rc::new(RefCell::new(Store::default())),
+        }
+    }
+
+    pub(crate) fn with_store(store: StoreRef) -> Promotions {
+        Promotions { store }
+    }
+
+    // ========================================================================
+    // Promotions CRUD
+    // ========================================================================
+
+    /// Create a new promotion.
+    #[wasm_bindgen(js_name = createPromotion)]
+    pub fn create_promotion(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: CreatePromotionInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+
+        store.next_promotion_code_number += 1;
+        let code = input.code.unwrap_or_else(|| {
+            format!("PROMO-{:06}", store.next_promotion_code_number)
+        });
+
+        let promo = PromotionData {
+            id,
+            code,
+            name: input.name,
+            description: input.description,
+            promotion_type: input.promotion_type.unwrap_or_else(|| "percentage_off".to_string()),
+            trigger: input.trigger.unwrap_or_else(|| "automatic".to_string()),
+            target: input.target.unwrap_or_else(|| "order".to_string()),
+            stacking: input.stacking.unwrap_or_else(|| "stackable".to_string()),
+            status: "draft".to_string(),
+            percentage_off: input.percentage_off,
+            fixed_amount_off: input.fixed_amount_off,
+            max_discount_amount: input.max_discount_amount,
+            buy_quantity: input.buy_quantity,
+            get_quantity: input.get_quantity,
+            starts_at: input.starts_at.unwrap_or_else(|| now.to_rfc3339()),
+            ends_at: input.ends_at,
+            total_usage_limit: input.total_usage_limit,
+            per_customer_limit: input.per_customer_limit,
+            usage_count: 0,
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            priority: input.priority.unwrap_or(0),
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_promo: JsPromotion = (&promo).into();
+        store.promotions.insert(id, promo);
+
+        serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a promotion by ID.
+    #[wasm_bindgen(js_name = getPromotion)]
+    pub fn get_promotion(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        match store.promotions.get(&uuid) {
+            Some(promo) => {
+                let js_promo: JsPromotion = promo.into();
+                serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get a promotion by its code.
+    #[wasm_bindgen(js_name = getPromotionByCode)]
+    pub fn get_promotion_by_code(&self, code: &str) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        match store.promotions.values().find(|p| p.code == code) {
+            Some(promo) => {
+                let js_promo: JsPromotion = promo.into();
+                serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List all promotions.
+    #[wasm_bindgen(js_name = listPromotions)]
+    pub fn list_promotions(&self, status: Option<String>, is_active: Option<bool>) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        let promos: Vec<JsPromotion> = store
+            .promotions
+            .values()
+            .filter(|p| {
+                let status_match = status.as_ref().map_or(true, |s| &p.status == s);
+                let active_match = is_active.map_or(true, |active| {
+                    if active {
+                        p.status == "active"
+                    } else {
+                        p.status != "active"
+                    }
+                });
+                status_match && active_match
+            })
+            .map(|p| p.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&promos).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Update a promotion.
+    #[wasm_bindgen(js_name = updatePromotion)]
+    pub fn update_promotion(&self, id: &str, input: JsValue) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let input: UpdatePromotionInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+
+        let promo = store
+            .promotions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Promotion not found"))?;
+
+        if let Some(name) = input.name {
+            promo.name = name;
+        }
+        if let Some(desc) = input.description {
+            promo.description = Some(desc);
+        }
+        if let Some(status) = input.status {
+            promo.status = status;
+        }
+        if let Some(pct) = input.percentage_off {
+            promo.percentage_off = Some(pct);
+        }
+        if let Some(fixed) = input.fixed_amount_off {
+            promo.fixed_amount_off = Some(fixed);
+        }
+        if let Some(max) = input.max_discount_amount {
+            promo.max_discount_amount = Some(max);
+        }
+        if let Some(starts) = input.starts_at {
+            promo.starts_at = starts;
+        }
+        if let Some(ends) = input.ends_at {
+            promo.ends_at = Some(ends);
+        }
+        if let Some(limit) = input.total_usage_limit {
+            promo.total_usage_limit = Some(limit);
+        }
+        if let Some(limit) = input.per_customer_limit {
+            promo.per_customer_limit = Some(limit);
+        }
+        if let Some(priority) = input.priority {
+            promo.priority = priority;
+        }
+        promo.updated_at = now.to_rfc3339();
+
+        let js_promo: JsPromotion = (&*promo).into();
+        serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Delete a promotion.
+    #[wasm_bindgen(js_name = deletePromotion)]
+    pub fn delete_promotion(&self, id: &str) -> Result<bool, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+
+        Ok(store.promotions.remove(&uuid).is_some())
+    }
+
+    /// Activate a promotion.
+    #[wasm_bindgen(js_name = activatePromotion)]
+    pub fn activate_promotion(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+
+        let promo = store
+            .promotions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Promotion not found"))?;
+
+        promo.status = "active".to_string();
+        promo.updated_at = now.to_rfc3339();
+
+        let js_promo: JsPromotion = (&*promo).into();
+        serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Deactivate (pause) a promotion.
+    #[wasm_bindgen(js_name = deactivatePromotion)]
+    pub fn deactivate_promotion(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+
+        let promo = store
+            .promotions
+            .get_mut(&uuid)
+            .ok_or_else(|| JsValue::from_str("Promotion not found"))?;
+
+        promo.status = "paused".to_string();
+        promo.updated_at = now.to_rfc3339();
+
+        let js_promo: JsPromotion = (&*promo).into();
+        serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get all active promotions.
+    #[wasm_bindgen(js_name = getActivePromotions)]
+    pub fn get_active_promotions(&self) -> Result<JsValue, JsValue> {
+        self.list_promotions(Some("active".to_string()), None)
+    }
+
+    // ========================================================================
+    // Coupon Codes
+    // ========================================================================
+
+    /// Create a coupon code for a promotion.
+    #[wasm_bindgen(js_name = createCoupon)]
+    pub fn create_coupon(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: CreateCouponInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let promotion_id = Uuid::parse_str(&input.promotion_id)
+            .map_err(|_| JsValue::from_str("Invalid promotion UUID"))?;
+
+        let store_ref = self.store.borrow();
+        if !store_ref.promotions.contains_key(&promotion_id) {
+            return Err(JsValue::from_str("Promotion not found"));
+        }
+        drop(store_ref);
+
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+
+        let coupon = CouponData {
+            id,
+            promotion_id,
+            code: input.code,
+            status: "active".to_string(),
+            usage_limit: input.usage_limit,
+            per_customer_limit: input.per_customer_limit,
+            usage_count: 0,
+            starts_at: input.starts_at,
+            ends_at: input.ends_at,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_coupon: JsCoupon = (&coupon).into();
+        store.coupons.insert(id, coupon);
+
+        serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a coupon by ID.
+    #[wasm_bindgen(js_name = getCoupon)]
+    pub fn get_coupon(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let store = self.store.borrow();
+
+        match store.coupons.get(&uuid) {
+            Some(coupon) => {
+                let js_coupon: JsCoupon = coupon.into();
+                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get a coupon by its code.
+    #[wasm_bindgen(js_name = getCouponByCode)]
+    pub fn get_coupon_by_code(&self, code: &str) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        match store.coupons.values().find(|c| c.code == code) {
+            Some(coupon) => {
+                let js_coupon: JsCoupon = coupon.into();
+                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List coupons.
+    #[wasm_bindgen(js_name = listCoupons)]
+    pub fn list_coupons(&self, promotion_id: Option<String>) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let promo_uuid = promotion_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+
+        let coupons: Vec<JsCoupon> = store
+            .coupons
+            .values()
+            .filter(|c| promo_uuid.map_or(true, |id| c.promotion_id == id))
+            .map(|c| c.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&coupons).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Validate a coupon code.
+    #[wasm_bindgen(js_name = validateCoupon)]
+    pub fn validate_coupon(&self, code: &str) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        match store.coupons.values().find(|c| c.code == code) {
+            Some(coupon) => {
+                // Check status
+                if coupon.status != "active" {
+                    return Ok(JsValue::NULL);
+                }
+
+                // Check usage limits
+                if let Some(limit) = coupon.usage_limit {
+                    if coupon.usage_count >= limit {
+                        return Ok(JsValue::NULL);
+                    }
+                }
+
+                let js_coupon: JsCoupon = coupon.into();
+                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    // ========================================================================
+    // Apply Promotions
+    // ========================================================================
+
+    /// Apply promotions to a cart (simplified in-memory calculation).
+    #[wasm_bindgen(js_name = applyPromotions)]
+    pub fn apply_promotions(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: ApplyPromotionsInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let store = self.store.borrow();
+        let coupon_codes = input.coupon_codes.unwrap_or_default();
+        let subtotal = input.subtotal;
+        let shipping = input.shipping_amount.unwrap_or(0.0);
+
+        let mut total_discount = 0.0;
+        let mut shipping_discount = 0.0;
+        let mut applied_promotions = Vec::new();
+
+        // Find applicable promotions
+        for promo in store.promotions.values() {
+            if promo.status != "active" {
+                continue;
+            }
+
+            // Check if triggered by coupon
+            let triggered = if promo.trigger == "coupon_code" {
+                // Check if any coupon for this promotion is in coupon_codes
+                store.coupons.values().any(|c| {
+                    c.promotion_id == promo.id
+                        && c.status == "active"
+                        && coupon_codes.contains(&c.code)
+                })
+            } else {
+                // Automatic trigger
+                true
+            };
+
+            if !triggered {
+                continue;
+            }
+
+            // Calculate discount
+            let discount = if let Some(pct) = promo.percentage_off {
+                subtotal * pct
+            } else if let Some(fixed) = promo.fixed_amount_off {
+                fixed
+            } else {
+                0.0
+            };
+
+            // Apply max discount cap
+            let final_discount = if let Some(max) = promo.max_discount_amount {
+                discount.min(max)
+            } else {
+                discount
+            };
+
+            if final_discount > 0.0 {
+                // Check if free shipping
+                if promo.promotion_type == "free_shipping" {
+                    shipping_discount += shipping;
+                } else {
+                    total_discount += final_discount;
+                }
+
+                let coupon_code = store
+                    .coupons
+                    .values()
+                    .find(|c| c.promotion_id == promo.id && coupon_codes.contains(&c.code))
+                    .map(|c| c.code.clone());
+
+                applied_promotions.push(JsAppliedPromotion {
+                    promotion_id: promo.id.to_string(),
+                    promotion_name: promo.name.clone(),
+                    coupon_code,
+                    discount_amount: final_discount,
+                    discount_type: promo.promotion_type.clone(),
+                });
+            }
+        }
+
+        let result = JsApplyPromotionsResult {
+            original_subtotal: subtotal,
+            total_discount,
+            discounted_subtotal: (subtotal - total_discount).max(0.0),
+            original_shipping: shipping,
+            shipping_discount,
+            final_shipping: (shipping - shipping_discount).max(0.0),
+            grand_total: (subtotal - total_discount + shipping - shipping_discount).max(0.0),
+            applied_promotions,
+        };
+
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Record promotion usage.
+    #[wasm_bindgen(js_name = recordUsage)]
+    pub fn record_usage(
+        &self,
+        promotion_id: &str,
+        coupon_id: Option<String>,
+        customer_id: Option<String>,
+        order_id: Option<String>,
+        cart_id: Option<String>,
+        discount_amount: f64,
+        currency: &str,
+    ) -> Result<JsValue, JsValue> {
+        let promo_uuid = Uuid::parse_str(promotion_id)
+            .map_err(|_| JsValue::from_str("Invalid promotion UUID"))?;
+
+        let mut store = self.store.borrow_mut();
+        let now = Utc::now();
+
+        // Increment promotion usage
+        if let Some(promo) = store.promotions.get_mut(&promo_uuid) {
+            promo.usage_count += 1;
+        }
+
+        // Increment coupon usage
+        if let Some(ref coupon_id_str) = coupon_id {
+            if let Ok(coupon_uuid) = Uuid::parse_str(coupon_id_str) {
+                if let Some(coupon) = store.coupons.get_mut(&coupon_uuid) {
+                    coupon.usage_count += 1;
+                }
+            }
+        }
+
+        let usage = PromotionUsageData {
+            id: Uuid::new_v4(),
+            promotion_id: promo_uuid,
+            coupon_id: coupon_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            customer_id: customer_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            order_id: order_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            cart_id: cart_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            discount_amount,
+            currency: currency.to_string(),
+            used_at: now.to_rfc3339(),
+        };
+
+        let js_usage: JsPromotionUsage = (&usage).into();
+        store.promotion_usages.push(usage);
+
+        serde_wasm_bindgen::to_value(&js_usage).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Count promotions.
+    #[wasm_bindgen(js_name = countPromotions)]
+    pub fn count_promotions(&self) -> u32 {
+        self.store.borrow().promotions.len() as u32
+    }
+
+    /// Count coupons.
+    #[wasm_bindgen(js_name = countCoupons)]
+    pub fn count_coupons(&self) -> u32 {
+        self.store.borrow().coupons.len() as u32
+    }
+}
+
+// ============================================================================
+// Tax API
+// ============================================================================
+
+// --- Internal Data Types ---
+
+#[derive(Clone)]
+struct TaxJurisdictionData {
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    name: String,
+    code: String,
+    level: String,
+    country_code: String,
+    state_code: Option<String>,
+    county: Option<String>,
+    city: Option<String>,
+    postal_codes: Vec<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct TaxRateData {
+    id: Uuid,
+    jurisdiction_id: Uuid,
+    tax_type: String,
+    product_category: String,
+    rate: f64,
+    name: String,
+    description: Option<String>,
+    is_compound: bool,
+    priority: i32,
+    threshold_min: Option<f64>,
+    threshold_max: Option<f64>,
+    fixed_amount: Option<f64>,
+    effective_from: String,
+    effective_to: Option<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct TaxExemptionData {
+    id: Uuid,
+    customer_id: Uuid,
+    exemption_type: String,
+    certificate_number: Option<String>,
+    issuing_authority: Option<String>,
+    jurisdiction_ids: Vec<Uuid>,
+    exempt_categories: Vec<String>,
+    effective_from: String,
+    expires_at: Option<String>,
+    verified: bool,
+    verified_at: Option<String>,
+    notes: Option<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone)]
+struct TaxSettingsData {
+    id: Uuid,
+    enabled: bool,
+    calculation_method: String,
+    compound_method: String,
+    tax_shipping: bool,
+    tax_handling: bool,
+    tax_gift_wrap: bool,
+    default_product_category: String,
+    rounding_mode: String,
+    decimal_places: i32,
+    validate_addresses: bool,
+    tax_provider: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+// --- JS Return Types ---
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxJurisdiction {
+    id: String,
+    parent_id: Option<String>,
+    name: String,
+    code: String,
+    level: String,
+    country_code: String,
+    state_code: Option<String>,
+    county: Option<String>,
+    city: Option<String>,
+    postal_codes: Vec<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&TaxJurisdictionData> for JsTaxJurisdiction {
+    fn from(d: &TaxJurisdictionData) -> Self {
+        Self {
+            id: d.id.to_string(),
+            parent_id: d.parent_id.map(|u| u.to_string()),
+            name: d.name.clone(),
+            code: d.code.clone(),
+            level: d.level.clone(),
+            country_code: d.country_code.clone(),
+            state_code: d.state_code.clone(),
+            county: d.county.clone(),
+            city: d.city.clone(),
+            postal_codes: d.postal_codes.clone(),
+            active: d.active,
+            created_at: d.created_at.clone(),
+            updated_at: d.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxRate {
+    id: String,
+    jurisdiction_id: String,
+    tax_type: String,
+    product_category: String,
+    rate: f64,
+    name: String,
+    description: Option<String>,
+    is_compound: bool,
+    priority: i32,
+    threshold_min: Option<f64>,
+    threshold_max: Option<f64>,
+    fixed_amount: Option<f64>,
+    effective_from: String,
+    effective_to: Option<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&TaxRateData> for JsTaxRate {
+    fn from(d: &TaxRateData) -> Self {
+        Self {
+            id: d.id.to_string(),
+            jurisdiction_id: d.jurisdiction_id.to_string(),
+            tax_type: d.tax_type.clone(),
+            product_category: d.product_category.clone(),
+            rate: d.rate,
+            name: d.name.clone(),
+            description: d.description.clone(),
+            is_compound: d.is_compound,
+            priority: d.priority,
+            threshold_min: d.threshold_min,
+            threshold_max: d.threshold_max,
+            fixed_amount: d.fixed_amount,
+            effective_from: d.effective_from.clone(),
+            effective_to: d.effective_to.clone(),
+            active: d.active,
+            created_at: d.created_at.clone(),
+            updated_at: d.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxExemption {
+    id: String,
+    customer_id: String,
+    exemption_type: String,
+    certificate_number: Option<String>,
+    issuing_authority: Option<String>,
+    jurisdiction_ids: Vec<String>,
+    exempt_categories: Vec<String>,
+    effective_from: String,
+    expires_at: Option<String>,
+    verified: bool,
+    verified_at: Option<String>,
+    notes: Option<String>,
+    active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&TaxExemptionData> for JsTaxExemption {
+    fn from(d: &TaxExemptionData) -> Self {
+        Self {
+            id: d.id.to_string(),
+            customer_id: d.customer_id.to_string(),
+            exemption_type: d.exemption_type.clone(),
+            certificate_number: d.certificate_number.clone(),
+            issuing_authority: d.issuing_authority.clone(),
+            jurisdiction_ids: d.jurisdiction_ids.iter().map(|u| u.to_string()).collect(),
+            exempt_categories: d.exempt_categories.clone(),
+            effective_from: d.effective_from.clone(),
+            expires_at: d.expires_at.clone(),
+            verified: d.verified,
+            verified_at: d.verified_at.clone(),
+            notes: d.notes.clone(),
+            active: d.active,
+            created_at: d.created_at.clone(),
+            updated_at: d.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxSettings {
+    id: String,
+    enabled: bool,
+    calculation_method: String,
+    compound_method: String,
+    tax_shipping: bool,
+    tax_handling: bool,
+    tax_gift_wrap: bool,
+    default_product_category: String,
+    rounding_mode: String,
+    decimal_places: i32,
+    validate_addresses: bool,
+    tax_provider: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<&TaxSettingsData> for JsTaxSettings {
+    fn from(d: &TaxSettingsData) -> Self {
+        Self {
+            id: d.id.to_string(),
+            enabled: d.enabled,
+            calculation_method: d.calculation_method.clone(),
+            compound_method: d.compound_method.clone(),
+            tax_shipping: d.tax_shipping,
+            tax_handling: d.tax_handling,
+            tax_gift_wrap: d.tax_gift_wrap,
+            default_product_category: d.default_product_category.clone(),
+            rounding_mode: d.rounding_mode.clone(),
+            decimal_places: d.decimal_places,
+            validate_addresses: d.validate_addresses,
+            tax_provider: d.tax_provider.clone(),
+            created_at: d.created_at.clone(),
+            updated_at: d.updated_at.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxCalculationResult {
+    id: String,
+    total_tax: f64,
+    subtotal: f64,
+    total: f64,
+    shipping_tax: f64,
+    tax_breakdown: Vec<JsTaxBreakdown>,
+    line_item_taxes: Vec<JsLineItemTax>,
+    exemptions_applied: bool,
+    calculated_at: String,
+    is_estimate: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsTaxBreakdown {
+    jurisdiction_id: String,
+    jurisdiction_name: String,
+    tax_type: String,
+    rate_name: String,
+    rate: f64,
+    taxable_amount: f64,
+    tax_amount: f64,
+    is_compound: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsLineItemTax {
+    line_item_id: String,
+    taxable_amount: f64,
+    tax_amount: f64,
+    effective_rate: f64,
+    is_exempt: bool,
+    exemption_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsUsStateTaxInfo {
+    state_code: String,
+    state_name: String,
+    state_rate: f64,
+    has_local_taxes: bool,
+    origin_based: bool,
+    tax_shipping: bool,
+    tax_clothing: bool,
+    tax_food: bool,
+    tax_digital: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsEuVatInfo {
+    country_code: String,
+    country_name: String,
+    standard_rate: f64,
+    reduced_rate: Option<f64>,
+    super_reduced_rate: Option<f64>,
+    parking_rate: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct JsCanadianTaxInfo {
+    province_code: String,
+    province_name: String,
+    gst_rate: f64,
+    pst_rate: Option<f64>,
+    hst_rate: Option<f64>,
+    qst_rate: Option<f64>,
+    total_rate: f64,
+}
+
+// --- Input Types ---
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateJurisdictionInput {
+    parent_id: Option<String>,
+    name: String,
+    code: String,
+    level: Option<String>,
+    country_code: String,
+    state_code: Option<String>,
+    county: Option<String>,
+    city: Option<String>,
+    postal_codes: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTaxRateInput {
+    jurisdiction_id: String,
+    tax_type: Option<String>,
+    product_category: Option<String>,
+    rate: f64,
+    name: String,
+    description: Option<String>,
+    is_compound: Option<bool>,
+    priority: Option<i32>,
+    threshold_min: Option<f64>,
+    threshold_max: Option<f64>,
+    fixed_amount: Option<f64>,
+    effective_from: String,
+    effective_to: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateExemptionInput {
+    customer_id: String,
+    exemption_type: String,
+    certificate_number: Option<String>,
+    issuing_authority: Option<String>,
+    jurisdiction_ids: Option<Vec<String>>,
+    exempt_categories: Option<Vec<String>>,
+    effective_from: String,
+    expires_at: Option<String>,
+    notes: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaxCalculationInput {
+    line_items: Vec<TaxLineItemInput>,
+    shipping_address: TaxAddressInput,
+    customer_id: Option<String>,
+    shipping_amount: Option<f64>,
+    currency: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaxLineItemInput {
+    id: String,
+    quantity: f64,
+    unit_price: f64,
+    discount_amount: Option<f64>,
+    tax_category: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaxAddressInput {
+    line1: Option<String>,
+    line2: Option<String>,
+    city: Option<String>,
+    state: Option<String>,
+    postal_code: Option<String>,
+    country: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTaxSettingsInput {
+    enabled: Option<bool>,
+    calculation_method: Option<String>,
+    compound_method: Option<String>,
+    tax_shipping: Option<bool>,
+    tax_handling: Option<bool>,
+    tax_gift_wrap: Option<bool>,
+    default_product_category: Option<String>,
+    rounding_mode: Option<String>,
+    decimal_places: Option<i32>,
+    validate_addresses: Option<bool>,
+    tax_provider: Option<String>,
+}
+
+// --- Tax Struct ---
+
+#[wasm_bindgen]
+pub struct Tax {
+    store: StoreRef,
+}
+
+#[wasm_bindgen]
+impl Tax {
+    pub(crate) fn with_store(store: StoreRef) -> Tax {
+        Tax { store }
+    }
+
+    // ========================================================================
+    // Jurisdiction Operations
+    // ========================================================================
+
+    /// Create a tax jurisdiction.
+    #[wasm_bindgen(js_name = createJurisdiction)]
+    pub fn create_jurisdiction(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: CreateJurisdictionInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+
+        let data = TaxJurisdictionData {
+            id,
+            parent_id: input.parent_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            name: input.name,
+            code: input.code,
+            level: input.level.unwrap_or_else(|| "country".to_string()),
+            country_code: input.country_code,
+            state_code: input.state_code,
+            county: input.county,
+            city: input.city,
+            postal_codes: input.postal_codes.unwrap_or_default(),
+            active: true,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_jurisdiction: JsTaxJurisdiction = (&data).into();
+        self.store.borrow_mut().tax_jurisdictions.insert(id, data);
+
+        serde_wasm_bindgen::to_value(&js_jurisdiction).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a jurisdiction by ID.
+    #[wasm_bindgen(js_name = getJurisdiction)]
+    pub fn get_jurisdiction(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let store = self.store.borrow();
+
+        match store.tax_jurisdictions.get(&uuid) {
+            Some(data) => {
+                let js: JsTaxJurisdiction = data.into();
+                serde_wasm_bindgen::to_value(&js).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get a jurisdiction by code.
+    #[wasm_bindgen(js_name = getJurisdictionByCode)]
+    pub fn get_jurisdiction_by_code(&self, code: &str) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        match store.tax_jurisdictions.values().find(|j| j.code == code) {
+            Some(data) => {
+                let js: JsTaxJurisdiction = data.into();
+                serde_wasm_bindgen::to_value(&js).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List all jurisdictions.
+    #[wasm_bindgen(js_name = listJurisdictions)]
+    pub fn list_jurisdictions(&self, country_code: Option<String>, level: Option<String>) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let jurisdictions: Vec<JsTaxJurisdiction> = store.tax_jurisdictions.values()
+            .filter(|j| {
+                let country_match = country_code.as_ref().map_or(true, |c| &j.country_code == c);
+                let level_match = level.as_ref().map_or(true, |l| &j.level == l);
+                country_match && level_match
+            })
+            .map(|d| d.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&jurisdictions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    // ========================================================================
+    // Tax Rate Operations
+    // ========================================================================
+
+    /// Create a tax rate.
+    #[wasm_bindgen(js_name = createRate)]
+    pub fn create_rate(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: CreateTaxRateInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let jurisdiction_id = Uuid::parse_str(&input.jurisdiction_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+
+        let data = TaxRateData {
+            id,
+            jurisdiction_id,
+            tax_type: input.tax_type.unwrap_or_else(|| "sales_tax".to_string()),
+            product_category: input.product_category.unwrap_or_else(|| "standard".to_string()),
+            rate: input.rate,
+            name: input.name,
+            description: input.description,
+            is_compound: input.is_compound.unwrap_or(false),
+            priority: input.priority.unwrap_or(0),
+            threshold_min: input.threshold_min,
+            threshold_max: input.threshold_max,
+            fixed_amount: input.fixed_amount,
+            effective_from: input.effective_from,
+            effective_to: input.effective_to,
+            active: true,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_rate: JsTaxRate = (&data).into();
+        self.store.borrow_mut().tax_rates.insert(id, data);
+
+        serde_wasm_bindgen::to_value(&js_rate).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get a rate by ID.
+    #[wasm_bindgen(js_name = getRate)]
+    pub fn get_rate(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let store = self.store.borrow();
+
+        match store.tax_rates.get(&uuid) {
+            Some(data) => {
+                let js: JsTaxRate = data.into();
+                serde_wasm_bindgen::to_value(&js).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// List tax rates.
+    #[wasm_bindgen(js_name = listRates)]
+    pub fn list_rates(&self, jurisdiction_id: Option<String>) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+        let filter_id = jurisdiction_id.and_then(|s| Uuid::parse_str(&s).ok());
+
+        let rates: Vec<JsTaxRate> = store.tax_rates.values()
+            .filter(|r| filter_id.map_or(true, |id| r.jurisdiction_id == id))
+            .map(|d| d.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&rates).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    // ========================================================================
+    // Exemption Operations
+    // ========================================================================
+
+    /// Create a tax exemption.
+    #[wasm_bindgen(js_name = createExemption)]
+    pub fn create_exemption(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: CreateExemptionInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let customer_id = Uuid::parse_str(&input.customer_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+
+        let data = TaxExemptionData {
+            id,
+            customer_id,
+            exemption_type: input.exemption_type,
+            certificate_number: input.certificate_number,
+            issuing_authority: input.issuing_authority,
+            jurisdiction_ids: input.jurisdiction_ids
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|s| Uuid::parse_str(&s).ok())
+                .collect(),
+            exempt_categories: input.exempt_categories.unwrap_or_default(),
+            effective_from: input.effective_from,
+            expires_at: input.expires_at,
+            verified: false,
+            verified_at: None,
+            notes: input.notes,
+            active: true,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+
+        let js_exemption: JsTaxExemption = (&data).into();
+        self.store.borrow_mut().tax_exemptions.insert(id, data);
+
+        serde_wasm_bindgen::to_value(&js_exemption).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get an exemption by ID.
+    #[wasm_bindgen(js_name = getExemption)]
+    pub fn get_exemption(&self, id: &str) -> Result<JsValue, JsValue> {
+        let uuid = Uuid::parse_str(id).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let store = self.store.borrow();
+
+        match store.tax_exemptions.get(&uuid) {
+            Some(data) => {
+                let js: JsTaxExemption = data.into();
+                serde_wasm_bindgen::to_value(&js).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get exemptions for a customer.
+    #[wasm_bindgen(js_name = getCustomerExemptions)]
+    pub fn get_customer_exemptions(&self, customer_id: &str) -> Result<JsValue, JsValue> {
+        let customer_uuid = Uuid::parse_str(customer_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let store = self.store.borrow();
+        let exemptions: Vec<JsTaxExemption> = store.tax_exemptions.values()
+            .filter(|e| e.customer_id == customer_uuid && e.active)
+            .map(|d| d.into())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&exemptions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Check if a customer is tax exempt.
+    #[wasm_bindgen(js_name = customerIsExempt)]
+    pub fn customer_is_exempt(&self, customer_id: &str) -> Result<bool, JsValue> {
+        let customer_uuid = Uuid::parse_str(customer_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let store = self.store.borrow();
+        let has_exemption = store.tax_exemptions.values()
+            .any(|e| e.customer_id == customer_uuid && e.active);
+
+        Ok(has_exemption)
+    }
+
+    // ========================================================================
+    // Tax Calculation
+    // ========================================================================
+
+    /// Calculate tax for a transaction.
+    #[wasm_bindgen(js_name = calculate)]
+    pub fn calculate(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: TaxCalculationInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let store = self.store.borrow();
+        let now = Utc::now();
+
+        // Find applicable rates based on address
+        let applicable_rates: Vec<&TaxRateData> = store.tax_rates.values()
+            .filter(|r| {
+                // Simple matching - in a real implementation this would be more sophisticated
+                if let Some(jurisdiction) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
+                    let country_match = jurisdiction.country_code == input.shipping_address.country;
+                    let state_match = input.shipping_address.state.as_ref()
+                        .map_or(true, |s| jurisdiction.state_code.as_ref().map_or(true, |js| js == s));
+                    country_match && state_match && r.active
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        // Calculate total rate
+        let total_rate: f64 = applicable_rates.iter()
+            .filter(|r| !r.is_compound)
+            .map(|r| r.rate)
+            .sum();
+
+        // Calculate line item taxes
+        let mut subtotal = 0.0;
+        let mut total_tax = 0.0;
+        let mut line_item_taxes = Vec::new();
+        let mut tax_breakdown_map: std::collections::HashMap<Uuid, (String, String, f64)> = std::collections::HashMap::new();
+
+        for item in &input.line_items {
+            let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or(0.0);
+            subtotal += line_total;
+
+            let item_tax = line_total * total_rate;
+            total_tax += item_tax;
+
+            line_item_taxes.push(JsLineItemTax {
+                line_item_id: item.id.clone(),
+                taxable_amount: line_total,
+                tax_amount: item_tax,
+                effective_rate: total_rate,
+                is_exempt: false,
+                exemption_reason: None,
+            });
+
+            // Track breakdown by jurisdiction
+            for rate in &applicable_rates {
+                if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
+                    let entry = tax_breakdown_map.entry(rate.jurisdiction_id)
+                        .or_insert((j.name.clone(), rate.name.clone(), 0.0));
+                    entry.2 += line_total * rate.rate;
+                }
+            }
+        }
+
+        // Handle shipping tax
+        let shipping_tax = if let Some(shipping) = input.shipping_amount {
+            let settings = store.tax_settings.as_ref();
+            if settings.map_or(true, |s| s.tax_shipping) {
+                shipping * total_rate
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        total_tax += shipping_tax;
+
+        let tax_breakdown: Vec<JsTaxBreakdown> = applicable_rates.iter()
+            .filter_map(|rate| {
+                store.tax_jurisdictions.get(&rate.jurisdiction_id).map(|j| {
+                    let taxable = subtotal + input.shipping_amount.unwrap_or(0.0);
+                    JsTaxBreakdown {
+                        jurisdiction_id: j.id.to_string(),
+                        jurisdiction_name: j.name.clone(),
+                        tax_type: rate.tax_type.clone(),
+                        rate_name: rate.name.clone(),
+                        rate: rate.rate,
+                        taxable_amount: taxable,
+                        tax_amount: taxable * rate.rate,
+                        is_compound: rate.is_compound,
+                    }
+                })
+            })
+            .collect();
+
+        let result = JsTaxCalculationResult {
+            id: Uuid::new_v4().to_string(),
+            total_tax,
+            subtotal,
+            total: subtotal + total_tax + input.shipping_amount.unwrap_or(0.0),
+            shipping_tax,
+            tax_breakdown,
+            line_item_taxes,
+            exemptions_applied: false,
+            calculated_at: now.to_rfc3339(),
+            is_estimate: true,
+        };
+
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get the effective tax rate for an address.
+    #[wasm_bindgen(js_name = getEffectiveRate)]
+    pub fn get_effective_rate(&self, country: &str, state: Option<String>) -> f64 {
+        let store = self.store.borrow();
+
+        store.tax_rates.values()
+            .filter(|r| {
+                if let Some(j) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
+                    let country_match = j.country_code == country;
+                    let state_match = state.as_ref()
+                        .map_or(true, |s| j.state_code.as_ref().map_or(true, |js| js == s));
+                    country_match && state_match && r.active
+                } else {
+                    false
+                }
+            })
+            .filter(|r| !r.is_compound)
+            .map(|r| r.rate)
+            .sum()
+    }
+
+    // ========================================================================
+    // Settings Operations
+    // ========================================================================
+
+    /// Get tax settings.
+    #[wasm_bindgen(js_name = getSettings)]
+    pub fn get_settings(&self) -> Result<JsValue, JsValue> {
+        let store = self.store.borrow();
+
+        let settings = store.tax_settings.as_ref().map(|s| {
+            let js: JsTaxSettings = s.into();
+            js
+        }).unwrap_or_else(|| {
+            let now = Utc::now();
+            JsTaxSettings {
+                id: Uuid::new_v4().to_string(),
+                enabled: true,
+                calculation_method: "exclusive".to_string(),
+                compound_method: "combined".to_string(),
+                tax_shipping: true,
+                tax_handling: true,
+                tax_gift_wrap: true,
+                default_product_category: "standard".to_string(),
+                rounding_mode: "half_up".to_string(),
+                decimal_places: 2,
+                validate_addresses: false,
+                tax_provider: None,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            }
+        });
+
+        serde_wasm_bindgen::to_value(&settings).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Update tax settings.
+    #[wasm_bindgen(js_name = updateSettings)]
+    pub fn update_settings(&self, input: JsValue) -> Result<JsValue, JsValue> {
+        let input: UpdateTaxSettingsInput = serde_wasm_bindgen::from_value(input)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let now = Utc::now();
+        let mut store = self.store.borrow_mut();
+
+        let settings = store.tax_settings.get_or_insert_with(|| {
+            TaxSettingsData {
+                id: Uuid::new_v4(),
+                enabled: true,
+                calculation_method: "exclusive".to_string(),
+                compound_method: "combined".to_string(),
+                tax_shipping: true,
+                tax_handling: true,
+                tax_gift_wrap: true,
+                default_product_category: "standard".to_string(),
+                rounding_mode: "half_up".to_string(),
+                decimal_places: 2,
+                validate_addresses: false,
+                tax_provider: None,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            }
+        });
+
+        if let Some(v) = input.enabled { settings.enabled = v; }
+        if let Some(v) = input.calculation_method { settings.calculation_method = v; }
+        if let Some(v) = input.compound_method { settings.compound_method = v; }
+        if let Some(v) = input.tax_shipping { settings.tax_shipping = v; }
+        if let Some(v) = input.tax_handling { settings.tax_handling = v; }
+        if let Some(v) = input.tax_gift_wrap { settings.tax_gift_wrap = v; }
+        if let Some(v) = input.default_product_category { settings.default_product_category = v; }
+        if let Some(v) = input.rounding_mode { settings.rounding_mode = v; }
+        if let Some(v) = input.decimal_places { settings.decimal_places = v; }
+        if let Some(v) = input.validate_addresses { settings.validate_addresses = v; }
+        if let Some(v) = input.tax_provider { settings.tax_provider = Some(v); }
+        settings.updated_at = now.to_rfc3339();
+
+        let js_settings: JsTaxSettings = (&*settings).into();
+        serde_wasm_bindgen::to_value(&js_settings).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Enable or disable tax calculation.
+    #[wasm_bindgen(js_name = setEnabled)]
+    pub fn set_enabled(&self, enabled: bool) -> Result<JsValue, JsValue> {
+        let now = Utc::now();
+        let mut store = self.store.borrow_mut();
+
+        let settings = store.tax_settings.get_or_insert_with(|| {
+            TaxSettingsData {
+                id: Uuid::new_v4(),
+                enabled: true,
+                calculation_method: "exclusive".to_string(),
+                compound_method: "combined".to_string(),
+                tax_shipping: true,
+                tax_handling: true,
+                tax_gift_wrap: true,
+                default_product_category: "standard".to_string(),
+                rounding_mode: "half_up".to_string(),
+                decimal_places: 2,
+                validate_addresses: false,
+                tax_provider: None,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+            }
+        });
+
+        settings.enabled = enabled;
+        settings.updated_at = now.to_rfc3339();
+
+        let js_settings: JsTaxSettings = (&*settings).into();
+        serde_wasm_bindgen::to_value(&js_settings).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Check if tax calculation is enabled.
+    #[wasm_bindgen(js_name = isEnabled)]
+    pub fn is_enabled(&self) -> bool {
+        self.store.borrow().tax_settings.as_ref().map_or(true, |s| s.enabled)
+    }
+
+    // ========================================================================
+    // Helper Methods
+    // ========================================================================
+
+    /// Get US state tax information.
+    #[wasm_bindgen(js_name = getUsStateInfo)]
+    pub fn get_us_state_info(state_code: &str) -> Result<JsValue, JsValue> {
+        // US state tax rates (simplified)
+        let info = match state_code.to_uppercase().as_str() {
+            "CA" => Some(JsUsStateTaxInfo {
+                state_code: "CA".to_string(),
+                state_name: "California".to_string(),
+                state_rate: 0.0725,
+                has_local_taxes: true,
+                origin_based: true,
+                tax_shipping: false,
+                tax_clothing: true,
+                tax_food: false,
+                tax_digital: false,
+            }),
+            "TX" => Some(JsUsStateTaxInfo {
+                state_code: "TX".to_string(),
+                state_name: "Texas".to_string(),
+                state_rate: 0.0625,
+                has_local_taxes: true,
+                origin_based: true,
+                tax_shipping: true,
+                tax_clothing: true,
+                tax_food: false,
+                tax_digital: true,
+            }),
+            "NY" => Some(JsUsStateTaxInfo {
+                state_code: "NY".to_string(),
+                state_name: "New York".to_string(),
+                state_rate: 0.04,
+                has_local_taxes: true,
+                origin_based: false,
+                tax_shipping: true,
+                tax_clothing: false,
+                tax_food: false,
+                tax_digital: true,
+            }),
+            "FL" => Some(JsUsStateTaxInfo {
+                state_code: "FL".to_string(),
+                state_name: "Florida".to_string(),
+                state_rate: 0.06,
+                has_local_taxes: true,
+                origin_based: false,
+                tax_shipping: true,
+                tax_clothing: true,
+                tax_food: false,
+                tax_digital: true,
+            }),
+            "DE" | "MT" | "NH" | "OR" => Some(JsUsStateTaxInfo {
+                state_code: state_code.to_uppercase(),
+                state_name: match state_code.to_uppercase().as_str() {
+                    "DE" => "Delaware",
+                    "MT" => "Montana",
+                    "NH" => "New Hampshire",
+                    "OR" => "Oregon",
+                    _ => state_code,
+                }.to_string(),
+                state_rate: 0.0,
+                has_local_taxes: false,
+                origin_based: false,
+                tax_shipping: false,
+                tax_clothing: false,
+                tax_food: false,
+                tax_digital: false,
+            }),
+            _ => None,
+        };
+
+        match info {
+            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get EU VAT information.
+    #[wasm_bindgen(js_name = getEuVatInfo)]
+    pub fn get_eu_vat_info(country_code: &str) -> Result<JsValue, JsValue> {
+        let info = match country_code.to_uppercase().as_str() {
+            "DE" => Some(JsEuVatInfo {
+                country_code: "DE".to_string(),
+                country_name: "Germany".to_string(),
+                standard_rate: 0.19,
+                reduced_rate: Some(0.07),
+                super_reduced_rate: None,
+                parking_rate: None,
+            }),
+            "FR" => Some(JsEuVatInfo {
+                country_code: "FR".to_string(),
+                country_name: "France".to_string(),
+                standard_rate: 0.20,
+                reduced_rate: Some(0.10),
+                super_reduced_rate: Some(0.055),
+                parking_rate: None,
+            }),
+            "GB" => Some(JsEuVatInfo {
+                country_code: "GB".to_string(),
+                country_name: "United Kingdom".to_string(),
+                standard_rate: 0.20,
+                reduced_rate: Some(0.05),
+                super_reduced_rate: None,
+                parking_rate: None,
+            }),
+            "IT" => Some(JsEuVatInfo {
+                country_code: "IT".to_string(),
+                country_name: "Italy".to_string(),
+                standard_rate: 0.22,
+                reduced_rate: Some(0.10),
+                super_reduced_rate: Some(0.04),
+                parking_rate: None,
+            }),
+            "ES" => Some(JsEuVatInfo {
+                country_code: "ES".to_string(),
+                country_name: "Spain".to_string(),
+                standard_rate: 0.21,
+                reduced_rate: Some(0.10),
+                super_reduced_rate: Some(0.04),
+                parking_rate: None,
+            }),
+            _ => None,
+        };
+
+        match info {
+            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Get Canadian tax information.
+    #[wasm_bindgen(js_name = getCanadianTaxInfo)]
+    pub fn get_canadian_tax_info(province_code: &str) -> Result<JsValue, JsValue> {
+        let gst = 0.05;
+        let info = match province_code.to_uppercase().as_str() {
+            "ON" => Some(JsCanadianTaxInfo {
+                province_code: "ON".to_string(),
+                province_name: "Ontario".to_string(),
+                gst_rate: 0.0,
+                pst_rate: None,
+                hst_rate: Some(0.13),
+                qst_rate: None,
+                total_rate: 0.13,
+            }),
+            "BC" => Some(JsCanadianTaxInfo {
+                province_code: "BC".to_string(),
+                province_name: "British Columbia".to_string(),
+                gst_rate: gst,
+                pst_rate: Some(0.07),
+                hst_rate: None,
+                qst_rate: None,
+                total_rate: 0.12,
+            }),
+            "QC" => Some(JsCanadianTaxInfo {
+                province_code: "QC".to_string(),
+                province_name: "Quebec".to_string(),
+                gst_rate: gst,
+                pst_rate: None,
+                hst_rate: None,
+                qst_rate: Some(0.09975),
+                total_rate: 0.14975,
+            }),
+            "AB" => Some(JsCanadianTaxInfo {
+                province_code: "AB".to_string(),
+                province_name: "Alberta".to_string(),
+                gst_rate: gst,
+                pst_rate: None,
+                hst_rate: None,
+                qst_rate: None,
+                total_rate: gst,
+            }),
+            _ => None,
+        };
+
+        match info {
+            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Check if a country is in the EU.
+    #[wasm_bindgen(js_name = isEuCountry)]
+    pub fn is_eu_country(country_code: &str) -> bool {
+        const EU_MEMBERS: &[&str] = &[
+            "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+            "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
+            "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+        ];
+        EU_MEMBERS.contains(&country_code.to_uppercase().as_str())
+    }
+
+    /// Count jurisdictions.
+    #[wasm_bindgen(js_name = countJurisdictions)]
+    pub fn count_jurisdictions(&self) -> u32 {
+        self.store.borrow().tax_jurisdictions.len() as u32
+    }
+
+    /// Count tax rates.
+    #[wasm_bindgen(js_name = countRates)]
+    pub fn count_rates(&self) -> u32 {
+        self.store.borrow().tax_rates.len() as u32
+    }
+
+    /// Count exemptions.
+    #[wasm_bindgen(js_name = countExemptions)]
+    pub fn count_exemptions(&self) -> u32 {
+        self.store.borrow().tax_exemptions.len() as u32
     }
 }

@@ -285,6 +285,149 @@ Provide insights into sales performance, customer behavior, inventory health, an
 Note: All analytics tools are read-only. No --apply flag needed.`
   },
 
+  // Promotions specialist
+  'promotions': {
+    name: 'Promotions Agent',
+    description: 'Promotions, discounts, and coupon code management specialist',
+    tools: [
+      'mcp__stateset-commerce__list_promotions',
+      'mcp__stateset-commerce__get_promotion',
+      'mcp__stateset-commerce__create_promotion',
+      'mcp__stateset-commerce__activate_promotion',
+      'mcp__stateset-commerce__deactivate_promotion',
+      'mcp__stateset-commerce__create_coupon',
+      'mcp__stateset-commerce__validate_coupon',
+      'mcp__stateset-commerce__list_coupons',
+      'mcp__stateset-commerce__get_active_promotions',
+      'mcp__stateset-commerce__apply_cart_promotions',
+      // Also need cart access for applying promotions
+      'mcp__stateset-commerce__get_cart',
+      'mcp__stateset-commerce__apply_cart_discount'
+    ],
+    systemPrompt: `You are a promotions and discounts specialist for StateSet Commerce.
+
+## Your Role
+Manage promotional campaigns, discounts, and coupon codes. Help maximize revenue through strategic promotions.
+
+## Promotion Types
+- percentage_off: Percentage discount (e.g., 20% off)
+- fixed_amount_off: Fixed dollar discount (e.g., $10 off)
+- buy_x_get_y: BOGO promotions
+- free_shipping: Free shipping offers
+- tiered_discount: Spend more, save more
+
+## Promotion Triggers
+- automatic: Applied automatically when conditions are met
+- coupon_code: Requires customer to enter a code
+- both: Works either way
+
+## Promotion Lifecycle
+draft → active → (paused) → expired
+  Create → Activate → Deactivate → Auto-expires
+
+## Available Tools
+- list_promotions - List all promotions
+- get_promotion - Get promotion details
+- create_promotion - Create new promotion (requires --apply)
+- activate_promotion - Make promotion live (requires --apply)
+- deactivate_promotion - Pause promotion (requires --apply)
+- create_coupon - Create coupon code (requires --apply)
+- validate_coupon - Check if coupon is valid
+- list_coupons - List all coupon codes
+- get_active_promotions - Get currently running promotions
+- apply_cart_promotions - Apply discounts to cart (requires --apply)
+
+## Safety Rules
+1. Preview promotions before activating
+2. Verify discount values are reasonable
+3. Check date ranges for scheduled promotions
+4. Warn about overlapping promotions
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Subscriptions specialist
+  'subscriptions': {
+    name: 'Subscriptions Agent',
+    description: 'Subscription plans, recurring billing, and customer subscription lifecycle management',
+    tools: [
+      'mcp__stateset-commerce__list_subscription_plans',
+      'mcp__stateset-commerce__get_subscription_plan',
+      'mcp__stateset-commerce__create_subscription_plan',
+      'mcp__stateset-commerce__activate_subscription_plan',
+      'mcp__stateset-commerce__archive_subscription_plan',
+      'mcp__stateset-commerce__list_subscriptions',
+      'mcp__stateset-commerce__get_subscription',
+      'mcp__stateset-commerce__create_subscription',
+      'mcp__stateset-commerce__pause_subscription',
+      'mcp__stateset-commerce__resume_subscription',
+      'mcp__stateset-commerce__cancel_subscription',
+      'mcp__stateset-commerce__skip_billing_cycle',
+      'mcp__stateset-commerce__list_billing_cycles',
+      'mcp__stateset-commerce__get_billing_cycle',
+      'mcp__stateset-commerce__get_subscription_events',
+      // Also need customer access
+      'mcp__stateset-commerce__get_customer',
+      'mcp__stateset-commerce__list_customers'
+    ],
+    systemPrompt: `You are a subscription management specialist for StateSet Commerce.
+
+## Your Role
+Manage subscription plans, customer subscriptions, billing cycles, and subscription lifecycle events.
+
+## Billing Intervals
+- weekly: Billed every week
+- biweekly: Billed every 2 weeks
+- monthly: Billed every month
+- bimonthly: Billed every 2 months
+- quarterly: Billed every 3 months
+- semiannual: Billed every 6 months
+- annual: Billed yearly
+
+## Subscription Lifecycle
+pending → trial → active → (paused) → cancelled → expired
+  Create → Trial period → Active billing → Pause/Resume → Cancel
+
+## Plan Status
+- draft: Not yet available
+- active: Available for new subscriptions
+- archived: No new subscriptions, existing ones continue
+
+## Subscription Status
+- pending: Awaiting initial activation
+- trial: In trial period (no charge)
+- active: Billing normally
+- paused: Temporarily stopped (can resume)
+- past_due: Payment failed, in retry
+- cancelled: Will end at period end
+- expired: Subscription has ended
+
+## Available Tools
+- list_subscription_plans - List all plans
+- get_subscription_plan - Get plan details
+- create_subscription_plan - Create new plan (requires --apply)
+- activate_subscription_plan - Make plan available (requires --apply)
+- archive_subscription_plan - Retire a plan (requires --apply)
+- list_subscriptions - List customer subscriptions
+- get_subscription - Get subscription details
+- create_subscription - Subscribe a customer (requires --apply)
+- pause_subscription - Temporarily stop billing (requires --apply)
+- resume_subscription - Resume paused subscription (requires --apply)
+- cancel_subscription - Cancel subscription (requires --apply)
+- skip_billing_cycle - Skip next billing (requires --apply)
+- list_billing_cycles - View billing history
+- get_billing_cycle - Get cycle details
+- get_subscription_events - View audit log
+
+## Safety Rules
+1. Verify customer exists before creating subscription
+2. Confirm cancellation intent (immediate vs end of period)
+3. Show trial end dates clearly
+4. Warn about billing implications of changes
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
   // Storefront creation specialist
   'storefront': {
     name: 'Storefront Agent',
@@ -359,11 +502,13 @@ Create e-commerce storefronts using @stateset/embedded as the commerce backend. 
  * Keywords that suggest which agent to use
  */
 const AGENT_KEYWORDS = {
-  'checkout': ['cart', 'checkout', 'add to cart', 'shopping', 'buy', 'purchase', 'discount', 'coupon', 'shipping rate', 'abandoned'],
+  'checkout': ['cart', 'checkout', 'add to cart', 'shopping', 'buy', 'purchase', 'shipping rate', 'abandoned'],
   'orders': ['order', 'ship', 'shipping', 'tracking', 'fulfill', 'deliver'],
   'inventory': ['stock', 'inventory', 'restock', 'warehouse', 'reserve', 'allocation', 'on-hand', 'available'],
   'returns': ['return', 'rma', 'refund', 'exchange', 'defective', 'damaged'],
   'analytics': ['analytics', 'sales', 'revenue', 'best seller', 'top product', 'forecast', 'predict', 'trend', 'metrics', 'performance', 'how is business', 'how are sales', 'top customer', 'vip', 'lifetime value', 'aov', 'demand', 'low stock', 'out of stock', 'report', 'insight', 'dashboard'],
+  'promotions': ['promotion', 'discount', 'coupon', 'promo code', 'percent off', 'percentage off', 'bogo', 'buy one get one', 'free shipping', 'sale', 'deal', 'offer', 'campaign', 'tiered discount', 'flash sale'],
+  'subscriptions': ['subscription', 'subscribe', 'recurring', 'billing cycle', 'trial', 'plan', 'monthly plan', 'annual plan', 'pause subscription', 'cancel subscription', 'renew', 'renewal', 'billing', 'subscriber', 'membership'],
   'storefront': ['create store', 'new store', 'storefront', 'website', 'scaffold', 'generate', 'build store', 'create website', 'nextjs', 'react', 'ecommerce site', 'e-commerce site', 'online store', 'shop website']
 };
 

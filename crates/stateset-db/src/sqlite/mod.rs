@@ -10,9 +10,12 @@ mod invoices;
 mod orders;
 mod payments;
 mod products;
+mod promotions;
 mod purchase_orders;
 mod returns;
 mod shipments;
+mod subscriptions;
+mod tax;
 mod warranties;
 mod work_orders;
 
@@ -26,9 +29,12 @@ pub use invoices::*;
 pub use orders::*;
 pub use payments::*;
 pub use products::*;
+pub use promotions::*;
 pub use purchase_orders::*;
 pub use returns::*;
 pub use shipments::*;
+pub use subscriptions::*;
+pub use tax::*;
 pub use warranties::*;
 pub use work_orders::*;
 
@@ -168,6 +174,21 @@ impl SqliteDatabase {
     /// Get currency repository
     pub fn currency(&self) -> SqliteCurrencyRepository {
         SqliteCurrencyRepository::new(self.pool.clone())
+    }
+
+    /// Get tax repository
+    pub fn tax(&self) -> SqliteTaxRepository {
+        SqliteTaxRepository::new(self.pool.clone())
+    }
+
+    /// Get promotions repository
+    pub fn promotions(&self) -> SqlitePromotionRepository {
+        SqlitePromotionRepository::new(self.pool.clone())
+    }
+
+    /// Get subscriptions repository
+    pub fn subscriptions(&self) -> SqliteSubscriptionRepository {
+        SqliteSubscriptionRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

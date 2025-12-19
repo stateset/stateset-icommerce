@@ -668,6 +668,627 @@ export interface StoreCurrencySettingsOutput {
   autoConvert: boolean
   roundingMode: string
 }
+export interface CreateSubscriptionPlanInput {
+  name: string
+  description?: string
+  code?: string
+  billingInterval: string
+  customIntervalDays?: number
+  price: number
+  setupFee?: number
+  currency?: string
+  trialDays?: number
+  trialRequiresPaymentMethod?: boolean
+  minCycles?: number
+  maxCycles?: number
+  discountPercent?: number
+  discountAmount?: number
+}
+export interface UpdateSubscriptionPlanInput {
+  name?: string
+  description?: string
+  price?: number
+  setupFee?: number
+  trialDays?: number
+  trialRequiresPaymentMethod?: boolean
+  minCycles?: number
+  maxCycles?: number
+  discountPercent?: number
+  discountAmount?: number
+}
+export interface SubscriptionPlanFilterInput {
+  status?: string
+  billingInterval?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface SubscriptionPlanOutput {
+  id: string
+  code: string
+  name: string
+  description?: string
+  status: string
+  billingInterval: string
+  customIntervalDays?: number
+  price: number
+  setupFee?: number
+  currency: string
+  trialDays: number
+  trialRequiresPaymentMethod: boolean
+  minCycles?: number
+  maxCycles?: number
+  discountPercent?: number
+  discountAmount?: number
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateSubscriptionInput {
+  customerId: string
+  planId: string
+  paymentMethodId?: string
+  skipTrial?: boolean
+  price?: number
+  couponCode?: string
+  startDate?: string
+}
+export interface UpdateSubscriptionInput {
+  status?: string
+  price?: number
+  paymentMethodId?: string
+  nextBillingDate?: string
+  discountPercent?: number
+  discountAmount?: number
+  couponCode?: string
+}
+export interface SubscriptionFilterInput {
+  customerId?: string
+  planId?: string
+  status?: string
+  fromDate?: string
+  toDate?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface SubscriptionOutput {
+  id: string
+  subscriptionNumber: string
+  customerId: string
+  planId: string
+  planName: string
+  status: string
+  billingInterval: string
+  customIntervalDays?: number
+  price: number
+  currency: string
+  paymentMethodId?: string
+  startedAt: string
+  currentPeriodStart: string
+  currentPeriodEnd: string
+  nextBillingDate?: string
+  trialEndsAt?: string
+  pausedAt?: string
+  resumeAt?: string
+  cancelledAt?: string
+  endsAt?: string
+  billingCycleCount: number
+  failedPaymentAttempts: number
+  discountPercent?: number
+  discountAmount?: number
+  couponCode?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface PauseSubscriptionInput {
+  reason?: string
+  resumeAt?: string
+}
+export interface CancelSubscriptionInput {
+  reason?: string
+  immediate?: boolean
+  feedback?: string
+}
+export interface SkipBillingCycleInput {
+  reason?: string
+}
+export interface BillingCycleFilterInput {
+  subscriptionId?: string
+  status?: string
+  fromDate?: string
+  toDate?: string
+  limit?: number
+  offset?: number
+}
+export interface BillingCycleOutput {
+  id: string
+  subscriptionId: string
+  cycleNumber: number
+  status: string
+  periodStart: string
+  periodEnd: string
+  subtotal: number
+  discount: number
+  tax: number
+  total: number
+  currency: string
+  paymentId?: string
+  billedAt?: string
+  failureReason?: string
+  retryCount: number
+  createdAt: string
+  updatedAt: string
+}
+export interface SubscriptionEventOutput {
+  id: string
+  subscriptionId: string
+  eventType: string
+  description: string
+  data?: string
+  triggeredBy?: string
+  createdAt: string
+}
+/** Input for creating a promotion */
+export interface CreatePromotionInput {
+  /** Optional promotion code (auto-generated if not provided) */
+  code?: string
+  /** Display name */
+  name: string
+  /** Description for customers */
+  description?: string
+  /** Internal notes */
+  internalNotes?: string
+  /** Type: percentage_off, fixed_amount_off, buy_x_get_y, free_shipping, tiered_discount, bundle */
+  promotionType?: string
+  /** Trigger: automatic, coupon_code, both */
+  trigger?: string
+  /** Target: order, product, category, shipping, line_item */
+  target?: string
+  /** Stacking: stackable, exclusive, selective_stack */
+  stacking?: string
+  /** Percentage off (0.0-1.0, e.g., 0.20 for 20%) */
+  percentageOff?: number
+  /** Fixed amount off */
+  fixedAmountOff?: number
+  /** Maximum discount amount (cap) */
+  maxDiscountAmount?: number
+  /** Buy X quantity (for BOGO) */
+  buyQuantity?: number
+  /** Get Y quantity (for BOGO) */
+  getQuantity?: number
+  /** Discount on "get" items (1.0 = free, 0.5 = 50% off) */
+  getDiscountPercent?: number
+  /** Tiered discount rules as JSON */
+  tiers?: string
+  /** Bundle product IDs as JSON array */
+  bundleProductIds?: Array<string>
+  /** Bundle discount */
+  bundleDiscount?: number
+  /** Start date (RFC3339) */
+  startsAt?: string
+  /** End date (RFC3339) */
+  endsAt?: string
+  /** Total usage limit */
+  totalUsageLimit?: number
+  /** Per customer usage limit */
+  perCustomerLimit?: number
+  /** Applicable product IDs */
+  applicableProductIds?: Array<string>
+  /** Applicable category IDs */
+  applicableCategoryIds?: Array<string>
+  /** Applicable SKUs */
+  applicableSkus?: Array<string>
+  /** Excluded product IDs */
+  excludedProductIds?: Array<string>
+  /** Excluded category IDs */
+  excludedCategoryIds?: Array<string>
+  /** Eligible customer IDs */
+  eligibleCustomerIds?: Array<string>
+  /** Eligible customer groups */
+  eligibleCustomerGroups?: Array<string>
+  /** Currency code */
+  currency?: string
+  /** Priority (lower = applied first) */
+  priority?: number
+  /** Metadata as JSON */
+  metadata?: string
+}
+/** Input for updating a promotion */
+export interface UpdatePromotionInput {
+  name?: string
+  description?: string
+  internalNotes?: string
+  status?: string
+  percentageOff?: number
+  fixedAmountOff?: number
+  maxDiscountAmount?: number
+  startsAt?: string
+  endsAt?: string
+  totalUsageLimit?: number
+  perCustomerLimit?: number
+  priority?: number
+}
+/** Filter for listing promotions */
+export interface PromotionFilterInput {
+  /** Filter by status */
+  status?: string
+  /** Filter by promotion type */
+  promotionType?: string
+  /** Filter by trigger */
+  trigger?: string
+  /** Filter by active status */
+  isActive?: boolean
+  /** Search term */
+  search?: string
+  /** Max results */
+  limit?: number
+  /** Offset for pagination */
+  offset?: number
+}
+/** Promotion output */
+export interface PromotionOutput {
+  id: string
+  code: string
+  name: string
+  description?: string
+  internalNotes?: string
+  promotionType: string
+  trigger: string
+  target: string
+  stacking: string
+  status: string
+  percentageOff?: number
+  fixedAmountOff?: number
+  maxDiscountAmount?: number
+  buyQuantity?: number
+  getQuantity?: number
+  getDiscountPercent?: number
+  startsAt: string
+  endsAt?: string
+  totalUsageLimit?: number
+  perCustomerLimit?: number
+  usageCount: number
+  currency: string
+  priority: number
+  metadata?: string
+  createdAt: string
+  updatedAt: string
+}
+/** Input for creating a coupon code */
+export interface CreateCouponInput {
+  /** Promotion ID this coupon is for */
+  promotionId: string
+  /** The coupon code customers enter */
+  code: string
+  /** Usage limit for this coupon */
+  usageLimit?: number
+  /** Per customer limit */
+  perCustomerLimit?: number
+  /** Start date (RFC3339) */
+  startsAt?: string
+  /** End date (RFC3339) */
+  endsAt?: string
+  /** Metadata as JSON */
+  metadata?: string
+}
+/** Filter for listing coupons */
+export interface CouponFilterInput {
+  promotionId?: string
+  status?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+/** Coupon code output */
+export interface CouponOutput {
+  id: string
+  promotionId: string
+  code: string
+  status: string
+  usageLimit?: number
+  perCustomerLimit?: number
+  usageCount: number
+  startsAt?: string
+  endsAt?: string
+  metadata?: string
+  createdAt: string
+  updatedAt: string
+}
+/** Input for applying promotions */
+export interface ApplyPromotionsInput {
+  cartId?: string
+  customerId?: string
+  couponCodes?: Array<string>
+  lineItems: Array<PromotionLineItemInput>
+  subtotal: number
+  shippingAmount?: number
+  shippingCountry?: string
+  shippingState?: string
+  currency?: string
+}
+/** Line item input for promotion calculation */
+export interface PromotionLineItemInput {
+  id: string
+  productId?: string
+  variantId?: string
+  sku?: string
+  categoryIds?: Array<string>
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}
+/** Result of applying promotions */
+export interface ApplyPromotionsOutput {
+  originalSubtotal: number
+  totalDiscount: number
+  discountedSubtotal: number
+  originalShipping: number
+  shippingDiscount: number
+  finalShipping: number
+  grandTotal: number
+  appliedPromotions: Array<AppliedPromotionOutput>
+}
+/** An applied promotion */
+export interface AppliedPromotionOutput {
+  promotionId: string
+  promotionName: string
+  couponCode?: string
+  discountAmount: number
+  discountType: string
+}
+/** Promotion usage record output */
+export interface PromotionUsageOutput {
+  id: string
+  promotionId: string
+  couponId?: string
+  customerId?: string
+  orderId?: string
+  cartId?: string
+  discountAmount: number
+  currency: string
+  usedAt: string
+}
+export interface TaxAddressInput {
+  line1?: string
+  line2?: string
+  city?: string
+  state?: string
+  postalCode?: string
+  country: string
+}
+export interface TaxLineItemInput {
+  id: string
+  sku?: string
+  productId?: string
+  quantity: number
+  unitPrice: number
+  discountAmount?: number
+  taxCategory?: string
+  taxCode?: string
+  description?: string
+}
+export interface TaxCalculationInput {
+  lineItems: Array<TaxLineItemInput>
+  shippingAddress: TaxAddressInput
+  billingAddress?: TaxAddressInput
+  customerId?: string
+  shippingAmount?: number
+  currency?: string
+  transactionDate?: string
+  pricesIncludeTax?: boolean
+}
+export interface CreateJurisdictionInput {
+  parentId?: string
+  name: string
+  code: string
+  level?: string
+  countryCode: string
+  stateCode?: string
+  county?: string
+  city?: string
+  postalCodes?: Array<string>
+}
+export interface CreateTaxRateInput {
+  jurisdictionId: string
+  taxType?: string
+  productCategory?: string
+  rate: number
+  name: string
+  description?: string
+  isCompound?: boolean
+  priority?: number
+  thresholdMin?: number
+  thresholdMax?: number
+  fixedAmount?: number
+  effectiveFrom: string
+  effectiveTo?: string
+}
+export interface CreateExemptionInput {
+  customerId: string
+  exemptionType: string
+  certificateNumber?: string
+  issuingAuthority?: string
+  jurisdictionIds?: Array<string>
+  exemptCategories?: Array<string>
+  effectiveFrom: string
+  expiresAt?: string
+  notes?: string
+}
+export interface TaxRateFilterInput {
+  jurisdictionId?: string
+  taxType?: string
+  productCategory?: string
+  activeOnly?: boolean
+  effectiveDate?: string
+}
+export interface JurisdictionFilterInput {
+  countryCode?: string
+  stateCode?: string
+  level?: string
+  activeOnly?: boolean
+}
+export interface TaxSettingsInput {
+  enabled?: boolean
+  calculationMethod?: string
+  compoundMethod?: string
+  taxShipping?: boolean
+  taxHandling?: boolean
+  taxGiftWrap?: boolean
+  defaultProductCategory?: string
+  roundingMode?: string
+  decimalPlaces?: number
+  validateAddresses?: boolean
+  taxProvider?: string
+}
+export interface TaxJurisdictionOutput {
+  id: string
+  parentId?: string
+  name: string
+  code: string
+  level: string
+  countryCode: string
+  stateCode?: string
+  county?: string
+  city?: string
+  postalCodes: Array<string>
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface TaxRateOutput {
+  id: string
+  jurisdictionId: string
+  taxType: string
+  productCategory: string
+  rate: number
+  name: string
+  description?: string
+  isCompound: boolean
+  priority: number
+  thresholdMin?: number
+  thresholdMax?: number
+  fixedAmount?: number
+  effectiveFrom: string
+  effectiveTo?: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface TaxExemptionOutput {
+  id: string
+  customerId: string
+  exemptionType: string
+  certificateNumber?: string
+  issuingAuthority?: string
+  jurisdictionIds: Array<string>
+  exemptCategories: Array<string>
+  effectiveFrom: string
+  expiresAt?: string
+  verified: boolean
+  verifiedAt?: string
+  notes?: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+export interface TaxBreakdownOutput {
+  jurisdictionId: string
+  jurisdictionName: string
+  taxType: string
+  rateName: string
+  rate: number
+  taxableAmount: number
+  taxAmount: number
+  isCompound: boolean
+}
+export interface TaxDetailOutput {
+  taxType: string
+  jurisdictionName: string
+  rate: number
+  amount: number
+}
+export interface LineItemTaxOutput {
+  lineItemId: string
+  taxableAmount: number
+  taxAmount: number
+  effectiveRate: number
+  isExempt: boolean
+  exemptionReason?: string
+  taxDetails: Array<TaxDetailOutput>
+}
+export interface ExemptionDetailsOutput {
+  exemptionId: string
+  exemptionType: string
+  certificateNumber?: string
+  amountExempt: number
+  taxSaved: number
+}
+export interface JurisdictionSummaryOutput {
+  id: string
+  name: string
+  code: string
+  level: string
+  totalRate: number
+  totalTax: number
+}
+export interface TaxCalculationOutput {
+  id: string
+  totalTax: number
+  subtotal: number
+  total: number
+  shippingTax: number
+  taxBreakdown: Array<TaxBreakdownOutput>
+  lineItemTaxes: Array<LineItemTaxOutput>
+  exemptionsApplied: boolean
+  exemptionDetails?: ExemptionDetailsOutput
+  jurisdictions: Array<JurisdictionSummaryOutput>
+  calculatedAt: string
+  isEstimate: boolean
+}
+export interface TaxSettingsOutput {
+  id: string
+  enabled: boolean
+  calculationMethod: string
+  compoundMethod: string
+  taxShipping: boolean
+  taxHandling: boolean
+  taxGiftWrap: boolean
+  defaultProductCategory: string
+  roundingMode: string
+  decimalPlaces: number
+  validateAddresses: boolean
+  taxProvider?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface UsStateTaxInfoOutput {
+  stateCode: string
+  stateName: string
+  stateRate: number
+  hasLocalTaxes: boolean
+  originBased: boolean
+  taxShipping: boolean
+  taxClothing: boolean
+  taxFood: boolean
+  taxDigital: boolean
+}
+export interface EuVatInfoOutput {
+  countryCode: string
+  countryName: string
+  standardRate: number
+  reducedRate?: number
+  superReducedRate?: number
+  parkingRate?: number
+}
+export interface CanadianTaxInfoOutput {
+  provinceCode: string
+  provinceName: string
+  gstRate: number
+  pstRate?: number
+  hstRate?: number
+  qstRate?: number
+  totalRate: number
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -705,6 +1326,12 @@ export declare class Commerce {
   get analytics(): Analytics
   /** Get the currency API */
   get currency(): CurrencyOperations
+  /** Get the subscriptions API */
+  get subscriptions(): Subscriptions
+  /** Get the promotions API */
+  get promotions(): Promotions
+  /** Get the tax API */
+  get tax(): Tax
 }
 export declare class Customers {
   create(input: CreateCustomerInput): Promise<CustomerOutput>
@@ -944,4 +1571,127 @@ export declare class CurrencyOperations {
   getEnabledCurrencies(): Promise<Array<string>>
   /** Format an amount with currency symbol */
   format(amount: number, currencyCode: string): Promise<string>
+}
+export declare class Subscriptions {
+  /** Create a new subscription plan */
+  createPlan(input: CreateSubscriptionPlanInput): Promise<SubscriptionPlanOutput>
+  /** Get a subscription plan by ID */
+  getPlan(id: string): Promise<SubscriptionPlanOutput | null>
+  /** Get a subscription plan by code */
+  getPlanByCode(code: string): Promise<SubscriptionPlanOutput | null>
+  /** List subscription plans */
+  listPlans(filter?: SubscriptionPlanFilterInput | undefined | null): Promise<Array<SubscriptionPlanOutput>>
+  /** Update a subscription plan */
+  updatePlan(id: string, input: UpdateSubscriptionPlanInput): Promise<SubscriptionPlanOutput>
+  /** Activate a subscription plan */
+  activatePlan(id: string): Promise<SubscriptionPlanOutput>
+  /** Archive a subscription plan */
+  archivePlan(id: string): Promise<SubscriptionPlanOutput>
+  /** Create a subscription for a customer */
+  subscribe(input: CreateSubscriptionInput): Promise<SubscriptionOutput>
+  /** Get a subscription by ID */
+  get(id: string): Promise<SubscriptionOutput | null>
+  /** Get a subscription by number */
+  getByNumber(number: string): Promise<SubscriptionOutput | null>
+  /** List subscriptions */
+  list(filter?: SubscriptionFilterInput | undefined | null): Promise<Array<SubscriptionOutput>>
+  /** Update a subscription */
+  update(id: string, input: UpdateSubscriptionInput): Promise<SubscriptionOutput>
+  /** Pause a subscription */
+  pause(id: string, input?: PauseSubscriptionInput | undefined | null): Promise<SubscriptionOutput>
+  /** Resume a paused subscription */
+  resume(id: string): Promise<SubscriptionOutput>
+  /** Cancel a subscription */
+  cancel(id: string, input?: CancelSubscriptionInput | undefined | null): Promise<SubscriptionOutput>
+  /** Skip the next billing cycle */
+  skipBilling(id: string, input?: SkipBillingCycleInput | undefined | null): Promise<SubscriptionOutput>
+  /** List billing cycles for a subscription */
+  listBillingCycles(filter?: BillingCycleFilterInput | undefined | null): Promise<Array<BillingCycleOutput>>
+  /** Get a billing cycle by ID */
+  getBillingCycle(id: string): Promise<BillingCycleOutput | null>
+  /** Get events for a subscription */
+  getEvents(subscriptionId: string, limit?: number | undefined | null): Promise<Array<SubscriptionEventOutput>>
+}
+/** Promotions API for managing discounts and coupon codes */
+export declare class Promotions {
+  /** Create a new promotion */
+  create(input: CreatePromotionInput): Promise<PromotionOutput>
+  /** Get a promotion by ID */
+  get(id: string): Promise<PromotionOutput | null>
+  /** Get a promotion by its internal code */
+  getByCode(code: string): Promise<PromotionOutput | null>
+  /** List promotions with optional filtering */
+  list(filter?: PromotionFilterInput | undefined | null): Promise<Array<PromotionOutput>>
+  /** Update a promotion */
+  update(id: string, input: UpdatePromotionInput): Promise<PromotionOutput>
+  /** Delete a promotion */
+  delete(id: string): Promise<void>
+  /** Activate a promotion */
+  activate(id: string): Promise<PromotionOutput>
+  /** Deactivate (pause) a promotion */
+  deactivate(id: string): Promise<PromotionOutput>
+  /** Get all currently active promotions */
+  getActive(): Promise<Array<PromotionOutput>>
+  /** Check if a promotion is currently valid */
+  isValid(id: string): Promise<boolean>
+  /** Create a coupon code for a promotion */
+  createCoupon(input: CreateCouponInput): Promise<CouponOutput>
+  /** Get a coupon by ID */
+  getCoupon(id: string): Promise<CouponOutput | null>
+  /** Get a coupon by its code */
+  getCouponByCode(code: string): Promise<CouponOutput | null>
+  /** List coupons with optional filtering */
+  listCoupons(filter?: CouponFilterInput | undefined | null): Promise<Array<CouponOutput>>
+  /** Validate a coupon code */
+  validateCoupon(code: string): Promise<CouponOutput | null>
+  /** Apply promotions to cart/order items */
+  apply(input: ApplyPromotionsInput): Promise<ApplyPromotionsOutput>
+  /** Record promotion usage (after order completion) */
+  recordUsage(promotionId: string, couponId: string | undefined | null, customerId: string | undefined | null, orderId: string | undefined | null, cartId: string | undefined | null, discountAmount: number, currency: string): Promise<PromotionUsageOutput>
+}
+export declare class Tax {
+  /** Calculate tax for a transaction */
+  calculate(input: TaxCalculationInput): Promise<TaxCalculationOutput>
+  /** Calculate tax for a single item */
+  calculateForItem(unitPrice: number, quantity: number, category: string | undefined | null, shippingAddress: TaxAddressInput): Promise<number>
+  /** Get the effective tax rate for an address and category */
+  getEffectiveRate(address: TaxAddressInput, category?: string | undefined | null): Promise<number>
+  /** Get a jurisdiction by ID */
+  getJurisdiction(id: string): Promise<TaxJurisdictionOutput | null>
+  /** Get a jurisdiction by code */
+  getJurisdictionByCode(code: string): Promise<TaxJurisdictionOutput | null>
+  /** List jurisdictions with optional filtering */
+  listJurisdictions(filter?: JurisdictionFilterInput | undefined | null): Promise<Array<TaxJurisdictionOutput>>
+  /** Create a new jurisdiction */
+  createJurisdiction(input: CreateJurisdictionInput): Promise<TaxJurisdictionOutput>
+  /** Get a tax rate by ID */
+  getRate(id: string): Promise<TaxRateOutput | null>
+  /** List tax rates with optional filtering */
+  listRates(filter?: TaxRateFilterInput | undefined | null): Promise<Array<TaxRateOutput>>
+  /** Create a new tax rate */
+  createRate(input: CreateTaxRateInput): Promise<TaxRateOutput>
+  /** Get an exemption by ID */
+  getExemption(id: string): Promise<TaxExemptionOutput | null>
+  /** Get exemptions for a customer */
+  getCustomerExemptions(customerId: string): Promise<Array<TaxExemptionOutput>>
+  /** Create a tax exemption */
+  createExemption(input: CreateExemptionInput): Promise<TaxExemptionOutput>
+  /** Check if a customer is tax exempt */
+  customerIsExempt(customerId: string): Promise<boolean>
+  /** Get tax settings */
+  getSettings(): Promise<TaxSettingsOutput>
+  /** Update tax settings */
+  updateSettings(input: TaxSettingsInput): Promise<TaxSettingsOutput>
+  /** Enable or disable tax calculation */
+  setEnabled(enabled: boolean): Promise<TaxSettingsOutput>
+  /** Check if tax calculation is enabled */
+  isEnabled(): Promise<boolean>
+  /** Get US state tax information */
+  static getUsStateInfo(stateCode: string): UsStateTaxInfoOutput | null
+  /** Get EU VAT information */
+  static getEuVatInfo(countryCode: string): EuVatInfoOutput | null
+  /** Get Canadian tax information */
+  static getCanadianTaxInfo(provinceCode: string): CanadianTaxInfoOutput | null
+  /** Check if a country is in the EU */
+  static isEuCountry(countryCode: string): boolean
 }

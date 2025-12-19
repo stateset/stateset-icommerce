@@ -95,7 +95,18 @@ export const TOOL_PERMISSIONS = {
   get_currency_settings: 'read',
   set_base_currency: 'admin',
   enable_currencies: 'admin',
-  format_currency: 'read'
+  format_currency: 'read',
+
+  // Tax tools
+  calculate_tax: 'read',
+  get_tax_rate: 'read',
+  list_tax_jurisdictions: 'read',
+  list_tax_rates: 'read',
+  get_tax_settings: 'read',
+  get_us_state_tax_info: 'read',
+  get_customer_tax_exemptions: 'read',
+  create_tax_exemption: 'write',
+  calculate_cart_tax: 'read'
 };
 
 // ============================================================================

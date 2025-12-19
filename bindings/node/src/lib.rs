@@ -147,6 +147,30 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Get the subscriptions API
+    #[napi(getter)]
+    pub fn subscriptions(&self) -> Subscriptions {
+        Subscriptions {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the promotions API
+    #[napi(getter)]
+    pub fn promotions(&self) -> Promotions {
+        Promotions {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the tax API
+    #[napi(getter)]
+    pub fn tax(&self) -> Tax {
+        Tax {
+            commerce: self.inner.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -4412,3 +4436,2674 @@ impl CurrencyOperations {
         Ok(commerce.currency().format(amount_decimal, currency))
     }
 }
+
+// ============================================================================
+// Subscriptions API
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateSubscriptionPlanInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub code: Option<String>,
+    pub billing_interval: String,
+    pub custom_interval_days: Option<i32>,
+    pub price: f64,
+    pub setup_fee: Option<f64>,
+    pub currency: Option<String>,
+    pub trial_days: Option<i32>,
+    pub trial_requires_payment_method: Option<bool>,
+    pub min_cycles: Option<i32>,
+    pub max_cycles: Option<i32>,
+    pub discount_percent: Option<f64>,
+    pub discount_amount: Option<f64>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateSubscriptionPlanInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub price: Option<f64>,
+    pub setup_fee: Option<f64>,
+    pub trial_days: Option<i32>,
+    pub trial_requires_payment_method: Option<bool>,
+    pub min_cycles: Option<i32>,
+    pub max_cycles: Option<i32>,
+    pub discount_percent: Option<f64>,
+    pub discount_amount: Option<f64>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubscriptionPlanFilterInput {
+    pub status: Option<String>,
+    pub billing_interval: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubscriptionPlanOutput {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub billing_interval: String,
+    pub custom_interval_days: Option<i32>,
+    pub price: f64,
+    pub setup_fee: Option<f64>,
+    pub currency: String,
+    pub trial_days: i32,
+    pub trial_requires_payment_method: bool,
+    pub min_cycles: Option<i32>,
+    pub max_cycles: Option<i32>,
+    pub discount_percent: Option<f64>,
+    pub discount_amount: Option<f64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
+    fn from(p: stateset_core::SubscriptionPlan) -> Self {
+        Self {
+            id: p.id.to_string(),
+            code: p.code,
+            name: p.name,
+            description: p.description,
+            status: format!("{:?}", p.status).to_lowercase(),
+            billing_interval: format!("{}", p.billing_interval),
+            custom_interval_days: p.custom_interval_days,
+            price: p.price.to_string().parse().unwrap_or(0.0),
+            setup_fee: p.setup_fee.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            currency: p.currency,
+            trial_days: p.trial_days,
+            trial_requires_payment_method: p.trial_requires_payment_method,
+            min_cycles: p.min_cycles,
+            max_cycles: p.max_cycles,
+            discount_percent: p.discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            discount_amount: p.discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateSubscriptionInput {
+    pub customer_id: String,
+    pub plan_id: String,
+    pub payment_method_id: Option<String>,
+    pub skip_trial: Option<bool>,
+    pub price: Option<f64>,
+    pub coupon_code: Option<String>,
+    pub start_date: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateSubscriptionInput {
+    pub status: Option<String>,
+    pub price: Option<f64>,
+    pub payment_method_id: Option<String>,
+    pub next_billing_date: Option<String>,
+    pub discount_percent: Option<f64>,
+    pub discount_amount: Option<f64>,
+    pub coupon_code: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubscriptionFilterInput {
+    pub customer_id: Option<String>,
+    pub plan_id: Option<String>,
+    pub status: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubscriptionOutput {
+    pub id: String,
+    pub subscription_number: String,
+    pub customer_id: String,
+    pub plan_id: String,
+    pub plan_name: String,
+    pub status: String,
+    pub billing_interval: String,
+    pub custom_interval_days: Option<i32>,
+    pub price: f64,
+    pub currency: String,
+    pub payment_method_id: Option<String>,
+    pub started_at: String,
+    pub current_period_start: String,
+    pub current_period_end: String,
+    pub next_billing_date: Option<String>,
+    pub trial_ends_at: Option<String>,
+    pub paused_at: Option<String>,
+    pub resume_at: Option<String>,
+    pub cancelled_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub billing_cycle_count: i32,
+    pub failed_payment_attempts: i32,
+    pub discount_percent: Option<f64>,
+    pub discount_amount: Option<f64>,
+    pub coupon_code: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Subscription> for SubscriptionOutput {
+    fn from(s: stateset_core::Subscription) -> Self {
+        Self {
+            id: s.id.to_string(),
+            subscription_number: s.subscription_number,
+            customer_id: s.customer_id.to_string(),
+            plan_id: s.plan_id.to_string(),
+            plan_name: s.plan_name,
+            status: format!("{}", s.status),
+            billing_interval: format!("{}", s.billing_interval),
+            custom_interval_days: s.custom_interval_days,
+            price: s.price.to_string().parse().unwrap_or(0.0),
+            currency: s.currency,
+            payment_method_id: s.payment_method_id,
+            started_at: s.started_at.to_rfc3339(),
+            current_period_start: s.current_period_start.to_rfc3339(),
+            current_period_end: s.current_period_end.to_rfc3339(),
+            next_billing_date: s.next_billing_date.map(|d| d.to_rfc3339()),
+            trial_ends_at: s.trial_ends_at.map(|d| d.to_rfc3339()),
+            paused_at: s.paused_at.map(|d| d.to_rfc3339()),
+            resume_at: s.resume_at.map(|d| d.to_rfc3339()),
+            cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
+            ends_at: s.ends_at.map(|d| d.to_rfc3339()),
+            billing_cycle_count: s.billing_cycle_count,
+            failed_payment_attempts: s.failed_payment_attempts,
+            discount_percent: s.discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            discount_amount: s.discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            coupon_code: s.coupon_code,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PauseSubscriptionInput {
+    pub reason: Option<String>,
+    pub resume_at: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CancelSubscriptionInput {
+    pub reason: Option<String>,
+    pub immediate: Option<bool>,
+    pub feedback: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SkipBillingCycleInput {
+    pub reason: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BillingCycleFilterInput {
+    pub subscription_id: Option<String>,
+    pub status: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BillingCycleOutput {
+    pub id: String,
+    pub subscription_id: String,
+    pub cycle_number: i32,
+    pub status: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub subtotal: f64,
+    pub discount: f64,
+    pub tax: f64,
+    pub total: f64,
+    pub currency: String,
+    pub payment_id: Option<String>,
+    pub billed_at: Option<String>,
+    pub failure_reason: Option<String>,
+    pub retry_count: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::BillingCycle> for BillingCycleOutput {
+    fn from(b: stateset_core::BillingCycle) -> Self {
+        Self {
+            id: b.id.to_string(),
+            subscription_id: b.subscription_id.to_string(),
+            cycle_number: b.cycle_number,
+            status: format!("{:?}", b.status).to_lowercase(),
+            period_start: b.period_start.to_rfc3339(),
+            period_end: b.period_end.to_rfc3339(),
+            subtotal: b.subtotal.to_string().parse().unwrap_or(0.0),
+            discount: b.discount.to_string().parse().unwrap_or(0.0),
+            tax: b.tax.to_string().parse().unwrap_or(0.0),
+            total: b.total.to_string().parse().unwrap_or(0.0),
+            currency: b.currency,
+            payment_id: b.payment_id,
+            billed_at: b.billed_at.map(|d| d.to_rfc3339()),
+            failure_reason: b.failure_reason,
+            retry_count: b.retry_count,
+            created_at: b.created_at.to_rfc3339(),
+            updated_at: b.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SubscriptionEventOutput {
+    pub id: String,
+    pub subscription_id: String,
+    pub event_type: String,
+    pub description: String,
+    pub data: Option<String>,
+    pub triggered_by: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::SubscriptionEvent> for SubscriptionEventOutput {
+    fn from(e: stateset_core::SubscriptionEvent) -> Self {
+        Self {
+            id: e.id.to_string(),
+            subscription_id: e.subscription_id.to_string(),
+            event_type: format!("{:?}", e.event_type).to_lowercase(),
+            description: e.description,
+            data: e.data.map(|d| serde_json::to_string(&d).unwrap_or_default()),
+            triggered_by: e.triggered_by,
+            created_at: e.created_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_billing_interval(s: &str) -> Result<stateset_core::BillingInterval> {
+    match s.to_lowercase().as_str() {
+        "weekly" => Ok(stateset_core::BillingInterval::Weekly),
+        "biweekly" => Ok(stateset_core::BillingInterval::Biweekly),
+        "monthly" => Ok(stateset_core::BillingInterval::Monthly),
+        "bimonthly" => Ok(stateset_core::BillingInterval::Bimonthly),
+        "quarterly" => Ok(stateset_core::BillingInterval::Quarterly),
+        "semiannual" => Ok(stateset_core::BillingInterval::Semiannual),
+        "annual" => Ok(stateset_core::BillingInterval::Annual),
+        "custom" => Ok(stateset_core::BillingInterval::Custom),
+        _ => Err(Error::from_reason(format!("Invalid billing interval: {}", s))),
+    }
+}
+
+fn parse_plan_status(s: &str) -> Result<stateset_core::PlanStatus> {
+    match s.to_lowercase().as_str() {
+        "draft" => Ok(stateset_core::PlanStatus::Draft),
+        "active" => Ok(stateset_core::PlanStatus::Active),
+        "archived" => Ok(stateset_core::PlanStatus::Archived),
+        _ => Err(Error::from_reason(format!("Invalid plan status: {}", s))),
+    }
+}
+
+fn parse_subscription_status(s: &str) -> Result<stateset_core::SubscriptionStatus> {
+    match s.to_lowercase().as_str() {
+        "pending" => Ok(stateset_core::SubscriptionStatus::Pending),
+        "trial" => Ok(stateset_core::SubscriptionStatus::Trial),
+        "active" => Ok(stateset_core::SubscriptionStatus::Active),
+        "paused" => Ok(stateset_core::SubscriptionStatus::Paused),
+        "past_due" => Ok(stateset_core::SubscriptionStatus::PastDue),
+        "cancelled" => Ok(stateset_core::SubscriptionStatus::Cancelled),
+        "expired" => Ok(stateset_core::SubscriptionStatus::Expired),
+        _ => Err(Error::from_reason(format!("Invalid subscription status: {}", s))),
+    }
+}
+
+fn parse_billing_cycle_status(s: &str) -> Result<stateset_core::BillingCycleStatus> {
+    match s.to_lowercase().as_str() {
+        "scheduled" => Ok(stateset_core::BillingCycleStatus::Scheduled),
+        "processing" => Ok(stateset_core::BillingCycleStatus::Processing),
+        "paid" => Ok(stateset_core::BillingCycleStatus::Paid),
+        "failed" => Ok(stateset_core::BillingCycleStatus::Failed),
+        "skipped" => Ok(stateset_core::BillingCycleStatus::Skipped),
+        "refunded" => Ok(stateset_core::BillingCycleStatus::Refunded),
+        "voided" => Ok(stateset_core::BillingCycleStatus::Voided),
+        _ => Err(Error::from_reason(format!("Invalid billing cycle status: {}", s))),
+    }
+}
+
+#[napi]
+pub struct Subscriptions {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Subscriptions {
+    // ========================================================================
+    // Subscription Plans
+    // ========================================================================
+
+    /// Create a new subscription plan
+    #[napi]
+    pub async fn create_plan(&self, input: CreateSubscriptionPlanInput) -> Result<SubscriptionPlanOutput> {
+        let commerce = self.commerce.lock().await;
+        let billing_interval = parse_billing_interval(&input.billing_interval)?;
+
+        let plan = commerce
+            .subscriptions()
+            .create_plan(stateset_core::CreateSubscriptionPlan {
+                name: input.name,
+                description: input.description,
+                code: input.code,
+                billing_interval,
+                custom_interval_days: input.custom_interval_days,
+                price: Decimal::try_from(input.price)
+                    .map_err(|e| Error::from_reason(format!("Invalid price: {}", e)))?,
+                setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
+                currency: input.currency,
+                trial_days: input.trial_days,
+                trial_requires_payment_method: input.trial_requires_payment_method,
+                min_cycles: input.min_cycles,
+                max_cycles: input.max_cycles,
+                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                items: None,
+                metadata: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    /// Get a subscription plan by ID
+    #[napi]
+    pub async fn get_plan(&self, id: String) -> Result<Option<SubscriptionPlanOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let plan = commerce
+            .subscriptions()
+            .get_plan(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
+
+        Ok(plan.map(|p| p.into()))
+    }
+
+    /// Get a subscription plan by code
+    #[napi]
+    pub async fn get_plan_by_code(&self, code: String) -> Result<Option<SubscriptionPlanOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let plan = commerce
+            .subscriptions()
+            .get_plan_by_code(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to get plan: {}", e)))?;
+
+        Ok(plan.map(|p| p.into()))
+    }
+
+    /// List subscription plans
+    #[napi]
+    pub async fn list_plans(&self, filter: Option<SubscriptionPlanFilterInput>) -> Result<Vec<SubscriptionPlanOutput>> {
+        let commerce = self.commerce.lock().await;
+        let f = filter.unwrap_or_default();
+
+        let plans = commerce
+            .subscriptions()
+            .list_plans(stateset_core::SubscriptionPlanFilter {
+                status: f.status.as_ref().and_then(|s| parse_plan_status(s).ok()),
+                billing_interval: f.billing_interval.as_ref().and_then(|s| parse_billing_interval(s).ok()),
+                search: f.search,
+                limit: f.limit.map(|v| v as u32),
+                offset: f.offset.map(|v| v as u32),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list plans: {}", e)))?;
+
+        Ok(plans.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Update a subscription plan
+    #[napi]
+    pub async fn update_plan(&self, id: String, input: UpdateSubscriptionPlanInput) -> Result<SubscriptionPlanOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let plan = commerce
+            .subscriptions()
+            .update_plan(uuid, stateset_core::UpdateSubscriptionPlan {
+                name: input.name,
+                description: input.description,
+                status: None,
+                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
+                trial_days: input.trial_days,
+                trial_requires_payment_method: input.trial_requires_payment_method,
+                min_cycles: input.min_cycles,
+                max_cycles: input.max_cycles,
+                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                metadata: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to update plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    /// Activate a subscription plan
+    #[napi]
+    pub async fn activate_plan(&self, id: String) -> Result<SubscriptionPlanOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let plan = commerce
+            .subscriptions()
+            .activate_plan(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to activate plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    /// Archive a subscription plan
+    #[napi]
+    pub async fn archive_plan(&self, id: String) -> Result<SubscriptionPlanOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let plan = commerce
+            .subscriptions()
+            .archive_plan(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to archive plan: {}", e)))?;
+
+        Ok(plan.into())
+    }
+
+    // ========================================================================
+    // Subscriptions
+    // ========================================================================
+
+    /// Create a subscription for a customer
+    #[napi]
+    pub async fn subscribe(&self, input: CreateSubscriptionInput) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let customer_id = uuid::Uuid::parse_str(&input.customer_id)
+            .map_err(|e| Error::from_reason(format!("Invalid customer UUID: {}", e)))?;
+        let plan_id = uuid::Uuid::parse_str(&input.plan_id)
+            .map_err(|e| Error::from_reason(format!("Invalid plan UUID: {}", e)))?;
+
+        let start_date = input.start_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        let subscription = commerce
+            .subscriptions()
+            .subscribe(stateset_core::CreateSubscription {
+                customer_id,
+                plan_id,
+                payment_method_id: input.payment_method_id,
+                skip_trial: input.skip_trial,
+                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                coupon_code: input.coupon_code,
+                start_date,
+                items: None,
+                shipping_address: None,
+                billing_address: None,
+                metadata: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Get a subscription by ID
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<SubscriptionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .get(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
+
+        Ok(subscription.map(|s| s.into()))
+    }
+
+    /// Get a subscription by number
+    #[napi]
+    pub async fn get_by_number(&self, number: String) -> Result<Option<SubscriptionOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let subscription = commerce
+            .subscriptions()
+            .get_by_number(&number)
+            .map_err(|e| Error::from_reason(format!("Failed to get subscription: {}", e)))?;
+
+        Ok(subscription.map(|s| s.into()))
+    }
+
+    /// List subscriptions
+    #[napi]
+    pub async fn list(&self, filter: Option<SubscriptionFilterInput>) -> Result<Vec<SubscriptionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let f = filter.unwrap_or_default();
+
+        let customer_id = f.customer_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let plan_id = f.plan_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let from_date = f.from_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+        let to_date = f.to_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        let subscriptions = commerce
+            .subscriptions()
+            .list(stateset_core::SubscriptionFilter {
+                customer_id,
+                plan_id,
+                status: f.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
+                from_date,
+                to_date,
+                search: f.search,
+                limit: f.limit.map(|v| v as u32),
+                offset: f.offset.map(|v| v as u32),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list subscriptions: {}", e)))?;
+
+        Ok(subscriptions.into_iter().map(|s| s.into()).collect())
+    }
+
+    /// Update a subscription
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdateSubscriptionInput) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let next_billing_date = input.next_billing_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        let subscription = commerce
+            .subscriptions()
+            .update(uuid, stateset_core::UpdateSubscription {
+                status: input.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
+                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                payment_method_id: input.payment_method_id,
+                next_billing_date,
+                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                coupon_code: input.coupon_code,
+                shipping_address: None,
+                billing_address: None,
+                metadata: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to update subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Pause a subscription
+    #[napi]
+    pub async fn pause(&self, id: String, input: Option<PauseSubscriptionInput>) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let i = input.unwrap_or_default();
+        let resume_at = i.resume_at.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        let subscription = commerce
+            .subscriptions()
+            .pause(uuid, stateset_core::PauseSubscription {
+                reason: i.reason,
+                resume_at,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to pause subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Resume a paused subscription
+    #[napi]
+    pub async fn resume(&self, id: String) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let subscription = commerce
+            .subscriptions()
+            .resume(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to resume subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Cancel a subscription
+    #[napi]
+    pub async fn cancel(&self, id: String, input: Option<CancelSubscriptionInput>) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let i = input.unwrap_or_default();
+
+        let subscription = commerce
+            .subscriptions()
+            .cancel(uuid, stateset_core::CancelSubscription {
+                reason: i.reason,
+                immediate: i.immediate,
+                feedback: i.feedback,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to cancel subscription: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    /// Skip the next billing cycle
+    #[napi]
+    pub async fn skip_billing(&self, id: String, input: Option<SkipBillingCycleInput>) -> Result<SubscriptionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let i = input.unwrap_or_default();
+
+        let subscription = commerce
+            .subscriptions()
+            .skip_next_cycle(uuid, stateset_core::SkipBillingCycle {
+                reason: i.reason,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to skip billing: {}", e)))?;
+
+        Ok(subscription.into())
+    }
+
+    // ========================================================================
+    // Billing Cycles
+    // ========================================================================
+
+    /// List billing cycles for a subscription
+    #[napi]
+    pub async fn list_billing_cycles(&self, filter: Option<BillingCycleFilterInput>) -> Result<Vec<BillingCycleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let f = filter.unwrap_or_default();
+
+        let subscription_id = f.subscription_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let from_date = f.from_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+        let to_date = f.to_date.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        let cycles = commerce
+            .subscriptions()
+            .list_billing_cycles(stateset_core::BillingCycleFilter {
+                subscription_id,
+                status: f.status.as_ref().and_then(|s| parse_billing_cycle_status(s).ok()),
+                from_date,
+                to_date,
+                limit: f.limit.map(|v| v as u32),
+                offset: f.offset.map(|v| v as u32),
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list billing cycles: {}", e)))?;
+
+        Ok(cycles.into_iter().map(|c| c.into()).collect())
+    }
+
+    /// Get a billing cycle by ID
+    #[napi]
+    pub async fn get_billing_cycle(&self, id: String) -> Result<Option<BillingCycleOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let cycle = commerce
+            .subscriptions()
+            .get_billing_cycle(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get billing cycle: {}", e)))?;
+
+        Ok(cycle.map(|c| c.into()))
+    }
+
+    // ========================================================================
+    // Events
+    // ========================================================================
+
+    /// Get events for a subscription
+    #[napi]
+    pub async fn get_events(&self, subscription_id: String, limit: Option<i32>) -> Result<Vec<SubscriptionEventOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&subscription_id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let events = commerce
+            .subscriptions()
+            .get_events(uuid, limit.map(|v| v as u32))
+            .map_err(|e| Error::from_reason(format!("Failed to get events: {}", e)))?;
+
+        Ok(events.into_iter().map(|e| e.into()).collect())
+    }
+}
+
+impl Default for SubscriptionPlanFilterInput {
+    fn default() -> Self {
+        Self {
+            status: None,
+            billing_interval: None,
+            search: None,
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+impl Default for SubscriptionFilterInput {
+    fn default() -> Self {
+        Self {
+            customer_id: None,
+            plan_id: None,
+            status: None,
+            from_date: None,
+            to_date: None,
+            search: None,
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+impl Default for PauseSubscriptionInput {
+    fn default() -> Self {
+        Self {
+            reason: None,
+            resume_at: None,
+        }
+    }
+}
+
+impl Default for CancelSubscriptionInput {
+    fn default() -> Self {
+        Self {
+            reason: None,
+            immediate: None,
+            feedback: None,
+        }
+    }
+}
+
+impl Default for SkipBillingCycleInput {
+    fn default() -> Self {
+        Self {
+            reason: None,
+        }
+    }
+}
+
+impl Default for BillingCycleFilterInput {
+    fn default() -> Self {
+        Self {
+            subscription_id: None,
+            status: None,
+            from_date: None,
+            to_date: None,
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+// ============================================================================
+// Promotions
+// ============================================================================
+
+/// Promotions API for managing discounts and coupon codes
+#[napi]
+pub struct Promotions {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+/// Input for creating a promotion
+#[napi(object)]
+#[derive(Default)]
+pub struct CreatePromotionInput {
+    /// Optional promotion code (auto-generated if not provided)
+    pub code: Option<String>,
+    /// Display name
+    pub name: String,
+    /// Description for customers
+    pub description: Option<String>,
+    /// Internal notes
+    pub internal_notes: Option<String>,
+
+    /// Type: percentage_off, fixed_amount_off, buy_x_get_y, free_shipping, tiered_discount, bundle
+    pub promotion_type: Option<String>,
+    /// Trigger: automatic, coupon_code, both
+    pub trigger: Option<String>,
+    /// Target: order, product, category, shipping, line_item
+    pub target: Option<String>,
+    /// Stacking: stackable, exclusive, selective_stack
+    pub stacking: Option<String>,
+
+    /// Percentage off (0.0-1.0, e.g., 0.20 for 20%)
+    pub percentage_off: Option<f64>,
+    /// Fixed amount off
+    pub fixed_amount_off: Option<f64>,
+    /// Maximum discount amount (cap)
+    pub max_discount_amount: Option<f64>,
+
+    /// Buy X quantity (for BOGO)
+    pub buy_quantity: Option<i32>,
+    /// Get Y quantity (for BOGO)
+    pub get_quantity: Option<i32>,
+    /// Discount on "get" items (1.0 = free, 0.5 = 50% off)
+    pub get_discount_percent: Option<f64>,
+
+    /// Tiered discount rules as JSON
+    pub tiers: Option<String>,
+
+    /// Bundle product IDs as JSON array
+    pub bundle_product_ids: Option<Vec<String>>,
+    /// Bundle discount
+    pub bundle_discount: Option<f64>,
+
+    /// Start date (RFC3339)
+    pub starts_at: Option<String>,
+    /// End date (RFC3339)
+    pub ends_at: Option<String>,
+
+    /// Total usage limit
+    pub total_usage_limit: Option<i32>,
+    /// Per customer usage limit
+    pub per_customer_limit: Option<i32>,
+
+    /// Applicable product IDs
+    pub applicable_product_ids: Option<Vec<String>>,
+    /// Applicable category IDs
+    pub applicable_category_ids: Option<Vec<String>>,
+    /// Applicable SKUs
+    pub applicable_skus: Option<Vec<String>>,
+    /// Excluded product IDs
+    pub excluded_product_ids: Option<Vec<String>>,
+    /// Excluded category IDs
+    pub excluded_category_ids: Option<Vec<String>>,
+
+    /// Eligible customer IDs
+    pub eligible_customer_ids: Option<Vec<String>>,
+    /// Eligible customer groups
+    pub eligible_customer_groups: Option<Vec<String>>,
+
+    /// Currency code
+    pub currency: Option<String>,
+    /// Priority (lower = applied first)
+    pub priority: Option<i32>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+/// Input for updating a promotion
+#[napi(object)]
+#[derive(Default)]
+pub struct UpdatePromotionInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub internal_notes: Option<String>,
+    pub status: Option<String>,
+    pub percentage_off: Option<f64>,
+    pub fixed_amount_off: Option<f64>,
+    pub max_discount_amount: Option<f64>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub total_usage_limit: Option<i32>,
+    pub per_customer_limit: Option<i32>,
+    pub priority: Option<i32>,
+}
+
+/// Filter for listing promotions
+#[napi(object)]
+#[derive(Default)]
+pub struct PromotionFilterInput {
+    /// Filter by status
+    pub status: Option<String>,
+    /// Filter by promotion type
+    pub promotion_type: Option<String>,
+    /// Filter by trigger
+    pub trigger: Option<String>,
+    /// Filter by active status
+    pub is_active: Option<bool>,
+    /// Search term
+    pub search: Option<String>,
+    /// Max results
+    pub limit: Option<i32>,
+    /// Offset for pagination
+    pub offset: Option<i32>,
+}
+
+/// Promotion output
+#[napi(object)]
+pub struct PromotionOutput {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub internal_notes: Option<String>,
+    pub promotion_type: String,
+    pub trigger: String,
+    pub target: String,
+    pub stacking: String,
+    pub status: String,
+    pub percentage_off: Option<f64>,
+    pub fixed_amount_off: Option<f64>,
+    pub max_discount_amount: Option<f64>,
+    pub buy_quantity: Option<i32>,
+    pub get_quantity: Option<i32>,
+    pub get_discount_percent: Option<f64>,
+    pub starts_at: String,
+    pub ends_at: Option<String>,
+    pub total_usage_limit: Option<i32>,
+    pub per_customer_limit: Option<i32>,
+    pub usage_count: i32,
+    pub currency: String,
+    pub priority: i32,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::Promotion> for PromotionOutput {
+    fn from(p: stateset_core::Promotion) -> Self {
+        Self {
+            id: p.id.to_string(),
+            code: p.code,
+            name: p.name,
+            description: p.description,
+            internal_notes: p.internal_notes,
+            promotion_type: format!("{:?}", p.promotion_type).to_lowercase(),
+            trigger: format!("{:?}", p.trigger).to_lowercase(),
+            target: format!("{:?}", p.target).to_lowercase(),
+            stacking: format!("{:?}", p.stacking).to_lowercase(),
+            status: format!("{:?}", p.status).to_lowercase(),
+            percentage_off: p.percentage_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            fixed_amount_off: p.fixed_amount_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            max_discount_amount: p.max_discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            buy_quantity: p.buy_quantity,
+            get_quantity: p.get_quantity,
+            get_discount_percent: p.get_discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            starts_at: p.starts_at.to_rfc3339(),
+            ends_at: p.ends_at.map(|d| d.to_rfc3339()),
+            total_usage_limit: p.total_usage_limit,
+            per_customer_limit: p.per_customer_limit,
+            usage_count: p.usage_count,
+            currency: p.currency,
+            priority: p.priority,
+            metadata: p.metadata.map(|m| m.to_string()),
+            created_at: p.created_at.to_rfc3339(),
+            updated_at: p.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Input for creating a coupon code
+#[napi(object)]
+pub struct CreateCouponInput {
+    /// Promotion ID this coupon is for
+    pub promotion_id: String,
+    /// The coupon code customers enter
+    pub code: String,
+    /// Usage limit for this coupon
+    pub usage_limit: Option<i32>,
+    /// Per customer limit
+    pub per_customer_limit: Option<i32>,
+    /// Start date (RFC3339)
+    pub starts_at: Option<String>,
+    /// End date (RFC3339)
+    pub ends_at: Option<String>,
+    /// Metadata as JSON
+    pub metadata: Option<String>,
+}
+
+/// Filter for listing coupons
+#[napi(object)]
+#[derive(Default)]
+pub struct CouponFilterInput {
+    pub promotion_id: Option<String>,
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}
+
+/// Coupon code output
+#[napi(object)]
+pub struct CouponOutput {
+    pub id: String,
+    pub promotion_id: String,
+    pub code: String,
+    pub status: String,
+    pub usage_limit: Option<i32>,
+    pub per_customer_limit: Option<i32>,
+    pub usage_count: i32,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::CouponCode> for CouponOutput {
+    fn from(c: stateset_core::CouponCode) -> Self {
+        Self {
+            id: c.id.to_string(),
+            promotion_id: c.promotion_id.to_string(),
+            code: c.code,
+            status: format!("{:?}", c.status).to_lowercase(),
+            usage_limit: c.usage_limit,
+            per_customer_limit: c.per_customer_limit,
+            usage_count: c.usage_count,
+            starts_at: c.starts_at.map(|d| d.to_rfc3339()),
+            ends_at: c.ends_at.map(|d| d.to_rfc3339()),
+            metadata: c.metadata.map(|m| m.to_string()),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Input for applying promotions
+#[napi(object)]
+pub struct ApplyPromotionsInput {
+    pub cart_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub coupon_codes: Option<Vec<String>>,
+    pub line_items: Vec<PromotionLineItemInput>,
+    pub subtotal: f64,
+    pub shipping_amount: Option<f64>,
+    pub shipping_country: Option<String>,
+    pub shipping_state: Option<String>,
+    pub currency: Option<String>,
+}
+
+/// Line item input for promotion calculation
+#[napi(object)]
+pub struct PromotionLineItemInput {
+    pub id: String,
+    pub product_id: Option<String>,
+    pub variant_id: Option<String>,
+    pub sku: Option<String>,
+    pub category_ids: Option<Vec<String>>,
+    pub quantity: i32,
+    pub unit_price: f64,
+    pub line_total: f64,
+}
+
+/// Result of applying promotions
+#[napi(object)]
+pub struct ApplyPromotionsOutput {
+    pub original_subtotal: f64,
+    pub total_discount: f64,
+    pub discounted_subtotal: f64,
+    pub original_shipping: f64,
+    pub shipping_discount: f64,
+    pub final_shipping: f64,
+    pub grand_total: f64,
+    pub applied_promotions: Vec<AppliedPromotionOutput>,
+}
+
+/// An applied promotion
+#[napi(object)]
+pub struct AppliedPromotionOutput {
+    pub promotion_id: String,
+    pub promotion_name: String,
+    pub coupon_code: Option<String>,
+    pub discount_amount: f64,
+    pub discount_type: String,
+}
+
+impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
+    fn from(r: stateset_core::ApplyPromotionsResult) -> Self {
+        Self {
+            original_subtotal: r.original_subtotal.to_string().parse().unwrap_or(0.0),
+            total_discount: r.total_discount.to_string().parse().unwrap_or(0.0),
+            discounted_subtotal: r.discounted_subtotal.to_string().parse().unwrap_or(0.0),
+            original_shipping: r.original_shipping.to_string().parse().unwrap_or(0.0),
+            shipping_discount: r.shipping_discount.to_string().parse().unwrap_or(0.0),
+            final_shipping: r.final_shipping.to_string().parse().unwrap_or(0.0),
+            grand_total: r.grand_total.to_string().parse().unwrap_or(0.0),
+            applied_promotions: r.applied_promotions.into_iter().map(|a| AppliedPromotionOutput {
+                promotion_id: a.promotion_id.to_string(),
+                promotion_name: a.promotion_name,
+                coupon_code: a.coupon_code,
+                discount_amount: a.discount_amount.to_string().parse().unwrap_or(0.0),
+                discount_type: format!("{:?}", a.discount_type).to_lowercase(),
+            }).collect(),
+        }
+    }
+}
+
+/// Promotion usage record output
+#[napi(object)]
+pub struct PromotionUsageOutput {
+    pub id: String,
+    pub promotion_id: String,
+    pub coupon_id: Option<String>,
+    pub customer_id: Option<String>,
+    pub order_id: Option<String>,
+    pub cart_id: Option<String>,
+    pub discount_amount: f64,
+    pub currency: String,
+    pub used_at: String,
+}
+
+impl From<stateset_core::PromotionUsage> for PromotionUsageOutput {
+    fn from(u: stateset_core::PromotionUsage) -> Self {
+        Self {
+            id: u.id.to_string(),
+            promotion_id: u.promotion_id.to_string(),
+            coupon_id: u.coupon_id.map(|id| id.to_string()),
+            customer_id: u.customer_id.map(|id| id.to_string()),
+            order_id: u.order_id.map(|id| id.to_string()),
+            cart_id: u.cart_id.map(|id| id.to_string()),
+            discount_amount: u.discount_amount.to_string().parse().unwrap_or(0.0),
+            currency: u.currency,
+            used_at: u.used_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_promotion_type(s: &str) -> stateset_core::PromotionType {
+    match s.to_lowercase().as_str() {
+        "percentage_off" | "percentageoff" => stateset_core::PromotionType::PercentageOff,
+        "fixed_amount_off" | "fixedamountoff" => stateset_core::PromotionType::FixedAmountOff,
+        "buy_x_get_y" | "buyxgety" | "bogo" => stateset_core::PromotionType::BuyXGetY,
+        "free_shipping" | "freeshipping" => stateset_core::PromotionType::FreeShipping,
+        "tiered_discount" | "tiereddiscount" => stateset_core::PromotionType::TieredDiscount,
+        "bundle" | "bundle_discount" | "bundlediscount" => stateset_core::PromotionType::BundleDiscount,
+        _ => stateset_core::PromotionType::PercentageOff,
+    }
+}
+
+fn parse_promotion_trigger(s: &str) -> stateset_core::PromotionTrigger {
+    match s.to_lowercase().as_str() {
+        "automatic" | "auto" => stateset_core::PromotionTrigger::Automatic,
+        "coupon_code" | "couponcode" | "coupon" => stateset_core::PromotionTrigger::CouponCode,
+        "both" => stateset_core::PromotionTrigger::Both,
+        _ => stateset_core::PromotionTrigger::Automatic,
+    }
+}
+
+fn parse_promotion_target(s: &str) -> stateset_core::PromotionTarget {
+    match s.to_lowercase().as_str() {
+        "order" => stateset_core::PromotionTarget::Order,
+        "product" => stateset_core::PromotionTarget::Product,
+        "category" => stateset_core::PromotionTarget::Category,
+        "shipping" => stateset_core::PromotionTarget::Shipping,
+        "line_item" | "lineitem" => stateset_core::PromotionTarget::LineItem,
+        _ => stateset_core::PromotionTarget::Order,
+    }
+}
+
+fn parse_stacking_behavior(s: &str) -> stateset_core::StackingBehavior {
+    match s.to_lowercase().as_str() {
+        "stackable" => stateset_core::StackingBehavior::Stackable,
+        "exclusive" => stateset_core::StackingBehavior::Exclusive,
+        "selective_stack" | "selectivestack" => stateset_core::StackingBehavior::SelectiveStack,
+        _ => stateset_core::StackingBehavior::Stackable,
+    }
+}
+
+fn parse_promotion_status(s: &str) -> stateset_core::PromotionStatus {
+    match s.to_lowercase().as_str() {
+        "draft" => stateset_core::PromotionStatus::Draft,
+        "scheduled" => stateset_core::PromotionStatus::Scheduled,
+        "active" => stateset_core::PromotionStatus::Active,
+        "paused" => stateset_core::PromotionStatus::Paused,
+        "expired" => stateset_core::PromotionStatus::Expired,
+        "exhausted" => stateset_core::PromotionStatus::Exhausted,
+        "archived" => stateset_core::PromotionStatus::Archived,
+        _ => stateset_core::PromotionStatus::Draft,
+    }
+}
+
+fn parse_coupon_status(s: &str) -> stateset_core::CouponStatus {
+    match s.to_lowercase().as_str() {
+        "active" => stateset_core::CouponStatus::Active,
+        "disabled" => stateset_core::CouponStatus::Disabled,
+        "exhausted" => stateset_core::CouponStatus::Exhausted,
+        "expired" => stateset_core::CouponStatus::Expired,
+        _ => stateset_core::CouponStatus::Active,
+    }
+}
+
+#[napi]
+impl Promotions {
+    /// Create a new promotion
+    #[napi]
+    pub async fn create(&self, input: CreatePromotionInput) -> Result<PromotionOutput> {
+        let commerce = self.commerce.lock().await;
+        let create = stateset_core::CreatePromotion {
+            code: input.code,
+            name: input.name,
+            description: input.description,
+            internal_notes: input.internal_notes,
+            promotion_type: input.promotion_type.map(|s| parse_promotion_type(&s)).unwrap_or_default(),
+            trigger: input.trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
+            target: input.target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
+            stacking: input.stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
+            percentage_off: input.percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount_off: input.fixed_amount_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            max_discount_amount: input.max_discount_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            buy_quantity: input.buy_quantity,
+            get_quantity: input.get_quantity,
+            get_discount_percent: input.get_discount_percent.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            tiers: input.tiers.and_then(|s| serde_json::from_str(&s).ok()),
+            bundle_product_ids: input.bundle_product_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            bundle_discount: input.bundle_discount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            total_usage_limit: input.total_usage_limit,
+            per_customer_limit: input.per_customer_limit,
+            conditions: None,
+            applicable_product_ids: input.applicable_product_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            applicable_category_ids: input.applicable_category_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            applicable_skus: input.applicable_skus,
+            excluded_product_ids: input.excluded_product_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            excluded_category_ids: input.excluded_category_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            eligible_customer_ids: input.eligible_customer_ids.map(|ids| {
+                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+            }),
+            eligible_customer_groups: input.eligible_customer_groups,
+            currency: input.currency,
+            priority: input.priority,
+            metadata: input.metadata.and_then(|s| serde_json::from_str(&s).ok()),
+        };
+
+        let promo = commerce.promotions().create(create)
+            .map_err(|e| Error::from_reason(format!("Failed to create promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Get a promotion by ID
+    #[napi]
+    pub async fn get(&self, id: String) -> Result<Option<PromotionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let promo = commerce.promotions().get(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
+
+        Ok(promo.map(|p| p.into()))
+    }
+
+    /// Get a promotion by its internal code
+    #[napi]
+    pub async fn get_by_code(&self, code: String) -> Result<Option<PromotionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let promo = commerce.promotions().get_by_code(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
+
+        Ok(promo.map(|p| p.into()))
+    }
+
+    /// List promotions with optional filtering
+    #[napi]
+    pub async fn list(&self, filter: Option<PromotionFilterInput>) -> Result<Vec<PromotionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or_default();
+
+        let core_filter = stateset_core::PromotionFilter {
+            status: filter.status.map(|s| parse_promotion_status(&s)),
+            promotion_type: filter.promotion_type.map(|s| parse_promotion_type(&s)),
+            trigger: filter.trigger.map(|s| parse_promotion_trigger(&s)),
+            is_active: filter.is_active,
+            search: filter.search,
+            limit: filter.limit.map(|v| v as u32),
+            offset: filter.offset.map(|v| v as u32),
+        };
+
+        let promos = commerce.promotions().list(core_filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list promotions: {}", e)))?;
+
+        Ok(promos.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Update a promotion
+    #[napi]
+    pub async fn update(&self, id: String, input: UpdatePromotionInput) -> Result<PromotionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let update = stateset_core::UpdatePromotion {
+            name: input.name,
+            description: input.description,
+            internal_notes: input.internal_notes,
+            status: input.status.map(|s| parse_promotion_status(&s)),
+            percentage_off: input.percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount_off: input.fixed_amount_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            max_discount_amount: input.max_discount_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            total_usage_limit: input.total_usage_limit,
+            per_customer_limit: input.per_customer_limit,
+            priority: input.priority,
+            metadata: None,
+        };
+
+        let promo = commerce.promotions().update(uuid, update)
+            .map_err(|e| Error::from_reason(format!("Failed to update promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Delete a promotion
+    #[napi]
+    pub async fn delete(&self, id: String) -> Result<()> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        commerce.promotions().delete(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to delete promotion: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Activate a promotion
+    #[napi]
+    pub async fn activate(&self, id: String) -> Result<PromotionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let promo = commerce.promotions().activate(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to activate promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Deactivate (pause) a promotion
+    #[napi]
+    pub async fn deactivate(&self, id: String) -> Result<PromotionOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let promo = commerce.promotions().deactivate(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to deactivate promotion: {}", e)))?;
+
+        Ok(promo.into())
+    }
+
+    /// Get all currently active promotions
+    #[napi]
+    pub async fn get_active(&self) -> Result<Vec<PromotionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let promos = commerce.promotions().get_active()
+            .map_err(|e| Error::from_reason(format!("Failed to get active promotions: {}", e)))?;
+
+        Ok(promos.into_iter().map(|p| p.into()).collect())
+    }
+
+    /// Check if a promotion is currently valid
+    #[napi]
+    pub async fn is_valid(&self, id: String) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let valid = commerce.promotions().is_valid(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to check promotion validity: {}", e)))?;
+
+        Ok(valid)
+    }
+
+    // ========================================================================
+    // Coupon Codes
+    // ========================================================================
+
+    /// Create a coupon code for a promotion
+    #[napi]
+    pub async fn create_coupon(&self, input: CreateCouponInput) -> Result<CouponOutput> {
+        let commerce = self.commerce.lock().await;
+        let promotion_id = uuid::Uuid::parse_str(&input.promotion_id)
+            .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
+
+        let create = stateset_core::CreateCouponCode {
+            promotion_id,
+            code: input.code,
+            usage_limit: input.usage_limit,
+            per_customer_limit: input.per_customer_limit,
+            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            metadata: input.metadata.and_then(|s| serde_json::from_str(&s).ok()),
+        };
+
+        let coupon = commerce.promotions().create_coupon(create)
+            .map_err(|e| Error::from_reason(format!("Failed to create coupon: {}", e)))?;
+
+        Ok(coupon.into())
+    }
+
+    /// Get a coupon by ID
+    #[napi]
+    pub async fn get_coupon(&self, id: String) -> Result<Option<CouponOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let coupon = commerce.promotions().get_coupon(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    /// Get a coupon by its code
+    #[napi]
+    pub async fn get_coupon_by_code(&self, code: String) -> Result<Option<CouponOutput>> {
+        let commerce = self.commerce.lock().await;
+        let coupon = commerce.promotions().get_coupon_by_code(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    /// List coupons with optional filtering
+    #[napi]
+    pub async fn list_coupons(&self, filter: Option<CouponFilterInput>) -> Result<Vec<CouponOutput>> {
+        let commerce = self.commerce.lock().await;
+        let filter = filter.unwrap_or_default();
+
+        let core_filter = stateset_core::CouponFilter {
+            promotion_id: filter.promotion_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            status: filter.status.map(|s| parse_coupon_status(&s)),
+            search: filter.search,
+            limit: filter.limit.map(|v| v as u32),
+            offset: filter.offset.map(|v| v as u32),
+        };
+
+        let coupons = commerce.promotions().list_coupons(core_filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list coupons: {}", e)))?;
+
+        Ok(coupons.into_iter().map(|c| c.into()).collect())
+    }
+
+    /// Validate a coupon code
+    #[napi]
+    pub async fn validate_coupon(&self, code: String) -> Result<Option<CouponOutput>> {
+        let commerce = self.commerce.lock().await;
+        let coupon = commerce.promotions().validate_coupon(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to validate coupon: {}", e)))?;
+
+        Ok(coupon.map(|c| c.into()))
+    }
+
+    // ========================================================================
+    // Apply Promotions
+    // ========================================================================
+
+    /// Apply promotions to cart/order items
+    #[napi]
+    pub async fn apply(&self, input: ApplyPromotionsInput) -> Result<ApplyPromotionsOutput> {
+        let commerce = self.commerce.lock().await;
+        let request = stateset_core::ApplyPromotionsRequest {
+            cart_id: input.cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            coupon_codes: input.coupon_codes.unwrap_or_default(),
+            line_items: input.line_items.into_iter().map(|item| {
+                stateset_core::PromotionLineItem {
+                    id: item.id,
+                    product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                    variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                    sku: item.sku,
+                    category_ids: item.category_ids
+                        .map(|ids| ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect())
+                        .unwrap_or_default(),
+                    quantity: item.quantity,
+                    unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
+                    line_total: Decimal::from_f64_retain(item.line_total).unwrap_or_default(),
+                }
+            }).collect(),
+            subtotal: Decimal::from_f64_retain(input.subtotal).unwrap_or_default(),
+            shipping_amount: Decimal::from_f64_retain(input.shipping_amount.unwrap_or(0.0)).unwrap_or_default(),
+            shipping_country: input.shipping_country,
+            shipping_state: input.shipping_state,
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            is_first_order: false,
+        };
+
+        let result = commerce.promotions().apply(request)
+            .map_err(|e| Error::from_reason(format!("Failed to apply promotions: {}", e)))?;
+
+        Ok(result.into())
+    }
+
+    /// Record promotion usage (after order completion)
+    #[napi]
+    pub async fn record_usage(
+        &self,
+        promotion_id: String,
+        coupon_id: Option<String>,
+        customer_id: Option<String>,
+        order_id: Option<String>,
+        cart_id: Option<String>,
+        discount_amount: f64,
+        currency: String,
+    ) -> Result<PromotionUsageOutput> {
+        let commerce = self.commerce.lock().await;
+        let promotion_uuid = uuid::Uuid::parse_str(&promotion_id)
+            .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
+
+        let usage = commerce.promotions().record_usage(
+            promotion_uuid,
+            coupon_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
+            &currency,
+        ).map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
+
+        Ok(usage.into())
+    }
+}
+
+// ============================================================================
+// Tax API
+// ============================================================================
+
+// --- Input Types ---
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TaxAddressInput {
+    pub line1: Option<String>,
+    pub line2: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxLineItemInput {
+    pub id: String,
+    pub sku: Option<String>,
+    pub product_id: Option<String>,
+    pub quantity: f64,
+    pub unit_price: f64,
+    pub discount_amount: Option<f64>,
+    pub tax_category: Option<String>,
+    pub tax_code: Option<String>,
+    pub description: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TaxCalculationInput {
+    pub line_items: Vec<TaxLineItemInput>,
+    pub shipping_address: TaxAddressInput,
+    pub billing_address: Option<TaxAddressInput>,
+    pub customer_id: Option<String>,
+    pub shipping_amount: Option<f64>,
+    pub currency: Option<String>,
+    pub transaction_date: Option<String>,
+    pub prices_include_tax: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct CreateJurisdictionInput {
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub code: String,
+    pub level: Option<String>,
+    pub country_code: String,
+    pub state_code: Option<String>,
+    pub county: Option<String>,
+    pub city: Option<String>,
+    pub postal_codes: Option<Vec<String>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct CreateTaxRateInput {
+    pub jurisdiction_id: String,
+    pub tax_type: Option<String>,
+    pub product_category: Option<String>,
+    pub rate: f64,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_compound: Option<bool>,
+    pub priority: Option<i32>,
+    pub threshold_min: Option<f64>,
+    pub threshold_max: Option<f64>,
+    pub fixed_amount: Option<f64>,
+    pub effective_from: String,
+    pub effective_to: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct CreateExemptionInput {
+    pub customer_id: String,
+    pub exemption_type: String,
+    pub certificate_number: Option<String>,
+    pub issuing_authority: Option<String>,
+    pub jurisdiction_ids: Option<Vec<String>>,
+    pub exempt_categories: Option<Vec<String>>,
+    pub effective_from: String,
+    pub expires_at: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TaxRateFilterInput {
+    pub jurisdiction_id: Option<String>,
+    pub tax_type: Option<String>,
+    pub product_category: Option<String>,
+    pub active_only: Option<bool>,
+    pub effective_date: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct JurisdictionFilterInput {
+    pub country_code: Option<String>,
+    pub state_code: Option<String>,
+    pub level: Option<String>,
+    pub active_only: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TaxSettingsInput {
+    pub enabled: Option<bool>,
+    pub calculation_method: Option<String>,
+    pub compound_method: Option<String>,
+    pub tax_shipping: Option<bool>,
+    pub tax_handling: Option<bool>,
+    pub tax_gift_wrap: Option<bool>,
+    pub default_product_category: Option<String>,
+    pub rounding_mode: Option<String>,
+    pub decimal_places: Option<i32>,
+    pub validate_addresses: Option<bool>,
+    pub tax_provider: Option<String>,
+}
+
+// --- Output Types ---
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxJurisdictionOutput {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub code: String,
+    pub level: String,
+    pub country_code: String,
+    pub state_code: Option<String>,
+    pub county: Option<String>,
+    pub city: Option<String>,
+    pub postal_codes: Vec<String>,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::TaxJurisdiction> for TaxJurisdictionOutput {
+    fn from(j: stateset_core::TaxJurisdiction) -> Self {
+        Self {
+            id: j.id.to_string(),
+            parent_id: j.parent_id.map(|u| u.to_string()),
+            name: j.name,
+            code: j.code,
+            level: format!("{:?}", j.level).to_lowercase(),
+            country_code: j.country_code,
+            state_code: j.state_code,
+            county: j.county,
+            city: j.city,
+            postal_codes: j.postal_codes,
+            active: j.active,
+            created_at: j.created_at.to_rfc3339(),
+            updated_at: j.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxRateOutput {
+    pub id: String,
+    pub jurisdiction_id: String,
+    pub tax_type: String,
+    pub product_category: String,
+    pub rate: f64,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_compound: bool,
+    pub priority: i32,
+    pub threshold_min: Option<f64>,
+    pub threshold_max: Option<f64>,
+    pub fixed_amount: Option<f64>,
+    pub effective_from: String,
+    pub effective_to: Option<String>,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::TaxRate> for TaxRateOutput {
+    fn from(r: stateset_core::TaxRate) -> Self {
+        Self {
+            id: r.id.to_string(),
+            jurisdiction_id: r.jurisdiction_id.to_string(),
+            tax_type: r.tax_type.as_str().to_string(),
+            product_category: r.product_category.as_str().to_string(),
+            rate: r.rate.to_string().parse().unwrap_or(0.0),
+            name: r.name,
+            description: r.description,
+            is_compound: r.is_compound,
+            priority: r.priority,
+            threshold_min: r.threshold_min.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            threshold_max: r.threshold_max.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            fixed_amount: r.fixed_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            effective_from: r.effective_from.to_string(),
+            effective_to: r.effective_to.map(|d| d.to_string()),
+            active: r.active,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxExemptionOutput {
+    pub id: String,
+    pub customer_id: String,
+    pub exemption_type: String,
+    pub certificate_number: Option<String>,
+    pub issuing_authority: Option<String>,
+    pub jurisdiction_ids: Vec<String>,
+    pub exempt_categories: Vec<String>,
+    pub effective_from: String,
+    pub expires_at: Option<String>,
+    pub verified: bool,
+    pub verified_at: Option<String>,
+    pub notes: Option<String>,
+    pub active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::TaxExemption> for TaxExemptionOutput {
+    fn from(e: stateset_core::TaxExemption) -> Self {
+        Self {
+            id: e.id.to_string(),
+            customer_id: e.customer_id.to_string(),
+            exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
+            certificate_number: e.certificate_number,
+            issuing_authority: e.issuing_authority,
+            jurisdiction_ids: e.jurisdiction_ids.iter().map(|u| u.to_string()).collect(),
+            exempt_categories: e.exempt_categories.iter().map(|c| c.as_str().to_string()).collect(),
+            effective_from: e.effective_from.to_string(),
+            expires_at: e.expires_at.map(|d| d.to_string()),
+            verified: e.verified,
+            verified_at: e.verified_at.map(|d| d.to_rfc3339()),
+            notes: e.notes,
+            active: e.active,
+            created_at: e.created_at.to_rfc3339(),
+            updated_at: e.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxBreakdownOutput {
+    pub jurisdiction_id: String,
+    pub jurisdiction_name: String,
+    pub tax_type: String,
+    pub rate_name: String,
+    pub rate: f64,
+    pub taxable_amount: f64,
+    pub tax_amount: f64,
+    pub is_compound: bool,
+}
+
+impl From<stateset_core::TaxBreakdown> for TaxBreakdownOutput {
+    fn from(b: stateset_core::TaxBreakdown) -> Self {
+        Self {
+            jurisdiction_id: b.jurisdiction_id.to_string(),
+            jurisdiction_name: b.jurisdiction_name,
+            tax_type: b.tax_type.as_str().to_string(),
+            rate_name: b.rate_name,
+            rate: b.rate.to_string().parse().unwrap_or(0.0),
+            taxable_amount: b.taxable_amount.to_string().parse().unwrap_or(0.0),
+            tax_amount: b.tax_amount.to_string().parse().unwrap_or(0.0),
+            is_compound: b.is_compound,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxDetailOutput {
+    pub tax_type: String,
+    pub jurisdiction_name: String,
+    pub rate: f64,
+    pub amount: f64,
+}
+
+impl From<stateset_core::TaxDetail> for TaxDetailOutput {
+    fn from(d: stateset_core::TaxDetail) -> Self {
+        Self {
+            tax_type: d.tax_type.as_str().to_string(),
+            jurisdiction_name: d.jurisdiction_name,
+            rate: d.rate.to_string().parse().unwrap_or(0.0),
+            amount: d.amount.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LineItemTaxOutput {
+    pub line_item_id: String,
+    pub taxable_amount: f64,
+    pub tax_amount: f64,
+    pub effective_rate: f64,
+    pub is_exempt: bool,
+    pub exemption_reason: Option<String>,
+    pub tax_details: Vec<TaxDetailOutput>,
+}
+
+impl From<stateset_core::LineItemTax> for LineItemTaxOutput {
+    fn from(t: stateset_core::LineItemTax) -> Self {
+        Self {
+            line_item_id: t.line_item_id,
+            taxable_amount: t.taxable_amount.to_string().parse().unwrap_or(0.0),
+            tax_amount: t.tax_amount.to_string().parse().unwrap_or(0.0),
+            effective_rate: t.effective_rate.to_string().parse().unwrap_or(0.0),
+            is_exempt: t.is_exempt,
+            exemption_reason: t.exemption_reason,
+            tax_details: t.tax_details.into_iter().map(|d| d.into()).collect(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ExemptionDetailsOutput {
+    pub exemption_id: String,
+    pub exemption_type: String,
+    pub certificate_number: Option<String>,
+    pub amount_exempt: f64,
+    pub tax_saved: f64,
+}
+
+impl From<stateset_core::ExemptionDetails> for ExemptionDetailsOutput {
+    fn from(e: stateset_core::ExemptionDetails) -> Self {
+        Self {
+            exemption_id: e.exemption_id.to_string(),
+            exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
+            certificate_number: e.certificate_number,
+            amount_exempt: e.amount_exempt.to_string().parse().unwrap_or(0.0),
+            tax_saved: e.tax_saved.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct JurisdictionSummaryOutput {
+    pub id: String,
+    pub name: String,
+    pub code: String,
+    pub level: String,
+    pub total_rate: f64,
+    pub total_tax: f64,
+}
+
+impl From<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
+    fn from(s: stateset_core::JurisdictionSummary) -> Self {
+        Self {
+            id: s.id.to_string(),
+            name: s.name,
+            code: s.code,
+            level: format!("{:?}", s.level).to_lowercase(),
+            total_rate: s.total_rate.to_string().parse().unwrap_or(0.0),
+            total_tax: s.total_tax.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxCalculationOutput {
+    pub id: String,
+    pub total_tax: f64,
+    pub subtotal: f64,
+    pub total: f64,
+    pub shipping_tax: f64,
+    pub tax_breakdown: Vec<TaxBreakdownOutput>,
+    pub line_item_taxes: Vec<LineItemTaxOutput>,
+    pub exemptions_applied: bool,
+    pub exemption_details: Option<ExemptionDetailsOutput>,
+    pub jurisdictions: Vec<JurisdictionSummaryOutput>,
+    pub calculated_at: String,
+    pub is_estimate: bool,
+}
+
+impl From<stateset_core::TaxCalculationResult> for TaxCalculationOutput {
+    fn from(r: stateset_core::TaxCalculationResult) -> Self {
+        Self {
+            id: r.id.to_string(),
+            total_tax: r.total_tax.to_string().parse().unwrap_or(0.0),
+            subtotal: r.subtotal.to_string().parse().unwrap_or(0.0),
+            total: r.total.to_string().parse().unwrap_or(0.0),
+            shipping_tax: r.shipping_tax.to_string().parse().unwrap_or(0.0),
+            tax_breakdown: r.tax_breakdown.into_iter().map(|b| b.into()).collect(),
+            line_item_taxes: r.line_item_taxes.into_iter().map(|t| t.into()).collect(),
+            exemptions_applied: r.exemptions_applied,
+            exemption_details: r.exemption_details.map(|e| e.into()),
+            jurisdictions: r.jurisdictions.into_iter().map(|s| s.into()).collect(),
+            calculated_at: r.calculated_at.to_rfc3339(),
+            is_estimate: r.is_estimate,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TaxSettingsOutput {
+    pub id: String,
+    pub enabled: bool,
+    pub calculation_method: String,
+    pub compound_method: String,
+    pub tax_shipping: bool,
+    pub tax_handling: bool,
+    pub tax_gift_wrap: bool,
+    pub default_product_category: String,
+    pub rounding_mode: String,
+    pub decimal_places: i32,
+    pub validate_addresses: bool,
+    pub tax_provider: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::TaxSettings> for TaxSettingsOutput {
+    fn from(s: stateset_core::TaxSettings) -> Self {
+        Self {
+            id: s.id.to_string(),
+            enabled: s.enabled,
+            calculation_method: format!("{:?}", s.calculation_method).to_lowercase(),
+            compound_method: format!("{:?}", s.compound_method).to_lowercase(),
+            tax_shipping: s.tax_shipping,
+            tax_handling: s.tax_handling,
+            tax_gift_wrap: s.tax_gift_wrap,
+            default_product_category: s.default_product_category.as_str().to_string(),
+            rounding_mode: s.rounding_mode,
+            decimal_places: s.decimal_places,
+            validate_addresses: s.validate_addresses,
+            tax_provider: s.tax_provider,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UsStateTaxInfoOutput {
+    pub state_code: String,
+    pub state_name: String,
+    pub state_rate: f64,
+    pub has_local_taxes: bool,
+    pub origin_based: bool,
+    pub tax_shipping: bool,
+    pub tax_clothing: bool,
+    pub tax_food: bool,
+    pub tax_digital: bool,
+}
+
+impl From<stateset_core::UsStateTaxInfo> for UsStateTaxInfoOutput {
+    fn from(i: stateset_core::UsStateTaxInfo) -> Self {
+        Self {
+            state_code: i.state_code,
+            state_name: i.state_name,
+            state_rate: i.state_rate.to_string().parse().unwrap_or(0.0),
+            has_local_taxes: i.has_local_taxes,
+            origin_based: i.origin_based,
+            tax_shipping: i.tax_shipping,
+            tax_clothing: i.tax_clothing,
+            tax_food: i.tax_food,
+            tax_digital: i.tax_digital,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct EuVatInfoOutput {
+    pub country_code: String,
+    pub country_name: String,
+    pub standard_rate: f64,
+    pub reduced_rate: Option<f64>,
+    pub super_reduced_rate: Option<f64>,
+    pub parking_rate: Option<f64>,
+}
+
+impl From<stateset_core::EuVatInfo> for EuVatInfoOutput {
+    fn from(i: stateset_core::EuVatInfo) -> Self {
+        Self {
+            country_code: i.country_code,
+            country_name: i.country_name,
+            standard_rate: i.standard_rate.to_string().parse().unwrap_or(0.0),
+            reduced_rate: i.reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            super_reduced_rate: i.super_reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            parking_rate: i.parking_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CanadianTaxInfoOutput {
+    pub province_code: String,
+    pub province_name: String,
+    pub gst_rate: f64,
+    pub pst_rate: Option<f64>,
+    pub hst_rate: Option<f64>,
+    pub qst_rate: Option<f64>,
+    pub total_rate: f64,
+}
+
+impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
+    fn from(i: stateset_core::CanadianTaxInfo) -> Self {
+        Self {
+            province_code: i.province_code,
+            province_name: i.province_name,
+            gst_rate: i.gst_rate.to_string().parse().unwrap_or(0.0),
+            pst_rate: i.pst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            hst_rate: i.hst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            qst_rate: i.qst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            total_rate: i.total_rate.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+// --- Helper Functions ---
+
+fn parse_tax_type(s: &str) -> stateset_core::TaxType {
+    match s.to_lowercase().as_str() {
+        "sales_tax" => stateset_core::TaxType::SalesTax,
+        "vat" => stateset_core::TaxType::Vat,
+        "gst" => stateset_core::TaxType::Gst,
+        "hst" => stateset_core::TaxType::Hst,
+        "pst" => stateset_core::TaxType::Pst,
+        "qst" => stateset_core::TaxType::Qst,
+        "consumption_tax" => stateset_core::TaxType::ConsumptionTax,
+        "custom" => stateset_core::TaxType::Custom,
+        _ => stateset_core::TaxType::SalesTax,
+    }
+}
+
+fn parse_product_tax_category(s: &str) -> stateset_core::ProductTaxCategory {
+    match s.to_lowercase().as_str() {
+        "standard" => stateset_core::ProductTaxCategory::Standard,
+        "reduced" => stateset_core::ProductTaxCategory::Reduced,
+        "super_reduced" => stateset_core::ProductTaxCategory::SuperReduced,
+        "zero_rated" => stateset_core::ProductTaxCategory::ZeroRated,
+        "exempt" => stateset_core::ProductTaxCategory::Exempt,
+        "digital" => stateset_core::ProductTaxCategory::Digital,
+        "clothing" => stateset_core::ProductTaxCategory::Clothing,
+        "food" => stateset_core::ProductTaxCategory::Food,
+        "prepared_food" => stateset_core::ProductTaxCategory::PreparedFood,
+        "medical" => stateset_core::ProductTaxCategory::Medical,
+        "educational" => stateset_core::ProductTaxCategory::Educational,
+        "luxury" => stateset_core::ProductTaxCategory::Luxury,
+        _ => stateset_core::ProductTaxCategory::Standard,
+    }
+}
+
+fn parse_jurisdiction_level(s: &str) -> stateset_core::JurisdictionLevel {
+    match s.to_lowercase().as_str() {
+        "country" => stateset_core::JurisdictionLevel::Country,
+        "state" => stateset_core::JurisdictionLevel::State,
+        "county" => stateset_core::JurisdictionLevel::County,
+        "city" => stateset_core::JurisdictionLevel::City,
+        "district" => stateset_core::JurisdictionLevel::District,
+        "special" => stateset_core::JurisdictionLevel::Special,
+        _ => stateset_core::JurisdictionLevel::Country,
+    }
+}
+
+fn parse_exemption_type(s: &str) -> stateset_core::ExemptionType {
+    match s.to_lowercase().as_str() {
+        "resale" => stateset_core::ExemptionType::Resale,
+        "non_profit" | "nonprofit" => stateset_core::ExemptionType::NonProfit,
+        "government" => stateset_core::ExemptionType::Government,
+        "educational" => stateset_core::ExemptionType::Educational,
+        "religious" => stateset_core::ExemptionType::Religious,
+        "medical" => stateset_core::ExemptionType::Medical,
+        "manufacturing" => stateset_core::ExemptionType::Manufacturing,
+        "agricultural" => stateset_core::ExemptionType::Agricultural,
+        "export" => stateset_core::ExemptionType::Export,
+        "diplomatic" => stateset_core::ExemptionType::Diplomatic,
+        _ => stateset_core::ExemptionType::Other,
+    }
+}
+
+fn parse_calculation_method(s: &str) -> stateset_core::TaxCalculationMethod {
+    match s.to_lowercase().as_str() {
+        "inclusive" => stateset_core::TaxCalculationMethod::Inclusive,
+        _ => stateset_core::TaxCalculationMethod::Exclusive,
+    }
+}
+
+fn parse_compound_method(s: &str) -> stateset_core::TaxCompoundMethod {
+    match s.to_lowercase().as_str() {
+        "compound" => stateset_core::TaxCompoundMethod::Compound,
+        "separate" => stateset_core::TaxCompoundMethod::Separate,
+        _ => stateset_core::TaxCompoundMethod::Combined,
+    }
+}
+
+// --- Tax Struct ---
+
+#[napi]
+pub struct Tax {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Tax {
+    // ========================================================================
+    // Tax Calculation
+    // ========================================================================
+
+    /// Calculate tax for a transaction
+    #[napi]
+    pub async fn calculate(&self, input: TaxCalculationInput) -> Result<TaxCalculationOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let line_items: Vec<stateset_core::TaxLineItem> = input.line_items.into_iter().map(|item| {
+            stateset_core::TaxLineItem {
+                id: item.id,
+                sku: item.sku,
+                product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                quantity: Decimal::from_f64_retain(item.quantity).unwrap_or(Decimal::ONE),
+                unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
+                discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0)).unwrap_or_default(),
+                tax_category: item.tax_category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+                tax_code: item.tax_code,
+                description: item.description,
+            }
+        }).collect();
+
+        let shipping_address = stateset_core::TaxAddress {
+            line1: input.shipping_address.line1,
+            line2: input.shipping_address.line2,
+            city: input.shipping_address.city,
+            state: input.shipping_address.state,
+            postal_code: input.shipping_address.postal_code,
+            country: input.shipping_address.country,
+        };
+
+        let billing_address = input.billing_address.map(|addr| stateset_core::TaxAddress {
+            line1: addr.line1,
+            line2: addr.line2,
+            city: addr.city,
+            state: addr.state,
+            postal_code: addr.postal_code,
+            country: addr.country,
+        });
+
+        let request = stateset_core::TaxCalculationRequest {
+            line_items,
+            shipping_address,
+            billing_address,
+            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            shipping_amount: input.shipping_amount.map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
+            currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+            transaction_date: input.transaction_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            prices_include_tax: input.prices_include_tax.unwrap_or(false),
+        };
+
+        let result = commerce.tax().calculate(request)
+            .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
+
+        Ok(result.into())
+    }
+
+    /// Calculate tax for a single item
+    #[napi]
+    pub async fn calculate_for_item(
+        &self,
+        unit_price: f64,
+        quantity: f64,
+        category: Option<String>,
+        shipping_address: TaxAddressInput,
+    ) -> Result<f64> {
+        let commerce = self.commerce.lock().await;
+
+        let address = stateset_core::TaxAddress {
+            line1: shipping_address.line1,
+            line2: shipping_address.line2,
+            city: shipping_address.city,
+            state: shipping_address.state,
+            postal_code: shipping_address.postal_code,
+            country: shipping_address.country,
+        };
+
+        let tax = commerce.tax().calculate_for_item(
+            Decimal::from_f64_retain(unit_price).unwrap_or_default(),
+            Decimal::from_f64_retain(quantity).unwrap_or(Decimal::ONE),
+            category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+            &address,
+        ).map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
+
+        Ok(tax.to_string().parse().unwrap_or(0.0))
+    }
+
+    /// Get the effective tax rate for an address and category
+    #[napi]
+    pub async fn get_effective_rate(
+        &self,
+        address: TaxAddressInput,
+        category: Option<String>,
+    ) -> Result<f64> {
+        let commerce = self.commerce.lock().await;
+
+        let tax_address = stateset_core::TaxAddress {
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            state: address.state,
+            postal_code: address.postal_code,
+            country: address.country,
+        };
+
+        let rate = commerce.tax().get_effective_rate(
+            &tax_address,
+            category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+        ).map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+
+        Ok(rate.to_string().parse().unwrap_or(0.0))
+    }
+
+    // ========================================================================
+    // Jurisdiction Operations
+    // ========================================================================
+
+    /// Get a jurisdiction by ID
+    #[napi]
+    pub async fn get_jurisdiction(&self, id: String) -> Result<Option<TaxJurisdictionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let jurisdiction = commerce.tax().get_jurisdiction(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.map(|j| j.into()))
+    }
+
+    /// Get a jurisdiction by code
+    #[napi]
+    pub async fn get_jurisdiction_by_code(&self, code: String) -> Result<Option<TaxJurisdictionOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let jurisdiction = commerce.tax().get_jurisdiction_by_code(&code)
+            .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.map(|j| j.into()))
+    }
+
+    /// List jurisdictions with optional filtering
+    #[napi]
+    pub async fn list_jurisdictions(&self, filter: Option<JurisdictionFilterInput>) -> Result<Vec<TaxJurisdictionOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let f = filter.unwrap_or_default();
+        let core_filter = stateset_core::TaxJurisdictionFilter {
+            country_code: f.country_code,
+            state_code: f.state_code,
+            level: f.level.map(|s| parse_jurisdiction_level(&s)),
+            active_only: f.active_only.unwrap_or(false),
+        };
+
+        let jurisdictions = commerce.tax().list_jurisdictions(core_filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list jurisdictions: {}", e)))?;
+
+        Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
+    }
+
+    /// Create a new jurisdiction
+    #[napi]
+    pub async fn create_jurisdiction(&self, input: CreateJurisdictionInput) -> Result<TaxJurisdictionOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let create = stateset_core::CreateTaxJurisdiction {
+            parent_id: input.parent_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            name: input.name,
+            code: input.code,
+            level: input.level.map(|s| parse_jurisdiction_level(&s)).unwrap_or_default(),
+            country_code: input.country_code,
+            state_code: input.state_code,
+            county: input.county,
+            city: input.city,
+            postal_codes: input.postal_codes.unwrap_or_default(),
+        };
+
+        let jurisdiction = commerce.tax().create_jurisdiction(create)
+            .map_err(|e| Error::from_reason(format!("Failed to create jurisdiction: {}", e)))?;
+
+        Ok(jurisdiction.into())
+    }
+
+    // ========================================================================
+    // Tax Rate Operations
+    // ========================================================================
+
+    /// Get a tax rate by ID
+    #[napi]
+    pub async fn get_rate(&self, id: String) -> Result<Option<TaxRateOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let rate = commerce.tax().get_rate(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+
+        Ok(rate.map(|r| r.into()))
+    }
+
+    /// List tax rates with optional filtering
+    #[napi]
+    pub async fn list_rates(&self, filter: Option<TaxRateFilterInput>) -> Result<Vec<TaxRateOutput>> {
+        let commerce = self.commerce.lock().await;
+
+        let f = filter.unwrap_or_default();
+        let core_filter = stateset_core::TaxRateFilter {
+            jurisdiction_id: f.jurisdiction_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            tax_type: f.tax_type.map(|s| parse_tax_type(&s)),
+            product_category: f.product_category.map(|s| parse_product_tax_category(&s)),
+            active_only: f.active_only.unwrap_or(false),
+            effective_date: f.effective_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        };
+
+        let rates = commerce.tax().list_rates(core_filter)
+            .map_err(|e| Error::from_reason(format!("Failed to list rates: {}", e)))?;
+
+        Ok(rates.into_iter().map(|r| r.into()).collect())
+    }
+
+    /// Create a new tax rate
+    #[napi]
+    pub async fn create_rate(&self, input: CreateTaxRateInput) -> Result<TaxRateOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let jurisdiction_id = uuid::Uuid::parse_str(&input.jurisdiction_id)
+            .map_err(|e| Error::from_reason(format!("Invalid jurisdiction UUID: {}", e)))?;
+
+        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+            .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+
+        let create = stateset_core::CreateTaxRate {
+            jurisdiction_id,
+            tax_type: input.tax_type.map(|s| parse_tax_type(&s)).unwrap_or_default(),
+            product_category: input.product_category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+            rate: Decimal::from_f64_retain(input.rate).unwrap_or_default(),
+            name: input.name,
+            description: input.description,
+            is_compound: input.is_compound.unwrap_or(false),
+            priority: input.priority.unwrap_or(0),
+            threshold_min: input.threshold_min.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            threshold_max: input.threshold_max.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount: input.fixed_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            effective_from,
+            effective_to: input.effective_to.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        };
+
+        let rate = commerce.tax().create_rate(create)
+            .map_err(|e| Error::from_reason(format!("Failed to create rate: {}", e)))?;
+
+        Ok(rate.into())
+    }
+
+    // ========================================================================
+    // Exemption Operations
+    // ========================================================================
+
+    /// Get an exemption by ID
+    #[napi]
+    pub async fn get_exemption(&self, id: String) -> Result<Option<TaxExemptionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let exemption = commerce.tax().get_exemption(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get exemption: {}", e)))?;
+
+        Ok(exemption.map(|e| e.into()))
+    }
+
+    /// Get exemptions for a customer
+    #[napi]
+    pub async fn get_customer_exemptions(&self, customer_id: String) -> Result<Vec<TaxExemptionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&customer_id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let exemptions = commerce.tax().get_customer_exemptions(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get exemptions: {}", e)))?;
+
+        Ok(exemptions.into_iter().map(|e| e.into()).collect())
+    }
+
+    /// Create a tax exemption
+    #[napi]
+    pub async fn create_exemption(&self, input: CreateExemptionInput) -> Result<TaxExemptionOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let customer_id = uuid::Uuid::parse_str(&input.customer_id)
+            .map_err(|e| Error::from_reason(format!("Invalid customer UUID: {}", e)))?;
+
+        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+            .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+
+        let create = stateset_core::CreateTaxExemption {
+            customer_id,
+            exemption_type: parse_exemption_type(&input.exemption_type),
+            certificate_number: input.certificate_number,
+            issuing_authority: input.issuing_authority,
+            jurisdiction_ids: input.jurisdiction_ids
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                .collect(),
+            exempt_categories: input.exempt_categories
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| parse_product_tax_category(&s))
+                .collect(),
+            effective_from,
+            expires_at: input.expires_at.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            notes: input.notes,
+        };
+
+        let exemption = commerce.tax().create_exemption(create)
+            .map_err(|e| Error::from_reason(format!("Failed to create exemption: {}", e)))?;
+
+        Ok(exemption.into())
+    }
+
+    /// Check if a customer is tax exempt
+    #[napi]
+    pub async fn customer_is_exempt(&self, customer_id: String) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&customer_id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+
+        let is_exempt = commerce.tax().customer_is_exempt(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to check exemption: {}", e)))?;
+
+        Ok(is_exempt)
+    }
+
+    // ========================================================================
+    // Settings Operations
+    // ========================================================================
+
+    /// Get tax settings
+    #[napi]
+    pub async fn get_settings(&self) -> Result<TaxSettingsOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let settings = commerce.tax().get_settings()
+            .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Update tax settings
+    #[napi]
+    pub async fn update_settings(&self, input: TaxSettingsInput) -> Result<TaxSettingsOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let mut settings = commerce.tax().get_settings()
+            .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
+
+        if let Some(enabled) = input.enabled {
+            settings.enabled = enabled;
+        }
+        if let Some(method) = input.calculation_method {
+            settings.calculation_method = parse_calculation_method(&method);
+        }
+        if let Some(method) = input.compound_method {
+            settings.compound_method = parse_compound_method(&method);
+        }
+        if let Some(tax_shipping) = input.tax_shipping {
+            settings.tax_shipping = tax_shipping;
+        }
+        if let Some(tax_handling) = input.tax_handling {
+            settings.tax_handling = tax_handling;
+        }
+        if let Some(tax_gift_wrap) = input.tax_gift_wrap {
+            settings.tax_gift_wrap = tax_gift_wrap;
+        }
+        if let Some(category) = input.default_product_category {
+            settings.default_product_category = parse_product_tax_category(&category);
+        }
+        if let Some(mode) = input.rounding_mode {
+            settings.rounding_mode = mode;
+        }
+        if let Some(places) = input.decimal_places {
+            settings.decimal_places = places;
+        }
+        if let Some(validate) = input.validate_addresses {
+            settings.validate_addresses = validate;
+        }
+        if let Some(provider) = input.tax_provider {
+            settings.tax_provider = Some(provider);
+        }
+
+        let updated = commerce.tax().update_settings(settings)
+            .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
+
+        Ok(updated.into())
+    }
+
+    /// Enable or disable tax calculation
+    #[napi]
+    pub async fn set_enabled(&self, enabled: bool) -> Result<TaxSettingsOutput> {
+        let commerce = self.commerce.lock().await;
+
+        let settings = commerce.tax().set_enabled(enabled)
+            .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
+
+        Ok(settings.into())
+    }
+
+    /// Check if tax calculation is enabled
+    #[napi]
+    pub async fn is_enabled(&self) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+
+        let enabled = commerce.tax().is_enabled()
+            .map_err(|e| Error::from_reason(format!("Failed to check settings: {}", e)))?;
+
+        Ok(enabled)
+    }
+
+    // ========================================================================
+    // Helper Methods
+    // ========================================================================
+
+    /// Get US state tax information
+    #[napi]
+    pub fn get_us_state_info(state_code: String) -> Option<UsStateTaxInfoOutput> {
+        stateset_core::get_us_state_tax_info(&state_code).map(|i| i.into())
+    }
+
+    /// Get EU VAT information
+    #[napi]
+    pub fn get_eu_vat_info(country_code: String) -> Option<EuVatInfoOutput> {
+        stateset_core::get_eu_vat_info(&country_code).map(|i| i.into())
+    }
+
+    /// Get Canadian tax information
+    #[napi]
+    pub fn get_canadian_tax_info(province_code: String) -> Option<CanadianTaxInfoOutput> {
+        stateset_core::get_canadian_tax_info(&province_code).map(|i| i.into())
+    }
+
+    /// Check if a country is in the EU
+    #[napi]
+    pub fn is_eu_country(country_code: String) -> bool {
+        stateset_core::is_eu_member(&country_code)
+    }
+}
+

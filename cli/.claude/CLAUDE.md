@@ -31,6 +31,8 @@ This CLI provides natural language access to commerce operations:
 | `stateset-inventory` | inventory | Stock & reservation management |
 | `stateset-returns` | returns | RMA & refund processing |
 | `stateset-analytics` | analytics | Sales metrics & forecasting |
+| `stateset-promotions` | promotions | Promotions, discounts & coupons |
+| `stateset-subscriptions` | subscriptions | Subscription plans & recurring billing |
 | `stateset-create` | storefront | Create e-commerce storefronts |
 
 Use specialized commands for focused workflows with domain-specific tooling and prompts.
@@ -152,6 +154,46 @@ stateset --apply "create a cart for alice@example.com"
 - `enable_currencies` - Enable currencies for store (requires --apply)
 - `format_currency` - Format amount with currency symbol
 
+### commerce-tax
+- `calculate_tax` - Calculate tax for line items (US/EU/CA)
+- `calculate_cart_tax` - Calculate and apply tax to cart based on shipping address
+- `get_tax_rate` - Get effective rate for jurisdiction
+- `list_tax_jurisdictions` - List tax jurisdictions
+- `list_tax_rates` - List all tax rates
+- `get_tax_settings` - Get store tax settings
+- `get_us_state_tax_info` - Get US state tax details
+- `get_customer_tax_exemptions` - Get customer's tax exemptions
+- `create_tax_exemption` - Create tax exemption (requires --apply)
+
+### commerce-promotions
+- `list_promotions` - List all promotions
+- `get_promotion` - Get promotion details
+- `create_promotion` - Create a promotion (requires --apply)
+- `activate_promotion` - Make promotion live (requires --apply)
+- `deactivate_promotion` - Pause promotion (requires --apply)
+- `create_coupon` - Create a coupon code (requires --apply)
+- `validate_coupon` - Check if coupon code is valid
+- `list_coupons` - List all coupon codes
+- `get_active_promotions` - Get currently active promotions
+- `apply_cart_promotions` - Apply promotions to cart (requires --apply)
+
+### commerce-subscriptions
+- `list_subscription_plans` - List all subscription plans
+- `get_subscription_plan` - Get plan details
+- `create_subscription_plan` - Create a plan (requires --apply)
+- `activate_subscription_plan` - Make plan available (requires --apply)
+- `archive_subscription_plan` - Retire a plan (requires --apply)
+- `list_subscriptions` - List customer subscriptions
+- `get_subscription` - Get subscription details
+- `create_subscription` - Subscribe customer to plan (requires --apply)
+- `pause_subscription` - Pause billing (requires --apply)
+- `resume_subscription` - Resume paused subscription (requires --apply)
+- `cancel_subscription` - Cancel subscription (requires --apply)
+- `skip_billing_cycle` - Skip next billing (requires --apply)
+- `list_billing_cycles` - View billing history
+- `get_billing_cycle` - Get billing cycle details
+- `get_subscription_events` - View subscription event log
+
 ## Agents
 
 Specialized agents for different commerce domains:
@@ -163,6 +205,8 @@ Specialized agents for different commerce domains:
 | `inventory` | Stock management specialist | commerce-inventory |
 | `returns` | Return processing specialist | commerce-returns |
 | `analytics` | Business intelligence & forecasting | commerce-analytics |
+| `promotions` | Promotions & discounts specialist | commerce-promotions |
+| `subscriptions` | Subscription & recurring billing | commerce-subscriptions |
 | `customer-service` | Full customer service agent | All tools |
 
 ## Skills
@@ -176,6 +220,8 @@ Domain knowledge documents that enhance agent capabilities:
 | `commerce-inventory` | Stock tracking, reservations |
 | `commerce-returns` | Return reasons, refund workflows |
 | `commerce-analytics` | Sales metrics, forecasting, business intelligence |
+| `commerce-promotions` | Promotion types, coupon codes, discount rules |
+| `commerce-subscriptions` | Subscription plans, billing cycles, lifecycle management |
 
 ## Common Workflows
 
@@ -232,6 +278,74 @@ stateset --apply "enable currencies USD, EUR, GBP, JPY"
 stateset --apply "set base currency to EUR"
 ```
 
+### Tax Calculation
+```bash
+stateset "calculate tax for an order shipping to California"
+stateset "what's the tax rate for New York?"
+stateset "show me all tax jurisdictions"
+stateset "get tax info for Texas"
+stateset "what are the EU VAT rates?"
+stateset "calculate tax for order with items to Berlin, Germany"
+stateset --apply "create tax exemption for customer abc123 - resale certificate"
+
+# Cart tax calculation (integrated checkout)
+stateset "calculate tax for cart CART-123456"  # Uses cart's shipping address
+```
+
+### Promotions & Discounts
+```bash
+# View promotions
+stateset "show me all active promotions"
+stateset "list promotions by type percentage_off"
+stateset "get details for promotion <id>"
+
+# Create promotions
+stateset --apply "create a 20% off promotion called Summer Sale"
+stateset --apply "create a $10 off promotion for orders over $50"
+stateset --apply "create a free shipping promotion"
+stateset --apply "create a buy 2 get 1 free promotion"
+
+# Manage promotions
+stateset --apply "activate promotion <id>"
+stateset --apply "pause the Summer Sale promotion"
+
+# Coupon codes
+stateset "list all coupon codes"
+stateset "is coupon SAVE20 valid?"
+stateset --apply "create coupon SUMMER25 for promotion <id> with 100 use limit"
+
+# Apply to cart
+stateset --apply "apply promotions to cart <cart-id>"
+```
+
+### Subscriptions
+```bash
+# View subscription plans
+stateset "show me all subscription plans"
+stateset "list active plans"
+stateset "get details for plan <id>"
+
+# Create subscription plans
+stateset --apply "create a monthly plan called Coffee Club at $29.99 with 14 day trial"
+stateset --apply "create an annual plan called Pro Membership at $99.99"
+stateset --apply "activate plan <id>"
+
+# Manage subscriptions
+stateset "show me all active subscriptions"
+stateset "list subscriptions for customer <id>"
+stateset --apply "subscribe customer <id> to the Coffee Club plan"
+
+# Lifecycle operations
+stateset --apply "pause subscription <id>"
+stateset --apply "resume subscription <id>"
+stateset --apply "cancel subscription <id>"
+stateset --apply "skip next billing for subscription <id>"
+
+# View history
+stateset "show billing history for subscription <id>"
+stateset "get events for subscription <id>"
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -281,10 +395,12 @@ stateset-icommerce/cli/
 │   ├── stateset-checkout.js  # Checkout agent
 │   ├── stateset-orders.js    # Orders agent
 │   ├── stateset-inventory.js # Inventory agent
-│   └── stateset-returns.js   # Returns agent
+│   ├── stateset-returns.js   # Returns agent
+│   ├── stateset-promotions.js # Promotions agent
+│   └── stateset-subscriptions.js # Subscriptions agent
 ├── src/
 │   ├── claude-harness.js     # Multi-agent SDK integration
-│   ├── mcp-server.js         # MCP tools (38 total)
+│   ├── mcp-server.js         # MCP tools (63 total)
 │   └── utils/
 ├── .claude/
 │   ├── CLAUDE.md             # This file

@@ -53,6 +53,7 @@
 //! - **PostgreSQL support** - Scale to production with `postgres` feature
 //! - **Full commerce stack** - Orders, inventory, customers, products, returns
 //! - **Sync API** - Simple blocking operations
+//! - **Async API** - True async for PostgreSQL with `AsyncCommerce`
 //! - **Event-driven** - Subscribe to commerce events for side effects
 //!
 //! ## Database Backends
@@ -72,6 +73,38 @@
 //!     .postgres("postgres://localhost/stateset")
 //!     .max_connections(20)
 //!     .build()?;
+//! ```
+//!
+//! ### Async PostgreSQL API
+//!
+//! For true async operations with PostgreSQL, use `AsyncCommerce`:
+//!
+//! ```rust,ignore
+//! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem};
+//! use rust_decimal_macros::dec;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let commerce = AsyncCommerce::connect("postgres://localhost/stateset").await?;
+//!
+//!     // All operations are truly async
+//!     let order = commerce.orders().create(CreateOrder {
+//!         customer_id: uuid::Uuid::new_v4(),
+//!         items: vec![CreateOrderItem {
+//!             sku: "SKU-001".into(),
+//!             name: "Widget".into(),
+//!             quantity: 2,
+//!             unit_price: dec!(29.99),
+//!             ..Default::default()
+//!         }],
+//!         ..Default::default()
+//!     }).await?;
+//!
+//!     let customers = commerce.customers().list(Default::default()).await?;
+//!     let inventory = commerce.inventory().get_stock("SKU-001").await?;
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Architecture
@@ -99,11 +132,31 @@ mod invoices;
 mod orders;
 mod payments;
 mod products;
+mod promotions;
 mod purchase_orders;
 mod returns;
 mod shipments;
+mod subscriptions;
+mod tax;
 mod warranties;
 mod work_orders;
+
+#[cfg(feature = "postgres")]
+mod async_commerce;
+
+#[cfg(feature = "events")]
+pub mod events;
+
+// Event system types (feature-gated)
+#[cfg(feature = "events")]
+pub use events::{
+    EventBus, EventConfig, EventReceiver, EventSubscription, EventSystem,
+    Webhook, WebhookConfig, WebhookDelivery, WebhookManager,
+    FilteredSubscription, InMemoryEventStore, filters,
+};
+
+#[cfg(all(feature = "events", feature = "sqlite-events"))]
+pub use events::SqliteEventStore;
 
 pub use analytics::Analytics;
 pub use bom::Bom;
@@ -116,11 +169,22 @@ pub use invoices::Invoices;
 pub use orders::Orders;
 pub use payments::Payments;
 pub use products::Products;
+pub use promotions::Promotions;
 pub use purchase_orders::PurchaseOrders;
 pub use returns::Returns;
 pub use shipments::Shipments;
+pub use subscriptions::Subscriptions;
+pub use tax::Tax;
 pub use warranties::Warranties;
 pub use work_orders::WorkOrders;
+
+// Async API for PostgreSQL (feature-gated)
+#[cfg(feature = "postgres")]
+pub use async_commerce::{
+    AsyncAnalytics, AsyncBom, AsyncCarts, AsyncCommerce, AsyncCurrency, AsyncCustomers,
+    AsyncInventory, AsyncInvoices, AsyncOrders, AsyncPayments, AsyncProducts, AsyncPurchaseOrders,
+    AsyncReturns, AsyncShipments, AsyncWarranties, AsyncWorkOrders,
+};
 
 // Re-export Database trait for advanced users who want to bring their own database
 pub use stateset_db::Database;
@@ -325,4 +389,90 @@ pub use stateset_core::{
     RoundingMode,
     SetExchangeRate,
     StoreCurrencySettings,
+    // Tax types
+    CanadianTaxInfo,
+    CreateTaxExemption,
+    CreateTaxJurisdiction,
+    CreateTaxRate,
+    EuVatInfo,
+    ExemptionType,
+    JurisdictionLevel,
+    JurisdictionSummary,
+    LineItemTax,
+    ProductTaxCategory,
+    TaxAddress,
+    TaxBreakdown,
+    TaxCalculationMethod,
+    TaxCalculationRequest,
+    TaxCalculationResult,
+    TaxCompoundMethod,
+    TaxDetail,
+    TaxExemption,
+    TaxJurisdiction,
+    TaxJurisdictionFilter,
+    TaxLineItem,
+    TaxRate,
+    TaxRateFilter,
+    TaxSettings,
+    TaxType,
+    UsStateTaxInfo,
+    get_canadian_tax_info,
+    get_eu_vat_info,
+    get_us_state_tax_info,
+    is_eu_member,
+    // Promotion types
+    AppliedPromotion,
+    ApplyPromotionsRequest,
+    ApplyPromotionsResult,
+    ConditionOperator,
+    ConditionType,
+    CouponCode,
+    CouponFilter,
+    CouponStatus,
+    CreateCouponCode,
+    CreatePromotion,
+    CreatePromotionCondition,
+    DiscountTier,
+    LineItemDiscount,
+    Promotion,
+    PromotionCondition,
+    PromotionFilter,
+    PromotionLineItem,
+    PromotionStatus,
+    PromotionTarget,
+    PromotionTrigger,
+    PromotionType,
+    PromotionUsage,
+    RejectedPromotion,
+    RejectionReason,
+    StackingBehavior,
+    UpdatePromotion,
+    generate_coupon_code,
+    generate_promotion_code,
+    // Subscription types
+    BillingCycle,
+    BillingCycleFilter,
+    BillingCycleStatus,
+    BillingInterval,
+    CancelSubscription,
+    CreateSubscription,
+    CreateSubscriptionItem,
+    CreateSubscriptionPlan,
+    CreateSubscriptionPlanItem,
+    PauseSubscription,
+    PlanStatus,
+    SkipBillingCycle,
+    Subscription,
+    SubscriptionEvent,
+    SubscriptionEventType,
+    SubscriptionFilter,
+    SubscriptionItem,
+    SubscriptionPlan,
+    SubscriptionPlanFilter,
+    SubscriptionPlanItem,
+    SubscriptionStatus,
+    UpdateSubscription,
+    UpdateSubscriptionPlan,
+    generate_plan_code,
+    generate_subscription_number,
 };
