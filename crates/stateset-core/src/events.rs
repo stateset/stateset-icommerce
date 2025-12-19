@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::models::{
-    CustomerStatus, FulfillmentStatus, ItemCondition, OrderStatus, PaymentStatus,
-    ReservationStatus, ReturnReason, ReturnStatus,
+    CustomerStatus, FulfillmentStatus, OrderStatus, PaymentStatus, ReturnReason, ReturnStatus,
 };
 
 /// Commerce domain event

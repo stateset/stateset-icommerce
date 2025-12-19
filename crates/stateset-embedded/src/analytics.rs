@@ -3,7 +3,7 @@
 use stateset_core::{
     AnalyticsQuery, CustomerMetrics, DemandForecast, FulfillmentMetrics, InventoryHealth,
     InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance, Result,
-    ReturnMetrics, RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity, TimePeriod,
+    ReturnMetrics, RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity,
     TopCustomer, TopProduct,
 };
 use stateset_db::Database;

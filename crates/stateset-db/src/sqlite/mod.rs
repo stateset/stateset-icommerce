@@ -38,7 +38,6 @@ use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OpenFlags;
 use stateset_core::CommerceError;
-use std::sync::Arc;
 
 /// SQLite database connection pool
 pub struct SqliteDatabase {

@@ -9,7 +9,7 @@ use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
     InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance,
     Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast, SalesSummary,
-    TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    TimeGranularity, TimePeriod, TopCustomer, TopProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -631,8 +631,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
     fn get_fulfillment_metrics(&self, query: AnalyticsQuery) -> Result<FulfillmentMetrics> {
         let conn = self.conn()?;
         let (start, end) = self.get_date_range(&query);
-        let start_str = start.to_rfc3339();
-        let end_str = end.to_rfc3339();
+        let _start_str = start.to_rfc3339();
+        let _end_str = end.to_rfc3339();
 
         // Shipped today
         let today_start = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339();

@@ -1,7 +1,7 @@
 //! SQLite cart repository implementation
 
 use super::{map_db_error, parse_decimal};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;

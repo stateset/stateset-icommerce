@@ -1,7 +1,7 @@
 //! Bill of Materials (BOM) operations
 
 use stateset_core::{
-    BillOfMaterials, BomComponent, BomFilter, BomRepository, CommerceError, CreateBom,
+    BillOfMaterials, BomComponent, BomFilter, CreateBom,
     CreateBomComponent, Result, UpdateBom,
 };
 use stateset_db::Database;

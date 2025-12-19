@@ -33,7 +33,7 @@
 use crate::Database;
 use stateset_core::{
     AddShipmentEvent, CreateShipment, CreateShipmentItem, Result, Shipment,
-    ShipmentEvent, ShipmentFilter, ShipmentItem, ShipmentRepository,
+    ShipmentEvent, ShipmentFilter, ShipmentItem,
 };
 use std::sync::Arc;
 use uuid::Uuid;

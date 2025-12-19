@@ -682,7 +682,7 @@ fn parse_transaction_type(s: &str) -> TransactionType {
         "return" => TransactionType::Return,
         "allocation" => TransactionType::Allocation,
         "deallocation" => TransactionType::Deallocation,
-        "cycle_count" => TransactionType::Cycle_count,
+        "cycle_count" => TransactionType::CycleCount,
         _ => TransactionType::Adjustment,
     }
 }

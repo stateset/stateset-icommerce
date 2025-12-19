@@ -74,7 +74,7 @@ pub enum TransactionType {
     Return,
     Allocation,
     Deallocation,
-    Cycle_count,
+    CycleCount,
 }
 
 impl std::fmt::Display for TransactionType {
@@ -87,7 +87,7 @@ impl std::fmt::Display for TransactionType {
             Self::Return => write!(f, "return"),
             Self::Allocation => write!(f, "allocation"),
             Self::Deallocation => write!(f, "deallocation"),
-            Self::Cycle_count => write!(f, "cycle_count"),
+            Self::CycleCount => write!(f, "cycle_count"),
         }
     }
 }

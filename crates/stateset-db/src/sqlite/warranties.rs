@@ -7,7 +7,7 @@ use rusqlite::{params, Row};
 use stateset_core::{
     ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
     Result, UpdateWarranty, UpdateWarrantyClaim, Warranty, WarrantyClaim,
-    WarrantyClaimFilter, WarrantyFilter, WarrantyRepository, WarrantyStatus, WarrantyType,
+    WarrantyClaimFilter, WarrantyFilter, WarrantyRepository, WarrantyStatus,
     generate_warranty_number, generate_claim_number,
 };
 use uuid::Uuid;

@@ -2,9 +2,9 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddWorkOrderMaterial, CommerceError, CreateWorkOrder, CreateWorkOrderTask, Result,
+    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, Result,
     UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial,
-    WorkOrderRepository, WorkOrderTask,
+    WorkOrderTask,
 };
 use stateset_db::Database;
 use std::sync::Arc;

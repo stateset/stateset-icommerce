@@ -1,12 +1,12 @@
 //! SQLite order repository implementation
 
 use super::{map_db_error, parse_decimal};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    Address, CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
+    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
     OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use uuid::Uuid;

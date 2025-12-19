@@ -4,11 +4,9 @@ use super::{map_db_error, parse_decimal};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateProduct, CreateProductVariant, Product, ProductAttribute, ProductFilter,
-    ProductRepository, ProductStatus, ProductType, ProductVariant, Result, SeoMetadata, UpdateProduct,
-    VariantOption,
+    CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
+    ProductRepository, ProductStatus, ProductType, ProductVariant, Result, UpdateProduct,
 };
 use uuid::Uuid;
 

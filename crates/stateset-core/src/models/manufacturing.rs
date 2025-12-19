@@ -536,6 +536,7 @@ mod tests {
             tasks: vec![],
             materials: vec![],
             notes: None,
+            version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

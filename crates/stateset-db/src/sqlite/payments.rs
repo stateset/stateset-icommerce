@@ -5,8 +5,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
 use stateset_core::{
-    CardBrand, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund,
-    Payment, PaymentFilter, PaymentMethod, PaymentMethodType, PaymentRepository,
+    CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund,
+    Payment, PaymentFilter, PaymentMethod, PaymentRepository,
     PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
     generate_payment_number, generate_refund_number,
 };

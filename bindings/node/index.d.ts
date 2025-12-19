@@ -54,6 +54,7 @@ export interface OrderOutput {
   fulfillmentStatus: string
   trackingNumber?: string
   items: Array<OrderItemOutput>
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -129,6 +130,7 @@ export interface ReturnOutput {
   orderId: string
   status: string
   reason: string
+  version: number
   createdAt: string
 }
 export interface CreatePaymentInput {
@@ -148,6 +150,7 @@ export interface PaymentOutput {
   amount: number
   currency: string
   status: string
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -186,6 +189,7 @@ export interface ShipmentOutput {
   trackingUrl?: string
   recipientName: string
   shippingAddress: string
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -339,6 +343,7 @@ export interface WorkOrderOutput {
   priority: string
   quantityToBuild: number
   quantityCompleted: number
+  version: number
   createdAt: string
   updatedAt: string
 }

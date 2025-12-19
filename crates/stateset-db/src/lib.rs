@@ -37,7 +37,7 @@ pub use postgres::PostgresDatabase;
 
 
 use stateset_core::{
-    AnalyticsRepository, BomRepository, CartRepository, CommerceError, CurrencyRepository,
+    AnalyticsRepository, BomRepository, CartRepository, CurrencyRepository,
     CustomerRepository, InventoryRepository, InvoiceRepository, OrderRepository, PaymentRepository,
     ProductRepository, PurchaseOrderRepository, Result, ReturnRepository, ShipmentRepository,
     WarrantyRepository, WorkOrderRepository,

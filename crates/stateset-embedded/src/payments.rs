@@ -35,7 +35,7 @@
 use crate::Database;
 use stateset_core::{
     CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
-    PaymentMethod, PaymentRepository, Refund, Result,
+    PaymentMethod, Refund, Result,
 };
 use std::sync::Arc;
 use uuid::Uuid;
