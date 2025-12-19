@@ -13,12 +13,13 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 | Metric | Count |
 |--------|-------|
-| **Lines of Code** | ~40,000 |
-| **Domain Models** | 175 |
-| **Database Tables** | 38 |
-| **API Methods** | 311 |
-| **MCP Tools** | 56 |
-| **Language Bindings** | 3 (Rust, Node.js, Python) |
+| **Lines of Code** | ~136,000 |
+| **Domain Models** | 254 |
+| **Database Tables** | 53 |
+| **API Methods** | 670+ |
+| **MCP Tools** | 90 |
+| **AI Agents** | 8 |
+| **Language Bindings** | 4 (Rust, Node.js, Python, WASM) |
 
 ---
 
@@ -49,9 +50,9 @@ stateset-icommerce/
 │   ├── python/              # Python (PyO3)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # 8 CLI programs
-    ├── src/                 # MCP server (56 tools)
-    └── .claude/             # 6 AI agents, 5 skills
+    ├── bin/                 # 14 CLI programs
+    ├── src/                 # MCP server (90 tools)
+    └── .claude/             # 8 AI agents, 7 skills
 ```
 
 ```
@@ -66,10 +67,10 @@ stateset-icommerce/
 │                     StateSet iCommerce                          │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │   Models    │  │   Storage   │  │  Execution  │             │
-│  │ 175 types   │  │SQLite/Postgres│ │Deterministic│             │
+│  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  56 MCP     │  │  6 Agents   │  │  5 Skills   │             │
+│  │  90 MCP     │  │  8 Agents   │  │  7 Skills   │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
@@ -184,6 +185,20 @@ stateset "convert $100 USD to EUR"
 stateset --apply "create a cart for alice@example.com"
 stateset --apply "ship order #12345 with tracking FEDEX123"
 stateset --apply "approve return RET-001"
+
+# Tax calculation
+stateset "calculate tax for an order shipping to California"
+stateset "what's the VAT rate for Germany?"
+
+# Promotions
+stateset --apply "create a 20% off promotion called Summer Sale"
+stateset "is coupon SAVE20 valid?"
+stateset --apply "apply promotions to cart CART-123"
+
+# Subscriptions
+stateset "show me all subscription plans"
+stateset --apply "create a monthly plan called Pro at $29.99"
+stateset --apply "subscribe customer alice@example.com to the Pro plan"
 ```
 
 ---
@@ -206,10 +221,13 @@ stateset --apply "approve return RET-001"
 | **Invoices** | Invoice, InvoiceItem | Billing and accounts receivable |
 | **Currency** | ExchangeRate, Money | Multi-currency (35+ currencies) |
 | **Analytics** | SalesSummary, DemandForecast | Business intelligence |
+| **Tax** | TaxJurisdiction, TaxRate, TaxExemption | US/EU/CA tax calculation |
+| **Promotions** | Promotion, Coupon, DiscountRule | Campaigns, coupons, discounts |
+| **Subscriptions** | SubscriptionPlan, Subscription, BillingCycle | Recurring billing management |
 
 ---
 
-## Database Schema (38 Tables)
+## Database Schema (53 Tables)
 
 **Core:** customers, customer_addresses, products, product_variants, orders, order_items
 
@@ -221,13 +239,19 @@ stateset --apply "approve return RET-001"
 
 **Manufacturing:** manufacturing_boms, manufacturing_bom_components, manufacturing_work_orders, manufacturing_work_order_tasks, manufacturing_work_order_materials
 
+**Tax:** tax_jurisdictions, tax_rates, tax_exemptions, tax_settings
+
+**Promotions:** promotions, promotion_rules, promotion_actions, coupons, coupon_usages, promotion_applications
+
+**Subscriptions:** subscription_plans, subscriptions, billing_cycles, subscription_events
+
 **Other:** warranties, warranty_claims, carts, cart_items, exchange_rates, store_currency_settings, product_currency_prices, exchange_rate_history, events
 
 ---
 
-## MCP Tools (56 Total)
+## MCP Tools (90 Total)
 
-The MCP server exposes 56 tools for AI agent integration:
+The MCP server exposes 90 tools for AI agent integration:
 
 | Domain | Tools |
 |--------|-------|
@@ -239,12 +263,15 @@ The MCP server exposes 56 tools for AI agent integration:
 | **Carts** | list_carts, get_cart, create_cart, add_cart_item, update_cart_item, remove_cart_item, set_cart_shipping_address, set_cart_payment, apply_cart_discount, get_shipping_rates, complete_checkout, cancel_cart, abandon_cart, get_abandoned_carts |
 | **Analytics** | get_sales_summary, get_top_products, get_customer_metrics, get_top_customers, get_inventory_health, get_low_stock_items, get_demand_forecast, get_revenue_forecast, get_order_status_breakdown, get_return_metrics |
 | **Currency** | get_exchange_rate, list_exchange_rates, convert_currency, set_exchange_rate, get_currency_settings, set_base_currency, enable_currencies, format_currency |
+| **Tax** | calculate_tax, calculate_cart_tax, get_tax_rate, list_tax_jurisdictions, list_tax_rates, get_tax_settings, get_us_state_tax_info, get_customer_tax_exemptions, create_tax_exemption |
+| **Promotions** | list_promotions, get_promotion, create_promotion, activate_promotion, deactivate_promotion, create_coupon, validate_coupon, list_coupons, get_active_promotions, apply_cart_promotions |
+| **Subscriptions** | list_subscription_plans, get_subscription_plan, create_subscription_plan, activate_subscription_plan, archive_subscription_plan, list_subscriptions, get_subscription, create_subscription, pause_subscription, resume_subscription, cancel_subscription, skip_billing_cycle, list_billing_cycles, get_billing_cycle, get_subscription_events |
 
 ---
 
 ## AI Agents
 
-Six specialized agents for different commerce domains:
+Eight specialized agents for different commerce domains:
 
 | Agent | Description | Use Case |
 |-------|-------------|----------|
@@ -253,6 +280,8 @@ Six specialized agents for different commerce domains:
 | **inventory** | Stock management specialist | Reservations, adjustments |
 | **returns** | RMA processing specialist | Approvals, refunds |
 | **analytics** | Business intelligence | Metrics, forecasting |
+| **promotions** | Promotions & discounts specialist | Campaigns, coupons, discount rules |
+| **subscriptions** | Subscription management specialist | Plans, billing cycles, recurring payments |
 | **customer-service** | Full-service agent | All domains |
 
 ---
@@ -272,6 +301,27 @@ Six specialized agents for different commerce domains:
 - Invoice generation
 - Purchase orders with suppliers
 
+### Tax Management
+- Multi-jurisdiction tax calculation (US, EU, Canada)
+- State/province tax rates with automatic lookup
+- Tax exemptions and certificates
+- VAT support for EU countries
+- GST/HST/PST for Canadian provinces
+
+### Promotions & Discounts
+- Percentage and fixed-amount discounts
+- Coupon codes with usage limits
+- Buy-X-Get-Y promotions
+- Free shipping promotions
+- Time-limited campaigns
+
+### Subscriptions & Recurring Billing
+- Flexible subscription plans (daily, weekly, monthly, annual)
+- Free trial periods
+- Billing cycle management
+- Pause/resume/cancel lifecycle
+- Skip billing cycles
+
 ### Supply Chain
 - Manufacturing BOMs (Bill of Materials)
 - Work orders with task tracking
@@ -287,7 +337,7 @@ Six specialized agents for different commerce domains:
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
-- MCP protocol integration
+- MCP protocol integration (90 tools)
 - Safety architecture (--apply flag for writes)
 - Event-driven for full auditability
 - Portable state in single database file
@@ -381,22 +431,22 @@ stateset --apply "add 50 units to SKU-001"
 stateset-icommerce/
 ├── Cargo.toml                 # Workspace manifest
 ├── crates/
-│   ├── stateset-core/         # Domain models (5,685 LOC)
-│   │   └── src/models/        # 14 domain modules
-│   ├── stateset-db/           # Database layer (13,724 LOC)
-│   │   ├── src/sqlite/        # 15 SQLite modules
+│   ├── stateset-core/         # Domain models (18 domain modules)
+│   │   └── src/models/        # 254 types
+│   ├── stateset-db/           # Database layer
+│   │   ├── src/sqlite/        # 18 SQLite modules
 │   │   ├── src/postgres/      # 8 PostgreSQL modules
-│   │   └── migrations/        # 8 SQL migrations
-│   └── stateset-embedded/     # High-level API (4,641 LOC)
-│       └── src/               # 17 API modules
+│   │   └── migrations/        # 11 SQL migrations
+│   └── stateset-embedded/     # High-level API
+│       └── src/               # 20+ API modules
 ├── bindings/
-│   ├── node/                  # NAPI bindings
-│   ├── python/                # PyO3 bindings
-│   └── wasm/                  # WebAssembly bindings
+│   ├── node/                  # NAPI bindings (@stateset/embedded)
+│   ├── python/                # PyO3 bindings (stateset-embedded)
+│   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 8 CLI programs
-│   ├── src/mcp-server.js      # 56 MCP tools
-│   └── .claude/               # Agents & skills
+│   ├── bin/                   # 14 CLI programs
+│   ├── src/mcp-server.js      # 90 MCP tools
+│   └── .claude/               # 8 agents, 7 skills
 └── examples/
 ```
 
