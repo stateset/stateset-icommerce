@@ -16,10 +16,34 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **Lines of Code** | ~150,000 |
 | **Domain Models** | 254 |
 | **Database Tables** | 53 |
-| **API Methods** | 670+ |
-| **MCP Tools** | 90 |
+| **API Methods** | 700+ |
+| **MCP Tools** | 87 |
 | **AI Agents** | 8 |
 | **Language Bindings** | 7 (Rust, Node.js, Python, Ruby, PHP, Java, WASM) |
+| **Current Version** | 0.1.7 |
+
+---
+
+## What's New in v0.1.7
+
+**34 new MCP tools** expanding full commerce coverage:
+
+| New API | Tools | Description |
+|---------|-------|-------------|
+| **Payments** | 5 | Payment processing, capture, and refunds |
+| **Shipments** | 3 | Carrier tracking and delivery confirmation |
+| **Suppliers/POs** | 6 | Supply chain and purchase order management |
+| **Invoices** | 5 | B2B invoicing and accounts receivable |
+| **Warranties** | 4 | Warranty registration and claims processing |
+| **Manufacturing** | 11 | Bills of Materials and work order management |
+
+**Install:**
+```bash
+pip install stateset-embedded==0.1.7    # Python
+gem install stateset_embedded -v 0.1.7  # Ruby
+npm install @stateset/embedded@0.1.7    # Node.js
+cargo add stateset-embedded             # Rust
+```
 
 ---
 
@@ -54,7 +78,7 @@ stateset-icommerce/
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
     ├── bin/                 # 14 CLI programs
-    ├── src/                 # MCP server (90 tools)
+    ├── src/                 # MCP server (87 tools)
     └── .claude/             # 8 AI agents, 7 skills
 ```
 
@@ -73,7 +97,7 @@ stateset-icommerce/
 │  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  90 MCP     │  │  8 Agents   │  │  7 Skills   │             │
+│  │  87 MCP     │  │  8 Agents   │  │  7 Skills   │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
@@ -308,6 +332,37 @@ stateset --apply "apply promotions to cart CART-123"
 stateset "show me all subscription plans"
 stateset --apply "create a monthly plan called Pro at $29.99"
 stateset --apply "subscribe customer alice@example.com to the Pro plan"
+
+# Payments & Refunds
+stateset "list payments for order #12345"
+stateset --apply "create payment for order #12345 amount $99.99 via card"
+stateset --apply "refund payment PAY-001 amount $25.00"
+
+# Shipments
+stateset --apply "create shipment for order #12345 via FedEx tracking FEDEX123"
+stateset --apply "mark shipment SHIP-001 as delivered"
+
+# Supply Chain
+stateset "list purchase orders"
+stateset --apply "create purchase order for supplier SUP-001"
+stateset --apply "approve purchase order PO-001"
+
+# Invoices (B2B)
+stateset "show overdue invoices"
+stateset --apply "create invoice for customer CUST-001"
+stateset --apply "record payment on invoice INV-001"
+
+# Warranties
+stateset "list warranties for customer CUST-001"
+stateset --apply "create warranty for product SKU-001"
+stateset --apply "file warranty claim for warranty WRN-001"
+
+# Manufacturing
+stateset "list bills of materials"
+stateset --apply "create BOM for product WIDGET-ASSEMBLED"
+stateset --apply "add component SKU-PART-A quantity 2 to BOM-001"
+stateset --apply "create work order from BOM-001 quantity 50"
+stateset --apply "complete work order WO-001 with 48 units produced"
 ```
 
 ---
@@ -358,23 +413,29 @@ stateset --apply "subscribe customer alice@example.com to the Pro plan"
 
 ---
 
-## MCP Tools (90 Total)
+## MCP Tools (87 Total)
 
-The MCP server exposes 90 tools for AI agent integration:
+The MCP server exposes 87 tools for AI agent integration:
 
-| Domain | Tools |
-|--------|-------|
-| **Customers** | list_customers, get_customer, create_customer |
-| **Orders** | list_orders, get_order, create_order, update_order_status, ship_order, cancel_order |
-| **Products** | list_products, get_product, get_product_variant, create_product |
-| **Inventory** | get_stock, create_inventory_item, adjust_inventory, reserve_inventory, confirm_reservation, release_reservation |
-| **Returns** | list_returns, get_return, create_return, approve_return, reject_return |
-| **Carts** | list_carts, get_cart, create_cart, add_cart_item, update_cart_item, remove_cart_item, set_cart_shipping_address, set_cart_payment, apply_cart_discount, get_shipping_rates, complete_checkout, cancel_cart, abandon_cart, get_abandoned_carts |
-| **Analytics** | get_sales_summary, get_top_products, get_customer_metrics, get_top_customers, get_inventory_health, get_low_stock_items, get_demand_forecast, get_revenue_forecast, get_order_status_breakdown, get_return_metrics |
-| **Currency** | get_exchange_rate, list_exchange_rates, convert_currency, set_exchange_rate, get_currency_settings, set_base_currency, enable_currencies, format_currency |
-| **Tax** | calculate_tax, calculate_cart_tax, get_tax_rate, list_tax_jurisdictions, list_tax_rates, get_tax_settings, get_us_state_tax_info, get_customer_tax_exemptions, create_tax_exemption |
-| **Promotions** | list_promotions, get_promotion, create_promotion, activate_promotion, deactivate_promotion, create_coupon, validate_coupon, list_coupons, get_active_promotions, apply_cart_promotions |
-| **Subscriptions** | list_subscription_plans, get_subscription_plan, create_subscription_plan, activate_subscription_plan, archive_subscription_plan, list_subscriptions, get_subscription, create_subscription, pause_subscription, resume_subscription, cancel_subscription, skip_billing_cycle, list_billing_cycles, get_billing_cycle, get_subscription_events |
+| Domain | Tools | Count |
+|--------|-------|-------|
+| **Customers** | list_customers, get_customer, create_customer | 3 |
+| **Orders** | list_orders, get_order, create_order, update_order_status, ship_order, cancel_order | 6 |
+| **Products** | list_products, get_product, get_product_variant, create_product | 4 |
+| **Inventory** | get_stock, create_inventory_item, adjust_inventory, reserve_inventory, confirm_reservation, release_reservation | 6 |
+| **Returns** | list_returns, get_return, create_return, approve_return, reject_return | 5 |
+| **Carts** | list_carts, get_cart, create_cart, add_cart_item, update_cart_item, remove_cart_item, set_cart_shipping_address, set_cart_payment, apply_cart_discount, get_shipping_rates, complete_checkout, cancel_cart, abandon_cart, get_abandoned_carts | 14 |
+| **Analytics** | get_sales_summary, get_top_products, get_customer_metrics, get_top_customers, get_inventory_health, get_low_stock_items, get_demand_forecast, get_revenue_forecast, get_order_status_breakdown, get_return_metrics | 10 |
+| **Currency** | get_exchange_rate, list_exchange_rates, convert_currency, set_exchange_rate, get_currency_settings, set_base_currency, enable_currencies, format_currency | 8 |
+| **Tax** | calculate_tax, calculate_cart_tax, get_tax_rate, list_tax_jurisdictions, list_tax_rates, get_tax_settings, get_us_state_tax_info, get_customer_tax_exemptions, create_tax_exemption | 9 |
+| **Promotions** | list_promotions, get_promotion, create_promotion, activate_promotion, deactivate_promotion, create_coupon, validate_coupon, list_coupons, get_active_promotions, apply_cart_promotions | 10 |
+| **Subscriptions** | list_subscription_plans, get_subscription_plan, create_subscription_plan, activate_subscription_plan, archive_subscription_plan, list_subscriptions, get_subscription, create_subscription, pause_subscription, resume_subscription, cancel_subscription, skip_billing_cycle, list_billing_cycles, get_billing_cycle, get_subscription_events | 15 |
+| **Payments** | list_payments, get_payment, create_payment, complete_payment, create_refund | 5 |
+| **Shipments** | list_shipments, create_shipment, deliver_shipment | 3 |
+| **Suppliers/POs** | list_suppliers, create_supplier, list_purchase_orders, create_purchase_order, approve_purchase_order, send_purchase_order | 6 |
+| **Invoices** | list_invoices, create_invoice, send_invoice, record_invoice_payment, get_overdue_invoices | 5 |
+| **Warranties** | list_warranties, create_warranty, create_warranty_claim, approve_warranty_claim | 4 |
+| **Manufacturing** | list_boms, get_bom, create_bom, add_bom_component, activate_bom, list_work_orders, get_work_order, create_work_order, start_work_order, complete_work_order, cancel_work_order | 11 |
 
 ---
 
@@ -446,7 +507,7 @@ Eight specialized agents for different commerce domains:
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
-- MCP protocol integration (90 tools)
+- MCP protocol integration (87 tools)
 - Safety architecture (--apply flag for writes)
 - Event-driven for full auditability
 - Portable state in single database file
@@ -656,7 +717,7 @@ stateset-icommerce/
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
 │   ├── bin/                   # 14 CLI programs
-│   ├── src/mcp-server.js      # 90 MCP tools
+│   ├── src/mcp-server.js      # 87 MCP tools
 │   └── .claude/               # 8 agents, 7 skills
 └── examples/
 ```
