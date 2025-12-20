@@ -64,5 +64,6 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("009_tax", include_str!("../migrations/009_tax.sql")),
         ("010_promotions", include_str!("../migrations/010_promotions.sql")),
         ("011_subscriptions", include_str!("../migrations/011_subscriptions.sql")),
+        ("012_versioning", include_str!("../migrations/012_versioning.sql")),
     ]
 }

@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.1.4
+**Version:** 0.1.7
 
 ## Philosophy
 
@@ -17,7 +17,7 @@ The Stateset CLI is built on the premise that commerce infrastructure should be 
 
 - **Natural Language Interface** - Ask Claude to perform commerce operations
 - **Multi-Agent System** - 8 specialized agents auto-route to the best handler
-- **90 MCP Tools** - Full commerce API exposed to Claude
+- **87 MCP Tools** - Full commerce API exposed to Claude
 - **Multi-turn Sessions** - Resume conversations for complex workflows
 - **Preview Mode** - See what would happen before making changes
 - **Direct Commands** - Fast, non-AI mode for scripting
@@ -135,7 +135,7 @@ stateset-icommerce/
     ├── bin/                 # 14 CLI programs
     ├── src/
     │   ├── claude-harness.js    # Multi-agent SDK integration
-    │   ├── mcp-server.js        # 90 MCP tools for Claude
+    │   ├── mcp-server.js        # 87 MCP tools for Claude
     │   ├── permissions.js       # Fine-grained access control
     │   └── telemetry.js         # Observability & tracing
     └── .claude/
@@ -394,7 +394,7 @@ Eight specialized agents handle different commerce domains:
 | **analytics** | 10 tools | Business intelligence & forecasting |
 | **promotions** | 10 tools | Campaigns, discounts, coupons |
 | **subscriptions** | 15 tools | Subscription plans & recurring billing |
-| **customer-service** | All 90 tools | Full-service fallback agent |
+| **customer-service** | All 87 tools | Full-service fallback agent |
 
 ### Auto-Routing
 
@@ -404,7 +404,7 @@ The main `stateset` command automatically routes requests to the best agent base
 - Domain keyword matching
 - Ambiguity detection
 
-## MCP Tools (90 Total)
+## MCP Tools (87 Total)
 
 | Domain | Count | Examples |
 |--------|-------|----------|
@@ -419,6 +419,12 @@ The main `stateset` command automatically routes requests to the best agent base
 | **Tax** | 9 | calculate_tax, calculate_cart_tax, get_rate, list_jurisdictions |
 | **Promotions** | 10 | list, create, activate, create_coupon, validate_coupon, apply |
 | **Subscriptions** | 15 | list_plans, create_plan, create_subscription, pause, resume, cancel |
+| **Manufacturing** | 11 | list_boms, create_bom, create_work_order, complete_work_order |
+| **Payments** | 5 | list, get, create, complete, create_refund |
+| **Shipments** | 3 | list, create, deliver |
+| **Suppliers/POs** | 6 | list_suppliers, create_supplier, create_purchase_order |
+| **Invoices** | 5 | list, create, send, record_payment, get_overdue |
+| **Warranties** | 4 | list, create, create_claim, approve_claim |
 
 ## Configuration
 

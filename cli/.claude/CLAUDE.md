@@ -194,6 +194,52 @@ stateset --apply "create a cart for alice@example.com"
 - `get_billing_cycle` - Get billing cycle details
 - `get_subscription_events` - View subscription event log
 
+### commerce-manufacturing
+- `list_boms` - List all Bills of Materials
+- `get_bom` - Get BOM with components
+- `create_bom` - Create new BOM (requires --apply)
+- `add_bom_component` - Add component to BOM (requires --apply)
+- `activate_bom` - Activate BOM for production (requires --apply)
+- `list_work_orders` - List manufacturing work orders
+- `get_work_order` - Get work order details
+- `create_work_order` - Create work order from BOM (requires --apply)
+- `start_work_order` - Start production (requires --apply)
+- `complete_work_order` - Complete with quantity (requires --apply)
+- `cancel_work_order` - Cancel work order (requires --apply)
+
+### commerce-payments
+- `list_payments` - List all payments
+- `get_payment` - Get payment details
+- `create_payment` - Create payment for order (requires --apply)
+- `complete_payment` - Mark payment completed (requires --apply)
+- `create_refund` - Process refund (requires --apply)
+
+### commerce-shipments
+- `list_shipments` - List all shipments
+- `create_shipment` - Create shipment with tracking (requires --apply)
+- `deliver_shipment` - Mark as delivered (requires --apply)
+
+### commerce-suppliers
+- `list_suppliers` - List all suppliers
+- `create_supplier` - Create new supplier (requires --apply)
+- `list_purchase_orders` - List all purchase orders
+- `create_purchase_order` - Create PO (requires --apply)
+- `approve_purchase_order` - Approve PO (requires --apply)
+- `send_purchase_order` - Send to supplier (requires --apply)
+
+### commerce-invoices
+- `list_invoices` - List all invoices
+- `create_invoice` - Create B2B invoice (requires --apply)
+- `send_invoice` - Send to customer (requires --apply)
+- `record_invoice_payment` - Record payment (requires --apply)
+- `get_overdue_invoices` - Get overdue invoices
+
+### commerce-warranties
+- `list_warranties` - List all warranties
+- `create_warranty` - Create product warranty (requires --apply)
+- `create_warranty_claim` - File warranty claim (requires --apply)
+- `approve_warranty_claim` - Approve claim (requires --apply)
+
 ## Agents
 
 Specialized agents for different commerce domains:

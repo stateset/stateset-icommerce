@@ -270,6 +270,13 @@ function buildPayload(resourceName, methodName, args, result) {
  * @returns {Object} - Wrapped commerce instance with _outbox and _capture
  */
 export function wrapCommerceWithEvents(commerce, config) {
+  // Guard: commerce.db may be undefined if using N-API binding
+  // In this case, skip sync and return commerce as-is
+  if (!commerce.db) {
+    console.warn('[Sync] commerce.db not available, event sync disabled');
+    return commerce;
+  }
+
   const capture = new EventCapture(commerce.db, config);
 
   const wrapped = {

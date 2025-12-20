@@ -100,6 +100,50 @@ impl PgOrderRepository {
         }
     }
 
+    async fn update_order_total_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+    ) -> Result<()> {
+        let current_version: i32 = sqlx::query_scalar(
+            "SELECT version FROM orders WHERE id = $1 FOR UPDATE",
+        )
+        .bind(order_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::OrderNotFound(order_id))?;
+
+        let total: Decimal = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(total), 0) FROM order_items WHERE order_id = $1",
+        )
+        .bind(order_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let result = sqlx::query(
+            "UPDATE orders SET total_amount = $1, updated_at = $2, version = version + 1 WHERE id = $3 AND version = $4",
+        )
+        .bind(total)
+        .bind(Utc::now())
+        .bind(order_id)
+        .bind(current_version)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "order".to_string(),
+                id: order_id.to_string(),
+                expected_version: current_version,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Create an order (async)
     pub async fn create_async(&self, input: CreateOrder) -> Result<Order> {
         let id = Uuid::new_v4();
@@ -280,6 +324,7 @@ impl PgOrderRepository {
         let now = Utc::now();
 
         let existing = self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))?;
+        let expected_version = existing.version;
 
         let new_status = input.status.unwrap_or(existing.status);
         let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
@@ -292,13 +337,13 @@ impl PgOrderRepository {
         let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
         let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE orders
             SET status = $1, payment_status = $2, fulfillment_status = $3,
                 tracking_number = $4, notes = $5, shipping_address = $6,
-                billing_address = $7, updated_at = $8
-            WHERE id = $9
+                billing_address = $7, updated_at = $8, version = version + 1
+            WHERE id = $9 AND version = $10
             "#,
         )
         .bind(new_status.to_string())
@@ -310,9 +355,17 @@ impl PgOrderRepository {
         .bind(&billing_json)
         .bind(now)
         .bind(id)
+        .bind(expected_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "order".to_string(),
+                id: id.to_string(),
+                expected_version,
+            });
+        }
 
         self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))
     }
@@ -353,6 +406,7 @@ impl PgOrderRepository {
 
     /// Add item to order (async)
     pub async fn add_item_async(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let discount = item.discount.unwrap_or(Decimal::ZERO);
@@ -378,9 +432,12 @@ impl PgOrderRepository {
         .bind(tax)
         .bind(total)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
+
+        self.update_order_total_tx(&mut tx, order_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(OrderItem {
             id,
@@ -398,12 +455,17 @@ impl PgOrderRepository {
     }
 
     /// Remove item from order (async)
-    pub async fn remove_item_async(&self, _order_id: Uuid, item_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM order_items WHERE id = $1")
+    pub async fn remove_item_async(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("DELETE FROM order_items WHERE id = $1 AND order_id = $2")
             .bind(item_id)
-            .execute(&self.pool)
+            .bind(order_id)
+            .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
+
+        self.update_order_total_tx(&mut tx, order_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
@@ -421,39 +483,39 @@ impl PgOrderRepository {
 
 impl OrderRepository for PgOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Order>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, order_number: &str) -> Result<Option<Order>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(order_number))
+        super::block_on(self.get_by_number_async(order_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        tokio::runtime::Handle::current().block_on(self.add_item_async(order_id, item))
+        super::block_on(self.add_item_async(order_id, item))
     }
 
     fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_item_async(order_id, item_id))
+        super::block_on(self.remove_item_async(order_id, item_id))
     }
 
     fn count(&self, filter: OrderFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }
 

@@ -705,94 +705,94 @@ impl PgShipmentRepository {
 
 impl ShipmentRepository for PgShipmentRepository {
     fn create(&self, input: CreateShipment) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Shipment>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, shipment_number: &str) -> Result<Option<Shipment>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(shipment_number))
+        super::block_on(self.get_by_number_async(shipment_number))
     }
 
     fn get_by_tracking(&self, tracking_number: &str) -> Result<Option<Shipment>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_tracking_async(tracking_number))
+        super::block_on(self.get_by_tracking_async(tracking_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: ShipmentFilter) -> Result<Vec<Shipment>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        tokio::runtime::Handle::current().block_on(self.for_order_async(order_id))
+        super::block_on(self.for_order_async(order_id))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn mark_processing(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_processing_async(id))
+        super::block_on(self.mark_processing_async(id))
     }
 
     fn mark_ready(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_ready_async(id))
+        super::block_on(self.mark_ready_async(id))
     }
 
     fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.ship_async(id, tracking_number))
+        super::block_on(self.ship_async(id, tracking_number))
     }
 
     fn mark_in_transit(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_in_transit_async(id))
+        super::block_on(self.mark_in_transit_async(id))
     }
 
     fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_out_for_delivery_async(id))
+        super::block_on(self.mark_out_for_delivery_async(id))
     }
 
     fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_delivered_async(id))
+        super::block_on(self.mark_delivered_async(id))
     }
 
     fn mark_failed(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.mark_failed_async(id))
+        super::block_on(self.mark_failed_async(id))
     }
 
     fn hold(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.hold_async(id))
+        super::block_on(self.hold_async(id))
     }
 
     fn cancel(&self, id: Uuid) -> Result<Shipment> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
-        tokio::runtime::Handle::current().block_on(self.add_item_async(shipment_id, item))
+        super::block_on(self.add_item_async(shipment_id, item))
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_item_async(item_id))
+        super::block_on(self.remove_item_async(item_id))
     }
 
     fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_items_async(shipment_id))
+        super::block_on(self.get_items_async(shipment_id))
     }
 
     fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
-        tokio::runtime::Handle::current().block_on(self.add_event_async(shipment_id, event))
+        super::block_on(self.add_event_async(shipment_id, event))
     }
 
     fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
-        tokio::runtime::Handle::current().block_on(self.get_events_async(shipment_id))
+        super::block_on(self.get_events_async(shipment_id))
     }
 
     fn count(&self, filter: ShipmentFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }

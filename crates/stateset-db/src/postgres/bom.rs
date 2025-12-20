@@ -400,50 +400,50 @@ impl PgBomRepository {
 
 impl BomRepository for PgBomRepository {
     fn create(&self, input: CreateBom) -> Result<BillOfMaterials> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<BillOfMaterials>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, bom_number: &str) -> Result<Option<BillOfMaterials>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(bom_number))
+        super::block_on(self.get_by_number_async(bom_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateBom) -> Result<BillOfMaterials> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: BomFilter) -> Result<Vec<BillOfMaterials>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
-        tokio::runtime::Handle::current().block_on(self.add_component_async(bom_id, component))
+        super::block_on(self.add_component_async(bom_id, component))
     }
 
     fn update_component(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
-        tokio::runtime::Handle::current().block_on(self.update_component_async(component_id, component))
+        super::block_on(self.update_component_async(component_id, component))
     }
 
     fn remove_component(&self, component_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_component_async(component_id))
+        super::block_on(self.remove_component_async(component_id))
     }
 
     fn get_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
-        tokio::runtime::Handle::current().block_on(self.get_components_async(bom_id))
+        super::block_on(self.get_components_async(bom_id))
     }
 
     fn activate(&self, id: Uuid) -> Result<BillOfMaterials> {
-        tokio::runtime::Handle::current().block_on(self.activate_async(id))
+        super::block_on(self.activate_async(id))
     }
 
     fn count(&self, filter: BomFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }

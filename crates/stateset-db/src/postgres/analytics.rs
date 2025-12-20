@@ -705,16 +705,15 @@ impl PgAnalyticsRepository {
         let days_back = 30i64;
         let start = Utc::now() - Duration::days(days_back);
 
-        let sku_filter = match &skus {
+        let mut sku_params: Vec<String> = Vec::new();
+        let where_clause = match &skus {
             Some(sku_list) if !sku_list.is_empty() => {
-                format!(
-                    "AND ii.sku IN ({})",
-                    sku_list
-                        .iter()
-                        .map(|s| format!("'{}'", s.replace('\'', "''")))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
+                let placeholders = (0..sku_list.len())
+                    .map(|idx| format!("${}", idx + 2))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sku_params = sku_list.clone();
+                format!("WHERE ii.sku IN ({})", placeholders)
             }
             _ => String::new(),
         };
@@ -725,25 +724,25 @@ impl PgAnalyticsRepository {
                 ii.sku,
                 ii.name,
                 COALESCE(SUM(CASE WHEN it.transaction_type = 'sale' THEN ABS(it.quantity) ELSE 0 END), 0)::float / {} as avg_daily,
-                (COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0))::float as current_stock
+                (COALESCE(ib.quantity_on_hand, 0) - COALESCE(ib.quantity_allocated, 0))::float as current_stock
             FROM inventory_items ii
             LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
             LEFT JOIN inventory_transactions it ON ii.id = it.item_id AND it.created_at >= $1
             {}
-            GROUP BY ii.id, ii.sku, ii.name, ib.on_hand, ib.allocated
+            GROUP BY ii.id, ii.sku, ii.name, ib.quantity_on_hand, ib.quantity_allocated
             HAVING COALESCE(SUM(CASE WHEN it.transaction_type = 'sale' THEN ABS(it.quantity) ELSE 0 END), 0) / {} > 0
-               OR (COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0)) < 50
+               OR (COALESCE(ib.quantity_on_hand, 0) - COALESCE(ib.quantity_allocated, 0)) < 50
             ORDER BY avg_daily DESC
             LIMIT 50
             "#,
-            days_back, sku_filter, days_back
+            days_back, where_clause, days_back
         );
 
-        let rows: Vec<(String, String, f64, f64)> = sqlx::query_as(&sql)
-            .bind(start)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let mut query = sqlx::query_as::<_, (String, String, f64, f64)>(&sql).bind(start);
+        for sku in sku_params {
+            query = query.bind(sku);
+        }
+        let rows = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         Ok(rows
             .into_iter()
@@ -855,51 +854,51 @@ impl PgAnalyticsRepository {
 
 impl AnalyticsRepository for PgAnalyticsRepository {
     fn get_sales_summary(&self, query: AnalyticsQuery) -> Result<SalesSummary> {
-        tokio::runtime::Handle::current().block_on(self.get_sales_summary_async(query))
+        super::block_on(self.get_sales_summary_async(query))
     }
 
     fn get_revenue_by_period(&self, query: AnalyticsQuery) -> Result<Vec<RevenueByPeriod>> {
-        tokio::runtime::Handle::current().block_on(self.get_revenue_by_period_async(query))
+        super::block_on(self.get_revenue_by_period_async(query))
     }
 
     fn get_top_products(&self, query: AnalyticsQuery) -> Result<Vec<TopProduct>> {
-        tokio::runtime::Handle::current().block_on(self.get_top_products_async(query))
+        super::block_on(self.get_top_products_async(query))
     }
 
     fn get_product_performance(&self, query: AnalyticsQuery) -> Result<Vec<ProductPerformance>> {
-        tokio::runtime::Handle::current().block_on(self.get_product_performance_async(query))
+        super::block_on(self.get_product_performance_async(query))
     }
 
     fn get_customer_metrics(&self, query: AnalyticsQuery) -> Result<CustomerMetrics> {
-        tokio::runtime::Handle::current().block_on(self.get_customer_metrics_async(query))
+        super::block_on(self.get_customer_metrics_async(query))
     }
 
     fn get_top_customers(&self, query: AnalyticsQuery) -> Result<Vec<TopCustomer>> {
-        tokio::runtime::Handle::current().block_on(self.get_top_customers_async(query))
+        super::block_on(self.get_top_customers_async(query))
     }
 
     fn get_inventory_health(&self) -> Result<InventoryHealth> {
-        tokio::runtime::Handle::current().block_on(self.get_inventory_health_async())
+        super::block_on(self.get_inventory_health_async())
     }
 
     fn get_low_stock_items(&self, threshold: Option<Decimal>) -> Result<Vec<LowStockItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_low_stock_items_async(threshold))
+        super::block_on(self.get_low_stock_items_async(threshold))
     }
 
     fn get_inventory_movement(&self, query: AnalyticsQuery) -> Result<Vec<InventoryMovement>> {
-        tokio::runtime::Handle::current().block_on(self.get_inventory_movement_async(query))
+        super::block_on(self.get_inventory_movement_async(query))
     }
 
     fn get_order_status_breakdown(&self, query: AnalyticsQuery) -> Result<OrderStatusBreakdown> {
-        tokio::runtime::Handle::current().block_on(self.get_order_status_breakdown_async(query))
+        super::block_on(self.get_order_status_breakdown_async(query))
     }
 
     fn get_fulfillment_metrics(&self, query: AnalyticsQuery) -> Result<FulfillmentMetrics> {
-        tokio::runtime::Handle::current().block_on(self.get_fulfillment_metrics_async(query))
+        super::block_on(self.get_fulfillment_metrics_async(query))
     }
 
     fn get_return_metrics(&self, query: AnalyticsQuery) -> Result<ReturnMetrics> {
-        tokio::runtime::Handle::current().block_on(self.get_return_metrics_async(query))
+        super::block_on(self.get_return_metrics_async(query))
     }
 
     fn get_demand_forecast(
@@ -907,7 +906,7 @@ impl AnalyticsRepository for PgAnalyticsRepository {
         skus: Option<Vec<String>>,
         days_ahead: u32,
     ) -> Result<Vec<DemandForecast>> {
-        tokio::runtime::Handle::current().block_on(self.get_demand_forecast_async(skus, days_ahead))
+        super::block_on(self.get_demand_forecast_async(skus, days_ahead))
     }
 
     fn get_revenue_forecast(
@@ -915,7 +914,6 @@ impl AnalyticsRepository for PgAnalyticsRepository {
         periods_ahead: u32,
         granularity: TimeGranularity,
     ) -> Result<Vec<RevenueForecast>> {
-        tokio::runtime::Handle::current()
-            .block_on(self.get_revenue_forecast_async(periods_ahead, granularity))
+        super::block_on(self.get_revenue_forecast_async(periods_ahead, granularity))
     }
 }

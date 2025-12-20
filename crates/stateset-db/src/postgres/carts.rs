@@ -1159,131 +1159,131 @@ impl PgCartRepository {
 
 impl CartRepository for PgCartRepository {
     fn create(&self, input: CreateCart) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, cart_number: &str) -> Result<Option<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(cart_number))
+        super::block_on(self.get_by_number_async(cart_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: CartFilter) -> Result<Vec<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.for_customer_async(customer_id))
+        super::block_on(self.for_customer_async(customer_id))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
-        tokio::runtime::Handle::current().block_on(self.add_item_async(cart_id, item))
+        super::block_on(self.add_item_async(cart_id, item))
     }
 
     fn update_item(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
-        tokio::runtime::Handle::current().block_on(self.update_item_async(item_id, input))
+        super::block_on(self.update_item_async(item_id, input))
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_item_async(item_id))
+        super::block_on(self.remove_item_async(item_id))
     }
 
     fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_items_async(cart_id))
+        super::block_on(self.get_items_async(cart_id))
     }
 
     fn clear_items(&self, cart_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.clear_items_async(cart_id))
+        super::block_on(self.clear_items_async(cart_id))
     }
 
     fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.set_shipping_address_async(id, address))
+        super::block_on(self.set_shipping_address_async(id, address))
     }
 
     fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.set_billing_address_async(id, address))
+        super::block_on(self.set_billing_address_async(id, address))
     }
 
     fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.set_shipping_async(id, shipping))
+        super::block_on(self.set_shipping_async(id, shipping))
     }
 
     fn get_shipping_rates(&self, id: Uuid) -> Result<Vec<ShippingRate>> {
-        tokio::runtime::Handle::current().block_on(self.get_shipping_rates_async(id))
+        super::block_on(self.get_shipping_rates_async(id))
     }
 
     fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.set_payment_async(id, payment))
+        super::block_on(self.set_payment_async(id, payment))
     }
 
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.apply_discount_async(id, coupon_code))
+        super::block_on(self.apply_discount_async(id, coupon_code))
     }
 
     fn remove_discount(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.remove_discount_async(id))
+        super::block_on(self.remove_discount_async(id))
     }
 
     fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.mark_ready_for_payment_async(id))
+        super::block_on(self.mark_ready_for_payment_async(id))
     }
 
     fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.begin_checkout_async(id))
+        super::block_on(self.begin_checkout_async(id))
     }
 
     fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        tokio::runtime::Handle::current().block_on(self.complete_async(id))
+        super::block_on(self.complete_async(id))
     }
 
     fn cancel(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn abandon(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.abandon_async(id))
+        super::block_on(self.abandon_async(id))
     }
 
     fn expire(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.expire_async(id))
+        super::block_on(self.expire_async(id))
     }
 
     fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.reserve_inventory_async(id))
+        super::block_on(self.reserve_inventory_async(id))
     }
 
     fn release_inventory(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.release_inventory_async(id))
+        super::block_on(self.release_inventory_async(id))
     }
 
     fn recalculate(&self, id: Uuid) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.recalculate_async(id))
+        super::block_on(self.recalculate_async(id))
     }
 
     fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
-        tokio::runtime::Handle::current().block_on(self.set_tax_async(id, tax_amount))
+        super::block_on(self.set_tax_async(id, tax_amount))
     }
 
     fn get_abandoned(&self) -> Result<Vec<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.get_abandoned_async())
+        super::block_on(self.get_abandoned_async())
     }
 
     fn get_expired(&self) -> Result<Vec<Cart>> {
-        tokio::runtime::Handle::current().block_on(self.get_expired_async())
+        super::block_on(self.get_expired_async())
     }
 
     fn count(&self, filter: CartFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }
 

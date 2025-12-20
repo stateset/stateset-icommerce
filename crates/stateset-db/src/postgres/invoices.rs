@@ -874,86 +874,86 @@ impl PgInvoiceRepository {
 
 impl InvoiceRepository for PgInvoiceRepository {
     fn create(&self, input: CreateInvoice) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, invoice_number: &str) -> Result<Option<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(invoice_number))
+        super::block_on(self.get_by_number_async(invoice_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.for_customer_async(customer_id))
+        super::block_on(self.for_customer_async(customer_id))
     }
 
     fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.for_order_async(order_id))
+        super::block_on(self.for_order_async(order_id))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn send(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.send_async(id))
+        super::block_on(self.send_async(id))
     }
 
     fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.mark_viewed_async(id))
+        super::block_on(self.mark_viewed_async(id))
     }
 
     fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.record_payment_async(id, payment))
+        super::block_on(self.record_payment_async(id, payment))
     }
 
     fn void(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.void_async(id))
+        super::block_on(self.void_async(id))
     }
 
     fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.write_off_async(id))
+        super::block_on(self.write_off_async(id))
     }
 
     fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.dispute_async(id))
+        super::block_on(self.dispute_async(id))
     }
 
     fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        tokio::runtime::Handle::current().block_on(self.add_item_async(invoice_id, item))
+        super::block_on(self.add_item_async(invoice_id, item))
     }
 
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        tokio::runtime::Handle::current().block_on(self.update_item_async(item_id, item))
+        super::block_on(self.update_item_async(item_id, item))
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_item_async(item_id))
+        super::block_on(self.remove_item_async(item_id))
     }
 
     fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_items_async(invoice_id))
+        super::block_on(self.get_items_async(invoice_id))
     }
 
     fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        tokio::runtime::Handle::current().block_on(self.recalculate_invoice_async(id))
+        super::block_on(self.recalculate_invoice_async(id))
     }
 
     fn get_overdue(&self) -> Result<Vec<Invoice>> {
-        tokio::runtime::Handle::current().block_on(self.get_overdue_async())
+        super::block_on(self.get_overdue_async())
     }
 
     fn count(&self, filter: InvoiceFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }

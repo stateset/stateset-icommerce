@@ -32,6 +32,7 @@ struct CustomerRow {
     default_billing_address_id: Option<Uuid>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    version: i32,
 }
 
 #[derive(FromRow)]
@@ -194,8 +195,14 @@ impl PgCustomerRepository {
     pub async fn update_async(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
         let now = Utc::now();
 
-        let existing = self.get_async(id).await?
+        let existing_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?
             .ok_or(CommerceError::CustomerNotFound(id))?;
+        let current_version = existing_row.version;
+        let existing = Self::row_to_customer(existing_row);
 
         let new_email = input.email.unwrap_or(existing.email);
         let new_first_name = input.first_name.unwrap_or(existing.first_name);
@@ -208,12 +215,12 @@ impl PgCustomerRepository {
 
         let tags_json = serde_json::to_value(&new_tags).unwrap_or_default();
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE customers
             SET email = $1, first_name = $2, last_name = $3, phone = $4,
-                status = $5, accepts_marketing = $6, tags = $7, metadata = $8, updated_at = $9
-            WHERE id = $10
+                status = $5, accepts_marketing = $6, tags = $7, metadata = $8, updated_at = $9, version = version + 1
+            WHERE id = $10 AND version = $11
             "#,
         )
         .bind(&new_email)
@@ -226,9 +233,17 @@ impl PgCustomerRepository {
         .bind(&new_metadata)
         .bind(now)
         .bind(id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "customer".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         self.get_async(id).await?.ok_or(CommerceError::CustomerNotFound(id))
     }
@@ -346,35 +361,35 @@ impl PgCustomerRepository {
 
 impl CustomerRepository for PgCustomerRepository {
     fn create(&self, input: CreateCustomer) -> Result<Customer> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Customer>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_email(&self, email: &str) -> Result<Option<Customer>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_email_async(email))
+        super::block_on(self.get_by_email_async(email))
     }
 
     fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {
-        tokio::runtime::Handle::current().block_on(self.add_address_async(input))
+        super::block_on(self.add_address_async(input))
     }
 
     fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
-        tokio::runtime::Handle::current().block_on(self.get_addresses_async(customer_id))
+        super::block_on(self.get_addresses_async(customer_id))
     }
 
     fn update_address(&self, _address_id: Uuid, _input: CreateCustomerAddress) -> Result<CustomerAddress> {
@@ -390,7 +405,7 @@ impl CustomerRepository for PgCustomerRepository {
     }
 
     fn count(&self, filter: CustomerFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }
 

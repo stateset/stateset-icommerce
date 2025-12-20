@@ -776,24 +776,20 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        let billing_update = if let Some(addr) = &payment.billing_address {
-            let json = serde_json::to_string(addr).unwrap_or_default();
-            format!(", billing_address = '{}'", json)
-        } else {
-            String::new()
-        };
+        let billing_json = payment
+            .billing_address
+            .as_ref()
+            .map(|addr| serde_json::to_string(addr).unwrap_or_default());
 
         {
             let conn = self.conn()?;
             conn.execute(
-                &format!(
-                    "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
-                 updated_at = ?{} WHERE id = ?",
-                    billing_update
-                ),
+                "UPDATE carts SET payment_method = ?, payment_token = ?, payment_status = 'method_selected',
+                 billing_address = COALESCE(?, billing_address), updated_at = ? WHERE id = ?",
                 rusqlite::params![
                     payment.payment_method,
                     payment.payment_token,
+                    billing_json,
                     Utc::now().to_rfc3339(),
                     id.to_string()
                 ],

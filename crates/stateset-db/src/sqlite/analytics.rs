@@ -4,6 +4,7 @@ use super::{map_db_error, parse_decimal};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::ToSql;
 use rust_decimal::Decimal;
 use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
@@ -753,9 +754,14 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let start = (Utc::now() - Duration::days(days_back)).to_rfc3339();
 
         // Build SKU filter
-        let sku_filter = match &skus {
+        let mut params: Vec<Box<dyn ToSql>> = vec![Box::new(start.clone())];
+        let where_clause = match &skus {
             Some(sku_list) if !sku_list.is_empty() => {
-                format!("AND ii.sku IN ({})", sku_list.iter().map(|s| format!("'{}'", s)).collect::<Vec<_>>().join(","))
+                let placeholders = sku_list.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+                for sku in sku_list {
+                    params.push(Box::new(sku.clone()));
+                }
+                format!("WHERE ii.sku IN ({})", placeholders)
             }
             _ => String::new(),
         };
@@ -766,23 +772,24 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 ii.sku,
                 ii.name,
                 COALESCE(SUM(CASE WHEN it.transaction_type = 'sale' THEN ABS(it.quantity) ELSE 0 END), 0) / {} as avg_daily,
-                COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) as current_stock
+                COALESCE(ib.quantity_on_hand, 0) - COALESCE(ib.quantity_allocated, 0) as current_stock
             FROM inventory_items ii
             LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
-            LEFT JOIN inventory_transactions it ON ii.id = it.item_id AND it.created_at >= ?1
+            LEFT JOIN inventory_transactions it ON ii.id = it.item_id AND it.created_at >= ?
             {}
             GROUP BY ii.id
             HAVING avg_daily > 0 OR current_stock < 50
             ORDER BY avg_daily DESC
             LIMIT 50
             "#,
-            days_back, sku_filter
+            days_back, where_clause
         );
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
 
+        let params_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
-            .query_map([&start], |row| {
+            .query_map(params_refs.as_slice(), |row| {
                 let sku: String = row.get(0)?;
                 let name: String = row.get(1)?;
                 let avg_daily: f64 = row.get(2)?;

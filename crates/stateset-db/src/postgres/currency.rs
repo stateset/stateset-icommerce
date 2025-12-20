@@ -355,19 +355,19 @@ impl PgCurrencyRepository {
 
 impl CurrencyRepository for PgCurrencyRepository {
     fn get_rate(&self, from: Currency, to: Currency) -> Result<Option<ExchangeRate>> {
-        tokio::runtime::Handle::current().block_on(self.get_rate_async(from, to))
+        super::block_on(self.get_rate_async(from, to))
     }
 
     fn get_rates_for(&self, base: Currency) -> Result<Vec<ExchangeRate>> {
-        tokio::runtime::Handle::current().block_on(self.get_rates_for_async(base))
+        super::block_on(self.get_rates_for_async(base))
     }
 
     fn list_rates(&self, filter: ExchangeRateFilter) -> Result<Vec<ExchangeRate>> {
-        tokio::runtime::Handle::current().block_on(self.list_rates_async(filter))
+        super::block_on(self.list_rates_async(filter))
     }
 
     fn set_rate(&self, input: SetExchangeRate) -> Result<ExchangeRate> {
-        tokio::runtime::Handle::current().block_on(self.set_rate_async(input))
+        super::block_on(self.set_rate_async(input))
     }
 
     fn set_rates(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
@@ -379,18 +379,18 @@ impl CurrencyRepository for PgCurrencyRepository {
     }
 
     fn delete_rate(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_rate_async(id))
+        super::block_on(self.delete_rate_async(id))
     }
 
     fn convert(&self, input: ConvertCurrency) -> Result<ConversionResult> {
-        tokio::runtime::Handle::current().block_on(self.convert_async(input))
+        super::block_on(self.convert_async(input))
     }
 
     fn get_settings(&self) -> Result<StoreCurrencySettings> {
-        tokio::runtime::Handle::current().block_on(self.get_settings_async())
+        super::block_on(self.get_settings_async())
     }
 
     fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
-        tokio::runtime::Handle::current().block_on(self.update_settings_async(settings))
+        super::block_on(self.update_settings_async(settings))
     }
 }

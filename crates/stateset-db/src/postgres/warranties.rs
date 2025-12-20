@@ -629,94 +629,94 @@ impl PgWarrantyRepository {
 
 impl WarrantyRepository for PgWarrantyRepository {
     fn create(&self, input: CreateWarranty) -> Result<Warranty> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, warranty_number: &str) -> Result<Option<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(warranty_number))
+        super::block_on(self.get_by_number_async(warranty_number))
     }
 
     fn get_by_serial(&self, serial_number: &str) -> Result<Option<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_serial_async(serial_number))
+        super::block_on(self.get_by_serial_async(serial_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: WarrantyFilter) -> Result<Vec<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.for_customer_async(customer_id))
+        super::block_on(self.for_customer_async(customer_id))
     }
 
     fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        tokio::runtime::Handle::current().block_on(self.for_order_async(order_id))
+        super::block_on(self.for_order_async(order_id))
     }
 
     fn void(&self, id: Uuid) -> Result<Warranty> {
-        tokio::runtime::Handle::current().block_on(self.void_async(id))
+        super::block_on(self.void_async(id))
     }
 
     fn expire(&self, id: Uuid) -> Result<Warranty> {
-        tokio::runtime::Handle::current().block_on(self.expire_async(id))
+        super::block_on(self.expire_async(id))
     }
 
     fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        tokio::runtime::Handle::current().block_on(self.transfer_async(id, new_customer_id))
+        super::block_on(self.transfer_async(id, new_customer_id))
     }
 
     fn create_claim(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.create_claim_async(input))
+        super::block_on(self.create_claim_async(input))
     }
 
     fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
-        tokio::runtime::Handle::current().block_on(self.get_claim_async(id))
+        super::block_on(self.get_claim_async(id))
     }
 
     fn get_claim_by_number(&self, claim_number: &str) -> Result<Option<WarrantyClaim>> {
-        tokio::runtime::Handle::current().block_on(self.get_claim_by_number_async(claim_number))
+        super::block_on(self.get_claim_by_number_async(claim_number))
     }
 
     fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.update_claim_async(id, input))
+        super::block_on(self.update_claim_async(id, input))
     }
 
     fn list_claims(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>> {
-        tokio::runtime::Handle::current().block_on(self.list_claims_async(filter))
+        super::block_on(self.list_claims_async(filter))
     }
 
     fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        tokio::runtime::Handle::current().block_on(self.get_claims_async(warranty_id))
+        super::block_on(self.get_claims_async(warranty_id))
     }
 
     fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.approve_claim_async(id))
+        super::block_on(self.approve_claim_async(id))
     }
 
     fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.deny_claim_async(id, reason))
+        super::block_on(self.deny_claim_async(id, reason))
     }
 
     fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.complete_claim_async(id, resolution))
+        super::block_on(self.complete_claim_async(id, resolution))
     }
 
     fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        tokio::runtime::Handle::current().block_on(self.cancel_claim_async(id))
+        super::block_on(self.cancel_claim_async(id))
     }
 
     fn count(&self, filter: WarrantyFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 
     fn count_claims(&self, filter: WarrantyClaimFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_claims_async(filter))
+        super::block_on(self.count_claims_async(filter))
     }
 }

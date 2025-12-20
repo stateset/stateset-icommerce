@@ -771,7 +771,10 @@ export async function runAgentLoop({
       'stateset-commerce': mcpServer
     },
     allowedTools: agentConfig.tools,
-    maxTurns
+    maxTurns,
+    // Allow MCP tools to run without prompting for permission
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true
   };
 
   // Track results
@@ -779,14 +782,20 @@ export async function runAgentLoop({
   let sessionId = resumeSessionId;
   let response = '';
 
+  // Save process.argv to restore later (prevent our CLI args from being passed to Claude Code)
+  const savedArgv = process.argv;
+
   try {
-    // Create streaming input
-    const input = resumeSessionId
-      ? { sessionId: resumeSessionId, prompt: request }
-      : { prompt: request };
+    // If resuming, add session ID to options
+    if (resumeSessionId) {
+      options.resume = resumeSessionId;
+    }
+
+    // Clean process.argv before SDK call
+    process.argv = process.argv.slice(0, 2); // Keep only node and script path
 
     // Run the query
-    for await (const message of query({ prompt: input, options })) {
+    for await (const message of query({ prompt: request, options })) {
       // Capture session ID
       if (message.sessionId && !sessionId) {
         sessionId = message.sessionId;
@@ -795,8 +804,10 @@ export async function runAgentLoop({
       // Handle different message types
       if (message.type === 'assistant') {
         // Extract tool use from assistant messages
-        if (message.content) {
-          for (const block of message.content) {
+        // Note: SDK wraps API message in message.message
+        const content = message.message?.content || message.content;
+        if (content) {
+          for (const block of content) {
             if (block.type === 'tool_use') {
               const toolCall = {
                 id: block.id,
@@ -814,10 +825,16 @@ export async function runAgentLoop({
           }
         }
       } else if (message.type === 'result') {
-        // Match result to tool call
+        // Final result message - extract the response
+        if (message.result) {
+          response = message.result;
+        }
+      } else if (message.type === 'user') {
+        // User messages contain tool results
+        // Match result to pending tool call
         const pending = toolResults.find(tr => tr.result === null);
-        if (pending) {
-          pending.result = message.content;
+        if (pending && message.tool_use_result) {
+          pending.result = message.tool_use_result;
           pending.endTime = Date.now();
           pending.duration = pending.endTime - pending.toolCall.startTime;
 
@@ -831,6 +848,9 @@ export async function runAgentLoop({
         }
       }
     }
+
+    // Restore process.argv
+    process.argv = savedArgv;
 
     // Log assistant response
     telem.logAssistantMessage(response);
@@ -881,6 +901,8 @@ export async function runAgentLoop({
       } : (shouldEnableSync ? { enabled: true, pushed: 0 } : null)
     };
   } catch (error) {
+    // Restore process.argv on error
+    process.argv = savedArgv;
     // Cleanup sync engine on error
     if (syncEngine) {
       try { await syncEngine.shutdown(); } catch (e) { /* ignore */ }

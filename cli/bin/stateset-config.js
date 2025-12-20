@@ -278,10 +278,15 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error('Config error:', error.message);
-  process.exit(1);
-});
+// Only run main if this is the entry point (not imported)
+import { fileURLToPath } from 'node:url';
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] === __filename || process.argv[1]?.endsWith('stateset-config.js') || process.argv[1]?.endsWith('stateset-config')) {
+  main().catch(error => {
+    console.error('Config error:', error.message);
+    process.exit(1);
+  });
+}
 
 // Export for use by main CLI
 export function getProfileConfig(profileName) {

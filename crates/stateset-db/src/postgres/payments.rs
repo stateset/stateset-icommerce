@@ -634,90 +634,90 @@ impl PgPaymentRepository {
 
 impl PaymentRepository for PgPaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, payment_number: &str) -> Result<Option<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(payment_number))
+        super::block_on(self.get_by_number_async(payment_number))
     }
 
     fn get_by_external_id(&self, external_id: &str) -> Result<Option<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_external_id_async(external_id))
+        super::block_on(self.get_by_external_id_async(external_id))
     }
 
     fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: PaymentFilter) -> Result<Vec<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_order(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.for_order_async(order_id))
+        super::block_on(self.for_order_async(order_id))
     }
 
     fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        tokio::runtime::Handle::current().block_on(self.for_invoice_async(invoice_id))
+        super::block_on(self.for_invoice_async(invoice_id))
     }
 
     fn mark_processing(&self, id: Uuid) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.mark_processing_async(id))
+        super::block_on(self.mark_processing_async(id))
     }
 
     fn mark_completed(&self, id: Uuid) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.mark_completed_async(id))
+        super::block_on(self.mark_completed_async(id))
     }
 
     fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.mark_failed_async(id, reason, code))
+        super::block_on(self.mark_failed_async(id, reason, code))
     }
 
     fn cancel(&self, id: Uuid) -> Result<Payment> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
-        tokio::runtime::Handle::current().block_on(self.create_refund_async(input))
+        super::block_on(self.create_refund_async(input))
     }
 
     fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
-        tokio::runtime::Handle::current().block_on(self.get_refund_async(id))
+        super::block_on(self.get_refund_async(id))
     }
 
     fn get_refunds(&self, payment_id: Uuid) -> Result<Vec<Refund>> {
-        tokio::runtime::Handle::current().block_on(self.get_refunds_async(payment_id))
+        super::block_on(self.get_refunds_async(payment_id))
     }
 
     fn complete_refund(&self, id: Uuid) -> Result<Refund> {
-        tokio::runtime::Handle::current().block_on(self.complete_refund_async(id))
+        super::block_on(self.complete_refund_async(id))
     }
 
     fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
-        tokio::runtime::Handle::current().block_on(self.fail_refund_async(id, reason))
+        super::block_on(self.fail_refund_async(id, reason))
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
-        tokio::runtime::Handle::current().block_on(self.create_payment_method_async(input))
+        super::block_on(self.create_payment_method_async(input))
     }
 
     fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>> {
-        tokio::runtime::Handle::current().block_on(self.get_payment_methods_async(customer_id))
+        super::block_on(self.get_payment_methods_async(customer_id))
     }
 
     fn delete_payment_method(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_payment_method_async(id))
+        super::block_on(self.delete_payment_method_async(id))
     }
 
     fn set_default_payment_method(&self, customer_id: Uuid, method_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.set_default_payment_method_async(customer_id, method_id))
+        super::block_on(self.set_default_payment_method_async(customer_id, method_id))
     }
 
     fn count(&self, filter: PaymentFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }

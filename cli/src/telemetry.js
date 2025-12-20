@@ -324,6 +324,27 @@ export class AgentTelemetry extends EventEmitter {
     }
   }
 
+  /**
+   * Log a custom event
+   */
+  logCustomEvent(eventName, data = {}) {
+    const record = {
+      timestamp: Date.now(),
+      eventName,
+      ...data
+    };
+
+    if (this.currentSpan) {
+      this.currentSpan.addEvent(eventName, data);
+    }
+
+    this.emit('custom:' + eventName, record);
+
+    if (this.verbose) {
+      this._log('info', eventName, data);
+    }
+  }
+
   // --------------------------------------------------------------------------
   // Reporting
   // --------------------------------------------------------------------------
@@ -449,11 +470,13 @@ export class NoOpTelemetry {
   logAgentRouting() {}
   logAssistantMessage() {}
   logError() {}
+  logCustomEvent() {}
   getTrace() { return {}; }
   getSummary() { return {}; }
   printSummary() {}
   on() {}
   emit() {}
+  get traceId() { return null; }
 }
 
 export const noOpTelemetry = new NoOpTelemetry();

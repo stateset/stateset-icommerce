@@ -38,6 +38,7 @@ pub use work_orders::*;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use stateset_core::CommerceError;
+use std::future::Future;
 use std::time::Duration;
 
 /// PostgreSQL database connection pool
@@ -101,6 +102,7 @@ impl PostgresDatabase {
             ("010_invoices", include_str!("migrations/010_invoices.sql")),
             ("011_carts", include_str!("migrations/011_carts.sql")),
             ("012_versioning", include_str!("migrations/012_versioning.sql")),
+            ("013_versioning_catalog", include_str!("migrations/013_versioning_catalog.sql")),
         ];
 
         for (name, sql) in migrations {
@@ -219,4 +221,19 @@ pub(crate) fn map_db_error(e: sqlx::Error) -> CommerceError {
         sqlx::Error::RowNotFound => CommerceError::NotFound,
         _ => CommerceError::DatabaseError(e.to_string()),
     }
+}
+
+pub(crate) fn block_on<F, T>(fut: F) -> stateset_core::Result<T>
+where
+    F: Future<Output = stateset_core::Result<T>>,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(CommerceError::NotPermitted(
+            "Blocking Postgres call inside an async runtime; use AsyncCommerce instead".into(),
+        ));
+    }
+
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
+    rt.block_on(fut)
 }

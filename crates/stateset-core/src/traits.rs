@@ -24,7 +24,7 @@ pub trait OrderRepository {
     /// List orders with filter
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>>;
 
-    /// Delete an order (soft delete)
+    /// Delete an order
     fn delete(&self, id: Uuid) -> Result<()>;
 
     /// Add item to order

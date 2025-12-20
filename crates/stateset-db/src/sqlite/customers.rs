@@ -194,6 +194,16 @@ impl CustomerRepository for SqliteCustomerRepository {
     fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
         let conn = self.conn()?;
         let now = Utc::now();
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM customers WHERE id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id),
+                e => map_db_error(e),
+            })?;
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -231,13 +241,21 @@ impl CustomerRepository for SqliteCustomerRepository {
             params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
         }
 
+        updates.push("version = version + 1");
         params.push(Box::new(id.to_string()));
+        params.push(Box::new(current_version));
 
-        let sql = format!("UPDATE customers SET {} WHERE id = ?", updates.join(", "));
+        let sql = format!("UPDATE customers SET {} WHERE id = ? AND version = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "customer".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         self.get(id)?.ok_or(CommerceError::CustomerNotFound(id))
     }

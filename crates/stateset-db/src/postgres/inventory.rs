@@ -609,47 +609,47 @@ impl PgInventoryRepository {
 
 impl InventoryRepository for PgInventoryRepository {
     fn create_item(&self, input: CreateInventoryItem) -> Result<InventoryItem> {
-        tokio::runtime::Handle::current().block_on(self.create_item_async(input))
+        super::block_on(self.create_item_async(input))
     }
 
     fn get_item(&self, id: i64) -> Result<Option<InventoryItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_item_async(id))
+        super::block_on(self.get_item_async(id))
     }
 
     fn get_item_by_sku(&self, sku: &str) -> Result<Option<InventoryItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_item_by_sku_async(sku))
+        super::block_on(self.get_item_by_sku_async(sku))
     }
 
     fn get_stock(&self, sku: &str) -> Result<Option<StockLevel>> {
-        tokio::runtime::Handle::current().block_on(self.get_stock_async(sku))
+        super::block_on(self.get_stock_async(sku))
     }
 
     fn get_balance(&self, item_id: i64, location_id: i32) -> Result<Option<InventoryBalance>> {
-        tokio::runtime::Handle::current().block_on(self.get_balance_async(item_id, location_id))
+        super::block_on(self.get_balance_async(item_id, location_id))
     }
 
     fn adjust(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
-        tokio::runtime::Handle::current().block_on(self.adjust_async(input))
+        super::block_on(self.adjust_async(input))
     }
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
-        tokio::runtime::Handle::current().block_on(self.reserve_async(input))
+        super::block_on(self.reserve_async(input))
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.release_reservation_async(reservation_id))
+        super::block_on(self.release_reservation_async(reservation_id))
     }
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.confirm_reservation_async(reservation_id))
+        super::block_on(self.confirm_reservation_async(reservation_id))
     }
 
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {
-        tokio::runtime::Handle::current().block_on(self.get_reorder_needed_async())
+        super::block_on(self.get_reorder_needed_async())
     }
 
     fn record_transaction(&self, _transaction: InventoryTransaction) -> Result<InventoryTransaction> {
@@ -657,7 +657,7 @@ impl InventoryRepository for PgInventoryRepository {
     }
 
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
-        tokio::runtime::Handle::current().block_on(self.get_transactions_async(item_id, limit))
+        super::block_on(self.get_transactions_async(item_id, limit))
     }
 }
 

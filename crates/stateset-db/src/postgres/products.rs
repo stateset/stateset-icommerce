@@ -30,6 +30,7 @@ struct ProductRow {
     seo: Option<serde_json::Value>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    version: i32,
 }
 
 #[derive(FromRow)]
@@ -170,7 +171,14 @@ impl PgProductRepository {
     pub async fn update_async(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
         let now = Utc::now();
 
-        let existing = self.get_async(id).await?.ok_or(CommerceError::ProductNotFound(id))?;
+        let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::ProductNotFound(id))?;
+        let current_version = existing_row.version;
+        let existing = Self::row_to_product(existing_row);
 
         let new_name = input.name.unwrap_or(existing.name);
         let new_slug = input.slug.unwrap_or(existing.slug);
@@ -182,12 +190,12 @@ impl PgProductRepository {
         let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
         let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE products
             SET name = $1, slug = $2, description = $3, status = $4,
-                attributes = $5, seo = $6, updated_at = $7
-            WHERE id = $8
+                attributes = $5, seo = $6, updated_at = $7, version = version + 1
+            WHERE id = $8 AND version = $9
             "#,
         )
         .bind(&new_name)
@@ -198,9 +206,17 @@ impl PgProductRepository {
         .bind(&seo_json)
         .bind(now)
         .bind(id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "product".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         self.get_async(id).await?.ok_or(CommerceError::ProductNotFound(id))
     }
@@ -330,14 +346,22 @@ impl PgProductRepository {
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
         let now = Utc::now();
+        let current_version: i32 = sqlx::query_scalar("SELECT version FROM product_variants WHERE id = $1")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| match e {
+                sqlx::Error::RowNotFound => CommerceError::ProductVariantNotFound(id),
+                e => map_db_error(e),
+            })?;
         let options_json = serde_json::to_value(&input.options.clone().unwrap_or_default()).unwrap_or_default();
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE product_variants
             SET sku = $1, name = $2, price = $3, compare_at_price = $4, cost = $5,
-                barcode = $6, weight = $7, weight_unit = $8, options = $9, updated_at = $10
-            WHERE id = $11
+                barcode = $6, weight = $7, weight_unit = $8, options = $9, updated_at = $10, version = version + 1
+            WHERE id = $11 AND version = $12
             "#,
         )
         .bind(&input.sku)
@@ -351,9 +375,17 @@ impl PgProductRepository {
         .bind(&options_json)
         .bind(now)
         .bind(id)
+        .bind(current_version)
         .execute(&self.pool)
         .await
         .map_err(map_db_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "product_variant".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         self.get_variant_async(id)
             .await?
@@ -396,55 +428,55 @@ impl PgProductRepository {
 
 impl ProductRepository for PgProductRepository {
     fn create(&self, input: CreateProduct) -> Result<Product> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Product>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_slug(&self, slug: &str) -> Result<Option<Product>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_slug_async(slug))
+        super::block_on(self.get_by_slug_async(slug))
     }
 
     fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: ProductFilter) -> Result<Vec<Product>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
-        tokio::runtime::Handle::current().block_on(self.add_variant_public_async(product_id, variant))
+        super::block_on(self.add_variant_public_async(product_id, variant))
     }
 
     fn get_variant(&self, id: Uuid) -> Result<Option<ProductVariant>> {
-        tokio::runtime::Handle::current().block_on(self.get_variant_async(id))
+        super::block_on(self.get_variant_async(id))
     }
 
     fn get_variant_by_sku(&self, sku: &str) -> Result<Option<ProductVariant>> {
-        tokio::runtime::Handle::current().block_on(self.get_variant_by_sku_async(sku))
+        super::block_on(self.get_variant_by_sku_async(sku))
     }
 
     fn update_variant(&self, id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
-        tokio::runtime::Handle::current().block_on(self.update_variant_async(id, variant))
+        super::block_on(self.update_variant_async(id, variant))
     }
 
     fn delete_variant(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_variant_async(id))
+        super::block_on(self.delete_variant_async(id))
     }
 
     fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
-        tokio::runtime::Handle::current().block_on(self.get_variants_async(product_id))
+        super::block_on(self.get_variants_async(product_id))
     }
 
     fn count(&self, filter: ProductFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }
 

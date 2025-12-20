@@ -12,11 +12,18 @@
  *   stateset --agent inventory "check stock levels"
  */
 
-import { runAgentLoop, RichOutput, ICONS, AgentTelemetry, AGENTS } from '../src/claude-harness.js';
-import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
-import { getProfileConfig } from './stateset-config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
+
+// IMPORTANT: Save and clean argv BEFORE importing SDK modules
+// The Claude Agent SDK reads process.argv and passes it to the spawned process
+const __savedArgv = [...process.argv];
+process.argv = process.argv.slice(0, 2);
+
+// Use dynamic imports after cleaning argv
+const { runAgentLoop, RichOutput, ICONS, AgentTelemetry, AGENTS } = await import('../src/claude-harness.js');
+const { DEFAULT_MODEL, CLI_VERSION } = await import('../src/config.js');
+const { getProfileConfig } = await import('./stateset-config.js');
 
 // Available agent names for validation
 const AVAILABLE_AGENTS = Object.keys(AGENTS);
@@ -283,8 +290,9 @@ async function handleBatchMode(values, config, output) {
 }
 
 async function main() {
-  // Parse arguments
+  // Parse arguments using the saved argv (before we cleaned it for the SDK)
   const { values, positionals } = parseArgs({
+    args: __savedArgv.slice(2), // Use saved argv, skip node and script path
     options: {
       db: { type: 'string' },
       apply: { type: 'boolean', default: false },

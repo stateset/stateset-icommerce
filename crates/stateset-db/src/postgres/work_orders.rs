@@ -632,86 +632,86 @@ impl PgWorkOrderRepository {
 
 impl WorkOrderRepository for PgWorkOrderRepository {
     fn create(&self, input: CreateWorkOrder) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<WorkOrder>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, work_order_number: &str) -> Result<Option<WorkOrder>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(work_order_number))
+        super::block_on(self.get_by_number_async(work_order_number))
     }
 
     fn update(&self, id: Uuid, input: UpdateWorkOrder) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: WorkOrderFilter) -> Result<Vec<WorkOrder>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn start(&self, id: Uuid) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.start_async(id))
+        super::block_on(self.start_async(id))
     }
 
     fn complete(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.complete_async(id, quantity_completed))
+        super::block_on(self.complete_async(id, quantity_completed))
     }
 
     fn hold(&self, id: Uuid) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.hold_async(id))
+        super::block_on(self.hold_async(id))
     }
 
     fn resume(&self, id: Uuid) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.resume_async(id))
+        super::block_on(self.resume_async(id))
     }
 
     fn cancel(&self, id: Uuid) -> Result<WorkOrder> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn add_task(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
-        tokio::runtime::Handle::current().block_on(self.add_task_async(work_order_id, task))
+        super::block_on(self.add_task_async(work_order_id, task))
     }
 
     fn update_task(&self, task_id: Uuid, task: UpdateWorkOrderTask) -> Result<WorkOrderTask> {
-        tokio::runtime::Handle::current().block_on(self.update_task_async(task_id, task))
+        super::block_on(self.update_task_async(task_id, task))
     }
 
     fn remove_task(&self, task_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_task_async(task_id))
+        super::block_on(self.remove_task_async(task_id))
     }
 
     fn get_tasks(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderTask>> {
-        tokio::runtime::Handle::current().block_on(self.get_tasks_async(work_order_id))
+        super::block_on(self.get_tasks_async(work_order_id))
     }
 
     fn start_task(&self, task_id: Uuid) -> Result<WorkOrderTask> {
-        tokio::runtime::Handle::current().block_on(self.start_task_async(task_id))
+        super::block_on(self.start_task_async(task_id))
     }
 
     fn complete_task(&self, task_id: Uuid, actual_hours: Option<Decimal>) -> Result<WorkOrderTask> {
-        tokio::runtime::Handle::current().block_on(self.complete_task_async(task_id, actual_hours))
+        super::block_on(self.complete_task_async(task_id, actual_hours))
     }
 
     fn add_material(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial> {
-        tokio::runtime::Handle::current().block_on(self.add_material_async(work_order_id, material))
+        super::block_on(self.add_material_async(work_order_id, material))
     }
 
     fn consume_material(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
-        tokio::runtime::Handle::current().block_on(self.consume_material_async(material_id, quantity))
+        super::block_on(self.consume_material_async(material_id, quantity))
     }
 
     fn get_materials(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderMaterial>> {
-        tokio::runtime::Handle::current().block_on(self.get_materials_async_internal(work_order_id))
+        super::block_on(self.get_materials_async_internal(work_order_id))
     }
 
     fn count(&self, filter: WorkOrderFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }

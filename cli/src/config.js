@@ -14,14 +14,14 @@
  */
 export const MODELS = {
   // Primary models
-  SONNET: 'claude-sonnet-4-20250514',
-  OPUS: 'claude-opus-4-20250514',
+  SONNET: 'claude-sonnet-4-5-20250929',
+  OPUS: 'claude-opus-4-5-20251101',
   HAIKU: 'claude-haiku-3-5-20241022',
 
   // Aliases for convenience
-  DEFAULT: 'claude-sonnet-4-20250514',
+  DEFAULT: 'claude-sonnet-4-5-20250929',
   FAST: 'claude-haiku-3-5-20241022',
-  POWERFUL: 'claude-opus-4-20250514',
+  POWERFUL: 'claude-opus-4-5-20251101',
 };
 
 /**

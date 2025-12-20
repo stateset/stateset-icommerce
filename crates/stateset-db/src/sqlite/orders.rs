@@ -274,6 +274,16 @@ impl OrderRepository for SqliteOrderRepository {
     fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
         let conn = self.conn()?;
         let now = Utc::now();
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM orders WHERE id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
+                e => map_db_error(e),
+            })?;
 
         // Build dynamic update
         let mut updates = vec!["updated_at = ?"];
@@ -308,16 +318,24 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
         }
 
+        updates.push("version = version + 1");
         params.push(Box::new(id.to_string()));
+        params.push(Box::new(current_version));
 
         let sql = format!(
-            "UPDATE orders SET {} WHERE id = ?",
+            "UPDATE orders SET {} WHERE id = ? AND version = ?",
             updates.join(", ")
         );
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "order".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         // Now fetch the updated order using the same connection
         let result = conn.query_row(
@@ -491,6 +509,17 @@ impl SqliteOrderRepository {
         conn: &rusqlite::Connection,
         order_id: Uuid,
     ) -> Result<()> {
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM orders WHERE id = ?",
+                [order_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(order_id),
+                e => map_db_error(e),
+            })?;
+
         let total: String = conn
             .query_row(
                 "SELECT COALESCE(SUM(CAST(total AS REAL)), 0) FROM order_items WHERE order_id = ?",
@@ -499,11 +528,24 @@ impl SqliteOrderRepository {
             )
             .map_err(map_db_error)?;
 
-        conn.execute(
-            "UPDATE orders SET total_amount = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![total, Utc::now().to_rfc3339(), order_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        let rows_affected = conn
+            .execute(
+                "UPDATE orders SET total_amount = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?",
+                rusqlite::params![
+                    total,
+                    Utc::now().to_rfc3339(),
+                    order_id.to_string(),
+                    current_version
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "order".to_string(),
+                id: order_id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         Ok(())
     }

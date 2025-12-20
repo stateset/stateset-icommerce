@@ -338,39 +338,39 @@ impl PgReturnRepository {
 
 impl ReturnRepository for PgReturnRepository {
     fn create(&self, input: CreateReturn) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<Return>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: ReturnFilter) -> Result<Vec<Return>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn approve(&self, id: Uuid) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.approve_async(id))
+        super::block_on(self.approve_async(id))
     }
 
     fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.reject_async(id, reason))
+        super::block_on(self.reject_async(id, reason))
     }
 
     fn complete(&self, id: Uuid) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.complete_async(id))
+        super::block_on(self.complete_async(id))
     }
 
     fn cancel(&self, id: Uuid) -> Result<Return> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn count(&self, filter: ReturnFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 }
 

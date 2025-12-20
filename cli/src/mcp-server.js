@@ -49,7 +49,19 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       'list_subscription_plans', 'get_subscription_plan', 'list_subscriptions', 'get_subscription',
       'list_billing_cycles', 'get_billing_cycle', 'get_subscription_events',
       // Sync tools (read-only)
-      'sync_status', 'sync_pull', 'sync_outbox', 'sync_entity_history', 'sync_conflicts'
+      'sync_status', 'sync_pull', 'sync_outbox', 'sync_entity_history', 'sync_conflicts',
+      // Manufacturing (read-only)
+      'list_boms', 'get_bom', 'list_work_orders', 'get_work_order',
+      // Payments (read-only)
+      'list_payments', 'get_payment',
+      // Shipments (read-only)
+      'list_shipments',
+      // Suppliers & Purchase Orders (read-only)
+      'list_suppliers', 'list_purchase_orders',
+      // Invoices (read-only)
+      'list_invoices', 'get_overdue_invoices',
+      // Warranties (read-only)
+      'list_warranties'
     ];
     return readOnlyTools.includes(toolName);
   };
@@ -4452,6 +4464,841 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
         }
+      ),
+
+      // ============================================================================
+      // Manufacturing Tools - BOM & Work Orders
+      // ============================================================================
+      tool(
+        'list_boms',
+        'List all Bills of Materials (BOMs). BOMs define the components/ingredients needed to manufacture a product.',
+        {},
+        async () => {
+          try {
+            const boms = await commerce.bom.list();
+            const count = await commerce.bom.count();
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count,
+                  boms: boms.map(b => ({
+                    id: b.id,
+                    bomNumber: b.bomNumber,
+                    name: b.name,
+                    productId: b.productId,
+                    status: b.status,
+                    revision: b.revision,
+                    createdAt: b.createdAt
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_bom',
+        'Get a Bill of Materials by ID, including all components/ingredients.',
+        {
+          bomId: z.string().describe('BOM ID or BOM number')
+        },
+        async ({ bomId }) => {
+          try {
+            const bom = await commerce.bom.get(bomId);
+            if (!bom) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'BOM not found' }) }] };
+            }
+            const components = await commerce.bom.getComponents(bomId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  bom: { ...bom, components }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_bom',
+        'Create a new Bill of Materials for a product. Defines what components/ingredients are needed.',
+        {
+          name: z.string().describe('BOM name (e.g., "Classic Pickled Onions Recipe")'),
+          productId: z.string().describe('Product ID this BOM is for'),
+          description: z.string().optional().describe('Description of this BOM'),
+          revision: z.string().optional().describe('Revision number (default: A)')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Create BOM operation not allowed. The --apply flag must be set.',
+                  hint: 'Run with --apply to enable write operations.',
+                  wouldCreate: args
+                })
+              }]
+            };
+          }
+
+          try {
+            const bom = await commerce.bom.create({
+              name: args.name,
+              productId: args.productId,
+              description: args.description,
+              revision: args.revision
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'BOM created successfully',
+                  bom: {
+                    id: bom.id,
+                    bomNumber: bom.bomNumber,
+                    name: bom.name,
+                    status: bom.status
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'add_bom_component',
+        'Add a component/ingredient to a Bill of Materials.',
+        {
+          bomId: z.string().describe('BOM ID to add component to'),
+          name: z.string().describe('Component name (e.g., "Yellow Onions")'),
+          sku: z.string().optional().describe('Component SKU if from inventory'),
+          quantity: z.number().describe('Quantity needed per unit produced'),
+          unitOfMeasure: z.string().optional().describe('Unit (e.g., "kg", "lbs", "each", "ml")'),
+          notes: z.string().optional().describe('Notes about this component')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Add component operation not allowed. The --apply flag must be set.',
+                  wouldAdd: args
+                })
+              }]
+            };
+          }
+
+          try {
+            const component = await commerce.bom.addComponent(args.bomId, {
+              name: args.name,
+              componentSku: args.sku || null,
+              quantity: String(args.quantity),
+              unitOfMeasure: args.unitOfMeasure || 'each',
+              notes: args.notes || null
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Component added to BOM',
+                  component
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'activate_bom',
+        'Activate a BOM to make it available for work orders.',
+        {
+          bomId: z.string().describe('BOM ID to activate')
+        },
+        async ({ bomId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Activate BOM operation not allowed. The --apply flag must be set.',
+                  wouldActivate: bomId
+                })
+              }]
+            };
+          }
+
+          try {
+            const bom = await commerce.bom.activate(bomId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'BOM activated',
+                  bom: { id: bom.id, name: bom.name, status: bom.status }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_work_orders',
+        'List all manufacturing work orders. Work orders track production runs.',
+        {},
+        async () => {
+          try {
+            const workOrders = await commerce.workOrders.list();
+            const count = await commerce.workOrders.count();
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count,
+                  workOrders: workOrders.map(wo => ({
+                    id: wo.id,
+                    workOrderNumber: wo.workOrderNumber,
+                    productId: wo.productId,
+                    status: wo.status,
+                    priority: wo.priority,
+                    quantityToBuild: wo.quantityToBuild,
+                    quantityCompleted: wo.quantityCompleted,
+                    scheduledStart: wo.scheduledStart,
+                    scheduledEnd: wo.scheduledEnd
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_work_order',
+        'Get a work order by ID with full details.',
+        {
+          workOrderId: z.string().describe('Work order ID or number')
+        },
+        async ({ workOrderId }) => {
+          try {
+            const wo = await commerce.workOrders.get(workOrderId);
+            if (!wo) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Work order not found' }) }] };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, workOrder: wo }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_work_order',
+        'Create a manufacturing work order to produce a quantity of product.',
+        {
+          productId: z.string().describe('Product ID to manufacture'),
+          bomId: z.string().optional().describe('BOM ID to use (optional)'),
+          quantityToBuild: z.number().describe('Number of units to produce'),
+          priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Priority level'),
+          scheduledStart: z.string().optional().describe('Scheduled start date (ISO format)'),
+          scheduledEnd: z.string().optional().describe('Scheduled end date (ISO format)'),
+          notes: z.string().optional().describe('Production notes')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Create work order operation not allowed. The --apply flag must be set.',
+                  wouldCreate: args
+                })
+              }]
+            };
+          }
+
+          try {
+            const wo = await commerce.workOrders.create({
+              productId: args.productId,
+              bomId: args.bomId,
+              quantityToBuild: args.quantityToBuild,
+              priority: args.priority || 'normal',
+              scheduledStart: args.scheduledStart,
+              scheduledEnd: args.scheduledEnd,
+              notes: args.notes
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Work order created',
+                  workOrder: {
+                    id: wo.id,
+                    workOrderNumber: wo.workOrderNumber,
+                    status: wo.status,
+                    quantityToBuild: wo.quantityToBuild
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'start_work_order',
+        'Start a work order (begin production).',
+        {
+          workOrderId: z.string().describe('Work order ID to start')
+        },
+        async ({ workOrderId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Start work order operation not allowed. The --apply flag must be set.',
+                  wouldStart: workOrderId
+                })
+              }]
+            };
+          }
+
+          try {
+            const wo = await commerce.workOrders.start(workOrderId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Work order started - production in progress',
+                  workOrder: { id: wo.id, workOrderNumber: wo.workOrderNumber, status: wo.status }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'complete_work_order',
+        'Complete a work order with the quantity produced.',
+        {
+          workOrderId: z.string().describe('Work order ID to complete'),
+          quantityCompleted: z.number().describe('Number of units actually produced')
+        },
+        async ({ workOrderId, quantityCompleted }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Complete work order operation not allowed. The --apply flag must be set.',
+                  wouldComplete: { workOrderId, quantityCompleted }
+                })
+              }]
+            };
+          }
+
+          try {
+            const wo = await commerce.workOrders.complete(workOrderId, quantityCompleted);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: `Work order completed - ${quantityCompleted} units produced`,
+                  workOrder: {
+                    id: wo.id,
+                    workOrderNumber: wo.workOrderNumber,
+                    status: wo.status,
+                    quantityCompleted: wo.quantityCompleted
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'cancel_work_order',
+        'Cancel a work order.',
+        {
+          workOrderId: z.string().describe('Work order ID to cancel')
+        },
+        async ({ workOrderId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Cancel work order operation not allowed. The --apply flag must be set.',
+                  wouldCancel: workOrderId
+                })
+              }]
+            };
+          }
+
+          try {
+            const wo = await commerce.workOrders.cancel(workOrderId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Work order cancelled',
+                  workOrder: { id: wo.id, workOrderNumber: wo.workOrderNumber, status: wo.status }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Payment Tools
+      // ============================================================================
+      tool(
+        'list_payments',
+        'List all payments in the system.',
+        {},
+        async () => {
+          try {
+            const payments = await commerce.payments.list();
+            const count = await commerce.payments.count();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count, payments }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_payment',
+        'Get a payment by ID.',
+        { paymentId: z.string().describe('Payment ID') },
+        async ({ paymentId }) => {
+          try {
+            const payment = await commerce.payments.get(paymentId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, payment }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_payment',
+        'Create a payment for an order.',
+        {
+          orderId: z.string().describe('Order ID'),
+          amount: z.number().describe('Payment amount'),
+          currency: z.string().optional().describe('Currency (default: USD)'),
+          method: z.string().optional().describe('Payment method: credit_card, paypal, bank_transfer, crypto')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create payment requires --apply flag.', wouldCreate: args }) }] };
+          try {
+            const payment = await commerce.payments.create({ orderId: args.orderId, amount: String(args.amount), currency: args.currency || 'USD', method: args.method || 'credit_card' });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Payment created', payment }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'complete_payment',
+        'Mark a payment as completed.',
+        { paymentId: z.string().describe('Payment ID') },
+        async ({ paymentId }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Complete payment requires --apply flag.' }) }] };
+          try {
+            const payment = await commerce.payments.markCompleted(paymentId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Payment completed', payment }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_refund',
+        'Create a refund for a payment.',
+        {
+          paymentId: z.string().describe('Payment ID to refund'),
+          amount: z.number().describe('Refund amount'),
+          reason: z.string().optional().describe('Refund reason')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create refund requires --apply flag.' }) }] };
+          try {
+            const refund = await commerce.payments.createRefund({ paymentId: args.paymentId, amount: String(args.amount), reason: args.reason });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Refund created', refund }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Shipment Tools
+      // ============================================================================
+      tool(
+        'list_shipments',
+        'List all shipments.',
+        {},
+        async () => {
+          try {
+            const shipments = await commerce.shipments.list();
+            const count = await commerce.shipments.count();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count, shipments }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_shipment',
+        'Create a shipment for an order.',
+        {
+          orderId: z.string().describe('Order ID'),
+          carrier: z.string().optional().describe('Carrier: USPS, UPS, FedEx, DHL'),
+          service: z.string().optional().describe('Service level')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create shipment requires --apply flag.' }) }] };
+          try {
+            const shipment = await commerce.shipments.create({ orderId: args.orderId, carrier: args.carrier, service: args.service });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Shipment created', shipment }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'deliver_shipment',
+        'Mark a shipment as delivered.',
+        { shipmentId: z.string().describe('Shipment ID') },
+        async ({ shipmentId }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Deliver shipment requires --apply flag.' }) }] };
+          try {
+            const shipment = await commerce.shipments.deliver(shipmentId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Shipment delivered', shipment }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Supplier & Purchase Order Tools
+      // ============================================================================
+      tool(
+        'list_suppliers',
+        'List all suppliers.',
+        {},
+        async () => {
+          try {
+            const suppliers = await commerce.purchaseOrders.listSuppliers();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: suppliers.length, suppliers }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_supplier',
+        'Create a new supplier.',
+        {
+          name: z.string().describe('Supplier name'),
+          email: z.string().optional().describe('Contact email'),
+          phone: z.string().optional().describe('Phone number'),
+          address: z.string().optional().describe('Address')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create supplier requires --apply flag.' }) }] };
+          try {
+            const supplier = await commerce.purchaseOrders.createSupplier({ name: args.name, email: args.email, phone: args.phone, address: args.address });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Supplier created', supplier }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_purchase_orders',
+        'List all purchase orders.',
+        {},
+        async () => {
+          try {
+            const purchaseOrders = await commerce.purchaseOrders.list();
+            const count = await commerce.purchaseOrders.count();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count, purchaseOrders }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_purchase_order',
+        'Create a purchase order to a supplier.',
+        {
+          supplierId: z.string().describe('Supplier ID'),
+          items: z.string().describe('JSON array: [{"sku":"X","name":"Y","quantity":10,"unitPrice":5.00}]'),
+          notes: z.string().optional().describe('Notes')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create PO requires --apply flag.' }) }] };
+          try {
+            const items = JSON.parse(args.items);
+            const po = await commerce.purchaseOrders.create({ supplierId: args.supplierId, items, notes: args.notes });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'PO created', purchaseOrder: po }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'approve_purchase_order',
+        'Approve a purchase order.',
+        {
+          purchaseOrderId: z.string().describe('PO ID'),
+          approvedBy: z.string().describe('Approver name')
+        },
+        async ({ purchaseOrderId, approvedBy }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Approve PO requires --apply flag.' }) }] };
+          try {
+            const po = await commerce.purchaseOrders.approve(purchaseOrderId, approvedBy);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'PO approved', purchaseOrder: po }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'send_purchase_order',
+        'Send a PO to the supplier.',
+        { purchaseOrderId: z.string().describe('PO ID') },
+        async ({ purchaseOrderId }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Send PO requires --apply flag.' }) }] };
+          try {
+            const po = await commerce.purchaseOrders.send(purchaseOrderId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'PO sent to supplier', purchaseOrder: po }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Invoice Tools
+      // ============================================================================
+      tool(
+        'list_invoices',
+        'List all invoices.',
+        {},
+        async () => {
+          try {
+            const invoices = await commerce.invoices.list();
+            const count = await commerce.invoices.count();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count, invoices }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_invoice',
+        'Create an invoice for a customer.',
+        {
+          customerId: z.string().describe('Customer ID'),
+          orderId: z.string().optional().describe('Order ID'),
+          items: z.string().describe('JSON array: [{"description":"X","quantity":1,"unitPrice":10.00}]'),
+          dueDate: z.string().optional().describe('Due date ISO'),
+          notes: z.string().optional().describe('Notes')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create invoice requires --apply flag.' }) }] };
+          try {
+            const items = JSON.parse(args.items);
+            const invoice = await commerce.invoices.create({ customerId: args.customerId, orderId: args.orderId, items, dueDate: args.dueDate, notes: args.notes });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Invoice created', invoice }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'send_invoice',
+        'Send an invoice to the customer.',
+        { invoiceId: z.string().describe('Invoice ID') },
+        async ({ invoiceId }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Send invoice requires --apply flag.' }) }] };
+          try {
+            const invoice = await commerce.invoices.send(invoiceId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Invoice sent', invoice }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'record_invoice_payment',
+        'Record payment on an invoice.',
+        {
+          invoiceId: z.string().describe('Invoice ID'),
+          amount: z.number().describe('Amount paid'),
+          paymentMethod: z.string().optional().describe('Payment method'),
+          reference: z.string().optional().describe('Check/reference number')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Record payment requires --apply flag.' }) }] };
+          try {
+            const invoice = await commerce.invoices.recordPayment(args.invoiceId, { amount: args.amount, paymentMethod: args.paymentMethod, reference: args.reference });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Payment recorded', invoice }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_overdue_invoices',
+        'Get all overdue invoices.',
+        {},
+        async () => {
+          try {
+            const invoices = await commerce.invoices.getOverdue();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: invoices.length, overdueInvoices: invoices }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Warranty Tools
+      // ============================================================================
+      tool(
+        'list_warranties',
+        'List all warranties.',
+        {},
+        async () => {
+          try {
+            const warranties = await commerce.warranties.list();
+            const count = await commerce.warranties.count();
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, count, warranties }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_warranty',
+        'Create a warranty for a product.',
+        {
+          customerId: z.string().describe('Customer ID (required)'),
+          orderId: z.string().optional().describe('Order ID'),
+          productId: z.string().optional().describe('Product ID'),
+          warrantyType: z.string().optional().describe('Type: standard, extended, lifetime'),
+          durationMonths: z.number().optional().describe('Duration in months')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create warranty requires --apply flag.' }) }] };
+          try {
+            const warranty = await commerce.warranties.create({ customerId: args.customerId, orderId: args.orderId, productId: args.productId, warrantyType: args.warrantyType || 'standard', durationMonths: args.durationMonths || 12 });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Warranty created', warranty }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_warranty_claim',
+        'File a warranty claim.',
+        {
+          warrantyId: z.string().describe('Warranty ID'),
+          description: z.string().describe('Issue description'),
+          claimType: z.string().optional().describe('Type: repair, replacement, refund')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Create claim requires --apply flag.' }) }] };
+          try {
+            const claim = await commerce.warranties.createClaim({ warrantyId: args.warrantyId, description: args.description, claimType: args.claimType || 'replacement' });
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Claim filed', claim }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'approve_warranty_claim',
+        'Approve a warranty claim.',
+        { claimId: z.string().describe('Claim ID') },
+        async ({ claimId }) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Approve claim requires --apply flag.' }) }] };
+          try {
+            const claim = await commerce.warranties.approveClaim(claimId);
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Claim approved', claim }, null, 2) }] };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
       )
     ]
   });
@@ -4570,5 +5417,45 @@ export const TOOL_NAMES = [
   // Sync Conflict Resolution
   'mcp__stateset-commerce__sync_conflicts',
   'mcp__stateset-commerce__sync_resolve',
-  'mcp__stateset-commerce__sync_rebase'
+  'mcp__stateset-commerce__sync_rebase',
+  // Manufacturing - BOM & Work Orders
+  'mcp__stateset-commerce__list_boms',
+  'mcp__stateset-commerce__get_bom',
+  'mcp__stateset-commerce__create_bom',
+  'mcp__stateset-commerce__add_bom_component',
+  'mcp__stateset-commerce__activate_bom',
+  'mcp__stateset-commerce__list_work_orders',
+  'mcp__stateset-commerce__get_work_order',
+  'mcp__stateset-commerce__create_work_order',
+  'mcp__stateset-commerce__start_work_order',
+  'mcp__stateset-commerce__complete_work_order',
+  'mcp__stateset-commerce__cancel_work_order',
+  // Payments
+  'mcp__stateset-commerce__list_payments',
+  'mcp__stateset-commerce__get_payment',
+  'mcp__stateset-commerce__create_payment',
+  'mcp__stateset-commerce__complete_payment',
+  'mcp__stateset-commerce__create_refund',
+  // Shipments
+  'mcp__stateset-commerce__list_shipments',
+  'mcp__stateset-commerce__create_shipment',
+  'mcp__stateset-commerce__deliver_shipment',
+  // Suppliers & Purchase Orders
+  'mcp__stateset-commerce__list_suppliers',
+  'mcp__stateset-commerce__create_supplier',
+  'mcp__stateset-commerce__list_purchase_orders',
+  'mcp__stateset-commerce__create_purchase_order',
+  'mcp__stateset-commerce__approve_purchase_order',
+  'mcp__stateset-commerce__send_purchase_order',
+  // Invoices
+  'mcp__stateset-commerce__list_invoices',
+  'mcp__stateset-commerce__create_invoice',
+  'mcp__stateset-commerce__send_invoice',
+  'mcp__stateset-commerce__record_invoice_payment',
+  'mcp__stateset-commerce__get_overdue_invoices',
+  // Warranties
+  'mcp__stateset-commerce__list_warranties',
+  'mcp__stateset-commerce__create_warranty',
+  'mcp__stateset-commerce__create_warranty_claim',
+  'mcp__stateset-commerce__approve_warranty_claim'
 ];

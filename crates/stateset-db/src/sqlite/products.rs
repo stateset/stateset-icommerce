@@ -208,6 +208,16 @@ impl ProductRepository for SqliteProductRepository {
     fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
         let conn = self.conn()?;
         let now = Utc::now();
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM products WHERE id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id),
+                e => map_db_error(e),
+            })?;
 
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
@@ -237,13 +247,21 @@ impl ProductRepository for SqliteProductRepository {
             params.push(Box::new(serde_json::to_string(seo).unwrap_or_default()));
         }
 
+        updates.push("version = version + 1");
         params.push(Box::new(id.to_string()));
+        params.push(Box::new(current_version));
 
-        let sql = format!("UPDATE products SET {} WHERE id = ?", updates.join(", "));
+        let sql = format!("UPDATE products SET {} WHERE id = ? AND version = ?", updates.join(", "));
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(map_db_error)?;
+        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "product".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         // Fetch the updated product with the same connection
         let result = conn.query_row(
@@ -408,12 +426,23 @@ impl ProductRepository for SqliteProductRepository {
     fn update_variant(&self, id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
         let conn = self.conn()?;
         let now = Utc::now();
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM product_variants WHERE id = ?",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductVariantNotFound(id),
+                e => map_db_error(e),
+            })?;
 
         let options_json = serde_json::to_string(&variant.options.clone().unwrap_or_default()).unwrap_or_default();
 
-        conn.execute(
+        let rows_affected = conn.execute(
             "UPDATE product_variants SET name = ?, price = ?, compare_at_price = ?, cost = ?,
-                     barcode = ?, weight = ?, weight_unit = ?, options = ?, updated_at = ? WHERE id = ?",
+                     barcode = ?, weight = ?, weight_unit = ?, options = ?, updated_at = ?, version = version + 1
+             WHERE id = ? AND version = ?",
             rusqlite::params![
                 variant.name.as_ref().unwrap_or(&variant.sku),
                 variant.price.to_string(),
@@ -425,9 +454,17 @@ impl ProductRepository for SqliteProductRepository {
                 options_json,
                 now.to_rfc3339(),
                 id.to_string(),
+                current_version,
             ],
         )
         .map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "product_variant".to_string(),
+                id: id.to_string(),
+                expected_version: current_version,
+            });
+        }
 
         // Fetch the updated variant with the same connection
         let result = conn.query_row(

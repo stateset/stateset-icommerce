@@ -255,11 +255,12 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn adjust(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get item directly with this connection
-        let item = conn.query_row(
+        let item = tx.query_row(
             "SELECT * FROM inventory_items WHERE sku = ?",
             [&input.sku],
             |row| {
@@ -282,7 +283,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let location_id = input.location_id.unwrap_or(1);
 
         // Get or create balance directly with this connection
-        let balance_result = conn.query_row(
+        let balance_result = tx.query_row(
             "SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?",
             rusqlite::params![item.id, location_id],
             |row| {
@@ -305,7 +306,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let balance = match balance_result {
             Ok(b) => b,
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                conn.execute(
+                tx.execute(
                     "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, updated_at)
                      VALUES (?, ?, '0', '0', '0', ?)",
                     rusqlite::params![item.id, location_id, now.to_rfc3339()],
@@ -313,7 +314,7 @@ impl InventoryRepository for SqliteInventoryRepository {
                 .map_err(map_db_error)?;
 
                 // Query the newly created balance
-                conn.query_row(
+                tx.query_row(
                     "SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?",
                     rusqlite::params![item.id, location_id],
                     |row| {
@@ -350,7 +351,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         // Update balance with optimistic locking
         let current_version = balance.version;
-        let rows_affected = conn.execute(
+        let rows_affected = tx.execute(
             "UPDATE inventory_balances SET quantity_on_hand = ?, quantity_available = ?, version = version + 1, updated_at = ?
              WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
@@ -374,7 +375,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         // Record transaction
         let tx_type = if input.quantity >= Decimal::ZERO { "receipt" } else { "adjustment" };
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
@@ -390,9 +391,8 @@ impl InventoryRepository for SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
-        let tx_id = conn.last_insert_rowid();
-
-        Ok(InventoryTransaction {
+        let tx_id = tx.last_insert_rowid();
+        let transaction = InventoryTransaction {
             id: tx_id,
             item_id: item.id,
             location_id,
@@ -407,15 +407,20 @@ impl InventoryRepository for SqliteInventoryRepository {
             reason: Some(input.reason),
             created_by: None,
             created_at: now,
-        })
+        };
+
+        tx.commit().map_err(map_db_error)?;
+
+        Ok(transaction)
     }
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get item directly with this connection
-        let item = conn.query_row(
+        let item = tx.query_row(
             "SELECT * FROM inventory_items WHERE sku = ?",
             [&input.sku],
             |row| {
@@ -438,7 +443,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let location_id = input.location_id.unwrap_or(1);
 
         // Get balance directly with this connection
-        let balance = conn.query_row(
+        let balance = tx.query_row(
             "SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?",
             rusqlite::params![item.id, location_id],
             |row| {
@@ -476,7 +481,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         });
 
         // Create reservation
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_reservations (id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at)
              VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
             rusqlite::params![
@@ -497,7 +502,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let new_available = balance.quantity_on_hand - new_allocated;
         let current_version = balance.version;
 
-        let rows_affected = conn.execute(
+        let rows_affected = tx.execute(
             "UPDATE inventory_balances SET quantity_allocated = ?, quantity_available = ?, version = version + 1, updated_at = ?
              WHERE item_id = ? AND location_id = ? AND version = ?",
             rusqlite::params![
@@ -519,7 +524,7 @@ impl InventoryRepository for SqliteInventoryRepository {
             });
         }
 
-        Ok(InventoryReservation {
+        let reservation = InventoryReservation {
             id: reservation_id,
             item_id: item.id,
             location_id,
@@ -529,15 +534,20 @@ impl InventoryRepository for SqliteInventoryRepository {
             reference_id: input.reference_id,
             expires_at,
             created_at: now,
-        })
+        };
+
+        tx.commit().map_err(map_db_error)?;
+
+        Ok(reservation)
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
         // Get reservation
-        let res = conn.query_row(
+        let res = tx.query_row(
             "SELECT item_id, location_id, quantity, status FROM inventory_reservations WHERE id = ?",
             [reservation_id.to_string()],
             |row| {
@@ -563,14 +573,14 @@ impl InventoryRepository for SqliteInventoryRepository {
         }
 
         // Update reservation status
-        conn.execute(
+        tx.execute(
             "UPDATE inventory_reservations SET status = 'released' WHERE id = ?",
             [reservation_id.to_string()],
         )
         .map_err(map_db_error)?;
 
         // Get current balance version for optimistic locking
-        let current_version: i32 = conn.query_row(
+        let current_version: i32 = tx.query_row(
             "SELECT version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
             rusqlite::params![item_id, location_id],
             |row| row.get(0),
@@ -578,7 +588,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         .map_err(map_db_error)?;
 
         // Update balance with optimistic locking
-        let rows_affected = conn.execute(
+        let rows_affected = tx.execute(
             "UPDATE inventory_balances SET quantity_allocated = quantity_allocated - ?,
              quantity_available = quantity_available + ?, version = version + 1, updated_at = ?
              WHERE item_id = ? AND location_id = ? AND version = ?",
@@ -600,6 +610,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                 expected_version: current_version,
             });
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }

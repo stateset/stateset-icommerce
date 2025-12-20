@@ -838,110 +838,110 @@ impl PgPurchaseOrderRepository {
 
 impl PurchaseOrderRepository for PgPurchaseOrderRepository {
     fn create_supplier(&self, input: CreateSupplier) -> Result<Supplier> {
-        tokio::runtime::Handle::current().block_on(self.create_supplier_async(input))
+        super::block_on(self.create_supplier_async(input))
     }
 
     fn get_supplier(&self, id: Uuid) -> Result<Option<Supplier>> {
-        tokio::runtime::Handle::current().block_on(self.get_supplier_async(id))
+        super::block_on(self.get_supplier_async(id))
     }
 
     fn get_supplier_by_code(&self, code: &str) -> Result<Option<Supplier>> {
-        tokio::runtime::Handle::current().block_on(self.get_supplier_by_code_async(code))
+        super::block_on(self.get_supplier_by_code_async(code))
     }
 
     fn update_supplier(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        tokio::runtime::Handle::current().block_on(self.update_supplier_async(id, input))
+        super::block_on(self.update_supplier_async(id, input))
     }
 
     fn list_suppliers(&self, filter: SupplierFilter) -> Result<Vec<Supplier>> {
-        tokio::runtime::Handle::current().block_on(self.list_suppliers_async(filter))
+        super::block_on(self.list_suppliers_async(filter))
     }
 
     fn delete_supplier(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_supplier_async(id))
+        super::block_on(self.delete_supplier_async(id))
     }
 
     fn create(&self, input: CreatePurchaseOrder) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.create_async(input))
+        super::block_on(self.create_async(input))
     }
 
     fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        tokio::runtime::Handle::current().block_on(self.get_async(id))
+        super::block_on(self.get_async(id))
     }
 
     fn get_by_number(&self, po_number: &str) -> Result<Option<PurchaseOrder>> {
-        tokio::runtime::Handle::current().block_on(self.get_by_number_async(po_number))
+        super::block_on(self.get_by_number_async(po_number))
     }
 
     fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.update_async(id, input))
+        super::block_on(self.update_async(id, input))
     }
 
     fn list(&self, filter: PurchaseOrderFilter) -> Result<Vec<PurchaseOrder>> {
-        tokio::runtime::Handle::current().block_on(self.list_async(filter))
+        super::block_on(self.list_async(filter))
     }
 
     fn for_supplier(&self, supplier_id: Uuid) -> Result<Vec<PurchaseOrder>> {
-        tokio::runtime::Handle::current().block_on(self.for_supplier_async(supplier_id))
+        super::block_on(self.for_supplier_async(supplier_id))
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.delete_async(id))
+        super::block_on(self.delete_async(id))
     }
 
     fn submit_for_approval(&self, id: Uuid) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.submit_for_approval_async(id))
+        super::block_on(self.submit_for_approval_async(id))
     }
 
     fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.approve_async(id, approved_by))
+        super::block_on(self.approve_async(id, approved_by))
     }
 
     fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.send_async(id))
+        super::block_on(self.send_async(id))
     }
 
     fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.acknowledge_async(id, supplier_reference))
+        super::block_on(self.acknowledge_async(id, supplier_reference))
     }
 
     fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.hold_async(id))
+        super::block_on(self.hold_async(id))
     }
 
     fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.cancel_async(id))
+        super::block_on(self.cancel_async(id))
     }
 
     fn receive(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.receive_async(id, items))
+        super::block_on(self.receive_async(id, items))
     }
 
     fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
-        tokio::runtime::Handle::current().block_on(self.complete_async(id))
+        super::block_on(self.complete_async(id))
     }
 
     fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
-        tokio::runtime::Handle::current().block_on(self.add_item_async(po_id, item))
+        super::block_on(self.add_item_async(po_id, item))
     }
 
     fn update_item(&self, item_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
-        tokio::runtime::Handle::current().block_on(self.update_item_async(item_id, item))
+        super::block_on(self.update_item_async(item_id, item))
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        tokio::runtime::Handle::current().block_on(self.remove_item_async(item_id))
+        super::block_on(self.remove_item_async(item_id))
     }
 
     fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
-        tokio::runtime::Handle::current().block_on(self.get_items_async(po_id))
+        super::block_on(self.get_items_async(po_id))
     }
 
     fn count(&self, filter: PurchaseOrderFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_async(filter))
+        super::block_on(self.count_async(filter))
     }
 
     fn count_suppliers(&self, filter: SupplierFilter) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.count_suppliers_async(filter))
+        super::block_on(self.count_suppliers_async(filter))
     }
 }
