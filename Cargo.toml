@@ -7,17 +7,22 @@ members = [
     "bindings/node",
     "bindings/python",
     "bindings/wasm",
+    "bindings/ruby",
+    "bindings/php",
+    "bindings/java",
 ]
-# Python/WASM bindings need special build tools (maturin/wasm-pack)
+# Python/WASM/Ruby/PHP bindings need special build tools (maturin/wasm-pack/rb_sys/ext-php-rs)
+# Java requires JDK for headers but can build with standard cargo
 default-members = [
     "crates/stateset-core",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "bindings/node",
+    "bindings/java",
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.6"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/stateset/stateset-icommerce"

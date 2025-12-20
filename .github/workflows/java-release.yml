@@ -1,0 +1,201 @@
+name: Java Release
+
+on:
+  push:
+    tags:
+      - 'java-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.4)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-native:
+    name: Build Native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x86_64
+            lib: libstateset_java.so
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: linux-arm64
+            lib: libstateset_java.so
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: darwin-x86_64
+            lib: libstateset_java.dylib
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: darwin-arm64
+            lib: libstateset_java.dylib
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x86_64
+            lib: stateset_java.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Build native library
+        working-directory: bindings/java
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package native library
+        shell: bash
+        run: |
+          mkdir -p dist/native/${{ matrix.artifact }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/${{ matrix.lib }} dist/native/${{ matrix.artifact }}/
+          else
+            cp target/${{ matrix.target }}/release/${{ matrix.lib }} dist/native/${{ matrix.artifact }}/
+          fi
+          tar -czvf stateset-java-native-${{ matrix.artifact }}.tar.gz -C dist .
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.artifact }}
+          path: stateset-java-native-${{ matrix.artifact }}.tar.gz
+          retention-days: 7
+
+  build-jar:
+    name: Build JAR
+    needs: build-native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Download all native libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: natives
+          pattern: native-*
+          merge-multiple: true
+
+      - name: Extract native libraries
+        working-directory: bindings/java/java
+        run: |
+          mkdir -p src/main/resources/native
+          for archive in ../../../natives/*.tar.gz; do
+            tar -xzvf "$archive" -C src/main/resources/
+          done
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Build JAR
+        working-directory: bindings/java/java
+        run: ./gradlew build -x test
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: bindings/java/java/build/libs/*.jar
+          retention-days: 7
+
+  publish:
+    name: Publish to Maven Central
+    needs: build-jar
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Download all native libraries
+        uses: actions/download-artifact@v4
+        with:
+          path: natives
+          pattern: native-*
+          merge-multiple: true
+
+      - name: Extract native libraries
+        working-directory: bindings/java/java
+        run: |
+          mkdir -p src/main/resources/native
+          for archive in ../../../natives/*.tar.gz; do
+            tar -xzvf "$archive" -C src/main/resources/
+          done
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Publish to Maven Central
+        working-directory: bindings/java/java
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publish
+
+      - name: Download JAR artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: jars
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            jars/*.jar
+            natives/*.tar.gz
+          generate_release_notes: true
+          body: |
+            ## Java: StateSet Embedded Commerce
+
+            ### Installation
+
+            **Maven:**
+            ```xml
+            <dependency>
+                <groupId>com.stateset</groupId>
+                <artifactId>embedded</artifactId>
+                <version>${{ github.ref_name }}</version>
+            </dependency>
+            ```
+
+            **Gradle:**
+            ```groovy
+            implementation 'com.stateset:embedded:${{ github.ref_name }}'
+            ```
+
+            ### Platform Support
+            - Linux x86_64
+            - Linux arm64
+            - macOS x86_64
+            - macOS arm64 (Apple Silicon)
+            - Windows x86_64

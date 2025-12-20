@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -17,7 +17,8 @@
     "stateset-create": "./bin/stateset-create.js",
     "stateset-config": "./bin/stateset-config.js",
     "stateset-doctor": "./bin/stateset-doctor.js",
-    "stateset-events": "./bin/stateset-events.js"
+    "stateset-events": "./bin/stateset-events.js",
+    "stateset-sync": "./bin/stateset-sync.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -47,7 +48,10 @@
     "storefront",
     "scaffold",
     "generator",
-    "nextjs"
+    "nextjs",
+    "sync",
+    "event-sourcing",
+    "outbox"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
@@ -62,6 +66,10 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@stateset/embedded": "^0.1.4",
+    "better-sqlite3": "^11.6.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.1.1",
     "zod": "^3.25.76"
   },
   "publishConfig": {

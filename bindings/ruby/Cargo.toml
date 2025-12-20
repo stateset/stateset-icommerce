@@ -1,0 +1,20 @@
+[package]
+name = "stateset-embedded-ruby"
+version = "0.1.4"
+edition = "2021"
+description = "Ruby bindings for StateSet Embedded Commerce"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/stateset/stateset-icommerce"
+keywords = ["commerce", "ecommerce", "ruby", "magnus"]
+categories = ["api-bindings"]
+
+[lib]
+name = "stateset_embedded"
+crate-type = ["cdylib"]
+
+[dependencies]
+stateset-embedded = { path = "../../crates/stateset-embedded", package = "stateset-embedded" }
+stateset-core = { path = "../../crates/stateset-core" }
+magnus = "0.7"
+rust_decimal = { version = "1.36", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }

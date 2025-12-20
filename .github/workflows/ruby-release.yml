@@ -1,0 +1,175 @@
+name: Ruby Release
+
+on:
+  push:
+    tags:
+      - 'ruby-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.4)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            platform: x86_64-linux
+            ruby: '3.2'
+          - os: ubuntu-latest
+            platform: x86_64-linux
+            ruby: '3.1'
+          - os: ubuntu-latest
+            platform: x86_64-linux
+            ruby: '3.0'
+          # Linux aarch64
+          - os: ubuntu-24.04-arm
+            platform: aarch64-linux
+            ruby: '3.2'
+          # macOS x86_64
+          - os: macos-13
+            platform: x86_64-darwin
+            ruby: '3.2'
+          # macOS arm64
+          - os: macos-14
+            platform: arm64-darwin
+            ruby: '3.2'
+          # Windows
+          - os: windows-latest
+            platform: x64-mingw-ucrt
+            ruby: '3.2'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+          working-directory: bindings/ruby
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build native gem
+        working-directory: bindings/ruby
+        run: |
+          bundle install
+          bundle exec rake native gem
+
+      - name: Upload gem
+        uses: actions/upload-artifact@v4
+        with:
+          name: gem-${{ matrix.platform }}-ruby${{ matrix.ruby }}
+          path: bindings/ruby/pkg/*.gem
+          retention-days: 7
+
+  # Build source gem (no native extension, compiles on install)
+  build-source:
+    name: Build Source Gem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: bindings/ruby
+
+      - name: Build source gem
+        working-directory: bindings/ruby
+        run: |
+          bundle install
+          gem build stateset_embedded.gemspec
+
+      - name: Upload source gem
+        uses: actions/upload-artifact@v4
+        with:
+          name: gem-source
+          path: bindings/ruby/*.gem
+          retention-days: 7
+
+  # Cross-compile for additional platforms using rb-sys-dock
+  cross-build:
+    name: Cross Build (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install rb_sys
+        run: gem install rb_sys
+
+      - name: Cross compile
+        working-directory: bindings/ruby
+        run: |
+          rb-sys-dock --platform ${{ matrix.platform }} -r 3.2 -- bundle exec rake native gem
+
+      - name: Upload gem
+        uses: actions/upload-artifact@v4
+        with:
+          name: gem-${{ matrix.platform }}
+          path: bindings/ruby/pkg/*.gem
+          retention-days: 7
+
+  publish:
+    name: Publish to RubyGems
+    needs: [build, build-source]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all gems
+        uses: actions/download-artifact@v4
+        with:
+          path: gems
+          pattern: gem-*
+          merge-multiple: true
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Configure RubyGems credentials
+        run: |
+          mkdir -p ~/.gem
+          cat << EOF > ~/.gem/credentials
+          ---
+          :rubygems_api_key: ${{ secrets.RUBYGEMS_API_KEY }}
+          EOF
+          chmod 0600 ~/.gem/credentials
+
+      - name: Publish gems
+        run: |
+          for gem in gems/*.gem; do
+            echo "Publishing $gem..."
+            gem push "$gem" || true
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: gems/*.gem
+          generate_release_notes: true

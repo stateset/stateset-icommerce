@@ -51,3 +51,18 @@ export {
   createScaffoldMcpServer,
   SCAFFOLD_TOOL_NAMES
 } from './scaffold-server.js';
+
+// Sync (Verifiable Event Sync)
+export {
+  Outbox,
+  createOutbox,
+  SyncConfig,
+  loadSyncConfig,
+  saveSyncConfig,
+  SequencerClient,
+  createSequencerClient,
+  SyncEngine,
+  createSyncEngine,
+  wrapCommerceWithEvents,
+  EventCapture
+} from './sync/index.js';

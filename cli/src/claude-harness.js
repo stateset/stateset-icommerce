@@ -10,6 +10,9 @@ import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
 import { PermissionGate, createPermissionGate, PERMISSION_LEVELS } from './permissions.js';
 import { RichOutput, ICONS } from './output.js';
+import { loadSyncConfig, SyncConfig } from './sync/config.js';
+import { wrapCommerceWithEvents } from './sync/capture.js';
+import { createSyncEngine } from './sync/engine.js';
 
 // ============================================================================
 // Agent Configurations
@@ -491,6 +494,79 @@ Create e-commerce storefronts using @stateset/embedded as the commerce backend. 
 - Preview mode shows what would be created
 - --apply flag enables write operations
 - Never overwrite files without confirmation`
+  },
+
+  // Sync specialist
+  'sync': {
+    name: 'Sync Agent',
+    description: 'Verifiable Event Sync (VES) management - sync local state with production sequencer',
+    tools: [
+      'mcp__stateset-commerce__sync_status',
+      'mcp__stateset-commerce__sync_push',
+      'mcp__stateset-commerce__sync_pull',
+      'mcp__stateset-commerce__sync_outbox',
+      'mcp__stateset-commerce__sync_retry_failed',
+      'mcp__stateset-commerce__sync_entity_history',
+      'mcp__stateset-commerce__sync_full'
+    ],
+    systemPrompt: `You are a sync management specialist for StateSet Commerce implementing Verifiable Event Sync (VES).
+
+## Your Role
+Manage synchronization between the local AI agent kernel and the production sequencer on Kubernetes. Help users understand sync status, push local changes to production, and pull remote changes locally.
+
+## Key Concepts
+- **Outbox**: Local SQLite table storing events before they're pushed to production
+- **Sequencer**: Production service that assigns canonical sequence numbers to events
+- **Push**: Send pending local events to the sequencer
+- **Pull**: Fetch new events from the sequencer to local
+- **Lag**: Number of events behind the remote head
+
+## Event Flow
+1. Local mutation (create order, update inventory) → Event captured in outbox
+2. sync_push → Events sent to sequencer, assigned sequence numbers
+3. sync_pull → Fetch events from other agents/sources
+4. Events form immutable, verifiable audit trail
+
+## Available Tools
+- sync_status - Check sync health, connection, and lag
+- sync_push - Push pending events to sequencer (requires --apply)
+- sync_pull - Pull new events from sequencer
+- sync_outbox - List events in local outbox
+- sync_retry_failed - Reset failed events for retry (requires --apply)
+- sync_entity_history - Get full event history for an entity
+- sync_full - Push then pull in one operation
+
+## Common Workflows
+
+### Check sync health
+Use sync_status to see:
+- Connection to sequencer
+- Pending events in outbox
+- Sync lag (how far behind remote)
+
+### Push local changes
+1. Check sync_status for pending count
+2. Use sync_push with --apply to send to production
+3. Verify with sync_status that pending is now 0
+
+### Investigate entity
+Use sync_entity_history to see all events for an order, customer, etc.
+
+### Recover from failures
+1. Use sync_outbox with status='failed' to see failed events
+2. Use sync_retry_failed with --apply to reset them
+3. Use sync_push with --apply to retry
+
+## Safety Rules
+1. sync_push requires --apply flag
+2. sync_retry_failed requires --apply flag
+3. sync_pull and sync_status are always safe (read-only)
+4. Check sync_status before pushing to verify connection
+
+## Troubleshooting
+- "Sync not configured" → Run stateset-sync init first
+- High lag → Run sync_pull to catch up
+- Failed events → Check sync_outbox for errors, then sync_retry_failed`
   }
 };
 
@@ -509,7 +585,8 @@ const AGENT_KEYWORDS = {
   'analytics': ['analytics', 'sales', 'revenue', 'best seller', 'top product', 'forecast', 'predict', 'trend', 'metrics', 'performance', 'how is business', 'how are sales', 'top customer', 'vip', 'lifetime value', 'aov', 'demand', 'low stock', 'out of stock', 'report', 'insight', 'dashboard'],
   'promotions': ['promotion', 'discount', 'coupon', 'promo code', 'percent off', 'percentage off', 'bogo', 'buy one get one', 'free shipping', 'sale', 'deal', 'offer', 'campaign', 'tiered discount', 'flash sale'],
   'subscriptions': ['subscription', 'subscribe', 'recurring', 'billing cycle', 'trial', 'plan', 'monthly plan', 'annual plan', 'pause subscription', 'cancel subscription', 'renew', 'renewal', 'billing', 'subscriber', 'membership'],
-  'storefront': ['create store', 'new store', 'storefront', 'website', 'scaffold', 'generate', 'build store', 'create website', 'nextjs', 'react', 'ecommerce site', 'e-commerce site', 'online store', 'shop website']
+  'storefront': ['create store', 'new store', 'storefront', 'website', 'scaffold', 'generate', 'build store', 'create website', 'nextjs', 'react', 'ecommerce site', 'e-commerce site', 'online store', 'shop website'],
+  'sync': ['sync', 'synchronize', 'push events', 'pull events', 'outbox', 'sequencer', 'event sync', 'sync status', 'pending events', 'sync lag', 'ves', 'verifiable event']
 };
 
 /**
@@ -588,6 +665,9 @@ export function routeToAgentWithConfidence(request) {
  * @param {Function} options.onConfirmRequired - Callback for confirmation prompts
  * @param {AgentTelemetry} options.telemetry - Custom telemetry instance
  * @param {PermissionGate} options.permissionGate - Custom permission gate instance
+ * @param {boolean} options.enableSync - Enable VES sync event capture (default: auto-detect from config)
+ * @param {boolean} options.autoSyncPush - Auto-push events after mutations (default: false)
+ * @param {Function} options.onSyncEvent - Callback when sync event is captured
  */
 export async function runAgentLoop({
   request,
@@ -603,7 +683,10 @@ export async function runAgentLoop({
   guardrails = {},
   onConfirmRequired = null,
   telemetry = null,
-  permissionGate = null
+  permissionGate = null,
+  enableSync = null,
+  autoSyncPush = false,
+  onSyncEvent = null
 }) {
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
@@ -617,7 +700,47 @@ export async function runAgentLoop({
   });
 
   // Initialize commerce instance
-  const commerce = new Commerce(dbPath);
+  let commerce = new Commerce(dbPath);
+  let syncEngine = null;
+  let syncConfig = null;
+
+  // Check if sync is configured and should be enabled
+  const rawSyncConfig = loadSyncConfig();
+  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+
+  if (shouldEnableSync && rawSyncConfig) {
+    syncConfig = new SyncConfig(rawSyncConfig);
+
+    // Wrap commerce with event capture
+    commerce = wrapCommerceWithEvents(commerce, syncConfig);
+
+    // Log sync enablement
+    telem.logCustomEvent('sync_enabled', {
+      tenantId: syncConfig.tenantId,
+      storeId: syncConfig.storeId,
+      agentId: syncConfig.agentId
+    });
+
+    // Set up sync event callback if provided
+    if (onSyncEvent && commerce._capture) {
+      const originalCapture = commerce._capture.capture.bind(commerce._capture);
+      commerce._capture.capture = (resourceMethod, entityId, payload, options) => {
+        originalCapture(resourceMethod, entityId, payload, options);
+        onSyncEvent({ resourceMethod, entityId, payload, options });
+      };
+    }
+
+    // Initialize sync engine if auto-push is enabled
+    if (autoSyncPush) {
+      try {
+        syncEngine = createSyncEngine({ db: commerce.db, config: syncConfig });
+        await syncEngine.initialize();
+      } catch (error) {
+        // Log but don't fail - sync is optional
+        telem.logCustomEvent('sync_init_failed', { error: error.message });
+      }
+    }
+  }
 
   // Create MCP server with telemetry and permissions
   const mcpServer = createStatesetMcpServer({
@@ -716,6 +839,29 @@ export async function runAgentLoop({
       onMessage(response);
     }
 
+    // Auto-push sync events if enabled
+    let syncResult = null;
+    if (syncEngine && autoSyncPush && allowApply) {
+      try {
+        const pendingCount = commerce._outbox?.getPendingCount() || 0;
+        if (pendingCount > 0) {
+          telem.logCustomEvent('sync_push_start', { pendingCount });
+          syncResult = await syncEngine.push();
+          telem.logCustomEvent('sync_push_complete', {
+            pushed: syncResult.pushed,
+            rejected: syncResult.rejected
+          });
+        }
+      } catch (error) {
+        telem.logCustomEvent('sync_push_failed', { error: error.message });
+      }
+    }
+
+    // Shutdown sync engine
+    if (syncEngine) {
+      await syncEngine.shutdown();
+    }
+
     // End main span
     telem.endSpanRef(mainSpan, 'ok', { toolCallCount: toolResults.length });
 
@@ -726,9 +872,19 @@ export async function runAgentLoop({
       agent: agentName,
       routing: routingResult,
       telemetry: telem.getSummary(),
-      traceId: telem.traceId
+      traceId: telem.traceId,
+      sync: syncResult ? {
+        enabled: true,
+        pushed: syncResult.pushed,
+        rejected: syncResult.rejected,
+        receipt: syncResult.receipt
+      } : (shouldEnableSync ? { enabled: true, pushed: 0 } : null)
     };
   } catch (error) {
+    // Cleanup sync engine on error
+    if (syncEngine) {
+      try { await syncEngine.shutdown(); } catch (e) { /* ignore */ }
+    }
     telem.logError(error, { agent: agentName, request: request.slice(0, 100) });
     telem.endSpanRef(mainSpan, 'error', { error: error.message });
     throw new Error(`Agent error: ${error.message}`);
@@ -737,6 +893,8 @@ export async function runAgentLoop({
 
 /**
  * Create a streaming generator for interactive use
+ * @param {Object} options
+ * @param {boolean} options.enableSync - Enable VES sync event capture
  */
 export async function* runAgentStream({
   request,
@@ -745,9 +903,20 @@ export async function* runAgentStream({
   allowApply = false,
   maxTurns = 10,
   resumeSessionId,
-  agent
+  agent,
+  enableSync = null
 }) {
-  const commerce = new Commerce(dbPath);
+  let commerce = new Commerce(dbPath);
+
+  // Check if sync is configured
+  const rawSyncConfig = loadSyncConfig();
+  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+
+  if (shouldEnableSync && rawSyncConfig) {
+    const syncConfig = new SyncConfig(rawSyncConfig);
+    commerce = wrapCommerceWithEvents(commerce, syncConfig);
+  }
+
   const mcpServer = createStatesetMcpServer({ commerce, allowApply });
 
   // Determine which agent to use
@@ -851,3 +1020,10 @@ export function listAgents() {
 export { AgentTelemetry, noOpTelemetry } from './telemetry.js';
 export { PermissionGate, createPermissionGate, PERMISSION_LEVELS, TOOL_PERMISSIONS } from './permissions.js';
 export { RichOutput, ICONS, createOutput } from './output.js';
+
+// Sync (Verifiable Event Sync)
+export { loadSyncConfig, saveSyncConfig, SyncConfig, isSyncConfigured } from './sync/config.js';
+export { createOutbox, Outbox } from './sync/outbox.js';
+export { createSyncEngine, SyncEngine } from './sync/engine.js';
+export { wrapCommerceWithEvents, EventCapture } from './sync/capture.js';
+export { createSequencerClient, SequencerClient } from './sync/client.js';

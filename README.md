@@ -13,13 +13,13 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 | Metric | Count |
 |--------|-------|
-| **Lines of Code** | ~136,000 |
+| **Lines of Code** | ~150,000 |
 | **Domain Models** | 254 |
 | **Database Tables** | 53 |
 | **API Methods** | 670+ |
 | **MCP Tools** | 90 |
 | **AI Agents** | 8 |
-| **Language Bindings** | 4 (Rust, Node.js, Python, WASM) |
+| **Language Bindings** | 7 (Rust, Node.js, Python, Ruby, PHP, Java, WASM) |
 
 ---
 
@@ -48,6 +48,9 @@ stateset-icommerce/
 ├── bindings/
 │   ├── node/                # JavaScript/TypeScript (NAPI)
 │   ├── python/              # Python (PyO3)
+│   ├── ruby/                # Ruby (Magnus)
+│   ├── php/                 # PHP (ext-php-rs)
+│   ├── java/                # Java (JNI)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
     ├── bin/                 # 14 CLI programs
@@ -171,6 +174,112 @@ forecasts = commerce.analytics.demand_forecast(days_ahead=30)
 for f in forecasts:
     if f.days_until_stockout and f.days_until_stockout < 14:
         print(f"WARNING: {f.sku} will stock out in {f.days_until_stockout} days")
+```
+
+### Ruby
+
+```ruby
+require 'stateset_embedded'
+
+commerce = StateSet::Commerce.new('./store.db')
+
+# Create a customer
+customer = commerce.customers.create(
+  email: 'alice@example.com',
+  first_name: 'Alice',
+  last_name: 'Smith'
+)
+
+# Create an order
+order = commerce.orders.create(
+  customer_id: customer.id,
+  items: [
+    { sku: 'SKU-001', name: 'Widget', quantity: 2, unit_price: 29.99 }
+  ]
+)
+
+# Manage subscriptions
+plan = commerce.subscriptions.create_plan(
+  name: 'Pro Monthly',
+  price: 29.99,
+  interval: 'month'
+)
+
+subscription = commerce.subscriptions.subscribe(
+  plan_id: plan.id,
+  customer_id: customer.id
+)
+```
+
+### PHP
+
+```php
+<?php
+use StateSet\Commerce;
+
+$commerce = new Commerce('./store.db');
+
+// Create a customer
+$customer = $commerce->customers()->create(
+    email: 'alice@example.com',
+    firstName: 'Alice',
+    lastName: 'Smith'
+);
+
+// Create an order
+$order = $commerce->orders()->create(
+    customerId: $customer->getId(),
+    items: [
+        ['sku' => 'SKU-001', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 29.99]
+    ]
+);
+
+// Calculate tax
+$tax = $commerce->tax()->calculate(
+    amount: 100.00,
+    jurisdictionId: $jurisdiction->getId()
+);
+
+// Apply promotions
+$promo = $commerce->promotions()->create(
+    code: 'SUMMER20',
+    name: 'Summer Sale',
+    discountType: 'percentage',
+    discountValue: 20.0
+);
+```
+
+### Java
+
+```java
+import com.stateset.embedded.*;
+
+try (Commerce commerce = new Commerce("./store.db")) {
+    // Create a customer
+    Customer customer = commerce.customers().create(
+        "alice@example.com",
+        "Alice",
+        "Smith"
+    );
+
+    // Create an order
+    Order order = commerce.orders().create(
+        customer.getId(),
+        "USD"
+    );
+
+    // Process payments
+    commerce.payments().recordPayment(
+        order.getId(),
+        order.getTotalAmount(),
+        "card",
+        "txn_123456"
+    );
+
+    // Get analytics
+    SalesSummary summary = commerce.analytics().salesSummary(30);
+    System.out.println("Revenue: $" + summary.getTotalRevenue());
+}
 ```
 
 ### CLI (AI-Powered)
@@ -367,6 +476,49 @@ npm install @stateset/embedded
 pip install stateset-embedded
 ```
 
+### Ruby
+
+```bash
+gem install stateset_embedded
+```
+
+Or add to your Gemfile:
+
+```ruby
+gem 'stateset_embedded'
+```
+
+### PHP
+
+```bash
+composer require stateset/embedded
+
+# Install the native extension for best performance
+composer install-extension
+```
+
+Then add to your `php.ini`:
+
+```ini
+extension=stateset_embedded
+```
+
+### Java (Maven)
+
+```xml
+<dependency>
+    <groupId>com.stateset</groupId>
+    <artifactId>embedded</artifactId>
+    <version>0.1.6</version>
+</dependency>
+```
+
+### Java (Gradle)
+
+```groovy
+implementation 'com.stateset:embedded:0.1.6'
+```
+
 ### CLI
 
 ```bash
@@ -376,6 +528,62 @@ npm link
 
 # Verify installation
 stateset --help
+```
+
+---
+
+## Language Bindings
+
+StateSet provides native bindings for 7 languages, all built from the same Rust core:
+
+| Language | Package | Install | Docs |
+|----------|---------|---------|------|
+| **Rust** | `stateset-embedded` | `cargo add stateset-embedded` | [crates.io](https://crates.io/crates/stateset-embedded) |
+| **Node.js** | `@stateset/embedded` | `npm install @stateset/embedded` | [npm](https://www.npmjs.com/package/@stateset/embedded) |
+| **Python** | `stateset-embedded` | `pip install stateset-embedded` | [PyPI](https://pypi.org/project/stateset-embedded/) |
+| **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
+| **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
+| **Java** | `com.stateset:embedded` | Maven/Gradle | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
+
+### Platform Support
+
+| Platform | Node.js | Python | Ruby | PHP | Java |
+|----------|---------|--------|------|-----|------|
+| Linux x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Linux arm64 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| macOS x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| macOS arm64 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Windows x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Browser (WASM) | ✅ | - | - | - | - |
+
+### Framework Integration
+
+**Laravel (PHP)**
+```php
+// AppServiceProvider.php
+$this->app->singleton(Commerce::class, fn() =>
+    new Commerce(storage_path('stateset/commerce.db'))
+);
+```
+
+**Rails (Ruby)**
+```ruby
+# config/initializers/stateset.rb
+Rails.application.config.stateset = StateSet::Commerce.new(
+  Rails.root.join('db', 'commerce.db').to_s
+)
+```
+
+**Spring Boot (Java)**
+```java
+@Configuration
+public class CommerceConfig {
+    @Bean(destroyMethod = "close")
+    public Commerce commerce() {
+        return new Commerce("commerce.db");
+    }
+}
 ```
 
 ---
@@ -442,6 +650,9 @@ stateset-icommerce/
 ├── bindings/
 │   ├── node/                  # NAPI bindings (@stateset/embedded)
 │   ├── python/                # PyO3 bindings (stateset-embedded)
+│   ├── ruby/                  # Magnus bindings (stateset_embedded gem)
+│   ├── php/                   # ext-php-rs bindings (stateset/embedded)
+│   ├── java/                  # JNI bindings (com.stateset:embedded)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
 │   ├── bin/                   # 14 CLI programs

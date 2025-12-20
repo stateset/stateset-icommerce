@@ -1,0 +1,122 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+group = 'com.stateset'
+version = '0.1.6'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+    withJavadocJar()
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    systemProperty 'java.library.path', "${project.rootDir}/../target/release"
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'StateSet Embedded Commerce',
+            'Implementation-Version': version,
+            'Implementation-Vendor': 'StateSet'
+        )
+    }
+}
+
+// Include native libraries in the JAR
+processResources {
+    from("${project.rootDir}/../target/release") {
+        include 'libstateset_java.so'
+        include 'libstateset_java.dylib'
+        include 'stateset_java.dll'
+        into 'native'
+        rename { filename ->
+            def os = System.getProperty('os.name').toLowerCase()
+            def arch = System.getProperty('os.arch').toLowerCase()
+            def platform
+            if (os.contains('win')) {
+                platform = 'windows-x86_64'
+            } else if (os.contains('mac')) {
+                platform = arch.contains('aarch64') || arch.contains('arm64') ? 'darwin-arm64' : 'darwin-x86_64'
+            } else {
+                platform = arch.contains('aarch64') || arch.contains('arm64') ? 'linux-arm64' : 'linux-x86_64'
+            }
+            "native/${platform}/${filename}"
+        }
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = 'embedded'
+            from components.java
+
+            pom {
+                name = 'StateSet Embedded Commerce'
+                description = 'Local-first commerce engine for Java - embedded SQLite-powered commerce operations'
+                url = 'https://github.com/stateset/stateset-icommerce'
+
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id = 'stateset'
+                        name = 'StateSet'
+                        email = 'support@stateset.com'
+                    }
+                }
+
+                scm {
+                    connection = 'scm:git:git://github.com/stateset/stateset-icommerce.git'
+                    developerConnection = 'scm:git:ssh://github.com:stateset/stateset-icommerce.git'
+                    url = 'https://github.com/stateset/stateset-icommerce/tree/main/bindings/java'
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = 'OSSRH'
+            def releasesRepoUrl = 'https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/'
+            def snapshotsRepoUrl = 'https://s01.oss.sonatype.org/content/repositories/snapshots/'
+            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+            credentials {
+                username = findProperty('ossrhUsername') ?: System.getenv('OSSRH_USERNAME')
+                password = findProperty('ossrhPassword') ?: System.getenv('OSSRH_PASSWORD')
+            }
+        }
+    }
+}
+
+signing {
+    def signingKey = findProperty('signingKey') ?: System.getenv('GPG_PRIVATE_KEY')
+    def signingPassword = findProperty('signingPassword') ?: System.getenv('GPG_PASSPHRASE')
+    useInMemoryPgpKeys(signingKey, signingPassword)
+    sign publishing.publications.mavenJava
+}
+
+tasks.withType(Sign) {
+    onlyIf { project.hasProperty('signing.keyId') || System.getenv('GPG_PRIVATE_KEY') }
+}

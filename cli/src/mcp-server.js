@@ -1,10 +1,14 @@
 /**
  * MCP Server for StateSet Commerce operations
- * Exposes tools for customers, orders, products, inventory, and returns
+ * Exposes tools for customers, orders, products, inventory, returns, and sync
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { loadSyncConfig, SyncConfig, isSyncConfigured } from './sync/config.js';
+import { createOutbox } from './sync/outbox.js';
+import { createSyncEngine } from './sync/engine.js';
+import { createSequencerClient } from './sync/client.js';
 
 /**
  * Create the StateSet Commerce MCP server
@@ -43,7 +47,9 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       'list_promotions', 'get_promotion', 'validate_coupon', 'list_coupons', 'get_active_promotions',
       // Subscriptions tools (read-only)
       'list_subscription_plans', 'get_subscription_plan', 'list_subscriptions', 'get_subscription',
-      'list_billing_cycles', 'get_billing_cycle', 'get_subscription_events'
+      'list_billing_cycles', 'get_billing_cycle', 'get_subscription_events',
+      // Sync tools (read-only)
+      'sync_status', 'sync_pull', 'sync_outbox', 'sync_entity_history', 'sync_conflicts'
     ];
     return readOnlyTools.includes(toolName);
   };
@@ -3797,6 +3803,655 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
         }
+      ),
+
+      // ============================================================================
+      // Sync Tools (Verifiable Event Sync)
+      // ============================================================================
+
+      tool(
+        'sync_status',
+        'Get the current sync status between local database and remote sequencer. Shows pending events, sync lag, and connection status.',
+        {},
+        async () => {
+          try {
+            // Check if sync is configured
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    configured: false,
+                    message: 'Sync not configured. Run "stateset-sync init" to set up sync.',
+                    hint: 'stateset-sync init --sequencer-url <url> --tenant-id <uuid> --store-id <uuid>'
+                  }, null, 2)
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+
+            // Get outbox stats
+            const outbox = createOutbox(commerce.db);
+            const stats = outbox.getStats();
+            const syncState = outbox.getSyncState();
+
+            // Try to get remote head
+            let remoteHead = syncState.headSequence;
+            let connected = false;
+            let connectionError = null;
+
+            try {
+              const client = createSequencerClient(config);
+              await client.connect();
+              const remoteState = await client.getHead();
+              remoteHead = remoteState.headSequence;
+              connected = true;
+            } catch (error) {
+              connectionError = error.message;
+            }
+
+            const lag = remoteHead - syncState.lastPulledSequence;
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  configured: true,
+                  connected,
+                  connectionError,
+                  sequencer: config.sequencerUrl,
+                  identity: {
+                    tenantId: config.tenantId,
+                    storeId: config.storeId,
+                    agentId: config.agentId
+                  },
+                  localState: {
+                    lastPushedSequence: syncState.lastPushedSequence,
+                    lastPulledSequence: syncState.lastPulledSequence,
+                    lastSyncAt: syncState.lastSyncAt
+                  },
+                  remoteHead,
+                  lag,
+                  outbox: {
+                    total: stats.total,
+                    pending: stats.pending,
+                    synced: stats.synced,
+                    failed: stats.failed,
+                    rejected: stats.rejected,
+                    oldestPending: stats.oldestPending,
+                    lastSynced: stats.lastSynced
+                  },
+                  health: lag > 100 ? 'degraded' : connected ? 'healthy' : 'offline'
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_push',
+        'Push pending local events to the remote sequencer. Requires --apply flag for actual push.',
+        {
+          batchSize: z.number().optional().describe('Maximum events to push in one batch (default: 100)'),
+          dryRun: z.boolean().optional().describe('Show what would be pushed without actually pushing')
+        },
+        async ({ batchSize = 100, dryRun = false }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            // Check permission for actual push
+            if (!dryRun && !allowApply) {
+              const outbox = createOutbox(commerce.db);
+              const pending = outbox.getPending(batchSize);
+
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Push operation not allowed. The --apply flag must be set.',
+                    hint: 'Run with --apply to enable push, or use dryRun: true to preview.',
+                    wouldPush: pending.length,
+                    pendingEvents: pending.map(e => ({
+                      eventId: e.eventId,
+                      eventType: e.eventType,
+                      entityType: e.entityType,
+                      entityId: e.entityId,
+                      createdAt: e.createdAt
+                    }))
+                  }, null, 2)
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+            const result = await engine.push({ batchSize, dryRun });
+            await engine.shutdown();
+
+            if (dryRun) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    dryRun: true,
+                    wouldPush: result.pushed,
+                    message: `Would push ${result.pushed} events to sequencer`
+                  }, null, 2)
+                }]
+              };
+            }
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: result.success,
+                  pushed: result.pushed,
+                  rejected: result.rejected,
+                  receipt: result.receipt ? {
+                    batchId: result.receipt.batchId,
+                    sequenceStart: result.receipt.sequenceStart,
+                    sequenceEnd: result.receipt.sequenceEnd
+                  } : null,
+                  error: result.error
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_pull',
+        'Pull events from the remote sequencer and store them locally.',
+        {
+          fromSequence: z.number().optional().describe('Start pulling from this sequence number'),
+          limit: z.number().optional().describe('Maximum events to pull (default: 1000)')
+        },
+        async ({ fromSequence, limit = 1000 }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+            const result = await engine.pull({ fromSequence, limit });
+            await engine.shutdown();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: result.success,
+                  pulled: result.pulled,
+                  applied: result.applied,
+                  conflicts: result.conflicts,
+                  error: result.error
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_outbox',
+        'List events in the local outbox. Shows pending, synced, failed, and rejected events.',
+        {
+          status: z.enum(['pending', 'synced', 'failed', 'rejected', 'all']).optional().describe('Filter by status (default: all)'),
+          limit: z.number().optional().describe('Maximum events to return (default: 20)')
+        },
+        async ({ status = 'all', limit = 20 }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const outbox = createOutbox(commerce.db);
+            outbox.initialize();
+
+            // Query based on status
+            let query;
+            if (status === 'pending') {
+              query = 'SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?';
+            } else if (status === 'all') {
+              query = 'SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?';
+            } else {
+              query = 'SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?';
+            }
+
+            const stmt = status === 'all'
+              ? commerce.db.prepare('SELECT * FROM _ves_outbox ORDER BY local_seq DESC LIMIT ?')
+              : commerce.db.prepare('SELECT * FROM _ves_outbox WHERE sync_status = ? ORDER BY local_seq DESC LIMIT ?');
+
+            const rows = status === 'all' ? stmt.all(limit) : stmt.all(status, limit);
+
+            const events = rows.map(row => ({
+              localSeq: row.local_seq,
+              eventId: row.event_id,
+              eventType: row.event_type,
+              entityType: row.entity_type,
+              entityId: row.entity_id,
+              syncStatus: row.sync_status,
+              remoteSequence: row.remote_sequence,
+              createdAt: row.created_at,
+              syncedAt: row.synced_at,
+              rejectionReason: row.rejection_reason,
+              retryCount: row.retry_count
+            }));
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: events.length,
+                  filter: status,
+                  events
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_retry_failed',
+        'Reset failed events to pending status so they can be retried. Requires --apply flag.',
+        {},
+        async () => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            if (!allowApply) {
+              const outbox = createOutbox(commerce.db);
+              const stats = outbox.getStats();
+
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Retry operation not allowed. The --apply flag must be set.',
+                    hint: 'Run with --apply to enable retry.',
+                    failedCount: stats.failed
+                  })
+                }]
+              };
+            }
+
+            const outbox = createOutbox(commerce.db);
+            const retriedCount = outbox.retryFailed();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  retriedCount,
+                  message: `Reset ${retriedCount} failed events to pending`
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_entity_history',
+        'Get the event history for a specific entity from the remote sequencer.',
+        {
+          entityType: z.string().describe('Entity type (order, customer, product, inventory, return, cart)'),
+          entityId: z.string().describe('Entity ID')
+        },
+        async ({ entityType, entityId }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const client = createSequencerClient(config);
+
+            await client.connect();
+            const events = await client.getEntityHistory(entityType, entityId);
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  entityType,
+                  entityId,
+                  eventCount: events.length,
+                  events: events.map(e => ({
+                    sequenceNumber: e.sequenceNumber,
+                    eventId: e.envelope.eventId,
+                    eventType: e.envelope.eventType,
+                    createdAt: e.envelope.createdAt,
+                    sequencedAt: e.sequencedAt,
+                    sourceAgent: e.envelope.sourceAgent
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_full',
+        'Perform a full sync: push pending events then pull new events. Requires --apply flag for push.',
+        {
+          pushBatchSize: z.number().optional().describe('Maximum events to push (default: 100)'),
+          pullLimit: z.number().optional().describe('Maximum events to pull (default: 1000)')
+        },
+        async ({ pushBatchSize = 100, pullLimit = 1000 }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+
+            // Push (if allowed)
+            let pushResult = { success: true, pushed: 0, rejected: 0 };
+            if (allowApply) {
+              pushResult = await engine.push({ batchSize: pushBatchSize });
+            } else {
+              const outbox = createOutbox(commerce.db);
+              pushResult = {
+                success: false,
+                pushed: 0,
+                rejected: 0,
+                skipped: true,
+                pendingCount: outbox.getPendingCount(),
+                message: 'Push skipped: --apply flag not set'
+              };
+            }
+
+            // Pull (always allowed)
+            const pullResult = await engine.pull({ limit: pullLimit });
+
+            await engine.shutdown();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  push: pushResult,
+                  pull: pullResult
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Sync Conflict Resolution Tools
+      // ============================================================================
+
+      tool(
+        'sync_conflicts',
+        'List unresolved sync conflicts. Conflicts occur when local and remote events modify the same entity concurrently.',
+        {},
+        async () => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+            const conflicts = await engine.getConflicts();
+            await engine.shutdown();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  count: conflicts.length,
+                  conflicts: conflicts.map(c => ({
+                    id: c.id,
+                    type: c.type,
+                    entityType: c.entityType,
+                    entityId: c.entityId,
+                    description: c.description,
+                    suggestedStrategy: c.suggestedStrategy,
+                    detectedAt: c.detectedAt,
+                    localEvent: c.localEvent ? {
+                      localSeq: c.localEvent.localSeq,
+                      eventType: c.localEvent.eventType,
+                      createdAt: c.localEvent.createdAt
+                    } : null
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_resolve',
+        'Resolve a specific sync conflict using a resolution strategy. Requires --apply flag.',
+        {
+          conflictId: z.string().describe('The conflict ID to resolve'),
+          strategy: z.enum(['remote-wins', 'local-wins', 'merge']).optional().describe('Resolution strategy (default: uses suggested strategy)')
+        },
+        async ({ conflictId, strategy }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            if (!allowApply) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Resolve operation not allowed. The --apply flag must be set.',
+                    hint: 'Run with --apply to enable conflict resolution.',
+                    conflictId,
+                    wouldUseStrategy: strategy || 'suggested'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+            const result = await engine.resolveConflict(conflictId, strategy);
+            await engine.shutdown();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: result.success,
+                  conflictId: result.conflictId,
+                  strategy: result.strategy,
+                  result: result.result,
+                  error: result.error
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'sync_rebase',
+        'Resolve all sync conflicts using a resolution strategy. Requires --apply flag.',
+        {
+          strategy: z.enum(['remote-wins', 'local-wins', 'merge']).optional().describe('Resolution strategy for all conflicts (default: remote-wins)')
+        },
+        async ({ strategy = 'remote-wins' }) => {
+          try {
+            if (!isSyncConfigured()) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Sync not configured',
+                    hint: 'Run "stateset-sync init" to set up sync.'
+                  })
+                }]
+              };
+            }
+
+            const rawConfig = loadSyncConfig();
+            const config = new SyncConfig(rawConfig);
+            const engine = createSyncEngine({ db: commerce.db, config });
+
+            await engine.initialize();
+            const conflicts = await engine.getConflicts();
+
+            if (!allowApply) {
+              await engine.shutdown();
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'Rebase operation not allowed. The --apply flag must be set.',
+                    hint: 'Run with --apply to enable rebase.',
+                    wouldResolve: conflicts.length,
+                    conflicts: conflicts.map(c => ({
+                      id: c.id,
+                      entityType: c.entityType,
+                      entityId: c.entityId,
+                      type: c.type
+                    })),
+                    strategy
+                  }, null, 2)
+                }]
+              };
+            }
+
+            const result = await engine.rebase({ strategy });
+            await engine.shutdown();
+
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: result.success,
+                  resolved: result.rebased,
+                  failed: result.failed,
+                  strategy,
+                  errors: result.errors
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
       )
     ]
   });
@@ -3903,5 +4558,17 @@ export const TOOL_NAMES = [
   'mcp__stateset-commerce__skip_billing_cycle',
   'mcp__stateset-commerce__list_billing_cycles',
   'mcp__stateset-commerce__get_billing_cycle',
-  'mcp__stateset-commerce__get_subscription_events'
+  'mcp__stateset-commerce__get_subscription_events',
+  // Sync (Verifiable Event Sync)
+  'mcp__stateset-commerce__sync_status',
+  'mcp__stateset-commerce__sync_push',
+  'mcp__stateset-commerce__sync_pull',
+  'mcp__stateset-commerce__sync_outbox',
+  'mcp__stateset-commerce__sync_retry_failed',
+  'mcp__stateset-commerce__sync_entity_history',
+  'mcp__stateset-commerce__sync_full',
+  // Sync Conflict Resolution
+  'mcp__stateset-commerce__sync_conflicts',
+  'mcp__stateset-commerce__sync_resolve',
+  'mcp__stateset-commerce__sync_rebase'
 ];

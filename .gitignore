@@ -46,3 +46,33 @@ Thumbs.db
 
 # Build artifacts
 *.dSYM/
+
+# Java
+bindings/java/target/
+bindings/java/java/build/
+bindings/java/java/.gradle/
+*.class
+*.jar
+
+# Ruby
+bindings/ruby/target/
+bindings/ruby/lib/*.so
+bindings/ruby/lib/*.dylib
+bindings/ruby/lib/*.bundle
+*.gem
+
+# PHP
+bindings/php/target/
+bindings/php/modules/
+*.php.bak
+
+# CLI local state
+cli/.stateset/
+
+# Dev/test files
+cli/test-*.mjs
+cli/add-more-events.mjs
+
+# Internal docs (not for public release)
+FUTURE.md
+PAPER.md

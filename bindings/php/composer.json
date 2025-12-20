@@ -1,0 +1,75 @@
+{
+    "name": "stateset/embedded",
+    "description": "Local-first commerce engine for PHP - embedded SQLite-powered commerce operations",
+    "type": "library",
+    "license": "MIT",
+    "version": "0.1.6",
+    "keywords": [
+        "commerce",
+        "ecommerce",
+        "woocommerce",
+        "magento",
+        "laravel",
+        "sqlite",
+        "local-first",
+        "embedded",
+        "native-extension"
+    ],
+    "homepage": "https://github.com/stateset/stateset-icommerce",
+    "authors": [
+        {
+            "name": "StateSet",
+            "email": "support@stateset.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/stateset/stateset-icommerce/issues",
+        "source": "https://github.com/stateset/stateset-icommerce/tree/main/bindings/php"
+    },
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "suggest": {
+        "ext-stateset_embedded": "Native extension for optimal performance"
+    },
+    "autoload": {
+        "files": [
+            "stubs/StateSet.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "StateSet\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit tests/",
+        "install-extension": "@php scripts/install-extension.php",
+        "post-install-cmd": [
+            "@php scripts/check-extension.php"
+        ],
+        "post-update-cmd": [
+            "@php scripts/check-extension.php"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": false
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        },
+        "stateset": {
+            "extension-name": "stateset_embedded",
+            "github-repo": "stateset/stateset-icommerce",
+            "binary-releases": true
+        }
+    }
+}
