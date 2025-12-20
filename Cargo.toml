@@ -48,6 +48,6 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chro
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # Internal crates
-stateset-core = { path = "crates/stateset-core" }
-stateset-db = { path = "crates/stateset-db" }
-stateset-embedded = { path = "crates/stateset-embedded" }
+stateset-core = { path = "crates/stateset-core", version = "0.1.7" }
+stateset-db = { path = "crates/stateset-db", version = "0.1.7" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.1.7" }
