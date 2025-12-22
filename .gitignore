@@ -76,3 +76,6 @@ cli/add-more-events.mjs
 # Internal docs (not for public release)
 FUTURE.md
 PAPER.md
+
+# Admin dashboard (not for public release)
+admin/

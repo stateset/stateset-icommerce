@@ -1,0 +1,191 @@
+# StateSet iCommerce Docker Compose Configuration
+#
+# Usage:
+#   Development:  docker-compose up -d
+#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   With Postgres: docker-compose --profile postgres up -d
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # StateSet CLI Service
+  # ===========================================================================
+  stateset-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cli
+    container_name: stateset-cli
+    restart: unless-stopped
+    volumes:
+      - stateset-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/store.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LOG_LEVEL=info
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - stateset-network
+
+  # ===========================================================================
+  # PostgreSQL Database (Optional - for production scaling)
+  # ===========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: stateset-postgres
+    profiles:
+      - postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./crates/stateset-db/migrations:/docker-entrypoint-initdb.d:ro
+    environment:
+      - POSTGRES_DB=stateset
+      - POSTGRES_USER=stateset
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-stateset_dev_password}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stateset -d stateset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - stateset-network
+
+  # ===========================================================================
+  # Redis (Optional - for caching and pub/sub)
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: stateset-redis
+    profiles:
+      - cache
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stateset-network
+
+  # ===========================================================================
+  # Prometheus (Metrics Collection)
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: stateset-prometheus
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - stateset-network
+
+  # ===========================================================================
+  # Grafana (Metrics Visualization)
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: stateset-grafana
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - stateset-network
+
+  # ===========================================================================
+  # Jaeger (Distributed Tracing)
+  # ===========================================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: stateset-jaeger
+    profiles:
+      - tracing
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "6831:6831/udp"   # Jaeger Thrift compact
+      - "6832:6832/udp"   # Jaeger Thrift binary
+      - "16686:16686"     # Jaeger UI
+      - "4317:4317"       # OTLP gRPC
+      - "4318:4318"       # OTLP HTTP
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - stateset-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  stateset-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  stateset-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

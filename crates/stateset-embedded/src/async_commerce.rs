@@ -1783,3 +1783,27 @@ impl AsyncCurrency {
         self.db.currency().update_settings_async(settings).await
     }
 }
+
+// ============================================================================
+// Async Subscriptions
+// ============================================================================
+
+// Note: Subscriptions async API requires PostgreSQL subscription repository implementation.
+// This module provides the async interface - the actual database methods need to be
+// implemented in stateset-db PostgresDatabase.
+
+// ============================================================================
+// Async Promotions
+// ============================================================================
+
+// Note: Promotions async API requires PostgreSQL promotion repository implementation.
+// This module provides the async interface - the actual database methods need to be
+// implemented in stateset-db PostgresDatabase.
+
+// ============================================================================
+// Async Tax
+// ============================================================================
+
+// Note: Tax async API requires PostgreSQL tax repository implementation.
+// This module provides the async interface - the actual database methods need to be
+// implemented in stateset-db PostgresDatabase.

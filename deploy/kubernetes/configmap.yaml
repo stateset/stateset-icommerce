@@ -1,0 +1,95 @@
+# StateSet iCommerce Kubernetes ConfigMaps
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stateset-config
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/part-of: stateset-icommerce
+data:
+  # Application settings
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+
+  # Database settings (SQLite default)
+  DATABASE_TYPE: "sqlite"
+  DATABASE_PATH: "/app/data/store.db"
+
+  # Metrics settings
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  METRICS_PATH: "/metrics"
+
+  # Feature flags
+  ENABLE_ANALYTICS: "true"
+  ENABLE_FORECASTING: "true"
+  ENABLE_AUDIT_LOG: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stateset-postgres-config
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-postgres
+    app.kubernetes.io/part-of: stateset-icommerce
+data:
+  # PostgreSQL settings
+  DATABASE_TYPE: "postgres"
+  POSTGRES_HOST: "stateset-postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "stateset"
+  POSTGRES_MAX_CONNECTIONS: "100"
+  POSTGRES_ACQUIRE_TIMEOUT: "30"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: stateset-icommerce
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'stateset-cli'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - stateset
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            action: keep
+            regex: stateset-cli
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['stateset-postgres:5432']

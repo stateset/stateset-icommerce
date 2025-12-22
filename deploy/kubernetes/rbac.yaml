@@ -1,0 +1,48 @@
+# StateSet iCommerce Kubernetes RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: stateset
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/part-of: stateset-icommerce
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: stateset-role
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/part-of: stateset-icommerce
+rules:
+  # Allow reading ConfigMaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading Secrets
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Allow pod management for health checks
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: stateset-role-binding
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/part-of: stateset-icommerce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: stateset-role
+subjects:
+  - kind: ServiceAccount
+    name: stateset
+    namespace: stateset

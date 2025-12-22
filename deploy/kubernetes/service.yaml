@@ -1,0 +1,63 @@
+# StateSet iCommerce Kubernetes Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateset-cli
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-cli
+    app.kubernetes.io/component: cli
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: stateset-cli
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateset-postgres
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: stateset-postgres
+---
+# Headless service for StatefulSet (if using StatefulSet for Postgres)
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateset-postgres-headless
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: stateset-postgres

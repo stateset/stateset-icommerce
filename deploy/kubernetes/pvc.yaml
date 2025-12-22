@@ -1,0 +1,34 @@
+# StateSet iCommerce Kubernetes Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stateset-data
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: stateset-postgres-data
+  namespace: stateset
+  labels:
+    app.kubernetes.io/name: stateset-postgres
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: stateset-icommerce
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard

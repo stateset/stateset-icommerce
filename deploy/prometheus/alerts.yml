@@ -1,0 +1,115 @@
+# StateSet iCommerce Prometheus Alerting Rules
+groups:
+  - name: stateset-alerts
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(stateset_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors/second"
+
+      # High latency
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(stateset_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request latency"
+          description: "95th percentile latency is {{ $value }}s"
+
+      # Database connection issues
+      - alert: DatabaseConnectionFailed
+        expr: stateset_database_connections_active == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active database connections"
+          description: "The application has no active database connections"
+
+      # Low inventory alert
+      - alert: LowInventory
+        expr: stateset_inventory_available < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low inventory alert"
+          description: "SKU {{ $labels.sku }} has only {{ $value }} units available"
+
+      # Out of stock
+      - alert: OutOfStock
+        expr: stateset_inventory_available == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Out of stock"
+          description: "SKU {{ $labels.sku }} is out of stock"
+
+      # High order cancellation rate
+      - alert: HighCancellationRate
+        expr: rate(stateset_orders_cancelled_total[1h]) / rate(stateset_orders_created_total[1h]) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order cancellation rate"
+          description: "Order cancellation rate is {{ $value | humanizePercentage }}"
+
+      # Service unavailable
+      - alert: ServiceUnavailable
+        expr: up{job="stateset-cli"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "StateSet service is down"
+          description: "The StateSet CLI service is not responding"
+
+      # Memory usage high
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanize }}MB"
+
+  - name: postgres-alerts
+    rules:
+      # PostgreSQL down
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding"
+
+      # High connection usage
+      - alert: HighConnectionUsage
+        expr: pg_stat_activity_count / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High PostgreSQL connection usage"
+          description: "{{ $value | humanizePercentage }} of max connections are in use"
+
+      # Slow queries
+      - alert: SlowQueries
+        expr: pg_stat_activity_max_tx_duration > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Long-running PostgreSQL queries"
+          description: "Queries running for more than 60 seconds"

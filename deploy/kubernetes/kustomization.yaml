@@ -1,0 +1,44 @@
+# StateSet iCommerce Kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stateset
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/part-of: stateset-icommerce
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to include
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+
+# Image customization (override in overlays)
+images:
+  - name: stateset/icommerce-cli
+    newTag: latest
+
+# ConfigMap generator (for dynamic configs)
+configMapGenerator:
+  - name: stateset-env
+    literals:
+      - NODE_ENV=production
+      - LOG_FORMAT=json
+
+# Secret generator (use external-secrets in production)
+# secretGenerator:
+#   - name: stateset-generated-secrets
+#     literals:
+#       - api-key=placeholder
+
+# Patches can be applied per environment
+# patches:
+#   - path: patches/deployment-resources.yaml

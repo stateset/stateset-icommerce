@@ -1,0 +1,8 @@
+# StateSet iCommerce Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stateset
+  labels:
+    app.kubernetes.io/name: stateset
+    app.kubernetes.io/part-of: stateset-icommerce
