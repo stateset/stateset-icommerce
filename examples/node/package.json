@@ -1,0 +1,12 @@
+{
+  "name": "stateset-example",
+  "version": "0.1.7",
+  "description": "StateSet iCommerce Node.js Example",
+  "main": "basic_usage.js",
+  "scripts": {
+    "start": "node basic_usage.js"
+  },
+  "dependencies": {
+    "@stateset/embedded": "^0.1.7"
+  }
+}

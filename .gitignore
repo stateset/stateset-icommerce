@@ -68,6 +68,7 @@ bindings/php/modules/
 
 # CLI local state
 cli/.stateset/
+.stateset/
 
 # Dev/test files
 cli/test-*.mjs

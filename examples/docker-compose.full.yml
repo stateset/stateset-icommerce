@@ -1,0 +1,148 @@
+# StateSet iCommerce - Full Stack Docker Compose
+#
+# Starts everything you need for local development:
+# - StateSet Sequencer (event ordering & sync)
+# - PostgreSQL (sequencer database)
+# - Redis (caching & pub/sub)
+#
+# REQUIRED environment variables:
+#   ADMIN_API_KEY       - API key for sequencer authentication
+#
+# OPTIONAL environment variables:
+#   POSTGRES_PASSWORD   - PostgreSQL password (default: changeme)
+#   BOOTSTRAP_TENANT_ID - Auto-create tenant on startup
+#   BOOTSTRAP_TENANT_NAME - Tenant name (default: demo-store)
+#
+# Usage:
+#   export ADMIN_API_KEY=$(openssl rand -hex 32)
+#   export POSTGRES_PASSWORD=$(openssl rand -hex 16)
+#   docker-compose -f docker-compose.full.yml up -d
+#
+# Then run:
+#   ./setup-sync.sh --api-key $ADMIN_API_KEY --tenant-id $(uuidgen) --store-id $(uuidgen)
+#
+# Or manually:
+#   stateset-sync init --sequencer-url http://localhost:8080 ...
+#
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # StateSet Sequencer - Event ordering and synchronization service
+  # ==========================================================================
+  sequencer:
+    image: stateset/sequencer:latest
+    # Or build from local source:
+    # build:
+    #   context: ~/stateset-sequencer
+    #   dockerfile: Dockerfile
+    container_name: stateset-sequencer
+    ports:
+      - "8080:8080"   # HTTP API
+      - "9090:9090"   # gRPC API
+      - "9091:9091"   # Metrics
+    environment:
+      # Database (override with POSTGRES_PASSWORD env var)
+      DATABASE_URL: postgres://stateset:${POSTGRES_PASSWORD:-changeme}@postgres:5432/sequencer
+
+      # Server
+      HTTP_PORT: 8080
+      GRPC_PORT: 9090
+      METRICS_PORT: 9091
+
+      # Authentication (REQUIRED: set ADMIN_API_KEY env var)
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?Set ADMIN_API_KEY environment variable}
+
+      # Bootstrap tenant (auto-created on startup - generate your own UUIDs)
+      BOOTSTRAP_TENANT_ID: ${BOOTSTRAP_TENANT_ID:-}
+      BOOTSTRAP_TENANT_NAME: ${BOOTSTRAP_TENANT_NAME:-demo-store}
+
+      # Logging
+      RUST_LOG: info,sequencer=debug
+
+      # Redis (optional, for pub/sub)
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - stateset
+
+  # ==========================================================================
+  # PostgreSQL - Sequencer database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: stateset-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: stateset
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: sequencer
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stateset -d sequencer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - stateset
+
+  # ==========================================================================
+  # Redis - Caching and pub/sub for real-time updates
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: stateset-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - stateset
+
+  # ==========================================================================
+  # Adminer - Database admin UI (optional, for debugging)
+  # ==========================================================================
+  adminer:
+    image: adminer:latest
+    container_name: stateset-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - stateset
+    profiles:
+      - debug
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  stateset:
+    driver: bridge
