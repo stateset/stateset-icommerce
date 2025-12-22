@@ -12,6 +12,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { bufferToHex, hexToBuffer } from './crypto.js';
+import { getRotationPolicyManager } from './rotation-policy.js';
 
 /**
  * @typedef {Object} SigningKeyPair
@@ -439,6 +440,270 @@ export class AgentKeyManager {
     await this._saveKeys(agentId, 'encryption', keys);
 
     return keyPair;
+  }
+
+  // ===========================================================================
+  // Policy-Aware Key Rotation
+  // ===========================================================================
+
+  /**
+   * Rotate key with policy-aware expiration and grace period
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {Object} [options]
+   * @param {number} [options.gracePeriodHours] - Override policy grace period
+   * @param {string} [options.reason] - Reason for rotation
+   * @returns {Promise<{oldKey: Object, newKey: Object, graceUntil: string}>}
+   */
+  async rotateKeyWithPolicy(agentId, keyType, options = {}) {
+    const policyManager = getRotationPolicyManager(this.keysDir.replace('/keys', ''));
+    const policy = await policyManager.getPolicy(agentId, keyType);
+    const gracePeriodHours = options.gracePeriodHours ?? policy.gracePeriodHours;
+
+    // Get current key
+    const currentKey = keyType === 'signing'
+      ? await this.getCurrentSigningKey(agentId)
+      : await this.getCurrentEncryptionKey(agentId);
+
+    if (!currentKey) {
+      throw new Error(`No ${keyType} key found for agent ${agentId}`);
+    }
+
+    // Generate new key
+    const newKey = keyType === 'signing'
+      ? await this.generateSigningKey(agentId)
+      : await this.generateEncryptionKey(agentId);
+
+    // Set grace period on old key instead of immediate revocation
+    const graceUntil = new Date();
+    graceUntil.setHours(graceUntil.getHours() + gracePeriodHours);
+
+    await this._setKeyGracePeriod(agentId, keyType, currentKey.keyId, graceUntil);
+
+    // Reset usage counter for new key
+    await policyManager.resetUsage(agentId, keyType, newKey.keyId);
+
+    return {
+      oldKey: currentKey,
+      newKey,
+      graceUntil: graceUntil.toISOString(),
+    };
+  }
+
+  /**
+   * Set grace period on a key (instead of immediate revocation)
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @param {Date} graceUntil
+   */
+  async _setKeyGracePeriod(agentId, keyType, keyId, graceUntil) {
+    const keys = await this._loadKeys(agentId, keyType);
+    const key = keys.find(k => k.keyId === keyId);
+
+    if (!key) throw new Error(`${keyType} key ${keyId} not found`);
+
+    key.graceUntil = graceUntil.toISOString();
+    key.expiresAt = key.expiresAt || graceUntil.toISOString();
+
+    await this._saveKeys(agentId, keyType, keys);
+  }
+
+  /**
+   * Set explicit expiration date on a key
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @param {Date} expiresAt
+   */
+  async setKeyExpiration(agentId, keyType, keyId, expiresAt) {
+    const keys = await this._loadKeys(agentId, keyType);
+    const key = keys.find(k => k.keyId === keyId);
+
+    if (!key) throw new Error(`${keyType} key ${keyId} not found`);
+
+    key.expiresAt = expiresAt.toISOString();
+
+    await this._saveKeys(agentId, keyType, keys);
+  }
+
+  /**
+   * Get key status considering grace period and expiration
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @returns {Promise<'active'|'grace_period'|'expired'|'revoked'|'not_found'>}
+   */
+  async getKeyStatus(agentId, keyType, keyId) {
+    const key = keyType === 'signing'
+      ? await this.getSigningKey(agentId, keyId)
+      : await this.getEncryptionKey(agentId, keyId);
+
+    if (!key) return 'not_found';
+    if (key.revokedAt) return 'revoked';
+
+    const now = new Date();
+
+    // Check grace period first (rotated but still valid)
+    if (key.graceUntil) {
+      const graceUntil = new Date(key.graceUntil);
+      if (now > graceUntil) {
+        return 'expired';
+      }
+      // Has grace period set, meaning it was rotated
+      if (key.expiresAt && new Date(key.expiresAt) <= now) {
+        return 'grace_period';
+      }
+    }
+
+    // Check explicit expiration
+    if (key.expiresAt && new Date(key.expiresAt) < now) {
+      return 'expired';
+    }
+
+    return 'active';
+  }
+
+  /**
+   * Get detailed key info with status
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @returns {Promise<Object|null>}
+   */
+  async getKeyInfo(agentId, keyType, keyId) {
+    const key = keyType === 'signing'
+      ? await this.getSigningKey(agentId, keyId)
+      : await this.getEncryptionKey(agentId, keyId);
+
+    if (!key) return null;
+
+    const status = await this.getKeyStatus(agentId, keyType, keyId);
+    const policyManager = getRotationPolicyManager(this.keysDir.replace('/keys', ''));
+    const usage = await policyManager.getUsage(agentId, keyType, keyId);
+
+    return {
+      ...key,
+      status,
+      usageCount: usage.usageCount,
+      lastUsedAt: usage.lastUsedAt,
+    };
+  }
+
+  /**
+   * Check if a key is usable (active or in grace period)
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @param {number} keyId
+   * @returns {Promise<boolean>}
+   */
+  async isKeyUsable(agentId, keyType, keyId) {
+    const status = await this.getKeyStatus(agentId, keyType, keyId);
+    return status === 'active' || status === 'grace_period';
+  }
+
+  /**
+   * Batch rotate keys for multiple agents
+   * @param {Array<{agentId: string, keyType: 'signing'|'encryption', options?: Object}>} rotations
+   * @returns {Promise<Array<{agentId: string, keyType: string, success: boolean, oldKey?: Object, newKey?: Object, error?: string}>>}
+   */
+  async batchRotate(rotations) {
+    const results = [];
+
+    for (const { agentId, keyType, options } of rotations) {
+      try {
+        const result = await this.rotateKeyWithPolicy(agentId, keyType, options);
+        results.push({
+          agentId,
+          keyType,
+          success: true,
+          oldKey: { keyId: result.oldKey.keyId },
+          newKey: { keyId: result.newKey.keyId },
+          graceUntil: result.graceUntil,
+        });
+      } catch (error) {
+        results.push({
+          agentId,
+          keyType,
+          success: false,
+          error: error.message,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Clean up expired keys (past grace period)
+   * @param {string} agentId
+   * @param {'signing'|'encryption'} keyType
+   * @returns {Promise<number>} Number of keys cleaned up
+   */
+  async cleanupExpiredKeys(agentId, keyType) {
+    const keys = await this._loadKeys(agentId, keyType);
+    const now = new Date();
+    let cleanedUp = 0;
+
+    for (const key of keys) {
+      if (key.revokedAt) continue; // Already revoked
+
+      // Check if past grace period
+      if (key.graceUntil && new Date(key.graceUntil) < now) {
+        key.revokedAt = new Date().toISOString();
+        cleanedUp++;
+      }
+    }
+
+    if (cleanedUp > 0) {
+      await this._saveKeys(agentId, keyType, keys);
+    }
+
+    return cleanedUp;
+  }
+
+  /**
+   * Process auto-rotation based on policies
+   * @param {string} agentId
+   * @returns {Promise<Array<{keyType: string, rotated: boolean, reason?: string}>>}
+   */
+  async processAutoRotation(agentId) {
+    const policyManager = getRotationPolicyManager(this.keysDir.replace('/keys', ''));
+    const results = [];
+
+    for (const keyType of ['signing', 'encryption']) {
+      const policy = await policyManager.getPolicy(agentId, keyType);
+
+      if (!policy.autoRotate) {
+        results.push({ keyType, rotated: false, reason: 'auto_rotate_disabled' });
+        continue;
+      }
+
+      const currentKey = keyType === 'signing'
+        ? await this.getCurrentSigningKey(agentId)
+        : await this.getCurrentEncryptionKey(agentId);
+
+      if (!currentKey) {
+        results.push({ keyType, rotated: false, reason: 'no_current_key' });
+        continue;
+      }
+
+      const { shouldRotate, reason } = await policyManager.shouldRotate(
+        agentId,
+        currentKey.keyId,
+        keyType,
+        currentKey
+      );
+
+      if (shouldRotate) {
+        await this.rotateKeyWithPolicy(agentId, keyType, { reason });
+        results.push({ keyType, rotated: true, reason });
+      } else {
+        results.push({ keyType, rotated: false, reason: 'not_needed' });
+      }
+    }
+
+    return results;
   }
 }
 

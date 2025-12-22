@@ -18,6 +18,7 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **Database Tables** | 53 |
 | **API Methods** | 700+ |
 | **MCP Tools** | 87 |
+| **CLI Programs** | 15 |
 | **AI Agents** | 8 |
 | **Language Bindings** | 7 (Rust, Node.js, Python, Ruby, PHP, Java, WASM) |
 | **Current Version** | 0.1.7 |
@@ -77,8 +78,9 @@ stateset-icommerce/
 │   ├── java/                # Java (JNI)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # 14 CLI programs
+    ├── bin/                 # 15 CLI programs (including stateset-sync)
     ├── src/                 # MCP server (87 tools)
+    ├── src/sync/            # VES sync engine, keys, groups
     └── .claude/             # 8 AI agents, 7 skills
 ```
 
@@ -365,6 +367,45 @@ stateset --apply "create work order from BOM-001 quantity 50"
 stateset --apply "complete work order WO-001 with 48 units produced"
 ```
 
+### Sync CLI (VES v1.0)
+
+Verifiable Event Sync (VES) enables local SQLite databases to synchronize with the `stateset-sequencer` service, providing deterministic event ordering, conflict resolution, and cryptographic audit trails.
+
+```bash
+# Initialize sync for a store
+stateset-sync init --sequencer-url grpc://sequencer.stateset.network:443 \
+  --tenant-id <uuid> --store-id <uuid> --api-key <key>
+
+# Sync operations
+stateset-sync push              # Push pending events to sequencer
+stateset-sync pull              # Pull remote events locally
+stateset-sync status            # Show sync status
+stateset-sync verify <event-id> # Verify event inclusion proof
+stateset-sync rebase            # Rebase after conflict
+stateset-sync conflicts         # List unresolved conflicts
+stateset-sync history           # Show sync history
+
+# Key Management (Ed25519/X25519)
+stateset-sync keys:generate     # Generate signing and encryption keys
+stateset-sync keys:list         # List agent keys
+stateset-sync keys:register     # Register signing key with sequencer
+stateset-sync keys:rotate --all --register  # Rotate keys and re-register
+stateset-sync keys:export       # Export public keys for sharing
+
+# Key Rotation Policies
+stateset-sync keys:policy --key-type signing --max-age 720 --grace-period 72
+stateset-sync keys:expiry       # Check key expiration warnings
+stateset-sync keys:batch-rotate --key-type all --register
+
+# Encryption Groups (multi-agent)
+stateset-sync groups:create --name "warehouse-agents"
+stateset-sync groups:add-member --group-id <id> --agent-id <id>
+stateset-sync groups:remove-member --group-id <id> --agent-id <id>
+stateset-sync groups:list       # List all groups
+stateset-sync groups:show <id>  # Show group details
+stateset-sync groups:my-groups  # List your group memberships
+```
+
 ---
 
 ## Domain Models
@@ -504,6 +545,15 @@ Eight specialized agents for different commerce domains:
 - Revenue projections with confidence intervals
 - Inventory health monitoring
 - Customer metrics and LTV
+
+### Verifiable Event Sync (VES v1.0)
+- Local-first with sequencer synchronization
+- Ed25519 agent signatures for event authenticity
+- X25519 encryption for payload confidentiality
+- Key rotation policies (time-based, usage-based)
+- Encryption groups for multi-agent collaboration
+- Merkle proofs for on-chain commitment verification
+- Conflict detection and resolution (remote-wins, local-wins, merge)
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
@@ -716,8 +766,17 @@ stateset-icommerce/
 │   ├── java/                  # JNI bindings (com.stateset:embedded)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 14 CLI programs
+│   ├── bin/                   # 15 CLI programs (incl. stateset-sync)
 │   ├── src/mcp-server.js      # 87 MCP tools
+│   ├── src/sync/              # VES sync engine
+│   │   ├── engine.js          # Sync orchestration
+│   │   ├── outbox.js          # Event outbox management
+│   │   ├── client.js          # gRPC sequencer client
+│   │   ├── keys.js            # Ed25519/X25519 key management
+│   │   ├── groups.js          # Encryption group management
+│   │   ├── rotation-policy.js # Key rotation policies
+│   │   ├── crypto.js          # VES cryptographic operations
+│   │   └── conflict.js        # Conflict resolution
 │   └── .claude/               # 8 agents, 7 skills
 └── examples/
 ```

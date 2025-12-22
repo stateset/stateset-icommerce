@@ -39,6 +39,8 @@ import { createSyncEngine } from '../src/sync/engine.js';
 import { createOutbox } from '../src/sync/outbox.js';
 import { createSequencerClient } from '../src/sync/client.js';
 import { getKeyManager } from '../src/sync/keys.js';
+import { getRotationPolicyManager } from '../src/sync/rotation-policy.js';
+import { getGroupManager } from '../src/sync/groups.js';
 import { bufferToHex } from '../src/sync/crypto.js';
 
 const program = new Command();
@@ -1099,6 +1101,686 @@ program
       }
     } catch (error) {
       console.error(chalk.red(`Export failed: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// keys:policy command
+// ============================================================================
+program
+  .command('keys:policy')
+  .description('Manage key rotation policies')
+  .option('--agent-id <uuid>', 'Agent UUID (uses configured agent if not specified)')
+  .option('--key-type <type>', 'Key type (signing, encryption)', 'signing')
+  .option('--max-age <hours>', 'Max key age in hours')
+  .option('--max-usage <count>', 'Max usage count')
+  .option('--grace-period <hours>', 'Grace period after rotation in hours')
+  .option('--warning <hours>', 'Warning threshold hours before expiry')
+  .option('--auto-rotate', 'Enable auto-rotation')
+  .option('--no-auto-rotate', 'Disable auto-rotation')
+  .option('--enforce-expiry', 'Enforce key expiry')
+  .option('--no-enforce-expiry', 'Disable expiry enforcement')
+  .option('--show', 'Show current policy')
+  .option('--reset', 'Reset policy to defaults')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const agentId = options.agentId || config.identity.agentId;
+    if (!agentId) {
+      console.error(chalk.red('No agent ID specified or configured.'));
+      process.exit(1);
+    }
+
+    const validKeyTypes = ['signing', 'encryption'];
+    if (!validKeyTypes.includes(options.keyType)) {
+      console.error(chalk.red(`Invalid key type: ${options.keyType}. Use 'signing' or 'encryption'.`));
+      process.exit(1);
+    }
+
+    try {
+      const policyManager = getRotationPolicyManager(getConfigDir());
+
+      // Show current policy
+      if (options.show) {
+        const policy = await policyManager.getPolicy(agentId, options.keyType);
+
+        if (options.json) {
+          console.log(JSON.stringify({ agentId, keyType: options.keyType, policy }, null, 2));
+        } else {
+          console.log();
+          console.log(chalk.bold(`Rotation Policy for ${agentId}`));
+          console.log(`  Key Type: ${options.keyType}`);
+          console.log();
+          console.log(`  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`);
+          console.log(`  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`);
+          console.log(`  Grace Period:      ${policy.gracePeriodHours} hours`);
+          console.log(`  Warning Threshold: ${policy.warningThresholdHours} hours`);
+          console.log(`  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
+          console.log(`  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
+        }
+        return;
+      }
+
+      // Reset to defaults
+      if (options.reset) {
+        await policyManager.removePolicy(agentId, options.keyType);
+        console.log(chalk.green(`Policy for ${agentId} ${options.keyType} keys reset to defaults.`));
+        return;
+      }
+
+      // Update policy
+      const updates = {};
+
+      if (options.maxAge !== undefined) {
+        updates.maxAgeHours = parseInt(options.maxAge, 10);
+      }
+      if (options.maxUsage !== undefined) {
+        updates.maxUsageCount = parseInt(options.maxUsage, 10);
+      }
+      if (options.gracePeriod !== undefined) {
+        updates.gracePeriodHours = parseInt(options.gracePeriod, 10);
+      }
+      if (options.warning !== undefined) {
+        updates.warningThresholdHours = parseInt(options.warning, 10);
+      }
+      if (options.autoRotate !== undefined) {
+        updates.autoRotate = options.autoRotate;
+      }
+      if (options.enforceExpiry !== undefined) {
+        updates.enforceExpiry = options.enforceExpiry;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        console.error(chalk.yellow('No policy updates specified. Use --show to view current policy.'));
+        process.exit(1);
+      }
+
+      const policy = await policyManager.setPolicy(agentId, options.keyType, updates);
+
+      console.log(chalk.green(`Policy updated for ${agentId} ${options.keyType} keys.`));
+      console.log();
+      console.log(chalk.bold('Updated Policy:'));
+      console.log(`  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`);
+      console.log(`  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`);
+      console.log(`  Grace Period:      ${policy.gracePeriodHours} hours`);
+      console.log(`  Warning Threshold: ${policy.warningThresholdHours} hours`);
+      console.log(`  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
+      console.log(`  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
+
+    } catch (error) {
+      console.error(chalk.red(`Policy management failed: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// keys:expiry command
+// ============================================================================
+program
+  .command('keys:expiry')
+  .description('Check key expiration warnings')
+  .option('--agent-id <uuid>', 'Agent UUID (all configured agents if not specified)')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const agentId = options.agentId || config.identity.agentId;
+
+    try {
+      const keyManager = getKeyManager(getConfigDir());
+      const policyManager = getRotationPolicyManager(getConfigDir());
+
+      const warnings = await policyManager.getExpiryWarnings(keyManager, agentId);
+
+      if (options.json) {
+        console.log(JSON.stringify(warnings, null, 2));
+        return;
+      }
+
+      if (warnings.length === 0) {
+        console.log(chalk.green('No key expiry warnings.'));
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold(`Key Expiry Warnings (${warnings.length})`));
+      console.log();
+
+      for (const warning of warnings) {
+        const severityIcon = {
+          info: chalk.blue('i'),
+          warning: chalk.yellow('!'),
+          critical: chalk.red('!!'),
+        }[warning.severity] || '?';
+
+        const hoursText = warning.hoursRemaining <= 0
+          ? chalk.red('EXPIRED')
+          : warning.hoursRemaining < 1
+            ? chalk.red(`${Math.round(warning.hoursRemaining * 60)} minutes`)
+            : `${Math.round(warning.hoursRemaining)} hours`;
+
+        console.log(`${severityIcon} ${warning.keyType} key ${warning.keyId} for agent ${warning.agentId.substring(0, 8)}...`);
+        console.log(`    Expires: ${warning.expiresAt}`);
+        console.log(`    Time remaining: ${hoursText}`);
+        console.log();
+      }
+
+      // Summary
+      const critical = warnings.filter(w => w.severity === 'critical').length;
+      const warningCount = warnings.filter(w => w.severity === 'warning').length;
+
+      if (critical > 0) {
+        console.log(chalk.red(`${critical} key(s) need immediate rotation!`));
+      }
+      if (warningCount > 0) {
+        console.log(chalk.yellow(`${warningCount} key(s) expiring soon.`));
+      }
+      console.log();
+      console.log(chalk.dim('Run "stateset-sync keys:rotate --<type>" to rotate keys.'));
+
+    } catch (error) {
+      console.error(chalk.red(`Expiry check failed: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// keys:batch-rotate command
+// ============================================================================
+program
+  .command('keys:batch-rotate')
+  .description('Batch rotate keys for multiple agents')
+  .option('--agents <file>', 'JSON file with agent list [{ "agentId": "...", "keyType": "signing" }]')
+  .option('--key-type <type>', 'Key type to rotate for all configured agents (signing, encryption, all)')
+  .option('--register', 'Auto-register new signing keys with sequencer')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    let rotations = [];
+
+    // Load from file or use configured agent
+    if (options.agents) {
+      try {
+        const fs = await import('fs/promises');
+        const data = await fs.readFile(options.agents, 'utf8');
+        rotations = JSON.parse(data);
+      } catch (error) {
+        console.error(chalk.red(`Failed to read agents file: ${error.message}`));
+        process.exit(1);
+      }
+    } else if (options.keyType) {
+      const agentId = config.identity.agentId;
+      if (options.keyType === 'all') {
+        rotations = [
+          { agentId, keyType: 'signing' },
+          { agentId, keyType: 'encryption' },
+        ];
+      } else {
+        rotations = [{ agentId, keyType: options.keyType }];
+      }
+    } else {
+      console.error(chalk.red('Specify --agents <file> or --key-type <type>'));
+      process.exit(1);
+    }
+
+    if (rotations.length === 0) {
+      console.error(chalk.red('No rotations specified.'));
+      process.exit(1);
+    }
+
+    const spinner = ora(`Rotating ${rotations.length} key(s)...`).start();
+
+    try {
+      const keyManager = getKeyManager(getConfigDir());
+      const results = await keyManager.batchRotate(rotations);
+
+      spinner.stop();
+
+      if (options.json) {
+        console.log(JSON.stringify(results, null, 2));
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold('Batch Rotation Results:'));
+      console.log();
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          console.log(chalk.green(`  ✓ ${result.agentId.substring(0, 8)}... ${result.keyType}`));
+          console.log(`      Old key: ${result.oldKey.keyId} → New key: ${result.newKey.keyId}`);
+          console.log(`      Grace until: ${result.graceUntil}`);
+        } else {
+          failCount++;
+          console.log(chalk.red(`  ✗ ${result.agentId.substring(0, 8)}... ${result.keyType}`));
+          console.log(`      Error: ${result.error}`);
+        }
+        console.log();
+      }
+
+      // Auto-register signing keys if requested
+      if (options.register) {
+        const signingResults = results.filter(r => r.success && r.keyType === 'signing');
+        if (signingResults.length > 0) {
+          spinner.start('Registering new signing keys with sequencer...');
+          const client = createSequencerClient(new SyncConfig(config));
+          await client.connect();
+
+          for (const result of signingResults) {
+            try {
+              const key = await keyManager.getSigningKey(result.agentId, result.newKey.keyId);
+              await client.registerAgentKey({
+                agentId: result.agentId,
+                keyId: key.keyId,
+                publicKey: bufferToHex(key.publicKey),
+              });
+            } catch (error) {
+              console.log(chalk.yellow(`  Warning: Failed to register key for ${result.agentId.substring(0, 8)}: ${error.message}`));
+            }
+          }
+          spinner.succeed(`Registered ${signingResults.length} signing key(s) with sequencer.`);
+        }
+      }
+
+      console.log(chalk.bold('Summary:'));
+      console.log(`  ${chalk.green(successCount + ' succeeded')}, ${chalk.red(failCount + ' failed')}`);
+
+    } catch (error) {
+      spinner.fail(`Batch rotation failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:create command
+// ============================================================================
+program
+  .command('groups:create')
+  .description('Create an encryption key group')
+  .requiredOption('--name <name>', 'Group name (unique within tenant)')
+  .option('--description <desc>', 'Group description')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const spinner = ora('Creating encryption group...').start();
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const tenantId = config.identity.tenantId;
+      const agentId = config.identity.agentId;
+
+      const group = await groupManager.createGroup(tenantId, options.name, agentId, {
+        description: options.description,
+      });
+
+      spinner.succeed(`Group '${options.name}' created successfully`);
+
+      if (options.json) {
+        console.log(JSON.stringify(group, null, 2));
+      } else {
+        console.log();
+        console.log(chalk.bold('Encryption Group Created:'));
+        console.log(`  Group ID:    ${group.groupId}`);
+        console.log(`  Name:        ${group.name}`);
+        console.log(`  Tenant:      ${group.tenantId}`);
+        console.log(`  Created By:  ${group.createdBy}`);
+        console.log(`  Members:     ${group.members.length} (you are admin)`);
+        if (group.description) {
+          console.log(`  Description: ${group.description}`);
+        }
+        console.log();
+        console.log(chalk.dim('Use "stateset-sync groups:add-member --group-id ' + group.groupId.substring(0, 8) + '... --agent-id <id>" to add members.'));
+      }
+    } catch (error) {
+      spinner.fail(`Failed to create group: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:list command
+// ============================================================================
+program
+  .command('groups:list')
+  .description('List encryption groups')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const tenantId = config.identity.tenantId;
+
+      const groups = await groupManager.listGroups(tenantId);
+
+      if (options.json) {
+        console.log(JSON.stringify(groups, null, 2));
+        return;
+      }
+
+      if (groups.length === 0) {
+        console.log(chalk.dim('No encryption groups found.'));
+        console.log(chalk.dim('Run "stateset-sync groups:create --name <name>" to create one.'));
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold(`Encryption Groups (${groups.length})`));
+      console.log();
+
+      for (const group of groups) {
+        const myMembership = group.members.find(m => m.agentId === config.identity.agentId);
+        const roleIcon = myMembership?.role === 'admin' ? chalk.yellow('*') : ' ';
+
+        console.log(`${roleIcon} ${chalk.bold(group.name)}`);
+        console.log(`    ID:      ${group.groupId}`);
+        console.log(`    Members: ${group.members.length}`);
+        if (group.description) {
+          console.log(`    Desc:    ${group.description}`);
+        }
+        console.log();
+      }
+
+      console.log(chalk.dim('* = You are admin'));
+
+    } catch (error) {
+      console.error(chalk.red(`Failed to list groups: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:show command
+// ============================================================================
+program
+  .command('groups:show <group-id>')
+  .description('Show group details')
+  .option('--json', 'Output as JSON')
+  .action(async (groupId, options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const group = await groupManager.getGroup(groupId);
+
+      if (!group) {
+        console.error(chalk.red(`Group ${groupId} not found`));
+        process.exit(1);
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify(group, null, 2));
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold(`Group: ${group.name}`));
+      console.log();
+      console.log(`  ID:          ${group.groupId}`);
+      console.log(`  Tenant:      ${group.tenantId}`);
+      console.log(`  Created:     ${group.createdAt}`);
+      console.log(`  Created By:  ${group.createdBy}`);
+      if (group.description) {
+        console.log(`  Description: ${group.description}`);
+      }
+      console.log();
+
+      console.log(chalk.bold(`Members (${group.members.length}):`));
+      console.log();
+
+      for (const member of group.members) {
+        const roleIcon = member.role === 'admin' ? chalk.yellow('[admin]') : chalk.dim('[member]');
+        const isYou = member.agentId === config.identity.agentId ? chalk.green(' (you)') : '';
+
+        console.log(`  ${roleIcon} ${member.agentId}${isYou}`);
+        console.log(`       Key ID: ${member.encryptionKeyId}`);
+        console.log(`       Added:  ${member.addedAt}`);
+        console.log();
+      }
+
+    } catch (error) {
+      console.error(chalk.red(`Failed to show group: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:add-member command
+// ============================================================================
+program
+  .command('groups:add-member')
+  .description('Add an agent to an encryption group')
+  .requiredOption('--group-id <id>', 'Group ID')
+  .requiredOption('--agent-id <id>', 'Agent ID to add')
+  .option('--role <role>', 'Role for the new member (admin, member)', 'member')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const spinner = ora('Adding member to group...').start();
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const myAgentId = config.identity.agentId;
+
+      const group = await groupManager.addMember(
+        options.groupId,
+        options.agentId,
+        myAgentId,
+        { role: options.role }
+      );
+
+      spinner.succeed(`Agent ${options.agentId.substring(0, 8)}... added to group`);
+
+      if (options.json) {
+        console.log(JSON.stringify(group, null, 2));
+      } else {
+        console.log();
+        console.log(chalk.bold('Member Added:'));
+        console.log(`  Agent ID: ${options.agentId}`);
+        console.log(`  Role:     ${options.role}`);
+        console.log(`  Group:    ${group.name} (${group.members.length} members)`);
+      }
+    } catch (error) {
+      spinner.fail(`Failed to add member: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:remove-member command
+// ============================================================================
+program
+  .command('groups:remove-member')
+  .description('Remove an agent from an encryption group')
+  .requiredOption('--group-id <id>', 'Group ID')
+  .requiredOption('--agent-id <id>', 'Agent ID to remove')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const spinner = ora('Removing member from group...').start();
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const myAgentId = config.identity.agentId;
+
+      const group = await groupManager.removeMember(
+        options.groupId,
+        options.agentId,
+        myAgentId
+      );
+
+      spinner.succeed(`Agent ${options.agentId.substring(0, 8)}... removed from group`);
+      console.log(`  Group now has ${group.members.length} member(s)`);
+    } catch (error) {
+      spinner.fail(`Failed to remove member: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:delete command
+// ============================================================================
+program
+  .command('groups:delete <group-id>')
+  .description('Delete an encryption group')
+  .option('--force', 'Skip confirmation')
+  .action(async (groupId, options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const myAgentId = config.identity.agentId;
+
+      // Get group to show details
+      const group = await groupManager.getGroup(groupId);
+      if (!group) {
+        console.error(chalk.red(`Group ${groupId} not found`));
+        process.exit(1);
+      }
+
+      if (!options.force) {
+        console.log();
+        console.log(chalk.yellow(`Warning: This will delete group '${group.name}' with ${group.members.length} member(s).`));
+        console.log(chalk.yellow('Existing encrypted data will still be decryptable by members.'));
+        console.log();
+        console.log(chalk.dim('Use --force to skip this confirmation.'));
+        process.exit(1);
+      }
+
+      const spinner = ora('Deleting group...').start();
+
+      await groupManager.deleteGroup(groupId, myAgentId);
+
+      spinner.succeed(`Group '${group.name}' deleted`);
+    } catch (error) {
+      console.error(chalk.red(`Failed to delete group: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:refresh-key command
+// ============================================================================
+program
+  .command('groups:refresh-key')
+  .description('Update your encryption key in a group after key rotation')
+  .requiredOption('--group-id <id>', 'Group ID')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    const spinner = ora('Refreshing encryption key in group...').start();
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const myAgentId = config.identity.agentId;
+
+      const group = await groupManager.refreshMemberKey(options.groupId, myAgentId);
+
+      spinner.succeed('Encryption key refreshed in group');
+      console.log(`  Group: ${group.name}`);
+    } catch (error) {
+      spinner.fail(`Failed to refresh key: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================================================
+// groups:my-groups command
+// ============================================================================
+program
+  .command('groups:my-groups')
+  .description('List groups you are a member of')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const config = loadSyncConfig();
+    if (!config) {
+      console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
+      process.exit(1);
+    }
+
+    try {
+      const groupManager = getGroupManager(getConfigDir());
+      const tenantId = config.identity.tenantId;
+      const myAgentId = config.identity.agentId;
+
+      const groups = await groupManager.getAgentGroups(myAgentId, tenantId);
+
+      if (options.json) {
+        console.log(JSON.stringify(groups, null, 2));
+        return;
+      }
+
+      if (groups.length === 0) {
+        console.log(chalk.dim('You are not a member of any groups.'));
+        return;
+      }
+
+      console.log();
+      console.log(chalk.bold(`Your Group Memberships (${groups.length})`));
+      console.log();
+
+      for (const group of groups) {
+        const myMembership = group.members.find(m => m.agentId === myAgentId);
+        const roleText = myMembership?.role === 'admin' ? chalk.yellow('admin') : 'member';
+
+        console.log(`  ${chalk.bold(group.name)}`);
+        console.log(`    ID:   ${group.groupId}`);
+        console.log(`    Role: ${roleText}`);
+        console.log(`    Members: ${group.members.length}`);
+        console.log();
+      }
+
+    } catch (error) {
+      console.error(chalk.red(`Failed to list groups: ${error.message}`));
       process.exit(1);
     }
   });
