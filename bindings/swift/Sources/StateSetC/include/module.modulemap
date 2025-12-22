@@ -1,0 +1,5 @@
+module StateSetC {
+    header "stateset.h"
+    link "stateset_swift"
+    export *
+}

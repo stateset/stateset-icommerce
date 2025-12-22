@@ -20,7 +20,7 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **MCP Tools** | 87 |
 | **CLI Programs** | 15 |
 | **AI Agents** | 8 |
-| **Language Bindings** | 7 (Rust, Node.js, Python, Ruby, PHP, Java, WASM) |
+| **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
 | **Current Version** | 0.1.7 |
 
 ---
@@ -76,6 +76,10 @@ stateset-icommerce/
 │   ├── ruby/                # Ruby (Magnus)
 │   ├── php/                 # PHP (ext-php-rs)
 │   ├── java/                # Java (JNI)
+│   ├── kotlin/              # Kotlin/JVM (JNI)
+│   ├── swift/               # Swift/iOS/macOS (C FFI)
+│   ├── dotnet/              # C#/.NET (P/Invoke)
+│   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
     ├── bin/                 # 15 CLI programs (including stateset-sync)
@@ -305,6 +309,154 @@ try (Commerce commerce = new Commerce("./store.db")) {
     // Get analytics
     SalesSummary summary = commerce.analytics().salesSummary(30);
     System.out.println("Revenue: $" + summary.getTotalRevenue());
+}
+```
+
+### Kotlin
+
+```kotlin
+import com.stateset.embedded.*
+
+val commerce = StateSetCommerce("./store.db")
+
+// Create a customer
+val customer = commerce.customers.create(
+    email = "alice@example.com",
+    firstName = "Alice",
+    lastName = "Smith"
+)
+
+// Create a product
+val product = commerce.products.create(
+    name = "Widget",
+    sku = "SKU-001",
+    price = 29.99,
+    description = "A premium widget"
+)
+
+// Create an order
+val order = commerce.orders.create(
+    customerId = customer.id,
+    items = listOf(
+        OrderItem(productId = product.id, sku = "SKU-001", name = "Widget", quantity = 2, unitPrice = "29.99")
+    ),
+    currency = "USD"
+)
+
+// Get analytics
+val summary = commerce.analytics.getSalesSummary(TimePeriod.MONTH)
+println("Revenue: $${summary.totalRevenue}")
+
+commerce.close()
+```
+
+### Swift
+
+```swift
+import StateSet
+
+let commerce = try StateSetCommerce(path: "./store.db")
+defer { commerce.close() }
+
+// Create a customer
+let customer = try commerce.customers.create(
+    email: "alice@example.com",
+    firstName: "Alice",
+    lastName: "Smith",
+    phone: "+1-555-0123"
+)
+
+// Create a product
+let product = try commerce.products.create(
+    name: "Widget",
+    sku: "SKU-001",
+    price: 29.99,
+    description: "A premium widget"
+)
+
+// Create an order
+let order = try commerce.orders.create(
+    customerId: customer.id,
+    items: [
+        OrderItem(productId: product.id, sku: "SKU-001", name: "Widget", quantity: 2, unitPrice: "29.99")
+    ],
+    currency: "USD"
+)
+
+// Update order status
+try commerce.orders.updateStatus(id: order.id, status: .shipped)
+```
+
+### C# / .NET
+
+```csharp
+using StateSet;
+
+using var commerce = new StateSetCommerce("./store.db");
+
+// Create a customer
+var customer = commerce.Customers.Create(
+    email: "alice@example.com",
+    firstName: "Alice",
+    lastName: "Smith"
+);
+
+// Create a product
+var product = commerce.Products.Create(
+    name: "Widget",
+    sku: "SKU-001",
+    price: 29.99m,
+    description: "A premium widget"
+);
+
+// Create an order
+var order = commerce.Orders.Create(
+    customerId: customer.Id,
+    items: new[] {
+        new OrderItem { ProductId = product.Id, Sku = "SKU-001", Name = "Widget", Quantity = 2, UnitPrice = "29.99" }
+    },
+    currency: "USD"
+);
+
+// Get analytics
+var summary = commerce.Analytics.GetSalesSummary(TimePeriod.Month);
+Console.WriteLine($"Revenue: ${summary.TotalRevenue}");
+```
+
+### Go
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/stateset/stateset-icommerce/bindings/go/stateset"
+)
+
+func main() {
+    commerce, _ := stateset.New("./store.db")
+    defer commerce.Close()
+
+    // Create a customer
+    customer, _ := commerce.Customers().Create(
+        "alice@example.com", "Alice", "Smith", "+1-555-0123",
+    )
+
+    // Create a product
+    product, _ := commerce.Products().Create(
+        "Widget", "SKU-001", 29.99, "A premium widget",
+    )
+
+    // Create an order
+    items := []stateset.OrderItem{
+        {ProductID: product.ID, SKU: "SKU-001", Name: "Widget", Quantity: 2, UnitPrice: "29.99"},
+    }
+    order, _ := commerce.Orders().Create(customer.ID, items, "USD")
+    fmt.Printf("Order created: %s\n", order.OrderNumber)
+
+    // Get analytics
+    summary, _ := commerce.Analytics().GetSalesSummary(stateset.TimePeriodMonth)
+    fmt.Printf("Revenue: $%s\n", summary.TotalRevenue)
 }
 ```
 
@@ -630,6 +782,48 @@ extension=stateset_embedded
 implementation 'com.stateset:embedded:0.1.7'
 ```
 
+### Kotlin (Gradle)
+
+```kotlin
+// build.gradle.kts
+dependencies {
+    implementation("com.stateset:embedded-kotlin:0.1.7")
+}
+```
+
+### Swift (Swift Package Manager)
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.1.7")
+]
+```
+
+Or with CocoaPods:
+
+```ruby
+pod 'StateSet', '~> 0.1.7'
+```
+
+### C# / .NET (NuGet)
+
+```bash
+dotnet add package StateSet.Embedded --version 0.1.7
+```
+
+Or in your `.csproj`:
+
+```xml
+<PackageReference Include="StateSet.Embedded" Version="0.1.7" />
+```
+
+### Go
+
+```bash
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.1.7
+```
+
 ### CLI
 
 ```bash
@@ -645,7 +839,7 @@ stateset --help
 
 ## Language Bindings
 
-StateSet provides native bindings for 7 languages, all built from the same Rust core:
+StateSet provides native bindings for 11 languages, all built from the same Rust core:
 
 | Language | Package | Install | Docs |
 |----------|---------|---------|------|
@@ -655,18 +849,26 @@ StateSet provides native bindings for 7 languages, all built from the same Rust 
 | **Ruby** | `stateset_embedded` | `gem install stateset_embedded` | [RubyGems](https://rubygems.org/gems/stateset_embedded) |
 | **PHP** | `stateset/embedded` | `composer require stateset/embedded` | [Packagist](https://packagist.org/packages/stateset/embedded) |
 | **Java** | `com.stateset:embedded` | Maven/Gradle | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded) |
+| **Kotlin** | `com.stateset:embedded-kotlin` | Gradle | [Maven Central](https://central.sonatype.com/artifact/com.stateset/embedded-kotlin) |
+| **Swift** | `StateSet` | Swift PM / CocoaPods | [GitHub](https://github.com/stateset/stateset-swift) |
+| **C# / .NET** | `StateSet.Embedded` | `dotnet add package StateSet.Embedded` | [NuGet](https://www.nuget.org/packages/StateSet.Embedded) |
+| **Go** | `stateset` | `go get github.com/stateset/.../stateset` | [pkg.go.dev](https://pkg.go.dev/github.com/stateset/stateset-icommerce/bindings/go/stateset) |
 | **WASM** | `@stateset/embedded-wasm` | `npm install @stateset/embedded-wasm` | [npm](https://www.npmjs.com/package/@stateset/embedded-wasm) |
 
 ### Platform Support
 
-| Platform | Node.js | Python | Ruby | PHP | Java |
-|----------|---------|--------|------|-----|------|
-| Linux x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Linux arm64 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| macOS x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| macOS arm64 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Windows x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Browser (WASM) | ✅ | - | - | - | - |
+| Platform | Node.js | Python | Ruby | PHP | Java | Kotlin | Swift | C# | Go |
+|----------|---------|--------|------|-----|------|--------|-------|-----|-----|
+| Linux x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Linux arm64 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| macOS x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| macOS arm64 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Windows x86_64 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | - | ✅ | ✅ |
+| iOS | - | - | - | - | - | - | ✅ | - | - |
+| Android | - | - | - | - | ✅ | ✅ | - | - | - |
+| Browser (WASM) | ✅ | - | - | - | - | - | - | ✅* | - |
+
+*Via Blazor WebAssembly
 
 ### Framework Integration
 
@@ -693,6 +895,47 @@ public class CommerceConfig {
     @Bean(destroyMethod = "close")
     public Commerce commerce() {
         return new Commerce("commerce.db");
+    }
+}
+```
+
+**Android (Kotlin)**
+```kotlin
+// Application class
+class CommerceApp : Application() {
+    val commerce by lazy {
+        StateSetCommerce(getDatabasePath("commerce.db").absolutePath)
+    }
+}
+```
+
+**iOS/macOS (Swift)**
+```swift
+// AppDelegate or @main struct
+let commerce = try! StateSetCommerce(
+    path: FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("commerce.db").path
+)
+```
+
+**ASP.NET Core (C#)**
+```csharp
+// Program.cs or Startup.cs
+builder.Services.AddSingleton<StateSetCommerce>(sp =>
+    new StateSetCommerce("commerce.db"));
+```
+
+**Go (net/http or Gin)**
+```go
+// main.go
+var commerce *stateset.Commerce
+
+func init() {
+    var err error
+    commerce, err = stateset.New("commerce.db")
+    if err != nil {
+        log.Fatal(err)
     }
 }
 ```
@@ -764,6 +1007,10 @@ stateset-icommerce/
 │   ├── ruby/                  # Magnus bindings (stateset_embedded gem)
 │   ├── php/                   # ext-php-rs bindings (stateset/embedded)
 │   ├── java/                  # JNI bindings (com.stateset:embedded)
+│   ├── kotlin/                # JNI bindings (com.stateset:embedded-kotlin)
+│   ├── swift/                 # C FFI bindings (StateSet Swift package)
+│   ├── dotnet/                # P/Invoke bindings (StateSet.Embedded NuGet)
+│   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
 │   ├── bin/                   # 15 CLI programs (incl. stateset-sync)

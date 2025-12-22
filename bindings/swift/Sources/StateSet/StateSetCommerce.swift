@@ -1,0 +1,134 @@
+import Foundation
+import StateSetC
+
+/// StateSet Embedded Commerce - The SQLite of Commerce
+///
+/// A zero-dependency, local-first commerce engine for Swift/iOS applications.
+///
+/// Example usage:
+/// ```swift
+/// let commerce = try StateSetCommerce(dbPath: "store.db")
+///
+/// let customer = try commerce.customers.create(
+///     email: "alice@example.com",
+///     firstName: "Alice",
+///     lastName: "Smith"
+/// )
+///
+/// let product = try commerce.products.create(
+///     name: "Premium Widget",
+///     sku: "WIDGET-001",
+///     price: 29.99
+/// )
+///
+/// let order = try commerce.orders.create(
+///     customerId: customer.id,
+///     items: [OrderItem(sku: "WIDGET-001", name: "Widget", quantity: 2, unitPrice: 29.99)],
+///     currency: "USD"
+/// )
+/// ```
+public final class StateSetCommerce {
+    private var handle: StateSetHandle?
+
+    /// Customers API
+    public private(set) lazy var customers = CustomersAPI(commerce: self)
+
+    /// Products API
+    public private(set) lazy var products = ProductsAPI(commerce: self)
+
+    /// Orders API
+    public private(set) lazy var orders = OrdersAPI(commerce: self)
+
+    /// Inventory API
+    public private(set) lazy var inventory = InventoryAPI(commerce: self)
+
+    /// Carts API
+    public private(set) lazy var carts = CartsAPI(commerce: self)
+
+    /// Returns API
+    public private(set) lazy var returns = ReturnsAPI(commerce: self)
+
+    /// Payments API
+    public private(set) lazy var payments = PaymentsAPI(commerce: self)
+
+    /// Analytics API
+    public private(set) lazy var analytics = AnalyticsAPI(commerce: self)
+
+    /// Create a new Commerce instance
+    /// - Parameter dbPath: Path to SQLite database file, or ":memory:" for in-memory database
+    /// - Throws: StateSetError if database initialization fails
+    public init(dbPath: String) throws {
+        handle = stateset_commerce_new(dbPath)
+        if handle == nil {
+            throw StateSetError.initializationFailed("Failed to create commerce instance")
+        }
+    }
+
+    deinit {
+        close()
+    }
+
+    /// Close the commerce instance and release native resources
+    public func close() {
+        if let h = handle {
+            stateset_commerce_free(h)
+            handle = nil
+        }
+    }
+
+    internal func getHandle() throws -> StateSetHandle {
+        guard let h = handle else {
+            throw StateSetError.invalidHandle
+        }
+        return h
+    }
+
+    internal func parseJSON<T: Decodable>(_ ptr: UnsafeMutablePointer<CChar>?) throws -> T {
+        guard let ptr = ptr else {
+            throw StateSetError.nullPointer
+        }
+        defer { stateset_string_free(ptr) }
+
+        let jsonString = String(cString: ptr)
+        guard let data = jsonString.data(using: .utf8) else {
+            throw StateSetError.invalidJSON("Failed to convert string to data")
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(T.self, from: data)
+    }
+
+    internal func parseOptionalJSON<T: Decodable>(_ ptr: UnsafeMutablePointer<CChar>?) -> T? {
+        guard let ptr = ptr else { return nil }
+        defer { stateset_string_free(ptr) }
+
+        let jsonString = String(cString: ptr)
+        guard let data = jsonString.data(using: .utf8) else { return nil }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(T.self, from: data)
+    }
+}
+
+/// StateSet error types
+public enum StateSetError: Error, LocalizedError {
+    case initializationFailed(String)
+    case invalidHandle
+    case nullPointer
+    case invalidJSON(String)
+    case invalidUUID
+    case operationFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .initializationFailed(let msg): return "Initialization failed: \(msg)"
+        case .invalidHandle: return "Invalid commerce handle"
+        case .nullPointer: return "Null pointer returned from native code"
+        case .invalidJSON(let msg): return "Invalid JSON: \(msg)"
+        case .invalidUUID: return "Invalid UUID format"
+        case .operationFailed(let msg): return "Operation failed: \(msg)"
+        }
+    }
+}

@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net6.0;net7.0;net8.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Package metadata -->
+    <PackageId>StateSet.Embedded</PackageId>
+    <Version>0.1.7</Version>
+    <Authors>StateSet</Authors>
+    <Company>StateSet</Company>
+    <Description>StateSet Embedded Commerce - The SQLite of Commerce. A zero-dependency, local-first commerce engine for .NET applications.</Description>
+    <PackageTags>commerce;ecommerce;embedded;sqlite;orders;inventory;customers;payments</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stateset/stateset-icommerce</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stateset/stateset-icommerce</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Build settings -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- Include native libraries -->
+  <ItemGroup>
+    <None Include="runtimes\**\*" Pack="true" PackagePath="runtimes" />
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- Native library paths for different platforms -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == ''">
+    <None Include="..\..\target\release\stateset_dotnet.dll"
+          Pack="true"
+          PackagePath="runtimes\win-x64\native"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false"
+          Condition="Exists('..\..\target\release\stateset_dotnet.dll')" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' Or '$(RuntimeIdentifier)' == ''">
+    <None Include="..\..\target\release\libstateset_dotnet.so"
+          Pack="true"
+          PackagePath="runtimes\linux-x64\native"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false"
+          Condition="Exists('..\..\target\release\libstateset_dotnet.so')" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or '$(RuntimeIdentifier)' == 'osx-arm64' Or '$(RuntimeIdentifier)' == ''">
+    <None Include="..\..\target\release\libstateset_dotnet.dylib"
+          Pack="true"
+          PackagePath="runtimes\osx-x64\native;runtimes\osx-arm64\native"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false"
+          Condition="Exists('..\..\target\release\libstateset_dotnet.dylib')" />
+  </ItemGroup>
+
+</Project>

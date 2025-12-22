@@ -10,15 +10,24 @@ members = [
     "bindings/ruby",
     "bindings/php",
     "bindings/java",
+    "bindings/kotlin",
+    "bindings/swift",
+    "bindings/dotnet",
+    "bindings/go",
 ]
 # Python/WASM/Ruby/PHP bindings need special build tools (maturin/wasm-pack/rb_sys/ext-php-rs)
-# Java requires JDK for headers but can build with standard cargo
+# Java/Kotlin requires JDK for headers but can build with standard cargo
+# Swift/.NET/Go use C FFI and can build with standard cargo
 default-members = [
     "crates/stateset-core",
     "crates/stateset-db",
     "crates/stateset-embedded",
     "bindings/node",
     "bindings/java",
+    "bindings/kotlin",
+    "bindings/swift",
+    "bindings/dotnet",
+    "bindings/go",
 ]
 
 [workspace.package]

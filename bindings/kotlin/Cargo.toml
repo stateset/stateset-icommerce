@@ -1,0 +1,32 @@
+[package]
+name = "stateset-kotlin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Kotlin JNI bindings for StateSet Embedded Commerce"
+
+[lib]
+name = "stateset_kotlin"
+crate-type = ["cdylib"]
+
+[dependencies]
+stateset-embedded = { path = "../../crates/stateset-embedded" }
+stateset-core = { path = "../../crates/stateset-core" }
+
+# JNI bindings
+jni = "0.21"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+jni = "0.21"

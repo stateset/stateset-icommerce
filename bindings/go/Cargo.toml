@@ -1,0 +1,29 @@
+[package]
+name = "stateset-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Go bindings for StateSet Embedded Commerce"
+
+[lib]
+name = "stateset_go"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+stateset-embedded = { path = "../../crates/stateset-embedded" }
+stateset-core = { path = "../../crates/stateset-core" }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+
+# C FFI helpers
+libc = "0.2"
