@@ -1,0 +1,11 @@
+[book]
+title = "StateSet iCommerce v0.1.7"
+authors = ["StateSet"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "light"
+git-repository-url = "https://github.com/stateset/stateset-icommerce"
+edit-url-template = "https://github.com/stateset/stateset-icommerce/edit/main/docs/{path}"

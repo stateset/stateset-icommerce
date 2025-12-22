@@ -77,6 +77,30 @@ class StateSetCommerce(dbPath: String) : Closeable {
     /** Analytics API */
     val analytics: Analytics = Analytics(this)
 
+    /** Shipments API */
+    val shipments: Shipments = Shipments(this)
+
+    /** Warranties API */
+    val warranties: Warranties = Warranties(this)
+
+    /** Suppliers API */
+    val suppliers: Suppliers = Suppliers(this)
+
+    /** Purchase Orders API */
+    val purchaseOrders: PurchaseOrders = PurchaseOrders(this)
+
+    /** Invoices API */
+    val invoices: Invoices = Invoices(this)
+
+    /** Bill of Materials API */
+    val bom: BOM = BOM(this)
+
+    /** Work Orders API */
+    val workOrders: WorkOrders = WorkOrders(this)
+
+    /** Currency API */
+    val currency: CurrencyApi = CurrencyApi(this)
+
     internal fun getPtr(): Long = nativePtr
 
     override fun close() {
@@ -128,6 +152,85 @@ class StateSetCommerce(dbPath: String) : Closeable {
     internal external fun nativeAnalyticsSalesSummary(ptr: Long, period: String): String?
     internal external fun nativeAnalyticsTopProducts(ptr: Long, limit: Int): String?
     internal external fun nativeAnalyticsTopCustomers(ptr: Long, limit: Int): String?
+
+    // Order natives - additional
+    internal external fun nativeOrderShip(ptr: Long, id: String): String?
+    internal external fun nativeOrderCancel(ptr: Long, id: String): String?
+
+    // Return natives - additional
+    internal external fun nativeReturnGet(ptr: Long, id: String): String?
+    internal external fun nativeReturnApprove(ptr: Long, id: String): String?
+    internal external fun nativeReturnReject(ptr: Long, id: String, reason: String): String?
+    internal external fun nativeReturnComplete(ptr: Long, id: String): String?
+
+    // Payment natives - additional
+    internal external fun nativePaymentGet(ptr: Long, id: String): String?
+    internal external fun nativePaymentList(ptr: Long): String?
+    internal external fun nativePaymentComplete(ptr: Long, id: String): String?
+    internal external fun nativePaymentFail(ptr: Long, id: String, reason: String): String?
+    internal external fun nativePaymentRefund(ptr: Long, paymentId: String, amount: Double, reason: String): String?
+
+    // Shipment natives
+    internal external fun nativeShipmentCreate(ptr: Long, orderId: String, recipientName: String, shippingAddress: String, carrier: String): String?
+    internal external fun nativeShipmentGet(ptr: Long, id: String): String?
+    internal external fun nativeShipmentList(ptr: Long): String?
+    internal external fun nativeShipmentShip(ptr: Long, id: String, trackingNumber: String): String?
+    internal external fun nativeShipmentDeliver(ptr: Long, id: String): String?
+    internal external fun nativeShipmentCancel(ptr: Long, id: String): String?
+
+    // Warranty natives
+    internal external fun nativeWarrantyCreate(ptr: Long, customerId: String, productId: String, warrantyType: String, durationMonths: Int): String?
+    internal external fun nativeWarrantyGet(ptr: Long, id: String): String?
+    internal external fun nativeWarrantyList(ptr: Long): String?
+    internal external fun nativeWarrantyCreateClaim(ptr: Long, warrantyId: String, issueDescription: String): String?
+    internal external fun nativeWarrantyApproveClaim(ptr: Long, claimId: String): String?
+    internal external fun nativeWarrantyDenyClaim(ptr: Long, claimId: String, reason: String): String?
+    internal external fun nativeWarrantyCompleteClaim(ptr: Long, claimId: String, resolution: String): String?
+
+    // Supplier natives
+    internal external fun nativeSupplierCreate(ptr: Long, name: String, email: String, phone: String): String?
+    internal external fun nativeSupplierGet(ptr: Long, id: String): String?
+    internal external fun nativeSupplierList(ptr: Long): String?
+
+    // Purchase Order natives
+    internal external fun nativePurchaseOrderCreate(ptr: Long, supplierId: String, itemsJson: String): String?
+    internal external fun nativePurchaseOrderGet(ptr: Long, id: String): String?
+    internal external fun nativePurchaseOrderList(ptr: Long): String?
+    internal external fun nativePurchaseOrderSubmit(ptr: Long, id: String): String?
+    internal external fun nativePurchaseOrderApprove(ptr: Long, id: String, approvedBy: String): String?
+    internal external fun nativePurchaseOrderSend(ptr: Long, id: String): String?
+    internal external fun nativePurchaseOrderCancel(ptr: Long, id: String): String?
+
+    // Invoice natives
+    internal external fun nativeInvoiceCreate(ptr: Long, customerId: String, itemsJson: String, billingEmail: String): String?
+    internal external fun nativeInvoiceGet(ptr: Long, id: String): String?
+    internal external fun nativeInvoiceList(ptr: Long): String?
+    internal external fun nativeInvoiceSend(ptr: Long, id: String): String?
+    internal external fun nativeInvoiceVoid(ptr: Long, id: String): String?
+    internal external fun nativeInvoiceRecordPayment(ptr: Long, id: String, amount: Double, paymentMethod: String): String?
+    internal external fun nativeInvoiceGetOverdue(ptr: Long): String?
+
+    // BOM natives
+    internal external fun nativeBOMCreate(ptr: Long, productId: String, name: String, description: String?): String?
+    internal external fun nativeBOMGet(ptr: Long, id: String): String?
+    internal external fun nativeBOMList(ptr: Long): String?
+    internal external fun nativeBOMAddComponent(ptr: Long, bomId: String, name: String, componentSku: String, quantity: Double): String?
+    internal external fun nativeBOMGetComponents(ptr: Long, bomId: String): String?
+    internal external fun nativeBOMActivate(ptr: Long, id: String): String?
+
+    // Work Order natives
+    internal external fun nativeWorkOrderCreate(ptr: Long, productId: String, quantityToBuild: Double, bomId: String?): String?
+    internal external fun nativeWorkOrderGet(ptr: Long, id: String): String?
+    internal external fun nativeWorkOrderList(ptr: Long): String?
+    internal external fun nativeWorkOrderStart(ptr: Long, id: String): String?
+    internal external fun nativeWorkOrderComplete(ptr: Long, id: String, quantityCompleted: Double): String?
+    internal external fun nativeWorkOrderCancel(ptr: Long, id: String): String?
+
+    // Currency natives
+    internal external fun nativeCurrencySetRate(ptr: Long, fromCurrency: String, toCurrency: String, rate: Double): String?
+    internal external fun nativeCurrencyGetRate(ptr: Long, fromCurrency: String, toCurrency: String): String?
+    internal external fun nativeCurrencyConvert(ptr: Long, amount: Double, fromCurrency: String, toCurrency: String): String?
+    internal external fun nativeCurrencyGetSettings(ptr: Long): String?
 }
 
 /**

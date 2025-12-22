@@ -83,6 +83,46 @@ public sealed class StateSetCommerce : IDisposable
     public AnalyticsApi Analytics { get; }
 
     /// <summary>
+    /// Shipments API
+    /// </summary>
+    public ShipmentsApi Shipments { get; }
+
+    /// <summary>
+    /// Warranties API
+    /// </summary>
+    public WarrantiesApi Warranties { get; }
+
+    /// <summary>
+    /// Suppliers API
+    /// </summary>
+    public SuppliersApi Suppliers { get; }
+
+    /// <summary>
+    /// Purchase Orders API
+    /// </summary>
+    public PurchaseOrdersApi PurchaseOrders { get; }
+
+    /// <summary>
+    /// Invoices API
+    /// </summary>
+    public InvoicesApi Invoices { get; }
+
+    /// <summary>
+    /// Bill of Materials API
+    /// </summary>
+    public BomApi Bom { get; }
+
+    /// <summary>
+    /// Work Orders API
+    /// </summary>
+    public WorkOrdersApi WorkOrders { get; }
+
+    /// <summary>
+    /// Currency API
+    /// </summary>
+    public CurrencyApi Currency { get; }
+
+    /// <summary>
     /// Create a new Commerce instance
     /// </summary>
     /// <param name="dbPath">Path to SQLite database file, or ":memory:" for in-memory database</param>
@@ -103,6 +143,14 @@ public sealed class StateSetCommerce : IDisposable
         Returns = new ReturnsApi(this);
         Payments = new PaymentsApi(this);
         Analytics = new AnalyticsApi(this);
+        Shipments = new ShipmentsApi(this);
+        Warranties = new WarrantiesApi(this);
+        Suppliers = new SuppliersApi(this);
+        PurchaseOrders = new PurchaseOrdersApi(this);
+        Invoices = new InvoicesApi(this);
+        Bom = new BomApi(this);
+        WorkOrders = new WorkOrdersApi(this);
+        Currency = new CurrencyApi(this);
     }
 
     internal IntPtr Handle

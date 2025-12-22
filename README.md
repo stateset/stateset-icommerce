@@ -48,6 +48,15 @@ cargo add stateset-embedded             # Rust
 
 ---
 
+## Documentation
+
+- mdBook docs live in `docs/` (see `docs/README.md`).
+- API reference pointers per binding: `docs/src/api/`.
+- End-to-end examples and workflows: `examples/`.
+- Release history: `CHANGELOG.md`.
+
+---
+
 ## The Shift: From eCommerce to iCommerce
 
 Commerce is undergoing a fundamental shift. Where eCommerce was built for humans clicking buttons in dashboards, **iCommerce** (Intelligent Commerce) is built for AI agents making decisions.

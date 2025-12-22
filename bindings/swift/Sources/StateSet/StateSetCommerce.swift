@@ -54,6 +54,30 @@ public final class StateSetCommerce {
     /// Analytics API
     public private(set) lazy var analytics = AnalyticsAPI(commerce: self)
 
+    /// Shipments API
+    public private(set) lazy var shipments = ShipmentsAPI(commerce: self)
+
+    /// Warranties API
+    public private(set) lazy var warranties = WarrantiesAPI(commerce: self)
+
+    /// Suppliers API
+    public private(set) lazy var suppliers = SuppliersAPI(commerce: self)
+
+    /// Purchase Orders API
+    public private(set) lazy var purchaseOrders = PurchaseOrdersAPI(commerce: self)
+
+    /// Invoices API
+    public private(set) lazy var invoices = InvoicesAPI(commerce: self)
+
+    /// Bill of Materials API
+    public private(set) lazy var bom = BOMAPI(commerce: self)
+
+    /// Work Orders API
+    public private(set) lazy var workOrders = WorkOrdersAPI(commerce: self)
+
+    /// Currency API
+    public private(set) lazy var currency = CurrencyAPI(commerce: self)
+
     /// Create a new Commerce instance
     /// - Parameter dbPath: Path to SQLite database file, or ":memory:" for in-memory database
     /// - Throws: StateSetError if database initialization fails

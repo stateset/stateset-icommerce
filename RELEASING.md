@@ -1,6 +1,15 @@
 # Releasing StateSet Bindings
 
-This guide covers publishing the Ruby and PHP bindings to their respective package registries.
+This guide covers publishing the Ruby and PHP bindings to their respective package registries. It also captures the repo-wide checklist for docs and changelog updates.
+
+## Release Checklist (All)
+
+1. Update version numbers across the workspace and bindings.
+2. Update `README.md` highlights and `CHANGELOG.md`.
+3. Refresh mdBook docs in `docs/src/`.
+4. Create a versioned docs snapshot: `./docs/scripts/snapshot-version.sh vX.Y.Z`.
+5. (Optional) Generate API docs into `docs/api/` with `./docs/scripts/generate-api.sh`.
+6. Tag the release and push tags.
 
 ## Prerequisites
 
@@ -156,8 +165,10 @@ We use semantic versioning (SemVer):
 
 Keep versions in sync across:
 - `Cargo.toml` (workspace version)
+- `CHANGELOG.md` (entry for the release)
 - Ruby: `stateset_embedded.gemspec`, `lib/stateset_embedded.rb`
 - PHP: `composer.json`, `scripts/install-extension.php`
+ - Docs: `docs/versions/vX.Y.Z/` snapshot
 
 ## Troubleshooting
 

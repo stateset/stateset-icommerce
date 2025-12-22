@@ -47,6 +47,11 @@ Thumbs.db
 # Build artifacts
 *.dSYM/
 
+# Docs build outputs
+docs/book/
+docs/versions/*/book/
+docs/api/
+
 # Java
 bindings/java/target/
 bindings/java/java/build/

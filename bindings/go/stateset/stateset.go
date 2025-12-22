@@ -90,15 +90,23 @@ var ErrOperationFailed = errors.New("operation failed")
 
 // Commerce is the main entry point for the StateSet commerce engine
 type Commerce struct {
-	handle    C.StateSetHandle
-	customers *CustomersAPI
-	products  *ProductsAPI
-	orders    *OrdersAPI
-	inventory *InventoryAPI
-	carts     *CartsAPI
-	returns   *ReturnsAPI
-	payments  *PaymentsAPI
-	analytics *AnalyticsAPI
+	handle         C.StateSetHandle
+	customers      *CustomersAPI
+	products       *ProductsAPI
+	orders         *OrdersAPI
+	inventory      *InventoryAPI
+	carts          *CartsAPI
+	returns        *ReturnsAPI
+	payments       *PaymentsAPI
+	analytics      *AnalyticsAPI
+	shipments      *ShipmentsAPI
+	warranties     *WarrantiesAPI
+	suppliers      *SuppliersAPI
+	purchaseOrders *PurchaseOrdersAPI
+	invoices       *InvoicesAPI
+	bom            *BOMAPI
+	workOrders     *WorkOrdersAPI
+	currency       *CurrencyAPI
 }
 
 // New creates a new Commerce instance
@@ -121,6 +129,14 @@ func New(dbPath string) (*Commerce, error) {
 	c.returns = &ReturnsAPI{commerce: c}
 	c.payments = &PaymentsAPI{commerce: c}
 	c.analytics = &AnalyticsAPI{commerce: c}
+	c.shipments = &ShipmentsAPI{commerce: c}
+	c.warranties = &WarrantiesAPI{commerce: c}
+	c.suppliers = &SuppliersAPI{commerce: c}
+	c.purchaseOrders = &PurchaseOrdersAPI{commerce: c}
+	c.invoices = &InvoicesAPI{commerce: c}
+	c.bom = &BOMAPI{commerce: c}
+	c.workOrders = &WorkOrdersAPI{commerce: c}
+	c.currency = &CurrencyAPI{commerce: c}
 
 	return c, nil
 }
@@ -171,6 +187,46 @@ func (c *Commerce) Payments() *PaymentsAPI {
 // Analytics returns the Analytics API
 func (c *Commerce) Analytics() *AnalyticsAPI {
 	return c.analytics
+}
+
+// Shipments returns the Shipments API
+func (c *Commerce) Shipments() *ShipmentsAPI {
+	return c.shipments
+}
+
+// Warranties returns the Warranties API
+func (c *Commerce) Warranties() *WarrantiesAPI {
+	return c.warranties
+}
+
+// Suppliers returns the Suppliers API
+func (c *Commerce) Suppliers() *SuppliersAPI {
+	return c.suppliers
+}
+
+// PurchaseOrders returns the Purchase Orders API
+func (c *Commerce) PurchaseOrders() *PurchaseOrdersAPI {
+	return c.purchaseOrders
+}
+
+// Invoices returns the Invoices API
+func (c *Commerce) Invoices() *InvoicesAPI {
+	return c.invoices
+}
+
+// BOM returns the Bill of Materials API
+func (c *Commerce) BOM() *BOMAPI {
+	return c.bom
+}
+
+// WorkOrders returns the Work Orders API
+func (c *Commerce) WorkOrders() *WorkOrdersAPI {
+	return c.workOrders
+}
+
+// Currency returns the Currency API
+func (c *Commerce) Currency() *CurrencyAPI {
+	return c.currency
 }
 
 // Helper to convert C string to Go string and free the C string
