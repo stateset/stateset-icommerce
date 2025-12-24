@@ -72,9 +72,18 @@ CONFIGURATION:
 BATCH/PIPELINE MODE:
   --stdin              Read requests from stdin (one per line)
   --batch <file>       Read requests from file (one per line)
+  --parallel <n>       Process requests in parallel (default: sequential)
+                       Use with caution - parallel requests are independent
 
-  Pipeline example:
+  Pipeline examples:
+    # Sequential processing (default, maintains session context)
     echo "list customers" | stateset --stdin --json | jq '.response'
+
+    # Parallel processing (faster, no shared context)
+    stateset --batch requests.txt --parallel 4 --json
+
+    # Parallel with write operations
+    stateset --apply --batch orders.txt --parallel 3
 
 AGENTS:
   customer-service   Full-service agent (default fallback)
@@ -186,11 +195,188 @@ async function readStdin() {
 }
 
 /**
+ * Process a single request in batch mode
+ */
+async function processBatchRequest(request, index, total, config, values, output) {
+  const isQuiet = values.quiet || values.json;
+  const startTime = Date.now();
+
+  try {
+    const result = await runAgentLoop({
+      request,
+      dbPath: config.db,
+      model: config.model,
+      allowApply: config.apply,
+      agent: values.agent,
+      verbose: false,
+      onConfirmRequired: values.yes ? null : async () => true
+    });
+
+    const duration = Date.now() - startTime;
+
+    return {
+      index,
+      request,
+      success: true,
+      response: result.response,
+      agent: result.agent,
+      sessionId: result.sessionId,
+      duration
+    };
+  } catch (error) {
+    return {
+      index,
+      request,
+      success: false,
+      error: error.message,
+      duration: Date.now() - startTime
+    };
+  }
+}
+
+/**
+ * Process requests sequentially (maintains session context)
+ */
+async function processSequential(requests, config, values, output) {
+  const isQuiet = values.quiet || values.json;
+  const results = [];
+  let sessionId = values.resume;
+
+  for (let i = 0; i < requests.length; i++) {
+    const request = requests[i].trim();
+    if (!request) continue;
+
+    if (!isQuiet) {
+      console.log(`${output.dim(`[${i + 1}/${requests.length}]`)} ${request}`);
+    }
+
+    const startTime = Date.now();
+
+    try {
+      const result = await runAgentLoop({
+        request,
+        dbPath: config.db,
+        model: config.model,
+        allowApply: config.apply,
+        resumeSessionId: sessionId,
+        agent: values.agent,
+        verbose: false,
+        onConfirmRequired: values.yes ? null : async () => true
+      });
+
+      // Chain session IDs for sequential operations
+      sessionId = result.sessionId;
+
+      const batchResult = {
+        index: i,
+        request,
+        success: true,
+        response: result.response,
+        agent: result.agent,
+        sessionId: result.sessionId,
+        duration: Date.now() - startTime
+      };
+
+      results.push(batchResult);
+
+      if (!isQuiet && !values.json) {
+        console.log(`   ${output.green('✓')} ${result.response.slice(0, 100)}${result.response.length > 100 ? '...' : ''}`);
+        console.log();
+      }
+    } catch (error) {
+      results.push({
+        index: i,
+        request,
+        success: false,
+        error: error.message,
+        duration: Date.now() - startTime
+      });
+
+      if (!isQuiet && !values.json) {
+        console.log(`   ${output.red('✗')} ${error.message}`);
+        console.log();
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Process requests in parallel with controlled concurrency
+ */
+async function processParallel(requests, concurrency, config, values, output) {
+  const isQuiet = values.quiet || values.json;
+  const results = [];
+  let completed = 0;
+  let inProgress = 0;
+
+  // Create a queue of work
+  const queue = requests.map((request, index) => ({ request: request.trim(), index }))
+    .filter(item => item.request);
+
+  const total = queue.length;
+
+  if (!isQuiet) {
+    console.log(`${output.dim('Processing...')}\n`);
+  }
+
+  // Process queue with controlled concurrency
+  const processNext = async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+
+      inProgress++;
+
+      const result = await processBatchRequest(
+        item.request,
+        item.index,
+        total,
+        config,
+        values,
+        output
+      );
+
+      results.push(result);
+      completed++;
+      inProgress--;
+
+      // Progress update for non-quiet mode
+      if (!isQuiet && !values.json) {
+        const pct = Math.round((completed / total) * 100);
+        const status = result.success ? output.green('✓') : output.red('✗');
+        process.stdout.write(`\r${output.dim(`Progress: ${completed}/${total} (${pct}%)`)}  `);
+      }
+    }
+  };
+
+  // Start concurrent workers
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, queue.length); i++) {
+    workers.push(processNext());
+  }
+
+  // Wait for all workers to complete
+  await Promise.all(workers);
+
+  if (!isQuiet && !values.json) {
+    // Clear progress line
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+    console.log(`${output.green('✓')} Completed ${completed} requests\n`);
+  }
+
+  return results;
+}
+
+/**
  * Handle batch mode - process multiple requests from stdin or file
+ * Supports both sequential (default) and parallel processing
  */
 async function handleBatchMode(values, config, output) {
   const fs = await import('node:fs/promises');
   const isQuiet = values.quiet || values.json;
+  const parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
 
   // Read requests
   let requests = [];
@@ -206,83 +392,78 @@ async function handleBatchMode(values, config, output) {
     process.exit(1);
   }
 
+  const startTime = Date.now();
+
   if (!isQuiet) {
     console.log(`\n${ICONS.order} StateSet iCommerce CLI - Batch Mode`);
-    console.log(`   ${output.dim('Requests:')} ${requests.length}`);
-    console.log(`   ${output.dim('Mode:')}     ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(`   ${output.dim('Requests:')}    ${requests.length}`);
+    console.log(`   ${output.dim('Mode:')}        ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(`   ${output.dim('Processing:')}  ${parallelism > 0 ? output.cyan(`Parallel (${parallelism} concurrent)`) : 'Sequential'}`);
     console.log();
   }
 
-  const results = [];
-  let sessionId = values.resume;
+  let results = [];
 
-  for (let i = 0; i < requests.length; i++) {
-    const request = requests[i].trim();
-    if (!request) continue;
+  if (parallelism > 0) {
+    // Parallel processing mode
+    results = await processParallel(requests, parallelism, config, values, output);
+  } else {
+    // Sequential processing mode (maintains session context)
+    results = await processSequential(requests, config, values, output);
+  }
 
-    if (!isQuiet) {
-      console.log(`${output.dim(`[${i + 1}/${requests.length}]`)} ${request}`);
-    }
+  // Sort results by original index for consistent output
+  results.sort((a, b) => a.index - b.index);
 
-    try {
-      const result = await runAgentLoop({
-        request,
-        dbPath: config.db,
-        model: config.model,
-        allowApply: config.apply,
-        resumeSessionId: sessionId,
-        agent: values.agent,
-        verbose: false,
-        onConfirmRequired: values.yes ? null : async () => true // Auto-confirm in batch mode
-      });
-
-      // Chain session IDs for sequential operations
-      sessionId = result.sessionId;
-
-      results.push({
-        request,
-        success: true,
+  // Output results
+  for (const result of results) {
+    if (values.json) {
+      console.log(JSON.stringify({
+        request: result.request,
+        success: result.success,
         response: result.response,
+        error: result.error,
         agent: result.agent,
-        sessionId: result.sessionId
-      });
-
-      if (values.json) {
-        console.log(JSON.stringify({
-          request,
-          success: true,
-          response: result.response,
-          agent: result.agent,
-          sessionId: result.sessionId
-        }));
-      } else if (!isQuiet) {
-        console.log(`   ${output.green('✓')} ${result.response.slice(0, 100)}${result.response.length > 100 ? '...' : ''}`);
-        console.log();
-      }
-    } catch (error) {
-      results.push({
-        request,
-        success: false,
-        error: error.message
-      });
-
-      if (values.json) {
-        console.log(JSON.stringify({ request, success: false, error: error.message }));
-      } else if (!isQuiet) {
-        console.log(`   ${output.red('✗')} ${error.message}`);
-        console.log();
-      }
+        sessionId: result.sessionId,
+        duration: result.duration
+      }));
+    } else if (!isQuiet && parallelism > 0) {
+      // For parallel mode, output results after completion
+      const status = result.success ? output.green('✓') : output.red('✗');
+      const content = result.success
+        ? result.response.slice(0, 100) + (result.response.length > 100 ? '...' : '')
+        : result.error;
+      console.log(`${output.dim(`[${result.index + 1}/${requests.length}]`)} ${result.request}`);
+      console.log(`   ${status} ${content}`);
+      console.log();
     }
   }
+
+  const totalDuration = Date.now() - startTime;
 
   // Summary
   if (!isQuiet && !values.json) {
     const succeeded = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
-    console.log(output.dim('─'.repeat(40)));
-    console.log(`${output.bold('Summary:')} ${output.green(succeeded + ' succeeded')}, ${failed > 0 ? output.red(failed + ' failed') : output.dim('0 failed')}`);
-    if (sessionId) {
-      console.log(`${output.dim('Last session:')} ${sessionId}`);
+    const avgDuration = results.length > 0
+      ? Math.round(results.reduce((sum, r) => sum + (r.duration || 0), 0) / results.length)
+      : 0;
+
+    console.log(output.dim('─'.repeat(50)));
+    console.log(`${output.bold('Summary:')}`);
+    console.log(`   ${output.dim('Results:')}    ${output.green(succeeded + ' succeeded')}, ${failed > 0 ? output.red(failed + ' failed') : output.dim('0 failed')}`);
+    console.log(`   ${output.dim('Total time:')} ${(totalDuration / 1000).toFixed(2)}s`);
+    console.log(`   ${output.dim('Avg/request:')} ${(avgDuration / 1000).toFixed(2)}s`);
+
+    if (parallelism > 0) {
+      const speedup = (results.reduce((sum, r) => sum + (r.duration || 0), 0) / totalDuration).toFixed(1);
+      console.log(`   ${output.dim('Speedup:')}    ${speedup}x (${parallelism} concurrent)`);
+    }
+
+    // Show last session for sequential mode
+    const lastSession = results.filter(r => r.sessionId).pop()?.sessionId;
+    if (lastSession && parallelism === 0) {
+      console.log(`   ${output.dim('Session:')}    ${lastSession}`);
     }
   }
 
@@ -309,6 +490,7 @@ async function main() {
       quiet: { type: 'boolean', short: 'q', default: false },
       stdin: { type: 'boolean', default: false },
       batch: { type: 'string' },
+      parallel: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false }
     },

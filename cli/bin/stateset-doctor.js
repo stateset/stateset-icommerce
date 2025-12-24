@@ -7,12 +7,14 @@
  *   stateset-doctor              Check system health
  *   stateset-doctor --db ./x.db  Check specific database
  *   stateset-doctor --verbose    Show detailed diagnostics
+ *   stateset-doctor --checks api,db  Run specific checks
  */
 
 import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
-import { CLI_VERSION, DEFAULT_MODEL } from '../src/config.js';
+import { CLI_VERSION, DEFAULT_MODEL, FEATURES } from '../src/config.js';
 import { Commerce } from '@stateset/embedded';
+import { checkApiAvailability } from '../src/offline.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -27,19 +29,26 @@ OPTIONS:
   --db <path>        Path to SQLite database to check (default: ./store.db)
   --verbose, -V      Show detailed diagnostics
   --json             Output as JSON
+  --checks <list>    Run specific checks (comma-separated)
+  --fix              Attempt to fix issues automatically
   --help, -h         Show this help message
 
 CHECKS:
-  ✓ API Key         Validates ANTHROPIC_API_KEY is set
-  ✓ Database        Tests database connectivity and schema
-  ✓ Node.js         Checks Node.js version compatibility
-  ✓ Permissions     Verifies file system permissions
-  ✓ Dependencies    Checks required packages
+  ✓ api             Validates ANTHROPIC_API_KEY and API connectivity
+  ✓ db              Tests database connectivity and schema
+  ✓ node            Checks Node.js version compatibility
+  ✓ permissions     Verifies file system permissions
+  ✓ dependencies    Checks required packages
+  ✓ sync            Checks sync configuration (if configured)
+  ✓ plugins         Validates installed plugins
+  ✓ config          Verifies CLI configuration
 
 EXAMPLES:
   stateset-doctor
   stateset-doctor --db ./production.db
   stateset-doctor --verbose --json
+  stateset-doctor --checks api,db
+  stateset-doctor --fix
 `;
 
 async function checkApiKey() {
@@ -58,10 +67,150 @@ async function checkApiKey() {
       hint: 'Anthropic API keys typically start with sk-ant-'
     };
   }
+
+  // Check API connectivity
+  try {
+    const connectivity = await checkApiAvailability(apiKey, { timeout: 5000 });
+    if (!connectivity.available) {
+      return {
+        status: 'warning',
+        message: `API key set but connectivity issue: ${connectivity.reason}`,
+        hint: connectivity.message,
+        stats: { keyConfigured: true, apiReachable: false }
+      };
+    }
+  } catch (error) {
+    // Ignore connectivity check errors, key is still valid
+  }
+
   return {
     status: 'ok',
-    message: `API key configured (${apiKey.slice(0, 10)}...${apiKey.slice(-4)})`
+    message: `API key configured (${apiKey.slice(0, 10)}...${apiKey.slice(-4)})`,
+    stats: { keyConfigured: true, apiReachable: true }
   };
+}
+
+async function checkSync() {
+  try {
+    const { isSyncConfigured, loadSyncConfig } = await import('../src/sync/config.js');
+
+    if (!isSyncConfigured()) {
+      return {
+        status: 'info',
+        message: 'Sync not configured (optional)',
+        hint: 'Run stateset-sync init to enable event synchronization'
+      };
+    }
+
+    const config = loadSyncConfig();
+    return {
+      status: 'ok',
+      message: 'Sync configured',
+      stats: {
+        endpoint: config.sequencerEndpoint,
+        configured: true
+      }
+    };
+  } catch (error) {
+    return {
+      status: 'warning',
+      message: `Sync check failed: ${error.message}`,
+      hint: 'Sync may not be available'
+    };
+  }
+}
+
+async function checkPlugins() {
+  try {
+    const { createPluginLoader } = await import('../src/plugins/loader.js');
+    const loader = createPluginLoader();
+    const plugins = await loader.loadAll();
+
+    if (plugins.length === 0) {
+      return {
+        status: 'info',
+        message: 'No plugins installed (optional)',
+        hint: 'Add plugins to ~/.stateset/plugins/ to extend functionality'
+      };
+    }
+
+    return {
+      status: 'ok',
+      message: `${plugins.length} plugin(s) loaded`,
+      stats: {
+        count: plugins.length,
+        plugins: plugins.map(p => p.name)
+      }
+    };
+  } catch (error) {
+    return {
+      status: 'warning',
+      message: `Plugin check failed: ${error.message}`
+    };
+  }
+}
+
+async function checkConfig() {
+  const configDir = path.join(os.homedir(), '.stateset');
+  const checks = [];
+
+  // Check config directory
+  if (fs.existsSync(configDir)) {
+    checks.push({ name: 'configDir', ok: true });
+  } else {
+    checks.push({ name: 'configDir', ok: false, hint: 'mkdir -p ~/.stateset' });
+  }
+
+  // Check profiles
+  const profilesDir = path.join(configDir, 'profiles');
+  if (fs.existsSync(profilesDir)) {
+    const profiles = fs.readdirSync(profilesDir).filter(f => f.endsWith('.json'));
+    checks.push({ name: 'profiles', ok: true, count: profiles.length });
+  } else {
+    checks.push({ name: 'profiles', ok: true, count: 0 });
+  }
+
+  const allOk = checks.every(c => c.ok);
+  return {
+    status: allOk ? 'ok' : 'warning',
+    message: allOk ? 'Configuration directory OK' : 'Configuration needs setup',
+    stats: {
+      configDir: configDir,
+      checks
+    }
+  };
+}
+
+async function checkDiskSpace(dbPath) {
+  try {
+    const stats = fs.statSync(dbPath);
+    const dbSizeMB = (stats.size / 1024 / 1024).toFixed(2);
+
+    // Check available space in the directory
+    const dir = path.dirname(path.resolve(dbPath));
+
+    return {
+      status: 'ok',
+      message: `Database size: ${dbSizeMB} MB`,
+      stats: {
+        sizeBytes: stats.size,
+        sizeMB: parseFloat(dbSizeMB),
+        path: dbPath
+      }
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return {
+        status: 'info',
+        message: 'Database file does not exist yet',
+        hint: 'Will be created on first use'
+      };
+    }
+    return {
+      status: 'warning',
+      message: `Could not check database: ${error.message}`
+    };
+  }
 }
 
 async function checkDatabase(dbPath) {
@@ -208,6 +357,8 @@ async function main() {
       db: { type: 'string', default: './store.db' },
       verbose: { type: 'boolean', short: 'V', default: false },
       json: { type: 'boolean', default: false },
+      checks: { type: 'string', default: '' },
+      fix: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },
     allowPositionals: true
@@ -220,15 +371,51 @@ async function main() {
 
   const output = new RichOutput({ color: !values.json });
 
-  // Run all checks
-  const checks = {
-    'API Key': await checkApiKey(),
-    'Node.js': await checkNodeVersion(),
-    'Database': await checkDatabase(values.db),
-    'Permissions': await checkPermissions(values.db),
-    'Dependencies': await checkDependencies(),
-    'System': await checkSystem()
+  // Available checks
+  const allChecks = {
+    'API Key': checkApiKey,
+    'Node.js': checkNodeVersion,
+    'Database': () => checkDatabase(values.db),
+    'Permissions': () => checkPermissions(values.db),
+    'Dependencies': checkDependencies,
+    'System': checkSystem,
+    'Sync': checkSync,
+    'Plugins': checkPlugins,
+    'Config': checkConfig,
+    'Disk Space': () => checkDiskSpace(values.db)
   };
+
+  // Filter checks if specified
+  let checksToRun = Object.keys(allChecks);
+  if (values.checks) {
+    const requested = values.checks.split(',').map(c => c.trim().toLowerCase());
+    const checkMap = {
+      'api': 'API Key',
+      'node': 'Node.js',
+      'db': 'Database',
+      'database': 'Database',
+      'permissions': 'Permissions',
+      'deps': 'Dependencies',
+      'dependencies': 'Dependencies',
+      'system': 'System',
+      'sync': 'Sync',
+      'plugins': 'Plugins',
+      'config': 'Config',
+      'disk': 'Disk Space'
+    };
+    checksToRun = requested
+      .map(r => checkMap[r])
+      .filter(Boolean);
+  }
+
+  // Run selected checks
+  const checks = {};
+  for (const name of checksToRun) {
+    const checkFn = allChecks[name];
+    if (checkFn) {
+      checks[name] = await checkFn();
+    }
+  }
 
   if (values.json) {
     console.log(JSON.stringify({

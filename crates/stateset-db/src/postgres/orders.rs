@@ -109,7 +109,7 @@ impl PgOrderRepository {
             "SELECT version FROM orders WHERE id = $1 FOR UPDATE",
         )
         .bind(order_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::OrderNotFound(order_id))?;
@@ -118,7 +118,7 @@ impl PgOrderRepository {
             "SELECT COALESCE(SUM(total), 0) FROM order_items WHERE order_id = $1",
         )
         .bind(order_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await
         .map_err(map_db_error)?;
 
@@ -129,7 +129,7 @@ impl PgOrderRepository {
         .bind(Utc::now())
         .bind(order_id)
         .bind(current_version)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(map_db_error)?;
 
@@ -432,7 +432,7 @@ impl PgOrderRepository {
         .bind(tax)
         .bind(total)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(map_db_error)?;
 
@@ -460,7 +460,7 @@ impl PgOrderRepository {
         sqlx::query("DELETE FROM order_items WHERE id = $1 AND order_id = $2")
             .bind(item_id)
             .bind(order_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await
             .map_err(map_db_error)?;
 

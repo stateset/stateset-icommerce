@@ -15,6 +15,55 @@
 import { Commerce } from '@stateset/embedded';
 import { parseArgs } from 'node:util';
 
+// ============================================================================
+// Resource & Action Aliases
+// ============================================================================
+
+const RESOURCE_ALIASES = {
+  // Single letter shortcuts
+  'c': 'customers',
+  'o': 'orders',
+  'p': 'products',
+  'i': 'inventory',
+  'r': 'returns',
+  // Common abbreviations
+  'cust': 'customers',
+  'ord': 'orders',
+  'prod': 'products',
+  'inv': 'inventory',
+  'ret': 'returns',
+  'stock': 'inventory'  // natural alias
+};
+
+const ACTION_ALIASES = {
+  'l': 'list',
+  'ls': 'list',
+  'g': 'get',
+  's': 'ship',
+  'x': 'cancel',
+  'a': 'adjust',
+  'n': 'count',
+  '#': 'count'
+};
+
+/**
+ * Expand resource alias to full name
+ */
+function expandResource(input) {
+  if (!input) return input;
+  const lower = input.toLowerCase();
+  return RESOURCE_ALIASES[lower] || lower;
+}
+
+/**
+ * Expand action alias to full name
+ */
+function expandAction(input) {
+  if (!input) return input;
+  const lower = input.toLowerCase();
+  return ACTION_ALIASES[lower] || lower;
+}
+
 const HELP = `
 StateSet iCommerce CLI - Direct Mode
 
@@ -48,6 +97,7 @@ RESOURCES & ACTIONS:
     count                         Count products
 
   inventory
+    list                          List all inventory with stock levels
     stock <sku>                   Get stock level for SKU
     adjust <sku> <qty> <reason>   Adjust stock (positive or negative)
     create <sku> <name> [qty]     Create inventory item
@@ -59,12 +109,24 @@ RESOURCES & ACTIONS:
     reject <id> <reason>          Reject a return
     count                         Count returns
 
+SHORTCUTS:
+  Resources: c=customers, o=orders, p=products, i/inv=inventory, r=returns
+  Actions:   l/ls=list, g=get, s=ship, x=cancel, a=adjust, n/#=count
+
 EXAMPLES:
   stateset-direct customers list
-  stateset-direct orders get abc-123-def
-  stateset-direct inventory stock WIDGET-001
-  stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
-  stateset-direct --json products list
+  stateset-direct c l                         # Same as: customers list
+  stateset-direct o g 8aeb                    # orders get (short ID)
+  stateset-direct o x 8aeb                    # orders cancel
+  stateset-direct inv stock WIDGET-001
+  stateset-direct i stock WIDGET              # Fuzzy SKU match
+  stateset-direct inv a WIDGET -5 "Sold"      # inventory adjust
+  stateset-direct o #                         # orders count
+  stateset-direct --json p l                  # products list as JSON
+
+SMART MATCHING:
+  - IDs: Use any unique prefix (like git). "8aeb" matches "8aeb3f12-..."
+  - SKUs: Partial match supported. "WIDGET" matches "WIDGET-001"
 `;
 
 async function main() {
@@ -94,7 +156,11 @@ async function main() {
     process.exit(0);
   }
 
-  const [resource, action, ...actionArgs] = filteredArgs;
+  const [rawResource, rawAction, ...actionArgs] = filteredArgs;
+
+  // Expand aliases
+  const resource = expandResource(rawResource);
+  const action = expandAction(rawAction);
 
   // Initialize commerce
   const commerce = new Commerce(dbPath);
@@ -105,6 +171,105 @@ async function main() {
     } else {
       console.log(data);
     }
+  };
+
+  // Resolve short ID prefix to full UUID
+  // Similar to git short hashes - must be unambiguous
+  const resolveId = async (prefix, resource) => {
+    // If it looks like a full UUID (contains dashes and is long enough), return as-is
+    if (prefix.includes('-') && prefix.length > 20) {
+      return prefix;
+    }
+
+    // Query the resource to find matching IDs
+    let items;
+    switch (resource) {
+      case 'orders':
+        items = await commerce.orders.list();
+        break;
+      case 'customers':
+        items = await commerce.customers.list();
+        break;
+      case 'products':
+        items = await commerce.products.list();
+        break;
+      case 'returns':
+        items = await commerce.returns.list();
+        break;
+      default:
+        throw new Error(`Unknown resource for ID resolution: ${resource}`);
+    }
+
+    // Find items whose ID starts with the prefix (case-insensitive)
+    const lowerPrefix = prefix.toLowerCase();
+    const matches = items.filter(item =>
+      item.id.toLowerCase().startsWith(lowerPrefix)
+    );
+
+    if (matches.length === 0) {
+      throw new Error(`No ${resource.slice(0, -1)} found matching '${prefix}'`);
+    }
+    if (matches.length > 1) {
+      const matchList = matches.slice(0, 5).map(m => m.id.slice(0, 12) + '...').join(', ');
+      throw new Error(`Ambiguous ID '${prefix}' - matches ${matches.length} ${resource}: ${matchList}`);
+    }
+
+    return matches[0].id;
+  };
+
+  // Resolve partial SKU to full SKU via fuzzy matching
+  const resolveSku = async (partial) => {
+    // Try exact match first
+    const exactStock = await commerce.inventory.getStock(partial);
+    if (exactStock) return partial;
+
+    // Get all inventory items and find matches
+    // Note: This requires listing inventory - we'll search through products variants
+    const products = await commerce.products.list();
+    const allSkus = [];
+
+    for (const product of products) {
+      if (product.variants) {
+        for (const variant of product.variants) {
+          if (variant.sku) {
+            allSkus.push(variant.sku);
+          }
+        }
+      }
+    }
+
+    // Also check inventory items directly if available
+    // Try to get stock for common patterns
+    const upperPartial = partial.toUpperCase();
+    const lowerPartial = partial.toLowerCase();
+
+    // Find SKUs that contain the partial (case-insensitive)
+    const matches = allSkus.filter(sku => {
+      const upperSku = sku.toUpperCase();
+      return upperSku === upperPartial ||
+             upperSku.startsWith(upperPartial) ||
+             upperSku.includes(upperPartial);
+    });
+
+    if (matches.length === 0) {
+      // No matches in products, return original and let it fail with proper error
+      return partial;
+    }
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    // Multiple matches - prefer exact start match
+    const startMatches = matches.filter(sku =>
+      sku.toUpperCase().startsWith(upperPartial)
+    );
+    if (startMatches.length === 1) {
+      return startMatches[0];
+    }
+
+    // Still ambiguous
+    const matchList = matches.slice(0, 5).join(', ');
+    throw new Error(`Ambiguous SKU '${partial}' - matches: ${matchList}`);
   };
 
   const formatTable = (items, columns) => {
@@ -151,11 +316,11 @@ async function main() {
             break;
           }
           case 'get': {
-            const id = actionArgs[0];
-            if (!id) throw new Error('Usage: customers get <id|email>');
-            const customer = id.includes('@')
-              ? await commerce.customers.getByEmail(id)
-              : await commerce.customers.get(id);
+            const idArg = actionArgs[0];
+            if (!idArg) throw new Error('Usage: customers get <id|email>');
+            const customer = idArg.includes('@')
+              ? await commerce.customers.getByEmail(idArg)
+              : await commerce.customers.get(await resolveId(idArg, 'customers'));
             if (!customer) throw new Error('Customer not found');
             output(jsonOutput ? customer : `
 Customer: ${customer.firstName} ${customer.lastName}
@@ -204,8 +369,9 @@ Created: ${customer.createdAt}
             break;
           }
           case 'get': {
-            const id = actionArgs[0];
-            if (!id) throw new Error('Usage: orders get <id>');
+            const idArg = actionArgs[0];
+            if (!idArg) throw new Error('Usage: orders get <id>');
+            const id = await resolveId(idArg, 'orders');
             const order = await commerce.orders.get(id);
             if (!order) throw new Error('Order not found');
             output(jsonOutput ? order : `
@@ -223,15 +389,17 @@ Created: ${order.createdAt}
             break;
           }
           case 'ship': {
-            const [orderId, trackingNumber] = actionArgs;
-            if (!orderId) throw new Error('Usage: orders ship <id> [tracking]');
+            const [orderIdArg, trackingNumber] = actionArgs;
+            if (!orderIdArg) throw new Error('Usage: orders ship <id> [tracking]');
+            const orderId = await resolveId(orderIdArg, 'orders');
             const order = await commerce.orders.ship(orderId, trackingNumber);
             output(jsonOutput ? order : `Order ${order.orderNumber} shipped${trackingNumber ? ` (${trackingNumber})` : ''}`);
             break;
           }
           case 'cancel': {
-            const orderId = actionArgs[0];
-            if (!orderId) throw new Error('Usage: orders cancel <id>');
+            const orderIdArg = actionArgs[0];
+            if (!orderIdArg) throw new Error('Usage: orders cancel <id>');
+            const orderId = await resolveId(orderIdArg, 'orders');
             const order = await commerce.orders.cancel(orderId);
             output(jsonOutput ? order : `Order ${order.orderNumber} cancelled`);
             break;
@@ -262,8 +430,9 @@ Created: ${order.createdAt}
             break;
           }
           case 'get': {
-            const id = actionArgs[0];
-            if (!id) throw new Error('Usage: products get <id>');
+            const idArg = actionArgs[0];
+            if (!idArg) throw new Error('Usage: products get <id>');
+            const id = await resolveId(idArg, 'products');
             const product = await commerce.products.get(id);
             if (!product) throw new Error('Product not found');
             output(jsonOutput ? product : `
@@ -277,10 +446,11 @@ Created: ${product.createdAt}
             break;
           }
           case 'variant': {
-            const sku = actionArgs[0];
-            if (!sku) throw new Error('Usage: products variant <sku>');
+            const skuArg = actionArgs[0];
+            if (!skuArg) throw new Error('Usage: products variant <sku>');
+            const sku = await resolveSku(skuArg);
             const variant = await commerce.products.getVariantBySku(sku);
-            if (!variant) throw new Error(`Variant ${sku} not found`);
+            if (!variant) throw new Error(`Variant ${skuArg} not found`);
             output(jsonOutput ? variant : `
 Variant: ${variant.name}
 SKU: ${variant.sku}
@@ -305,11 +475,33 @@ Default: ${variant.isDefault ? 'Yes' : 'No'}
       // ============================================================================
       case 'inventory':
         switch (action) {
+          case 'list': {
+            const products = await commerce.products.list();
+            const skuItems = [];
+            for (const product of products) {
+              if (product.variants) {
+                for (const variant of product.variants) {
+                  if (variant.sku) {
+                    const stock = await commerce.inventory.getStock(variant.sku);
+                    skuItems.push({
+                      sku: variant.sku,
+                      name: variant.name || product.name,
+                      onHand: stock?.totalOnHand ?? 0,
+                      available: stock?.totalAvailable ?? 0
+                    });
+                  }
+                }
+              }
+            }
+            output(formatTable(skuItems, ['sku', 'name', 'onHand', 'available']));
+            break;
+          }
           case 'stock': {
-            const sku = actionArgs[0];
-            if (!sku) throw new Error('Usage: inventory stock <sku>');
+            const skuArg = actionArgs[0];
+            if (!skuArg) throw new Error('Usage: inventory stock <sku>');
+            const sku = await resolveSku(skuArg);
             const stock = await commerce.inventory.getStock(sku);
-            if (!stock) throw new Error(`No inventory for SKU ${sku}`);
+            if (!stock) throw new Error(`No inventory for SKU ${skuArg}`);
             output(jsonOutput ? stock : `
 Stock for ${stock.sku} (${stock.name}):
   On Hand:   ${stock.totalOnHand}
@@ -319,12 +511,13 @@ Stock for ${stock.sku} (${stock.name}):
             break;
           }
           case 'adjust': {
-            const [sku, qtyStr, ...reasonParts] = actionArgs;
+            const [skuArg, qtyStr, ...reasonParts] = actionArgs;
             const qty = parseInt(qtyStr, 10);
             const reason = reasonParts.join(' ');
-            if (!sku || isNaN(qty) || !reason) {
+            if (!skuArg || isNaN(qty) || !reason) {
               throw new Error('Usage: inventory adjust <sku> <quantity> <reason>');
             }
+            const sku = await resolveSku(skuArg);
             await commerce.inventory.adjust(sku, qty, reason);
             const stock = await commerce.inventory.getStock(sku);
             output(jsonOutput ? stock : `Adjusted ${sku} by ${qty > 0 ? '+' : ''}${qty}. New on-hand: ${stock.totalOnHand}`);
@@ -362,8 +555,9 @@ Stock for ${stock.sku} (${stock.name}):
             break;
           }
           case 'get': {
-            const id = actionArgs[0];
-            if (!id) throw new Error('Usage: returns get <id>');
+            const idArg = actionArgs[0];
+            if (!idArg) throw new Error('Usage: returns get <id>');
+            const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.get(id);
             if (!ret) throw new Error('Return not found');
             output(jsonOutput ? ret : `
@@ -376,18 +570,20 @@ Created: ${ret.createdAt}
             break;
           }
           case 'approve': {
-            const id = actionArgs[0];
-            if (!id) throw new Error('Usage: returns approve <id>');
+            const idArg = actionArgs[0];
+            if (!idArg) throw new Error('Usage: returns approve <id>');
+            const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.approve(id);
             output(jsonOutput ? ret : `Return ${ret.id} approved`);
             break;
           }
           case 'reject': {
-            const [id, ...reasonParts] = actionArgs;
+            const [idArg, ...reasonParts] = actionArgs;
             const reason = reasonParts.join(' ');
-            if (!id || !reason) {
+            if (!idArg || !reason) {
               throw new Error('Usage: returns reject <id> <reason>');
             }
+            const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.reject(id, reason);
             output(jsonOutput ? ret : `Return ${ret.id} rejected`);
             break;

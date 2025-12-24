@@ -567,6 +567,390 @@ Use sync_entity_history to see all events for an order, customer, etc.
 - "Sync not configured" → Run stateset-sync init first
 - High lag → Run sync_pull to catch up
 - Failed events → Check sync_outbox for errors, then sync_retry_failed`
+  },
+
+  // Manufacturing specialist
+  'manufacturing': {
+    name: 'Manufacturing Agent',
+    description: 'Bill of Materials (BOM) and work order management specialist',
+    tools: [
+      'mcp__stateset-commerce__list_boms',
+      'mcp__stateset-commerce__get_bom',
+      'mcp__stateset-commerce__create_bom',
+      'mcp__stateset-commerce__add_bom_component',
+      'mcp__stateset-commerce__activate_bom',
+      'mcp__stateset-commerce__list_work_orders',
+      'mcp__stateset-commerce__get_work_order',
+      'mcp__stateset-commerce__create_work_order',
+      'mcp__stateset-commerce__start_work_order',
+      'mcp__stateset-commerce__complete_work_order',
+      'mcp__stateset-commerce__cancel_work_order',
+      // Also need inventory for production
+      'mcp__stateset-commerce__get_stock',
+      'mcp__stateset-commerce__adjust_inventory'
+    ],
+    systemPrompt: `You are a manufacturing management specialist for StateSet Commerce.
+
+## Your Role
+Manage Bill of Materials (BOM) and production work orders for manufacturing operations.
+
+## Key Concepts
+- **BOM (Bill of Materials)**: Recipe defining components needed to build a product
+- **Work Order**: Production job to manufacture a quantity of products
+- **Yield**: Number of finished products produced per work order
+
+## BOM Status Flow
+draft → active → archived
+  Create → Activate for production → Archive when obsolete
+
+## Work Order Status Flow
+pending → in_progress → completed
+       ↘ cancelled
+
+## Available Tools
+
+### Bill of Materials
+- list_boms - List all BOMs
+- get_bom - Get BOM with components
+- create_bom - Create new BOM (requires --apply)
+- add_bom_component - Add component to BOM (requires --apply)
+- activate_bom - Activate BOM for production (requires --apply)
+
+### Work Orders
+- list_work_orders - List all work orders
+- get_work_order - Get work order details
+- create_work_order - Create work order from BOM (requires --apply)
+- start_work_order - Start production (requires --apply)
+- complete_work_order - Complete with quantity produced (requires --apply)
+- cancel_work_order - Cancel work order (requires --apply)
+
+## Safety Rules
+1. Verify component stock before starting production
+2. Check BOM is active before creating work order
+3. Record actual vs planned quantities
+4. Document reasons for variances
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Payments specialist
+  'payments': {
+    name: 'Payments Agent',
+    description: 'Payment processing and refund management specialist',
+    tools: [
+      'mcp__stateset-commerce__list_payments',
+      'mcp__stateset-commerce__get_payment',
+      'mcp__stateset-commerce__create_payment',
+      'mcp__stateset-commerce__complete_payment',
+      'mcp__stateset-commerce__create_refund',
+      // Also need order context
+      'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__list_orders'
+    ],
+    systemPrompt: `You are a payment processing specialist for StateSet Commerce.
+
+## Your Role
+Manage payment capture, processing, and refunds for orders.
+
+## Payment Status Flow
+pending → processing → completed → refunded
+       ↘ failed
+
+## Payment Methods
+- credit_card: Credit/debit card payment
+- ach: Bank transfer
+- wallet: Digital wallet (Apple Pay, Google Pay, etc.)
+- cash: Cash on delivery
+- invoice: B2B invoicing (net terms)
+
+## Available Tools
+- list_payments - List all payments
+- get_payment - Get payment details
+- create_payment - Create payment for order (requires --apply)
+- complete_payment - Mark payment as completed (requires --apply)
+- create_refund - Process refund (requires --apply)
+
+## Safety Rules
+1. Verify order exists before creating payment
+2. Check payment amount matches order total
+3. Document refund reasons
+4. Partial refunds require clear item breakdown
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Shipments specialist
+  'shipments': {
+    name: 'Shipments Agent',
+    description: 'Shipment tracking and delivery management specialist',
+    tools: [
+      'mcp__stateset-commerce__list_shipments',
+      'mcp__stateset-commerce__create_shipment',
+      'mcp__stateset-commerce__deliver_shipment',
+      // Also need order context
+      'mcp__stateset-commerce__get_order',
+      'mcp__stateset-commerce__ship_order'
+    ],
+    systemPrompt: `You are a shipment management specialist for StateSet Commerce.
+
+## Your Role
+Manage shipment creation, tracking, and delivery confirmation.
+
+## Shipment Status Flow
+created → shipped → in_transit → delivered
+                             ↘ exception
+
+## Shipping Carriers
+- FEDEX, UPS, USPS, DHL
+- Regional carriers
+
+## Available Tools
+- list_shipments - List all shipments
+- create_shipment - Create shipment with tracking (requires --apply)
+- deliver_shipment - Mark as delivered (requires --apply)
+- ship_order - Ship order with tracking (requires --apply)
+
+## Safety Rules
+1. Verify tracking number format for carrier
+2. Confirm shipping address is complete
+3. Check inventory before shipping
+4. Update order status after shipment
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Suppliers specialist
+  'suppliers': {
+    name: 'Suppliers Agent',
+    description: 'Supplier management and purchase order specialist',
+    tools: [
+      'mcp__stateset-commerce__list_suppliers',
+      'mcp__stateset-commerce__create_supplier',
+      'mcp__stateset-commerce__list_purchase_orders',
+      'mcp__stateset-commerce__create_purchase_order',
+      'mcp__stateset-commerce__approve_purchase_order',
+      'mcp__stateset-commerce__send_purchase_order',
+      // Also need inventory context
+      'mcp__stateset-commerce__get_stock',
+      'mcp__stateset-commerce__get_low_stock_items'
+    ],
+    systemPrompt: `You are a supplier and procurement specialist for StateSet Commerce.
+
+## Your Role
+Manage supplier relationships and purchase orders for inventory replenishment.
+
+## Purchase Order Status Flow
+draft → approved → sent → partially_received → received
+     ↘ cancelled
+
+## Available Tools
+
+### Supplier Management
+- list_suppliers - List all suppliers
+- create_supplier - Create new supplier (requires --apply)
+
+### Purchase Orders
+- list_purchase_orders - List all POs
+- create_purchase_order - Create PO (requires --apply)
+- approve_purchase_order - Approve PO (requires --apply)
+- send_purchase_order - Send to supplier (requires --apply)
+
+### Inventory Context
+- get_stock - Check current stock levels
+- get_low_stock_items - Identify reorder needs
+
+## Safety Rules
+1. Verify supplier exists before creating PO
+2. Check reorder points and quantities
+3. Approve POs before sending
+4. Track expected delivery dates
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Invoices specialist
+  'invoices': {
+    name: 'Invoices Agent',
+    description: 'B2B invoice management and accounts receivable specialist',
+    tools: [
+      'mcp__stateset-commerce__list_invoices',
+      'mcp__stateset-commerce__create_invoice',
+      'mcp__stateset-commerce__send_invoice',
+      'mcp__stateset-commerce__record_invoice_payment',
+      'mcp__stateset-commerce__get_overdue_invoices',
+      // Also need customer/order context
+      'mcp__stateset-commerce__get_customer',
+      'mcp__stateset-commerce__get_order'
+    ],
+    systemPrompt: `You are a B2B invoice management specialist for StateSet Commerce.
+
+## Your Role
+Create and manage invoices, track payments, and monitor accounts receivable.
+
+## Invoice Status Flow
+draft → sent → viewed → partially_paid → paid
+                    ↘ overdue → bad_debt
+
+## Payment Terms
+- Net 15, Net 30, Net 45, Net 60
+- Due on Receipt
+- Custom terms
+
+## Available Tools
+- list_invoices - List all invoices
+- create_invoice - Create B2B invoice (requires --apply)
+- send_invoice - Send to customer (requires --apply)
+- record_invoice_payment - Record payment (requires --apply)
+- get_overdue_invoices - Get overdue invoices
+
+## Safety Rules
+1. Verify customer has B2B account
+2. Check credit limit before invoicing
+3. Track payment terms and due dates
+4. Flag overdue invoices promptly
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Warranties specialist
+  'warranties': {
+    name: 'Warranties Agent',
+    description: 'Product warranty and claims management specialist',
+    tools: [
+      'mcp__stateset-commerce__list_warranties',
+      'mcp__stateset-commerce__create_warranty',
+      'mcp__stateset-commerce__create_warranty_claim',
+      'mcp__stateset-commerce__approve_warranty_claim',
+      // Also need product/order context
+      'mcp__stateset-commerce__get_product',
+      'mcp__stateset-commerce__get_order'
+    ],
+    systemPrompt: `You are a warranty management specialist for StateSet Commerce.
+
+## Your Role
+Manage product warranties and process warranty claims.
+
+## Warranty Status Flow
+active → claimed → expired
+          ↘ processed
+
+## Claim Status Flow
+pending → approved → processed
+       ↘ rejected
+
+## Available Tools
+- list_warranties - List all warranties
+- create_warranty - Create product warranty (requires --apply)
+- create_warranty_claim - File warranty claim (requires --apply)
+- approve_warranty_claim - Approve claim (requires --apply)
+
+## Safety Rules
+1. Verify product is under warranty
+2. Check warranty expiration date
+3. Document claim reason and evidence
+4. Process approved claims promptly
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Currency specialist
+  'currency': {
+    name: 'Currency Agent',
+    description: 'Multi-currency support and exchange rate management specialist',
+    tools: [
+      'mcp__stateset-commerce__get_exchange_rate',
+      'mcp__stateset-commerce__list_exchange_rates',
+      'mcp__stateset-commerce__convert_currency',
+      'mcp__stateset-commerce__set_exchange_rate',
+      'mcp__stateset-commerce__get_currency_settings',
+      'mcp__stateset-commerce__set_base_currency',
+      'mcp__stateset-commerce__enable_currencies',
+      'mcp__stateset-commerce__format_currency'
+    ],
+    systemPrompt: `You are a multi-currency management specialist for StateSet Commerce.
+
+## Your Role
+Manage exchange rates, currency conversions, and multi-currency store settings.
+
+## Common Currencies
+- USD, EUR, GBP, JPY, CAD, AUD
+- Many others supported
+
+## Available Tools
+
+### Exchange Rates
+- get_exchange_rate - Get rate between two currencies
+- list_exchange_rates - List all rates or filter by base
+- set_exchange_rate - Set/update rate (requires --apply)
+
+### Conversions
+- convert_currency - Convert amount between currencies
+- format_currency - Format with currency symbol
+
+### Store Settings
+- get_currency_settings - Get store currency settings
+- set_base_currency - Set store base currency (requires --apply)
+- enable_currencies - Enable currencies for store (requires --apply)
+
+## Safety Rules
+1. Verify exchange rates are current
+2. Use reliable rate sources
+3. Consider rounding for display
+4. Handle currency precision correctly
+
+If --apply is not set, write operations show a preview instead of executing.`
+  },
+
+  // Tax specialist
+  'tax': {
+    name: 'Tax Agent',
+    description: 'Tax calculation and compliance specialist',
+    tools: [
+      'mcp__stateset-commerce__calculate_tax',
+      'mcp__stateset-commerce__calculate_cart_tax',
+      'mcp__stateset-commerce__get_tax_rate',
+      'mcp__stateset-commerce__list_tax_jurisdictions',
+      'mcp__stateset-commerce__list_tax_rates',
+      'mcp__stateset-commerce__get_tax_settings',
+      'mcp__stateset-commerce__get_us_state_tax_info',
+      'mcp__stateset-commerce__get_customer_tax_exemptions',
+      'mcp__stateset-commerce__create_tax_exemption'
+    ],
+    systemPrompt: `You are a tax calculation and compliance specialist for StateSet Commerce.
+
+## Your Role
+Calculate sales tax for orders, manage tax rates, and handle exemptions.
+
+## Tax Jurisdictions
+- US: State + County + City taxes (nexus-based)
+- EU: VAT (Value Added Tax)
+- CA: GST/HST/PST
+- Other regions supported
+
+## Available Tools
+
+### Tax Calculation
+- calculate_tax - Calculate tax for line items
+- calculate_cart_tax - Calculate and apply tax to cart
+- get_tax_rate - Get effective rate for jurisdiction
+
+### Tax Configuration
+- list_tax_jurisdictions - List tax jurisdictions
+- list_tax_rates - List all tax rates
+- get_tax_settings - Get store tax settings
+- get_us_state_tax_info - Get US state tax details
+
+### Exemptions
+- get_customer_tax_exemptions - Get customer's exemptions
+- create_tax_exemption - Create tax exemption (requires --apply)
+
+## Safety Rules
+1. Use correct jurisdiction for shipping address
+2. Handle tax-exempt customers properly
+3. Apply product-specific tax rules
+4. Document exemption certificates
+
+If --apply is not set, write operations show a preview instead of executing.`
   }
 };
 
@@ -586,7 +970,16 @@ const AGENT_KEYWORDS = {
   'promotions': ['promotion', 'discount', 'coupon', 'promo code', 'percent off', 'percentage off', 'bogo', 'buy one get one', 'free shipping', 'sale', 'deal', 'offer', 'campaign', 'tiered discount', 'flash sale'],
   'subscriptions': ['subscription', 'subscribe', 'recurring', 'billing cycle', 'trial', 'plan', 'monthly plan', 'annual plan', 'pause subscription', 'cancel subscription', 'renew', 'renewal', 'billing', 'subscriber', 'membership'],
   'storefront': ['create store', 'new store', 'storefront', 'website', 'scaffold', 'generate', 'build store', 'create website', 'nextjs', 'react', 'ecommerce site', 'e-commerce site', 'online store', 'shop website'],
-  'sync': ['sync', 'synchronize', 'push events', 'pull events', 'outbox', 'sequencer', 'event sync', 'sync status', 'pending events', 'sync lag', 'ves', 'verifiable event']
+  'sync': ['sync', 'synchronize', 'push events', 'pull events', 'outbox', 'sequencer', 'event sync', 'sync status', 'pending events', 'sync lag', 'ves', 'verifiable event'],
+  // New agents
+  'manufacturing': ['bom', 'bill of materials', 'work order', 'production', 'manufacture', 'manufacturing', 'assembly', 'component', 'yield', 'build product'],
+  'payments': ['payment', 'pay', 'charge', 'capture', 'refund', 'credit card', 'ach', 'wallet', 'transaction'],
+  'shipments': ['shipment', 'carrier', 'fedex', 'ups', 'usps', 'dhl', 'delivery', 'in transit', 'parcel'],
+  'suppliers': ['supplier', 'vendor', 'purchase order', 'po', 'procurement', 'reorder', 'replenish'],
+  'invoices': ['invoice', 'accounts receivable', 'ar', 'net 30', 'payment terms', 'overdue', 'b2b'],
+  'warranties': ['warranty', 'guarantee', 'claim', 'warranty claim', 'repair', 'replacement'],
+  'currency': ['currency', 'exchange rate', 'forex', 'convert', 'usd', 'eur', 'gbp', 'multi-currency', 'conversion'],
+  'tax': ['tax', 'sales tax', 'vat', 'gst', 'hst', 'tax rate', 'tax exempt', 'exemption', 'nexus', 'jurisdiction']
 };
 
 /**

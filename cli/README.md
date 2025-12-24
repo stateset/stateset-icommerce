@@ -2,11 +2,11 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.1.7
+**Version:** 0.1.9
 
 ## Philosophy
 
-The Stateset CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded, zero-dependency commerce engine that:
+The StateSet CLI is built on the premise that commerce infrastructure should be designed for AI agents, not just humans. Think of it as **"The SQLite of Commerce"** — an embedded, zero-dependency commerce engine that:
 
 - **Runs locally** without cloud dependencies
 - **Deterministic operations** for agent reliability
@@ -16,12 +16,14 @@ The Stateset CLI is built on the premise that commerce infrastructure should be 
 ## Features
 
 - **Natural Language Interface** - Ask Claude to perform commerce operations
-- **Multi-Agent System** - 8 specialized agents auto-route to the best handler
-- **87 MCP Tools** - Full commerce API exposed to Claude
+- **Multi-Agent System** - 17 specialized agents auto-route to the best handler
+- **87+ MCP Tools** - Full commerce API exposed to Claude
 - **Multi-turn Sessions** - Resume conversations for complex workflows
 - **Preview Mode** - See what would happen before making changes
 - **Direct Commands** - Fast, non-AI mode for scripting
 - **Interactive Chat** - REPL for exploratory work
+- **Batch Processing** - Sequential or parallel request processing
+- **Interactive Tutorials** - Guided onboarding for new users
 - **SQLite/PostgreSQL** - Flexible storage backends
 - **Rich Output** - ASCII tables, progress bars, formatted displays
 - **Telemetry** - Distributed tracing with `--verbose` and `--stats`
@@ -41,6 +43,14 @@ npm link
 ```
 
 ## Quick Start
+
+### Run the Tutorial
+
+New to StateSet CLI? Start with the interactive tutorial:
+
+```bash
+stateset-tutorial quickstart
+```
 
 ### AI-Powered Mode
 
@@ -88,6 +98,22 @@ stateset-direct inventory stock WIDGET-001
 stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
 ```
 
+### Batch Processing
+
+```bash
+# Process multiple requests sequentially (maintains session context)
+echo "list customers" | stateset --stdin --json
+
+# Process requests from file
+stateset --batch requests.txt
+
+# Parallel processing (faster, independent requests)
+stateset --batch requests.txt --parallel 4 --json
+
+# Parallel with write operations
+stateset --apply --batch orders.txt --parallel 3
+```
+
 ## Commands
 
 ### Primary Commands
@@ -110,6 +136,14 @@ stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
 | `stateset-promotions` | promotions | Promotions, discounts & coupons |
 | `stateset-subscriptions` | subscriptions | Subscription plans & recurring billing |
 | `stateset-create` | storefront | Scaffold e-commerce storefronts |
+| `stateset-manufacturing` | manufacturing | BOM & work order management |
+| `stateset-payments` | payments | Payment processing & refunds |
+| `stateset-shipments` | shipments | Shipment tracking & delivery |
+| `stateset-suppliers` | suppliers | Supplier & purchase order management |
+| `stateset-invoices` | invoices | B2B invoice management |
+| `stateset-warranties` | warranties | Product warranty & claims |
+| `stateset-currency` | currency | Multi-currency & exchange rates |
+| `stateset-tax` | tax | Tax calculation & compliance |
 
 ### Utility Commands
 
@@ -118,6 +152,9 @@ stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
 | `stateset-config` | Profile and configuration management |
 | `stateset-doctor` | Health check and diagnostics |
 | `stateset-events` | Event management and webhooks |
+| `stateset-sync` | Verifiable Event Sync with sequencer |
+| `stateset-tutorial` | Interactive tutorials and onboarding |
+| `stateset-completion` | Shell completion scripts (bash/zsh/fish) |
 
 ## Architecture
 
@@ -132,14 +169,20 @@ stateset-icommerce/
 │   ├── python/              # stateset-embedded (PyO3)
 │   └── wasm/                # WebAssembly for browsers
 └── cli/
-    ├── bin/                 # 14 CLI programs
+    ├── bin/                 # 25 CLI programs
     ├── src/
     │   ├── claude-harness.js    # Multi-agent SDK integration
-    │   ├── mcp-server.js        # 87 MCP tools for Claude
+    │   ├── mcp-server.js        # 87+ MCP tools for Claude
     │   ├── permissions.js       # Fine-grained access control
-    │   └── telemetry.js         # Observability & tracing
+    │   ├── telemetry.js         # Observability & tracing
+    │   ├── errors.js            # Structured error handling
+    │   ├── suggestions.js       # Smart command suggestions
+    │   ├── session.js           # Session persistence
+    │   ├── database.js          # Connection pooling
+    │   ├── tutorial.js          # Interactive tutorials
+    │   └── context.js           # Request context & tracing
     └── .claude/
-        ├── agents/          # 8 specialized agent definitions
+        ├── agents/          # 17 specialized agent definitions
         └── skills/          # Domain knowledge documents
 ```
 
@@ -164,6 +207,14 @@ stateset-icommerce/
 | **Returns** | RMA processing with refund management |
 | **Shipments** | Fulfillment tracking with carrier integration |
 
+### Manufacturing Operations
+
+| Domain | Operations |
+|--------|------------|
+| **Bill of Materials** | Create, manage, activate BOMs |
+| **Work Orders** | Production job management |
+| **Components** | Track component requirements |
+
 ### Financial Operations
 
 | Domain | Operations |
@@ -171,8 +222,9 @@ stateset-icommerce/
 | **Multi-Currency** | 35+ currencies (USD, EUR, GBP, JPY, BTC, ETH, USDC) |
 | **Payments** | Credit card, PayPal, cryptocurrency |
 | **Refunds** | Multiple payout methods |
-| **Invoices** | Generation with line items |
+| **Invoices** | B2B invoice management with payment terms |
 | **Purchase Orders** | Supplier management and procurement |
+| **Tax** | Multi-jurisdiction tax calculation (US, EU, CA) |
 
 ### Promotions & Discounts
 
@@ -205,6 +257,21 @@ stateset --apply "cancel subscription <id>"
 
 # View history
 stateset "show billing history for subscription <id>"
+```
+
+### Manufacturing
+
+```bash
+# Bill of Materials
+stateset-manufacturing "list all BOMs"
+stateset-manufacturing --apply "create a BOM for product ASSEMBLY-001"
+stateset-manufacturing --apply "add component PART-A qty 2 to BOM BOM-123"
+
+# Work Orders
+stateset-manufacturing "list pending work orders"
+stateset-manufacturing --apply "create work order from BOM BOM-123 for 100 units"
+stateset-manufacturing --apply "start work order WO-456"
+stateset-manufacturing --apply "complete work order WO-456 with 98 units produced"
 ```
 
 ### Tax Management
@@ -366,6 +433,30 @@ stateset --apply "set exchange rate USD to EUR at 0.92"
 stateset --apply "enable currencies USD, EUR, GBP, JPY"
 ```
 
+### Supplier Management
+
+```bash
+# Manage suppliers
+stateset-suppliers "list all suppliers"
+stateset-suppliers --apply "create supplier Acme Corp"
+
+# Purchase orders
+stateset-suppliers --apply "create PO for 100 WIDGET-001 from Acme Corp"
+stateset-suppliers --apply "approve purchase order PO-123"
+stateset-suppliers --apply "send purchase order PO-123 to supplier"
+```
+
+### B2B Invoicing
+
+```bash
+# Create and manage invoices
+stateset-invoices "list all invoices"
+stateset-invoices --apply "create invoice for order ORD-456"
+stateset-invoices --apply "send invoice INV-123"
+stateset-invoices "show overdue invoices"
+stateset-invoices --apply "record $500 payment for invoice INV-123"
+```
+
 ### Storefront Creation
 
 ```bash
@@ -383,7 +474,7 @@ Available templates: `nextjs`, `nextjs-minimal`, `vite-react`, `astro`
 
 ## Agent System
 
-Eight specialized agents handle different commerce domains:
+17 specialized agents handle different commerce domains:
 
 | Agent | Tools | Purpose |
 |-------|-------|---------|
@@ -394,7 +485,16 @@ Eight specialized agents handle different commerce domains:
 | **analytics** | 10 tools | Business intelligence & forecasting |
 | **promotions** | 10 tools | Campaigns, discounts, coupons |
 | **subscriptions** | 15 tools | Subscription plans & recurring billing |
-| **customer-service** | All 87 tools | Full-service fallback agent |
+| **manufacturing** | 11 tools | BOM & work order management |
+| **payments** | 5 tools | Payment processing & refunds |
+| **shipments** | 5 tools | Shipment tracking & delivery |
+| **suppliers** | 8 tools | Supplier & purchase order management |
+| **invoices** | 7 tools | B2B invoice management |
+| **warranties** | 6 tools | Product warranty & claims |
+| **currency** | 8 tools | Multi-currency & exchange rates |
+| **tax** | 9 tools | Tax calculation & compliance |
+| **storefront** | 12 tools | E-commerce site scaffolding |
+| **customer-service** | All 87+ tools | Full-service fallback agent |
 
 ### Auto-Routing
 
@@ -404,7 +504,7 @@ The main `stateset` command automatically routes requests to the best agent base
 - Domain keyword matching
 - Ambiguity detection
 
-## MCP Tools (87 Total)
+## MCP Tools (87+ Total)
 
 | Domain | Count | Examples |
 |--------|-------|----------|
@@ -459,6 +559,9 @@ stateset --db :memory: "list customers"
 | `--json` | JSON output |
 | `--verbose` | Real-time telemetry |
 | `--stats` | Execution statistics |
+| `--parallel <n>` | Process batch requests in parallel |
+| `--batch <file>` | Read requests from file |
+| `--stdin` | Read requests from stdin |
 | `--help` | Show help |
 
 ## Session Management
@@ -475,6 +578,37 @@ stateset --apply --resume abc-123-def "add 2 widgets at $29.99"
 stateset --apply --resume abc-123-def "complete checkout"
 ```
 
+## Tutorials
+
+Learn the CLI with interactive tutorials:
+
+```bash
+# List available tutorials
+stateset-tutorial
+
+# Run specific tutorials
+stateset-tutorial quickstart    # Learn basics in 5 minutes
+stateset-tutorial orders        # Order management
+stateset-tutorial inventory     # Stock management
+stateset-tutorial checkout      # Shopping cart flow
+stateset-tutorial analytics     # Business intelligence
+```
+
+## Shell Completions
+
+Generate shell completion scripts:
+
+```bash
+# Bash
+stateset-completion bash >> ~/.bashrc
+
+# Zsh
+stateset-completion zsh >> ~/.zshrc
+
+# Fish
+stateset-completion fish > ~/.config/fish/completions/stateset.fish
+```
+
 ## Command Reference
 
 ### `stateset` - AI Agent
@@ -483,14 +617,17 @@ stateset --apply --resume abc-123-def "complete checkout"
 stateset [options] "<request>"
 
 Options:
-  --db <path>     Database path (default: ./store.db)
-  --apply         Enable write operations
-  --model <name>  Claude model
-  --resume <id>   Resume previous session
-  --json          JSON output
-  --verbose       Show telemetry
-  --stats         Show execution stats
-  --help          Show help
+  --db <path>       Database path (default: ./store.db)
+  --apply           Enable write operations
+  --model <name>    Claude model
+  --resume <id>     Resume previous session
+  --json            JSON output
+  --verbose         Show telemetry
+  --stats           Show execution stats
+  --parallel <n>    Parallel batch processing
+  --batch <file>    Read requests from file
+  --stdin           Read requests from stdin
+  --help            Show help
 ```
 
 ### `stateset-chat` - Interactive Mode
@@ -530,6 +667,39 @@ Resources:
   returns         Return processing
 ```
 
+## Error Handling
+
+The CLI provides structured error handling with helpful suggestions:
+
+```bash
+# Permission errors
+Error: Permission denied: 'create_customer' requires --apply flag
+
+Suggestions:
+  • Add --apply flag to enable write operations
+  • Example: stateset --apply "your command here"
+  • Run without --apply first to preview what would happen
+
+# Not found errors
+Error: Customer 'unknown@example.com' not found
+
+Suggestions:
+  • Check that the customer ID is correct
+  • List available customers: stateset-direct customers list
+  • Use a partial ID (like git) - only a few characters needed if unique
+```
+
+## Diagnostics
+
+Run health checks:
+
+```bash
+stateset-doctor
+
+# Check specific components
+stateset-doctor --checks api,db,permissions
+```
+
 ## Development
 
 ```bash
@@ -538,11 +708,39 @@ npm install
 npm link
 
 # Test
-stateset --help
-stateset "list customers"
+npm test                    # All tests
+npm run test:unit          # Unit tests only
+npm run test:integration   # Integration tests
 
 # Run diagnostics
 stateset-doctor
+```
+
+## Programmatic Usage
+
+The CLI modules can be used programmatically:
+
+```javascript
+import {
+  runAgentLoop,
+  createErrorHandler,
+  createSessionManager,
+  createDatabaseManager,
+  withContext
+} from '@stateset/cli';
+
+// Run an agent request
+const result = await runAgentLoop({
+  request: 'list all customers',
+  dbPath: './store.db',
+  allowApply: false
+});
+
+// Use with request context
+await withContext({ agent: 'orders' }, async (ctx) => {
+  ctx.logEvent('processing_order');
+  // ... your code
+});
 ```
 
 ## License

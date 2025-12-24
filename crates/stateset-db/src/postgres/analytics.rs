@@ -11,7 +11,7 @@ use stateset_core::{
     FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
     ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod,
     RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct,
-    Trend,
+    TopReturnedProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -145,14 +145,56 @@ impl PgAnalyticsRepository {
         .await
         .unwrap_or(0);
 
+        // Calculate previous period for comparison
+        let period_duration = end - start;
+        let prev_end = start;
+        let prev_start = prev_end - period_duration;
+
+        // Get previous period metrics
+        let prev_row: (Decimal, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE(SUM(total_amount), 0) as revenue,
+                COUNT(*) as order_count
+            FROM orders
+            WHERE created_at >= $1 AND created_at < $2
+              AND status NOT IN ('cancelled', 'refunded')
+            "#,
+        )
+        .bind(prev_start)
+        .bind(prev_end)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or((Decimal::ZERO, 0));
+
+        let (prev_revenue, prev_order_count) = prev_row;
+
+        // Calculate percentage changes
+        let revenue_change_percent = if prev_revenue != Decimal::ZERO {
+            Some(((revenue - prev_revenue) / prev_revenue) * Decimal::from(100))
+        } else if revenue != Decimal::ZERO {
+            Some(Decimal::from(100)) // 100% increase from zero
+        } else {
+            Some(Decimal::ZERO)
+        };
+
+        let order_count_change_percent = if prev_order_count > 0 {
+            let change = ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
+            Decimal::from_f64_retain(change)
+        } else if order_count > 0 {
+            Some(Decimal::from(100))
+        } else {
+            Some(Decimal::ZERO)
+        };
+
         Ok(SalesSummary {
             total_revenue: revenue,
             order_count: order_count as u64,
             average_order_value: avg_order,
             items_sold: items_sold as u64,
             unique_customers: unique_customers as u64,
-            revenue_change_percent: None,
-            order_count_change_percent: None,
+            revenue_change_percent,
+            order_count_change_percent,
             period_start: Some(start),
             period_end: Some(end),
         })
@@ -688,12 +730,55 @@ impl PgAnalyticsRepository {
             })
             .collect();
 
+        // Get top returned products
+        let product_rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                ri.sku,
+                ri.name,
+                SUM(ri.quantity)::bigint as units_returned,
+                COALESCE(
+                    (SELECT SUM(oi.quantity)::bigint FROM order_items oi WHERE oi.sku = ri.sku),
+                    0
+                ) as units_sold
+            FROM return_items ri
+            JOIN returns r ON ri.return_id = r.id
+            WHERE r.created_at >= $1 AND r.created_at <= $2
+            GROUP BY ri.sku, ri.name
+            ORDER BY units_returned DESC
+            LIMIT 10
+            "#,
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        let top_returned_products: Vec<TopReturnedProduct> = product_rows
+            .into_iter()
+            .map(|(sku, name, units_returned, units_sold)| {
+                let return_rate = if units_sold > 0 {
+                    Decimal::from(units_returned * 100) / Decimal::from(units_sold)
+                } else {
+                    Decimal::ZERO
+                };
+                TopReturnedProduct {
+                    sku,
+                    name,
+                    units_returned: units_returned as u64,
+                    units_sold: units_sold as u64,
+                    return_rate_percent: return_rate,
+                }
+            })
+            .collect();
+
         Ok(ReturnMetrics {
             total_returns: total_returns as u64,
             return_rate_percent: return_rate,
             total_refunded,
             by_reason,
-            top_returned_products: vec![],
+            top_returned_products,
         })
     }
 

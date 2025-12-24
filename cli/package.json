@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -18,7 +18,17 @@
     "stateset-config": "./bin/stateset-config.js",
     "stateset-doctor": "./bin/stateset-doctor.js",
     "stateset-events": "./bin/stateset-events.js",
-    "stateset-sync": "./bin/stateset-sync.js"
+    "stateset-sync": "./bin/stateset-sync.js",
+    "stateset-completion": "./bin/stateset-completion.js",
+    "stateset-manufacturing": "./bin/stateset-manufacturing.js",
+    "stateset-payments": "./bin/stateset-payments.js",
+    "stateset-shipments": "./bin/stateset-shipments.js",
+    "stateset-suppliers": "./bin/stateset-suppliers.js",
+    "stateset-invoices": "./bin/stateset-invoices.js",
+    "stateset-warranties": "./bin/stateset-warranties.js",
+    "stateset-currency": "./bin/stateset-currency.js",
+    "stateset-tax": "./bin/stateset-tax.js",
+    "stateset-tutorial": "./bin/stateset-tutorial.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -30,8 +40,13 @@
     "url": "https://github.com/stateset/stateset-icommerce/issues"
   },
   "scripts": {
-    "test": "node --test test/*.js",
-    "prepublishOnly": "echo 'Ready to publish @stateset/cli'"
+    "test": "node --test test/**/*.test.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:e2e": "node --test test/e2e/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/**/*.test.js",
+    "lint": "echo 'Add eslint when ready'",
+    "prepublishOnly": "npm test && echo 'Ready to publish @stateset/cli'"
   },
   "keywords": [
     "commerce",

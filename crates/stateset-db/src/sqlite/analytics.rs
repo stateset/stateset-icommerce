@@ -10,7 +10,7 @@ use stateset_core::{
     AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
     InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance,
     Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast, SalesSummary,
-    TimeGranularity, TimePeriod, TopCustomer, TopProduct, Trend,
+    TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -130,14 +130,58 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or(0);
 
+        // Calculate previous period for comparison
+        let period_duration = end - start;
+        let prev_end = start;
+        let prev_start = prev_end - period_duration;
+        let prev_start_str = prev_start.to_rfc3339();
+        let prev_end_str = prev_end.to_rfc3339();
+
+        // Get previous period metrics
+        let (prev_revenue, prev_order_count): (String, i64) = conn
+            .query_row(
+                r#"
+                SELECT
+                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
+                    COUNT(*) as order_count
+                FROM orders
+                WHERE created_at >= ?1 AND created_at < ?2
+                  AND status NOT IN ('cancelled', 'refunded')
+                "#,
+                [&prev_start_str, &prev_end_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or(("0".to_string(), 0));
+
+        let current_revenue = parse_decimal(&revenue);
+        let previous_revenue = parse_decimal(&prev_revenue);
+
+        // Calculate percentage changes
+        let revenue_change_percent = if previous_revenue != Decimal::ZERO {
+            Some(((current_revenue - previous_revenue) / previous_revenue) * Decimal::from(100))
+        } else if current_revenue != Decimal::ZERO {
+            Some(Decimal::from(100)) // 100% increase from zero
+        } else {
+            Some(Decimal::ZERO)
+        };
+
+        let order_count_change_percent = if prev_order_count > 0 {
+            let change = ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
+            Decimal::from_f64_retain(change)
+        } else if order_count > 0 {
+            Some(Decimal::from(100))
+        } else {
+            Some(Decimal::ZERO)
+        };
+
         Ok(SalesSummary {
-            total_revenue: parse_decimal(&revenue),
+            total_revenue: current_revenue,
             order_count: order_count as u64,
             average_order_value: parse_decimal(&avg_order),
             items_sold: items_sold as u64,
             unique_customers: unique_customers as u64,
-            revenue_change_percent: None, // TODO: Compare with previous period
-            order_count_change_percent: None,
+            revenue_change_percent,
+            order_count_change_percent,
             period_start: Some(start),
             period_end: Some(end),
         })
@@ -739,12 +783,61 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             });
         }
 
+        // Get top returned products
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT
+                    ri.sku,
+                    ri.name,
+                    SUM(ri.quantity) as units_returned,
+                    COALESCE(
+                        (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.sku = ri.sku),
+                        0
+                    ) as units_sold
+                FROM return_items ri
+                JOIN returns r ON ri.return_id = r.id
+                WHERE r.created_at >= ?1 AND r.created_at <= ?2
+                GROUP BY ri.sku
+                ORDER BY units_returned DESC
+                LIMIT 10
+                "#,
+            )
+            .map_err(map_db_error)?;
+
+        let product_rows = stmt
+            .query_map([&start_str, &end_str], |row| {
+                let sku: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let units_returned: i64 = row.get(2)?;
+                let units_sold: i64 = row.get(3)?;
+                Ok((sku, name, units_returned, units_sold))
+            })
+            .map_err(map_db_error)?;
+
+        let mut top_returned_products = Vec::new();
+        for row in product_rows {
+            let (sku, name, units_returned, units_sold) = row.map_err(map_db_error)?;
+            let return_rate = if units_sold > 0 {
+                Decimal::from(units_returned * 100) / Decimal::from(units_sold)
+            } else {
+                Decimal::ZERO
+            };
+            top_returned_products.push(TopReturnedProduct {
+                sku,
+                name,
+                units_returned: units_returned as u64,
+                units_sold: units_sold as u64,
+                return_rate_percent: return_rate,
+            });
+        }
+
         Ok(ReturnMetrics {
             total_returns: total_returns as u64,
             return_rate_percent: return_rate,
             total_refunded: parse_decimal(&total_refunded),
             by_reason,
-            top_returned_products: vec![], // TODO: Implement
+            top_returned_products,
         })
     }
 
