@@ -6,8 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    CommerceError, ConversionResult, ConvertCurrency, Currency, CurrencyRepository, ExchangeRate,
-    ExchangeRateFilter, Result, RoundingMode, SetExchangeRate, StoreCurrencySettings,
+    validate_batch_size, BatchError, BatchErrorCode, BatchResult, CommerceError, ConversionResult,
+    ConvertCurrency, Currency, CurrencyRepository, ExchangeRate, ExchangeRateFilter, Result,
+    RoundingMode, SetExchangeRate, StoreCurrencySettings,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -351,6 +352,178 @@ impl PgCurrencyRepository {
 
         self.get_settings_async().await
     }
+
+    // === Batch Operations (async) ===
+
+    /// Set multiple exchange rates atomically (async)
+    pub async fn set_rates_atomic_async(
+        &self,
+        rates: Vec<SetExchangeRate>,
+    ) -> Result<Vec<ExchangeRate>> {
+        validate_batch_size(&rates)?;
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let mut results = Vec::with_capacity(rates.len());
+
+        for input in &rates {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let source = input.source.clone().unwrap_or_else(|| "manual".into());
+
+            // Upsert the rate within transaction
+            sqlx::query(
+                "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
+                    rate = EXCLUDED.rate,
+                    source = EXCLUDED.source,
+                    rate_at = EXCLUDED.rate_at,
+                    updated_at = EXCLUDED.updated_at",
+            )
+            .bind(id)
+            .bind(input.base_currency.code())
+            .bind(input.quote_currency.code())
+            .bind(input.rate)
+            .bind(&source)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            // Record in history within transaction
+            sqlx::query(
+                "INSERT INTO exchange_rate_history (base_currency, quote_currency, rate, source, rate_at)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(input.base_currency.code())
+            .bind(input.quote_currency.code())
+            .bind(input.rate)
+            .bind(&source)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            // Fetch the inserted/updated rate
+            let row = sqlx::query_as::<_, ExchangeRateRow>(
+                "SELECT id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at
+                 FROM exchange_rates WHERE base_currency = $1 AND quote_currency = $2",
+            )
+            .bind(input.base_currency.code())
+            .bind(input.quote_currency.code())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            results.push(Self::row_to_exchange_rate(row)?);
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Delete multiple exchange rates with partial success (async)
+    pub async fn delete_rates_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match sqlx::query("DELETE FROM exchange_rates WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+            {
+                Ok(r) if r.rows_affected() > 0 => {
+                    result.record_success(id);
+                }
+                Ok(_) => {
+                    result.failed.push(BatchError {
+                        index,
+                        id: Some(id.to_string()),
+                        error: "Exchange rate not found".to_string(),
+                        code: BatchErrorCode::NotFound,
+                    });
+                    result.failure_count += 1;
+                    result.total_attempted += 1;
+                }
+                Err(e) => {
+                    result.failed.push(BatchError {
+                        index,
+                        id: Some(id.to_string()),
+                        error: e.to_string(),
+                        code: BatchErrorCode::DatabaseError,
+                    });
+                    result.failure_count += 1;
+                    result.total_attempted += 1;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple exchange rates atomically (async)
+    pub async fn delete_rates_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        for id in &ids {
+            let result = sqlx::query("DELETE FROM exchange_rates WHERE id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            if result.rows_affected() == 0 {
+                // Rollback happens automatically when tx is dropped
+                return Err(CommerceError::NotFound);
+            }
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Get multiple exchange rates by currency pairs (async)
+    pub async fn get_rates_batch_async(
+        &self,
+        pairs: Vec<(Currency, Currency)>,
+    ) -> Result<Vec<ExchangeRate>> {
+        validate_batch_size(&pairs)?;
+
+        let mut results = Vec::with_capacity(pairs.len());
+
+        for (from, to) in pairs {
+            if let Some(rate) = self.get_rate_async(from, to).await? {
+                results.push(rate);
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 impl CurrencyRepository for PgCurrencyRepository {
@@ -392,5 +565,23 @@ impl CurrencyRepository for PgCurrencyRepository {
 
     fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
         super::block_on(self.update_settings_async(settings))
+    }
+
+    // === Batch Operations ===
+
+    fn set_rates_atomic(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
+        super::block_on(self.set_rates_atomic_async(rates))
+    }
+
+    fn delete_rates_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_rates_batch_async(ids))
+    }
+
+    fn delete_rates_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_rates_atomic_async(ids))
+    }
+
+    fn get_rates_batch(&self, pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>> {
+        super::block_on(self.get_rates_batch_async(pairs))
     }
 }

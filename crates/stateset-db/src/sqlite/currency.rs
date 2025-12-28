@@ -12,7 +12,8 @@ use stateset_core::{
 use std::str::FromStr;
 use uuid::Uuid;
 
-use super::map_db_error;
+use super::{build_in_clause, map_db_error, params_refs, uuid_params};
+use stateset_core::{validate_batch_size, BatchResult};
 
 /// SQLite currency repository
 pub struct SqliteCurrencyRepository {
@@ -382,5 +383,133 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         }
 
         self.get_settings()
+    }
+
+    // === Batch Operations ===
+
+    fn set_rates_atomic(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
+        validate_batch_size(&rates)?;
+
+        if rates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let now = Utc::now();
+        let mut rate_ids: Vec<(Currency, Currency)> = Vec::with_capacity(rates.len());
+
+        for input in &rates {
+            let id = Uuid::new_v4();
+            let source = input.source.clone().unwrap_or_else(|| "manual".into());
+
+            // Upsert the rate
+            tx.execute(
+                "INSERT INTO exchange_rates (id, base_currency, quote_currency, rate, source, rate_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (base_currency, quote_currency) DO UPDATE SET
+                    rate = excluded.rate,
+                    source = excluded.source,
+                    rate_at = excluded.rate_at,
+                    updated_at = excluded.updated_at",
+                params![
+                    id.to_string(),
+                    input.base_currency.code(),
+                    input.quote_currency.code(),
+                    input.rate.to_string(),
+                    source,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339()
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Record in history
+            tx.execute(
+                "INSERT INTO exchange_rate_history (id, base_currency, quote_currency, rate, source, rate_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    input.base_currency.code(),
+                    input.quote_currency.code(),
+                    input.rate.to_string(),
+                    source,
+                    now.to_rfc3339()
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            rate_ids.push((input.base_currency, input.quote_currency));
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Fetch and return all the rates
+        let mut results = Vec::with_capacity(rate_ids.len());
+        for (from, to) in rate_ids {
+            if let Some(rate) = self.get_rate(from, to)? {
+                results.push(rate);
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn delete_rates_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_rate(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_rates_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let in_clause = build_in_clause(ids.len());
+        let query = format!("DELETE FROM exchange_rates WHERE id IN ({})", in_clause);
+
+        let params = uuid_params(&ids);
+        let params_ref = params_refs(&params);
+
+        let affected = tx.execute(&query, params_ref.as_slice()).map_err(map_db_error)?;
+
+        if affected != ids.len() {
+            // Not all rates were found - rollback by not committing
+            return Err(CommerceError::NotFound);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_rates_batch(&self, pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>> {
+        validate_batch_size(&pairs)?;
+
+        let mut results = Vec::with_capacity(pairs.len());
+
+        for (from, to) in pairs {
+            if let Some(rate) = self.get_rate(from, to)? {
+                results.push(rate);
+            }
+        }
+
+        Ok(results)
     }
 }

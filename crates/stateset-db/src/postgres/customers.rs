@@ -5,8 +5,9 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress,
-    CustomerFilter, CustomerRepository, CustomerStatus, Result, UpdateCustomer,
+    validate_batch_size, AddressType, BatchResult, CommerceError, CreateCustomer,
+    CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter, CustomerRepository,
+    CustomerStatus, Result, UpdateCustomer,
 };
 use uuid::Uuid;
 
@@ -357,6 +358,249 @@ impl PgCustomerRepository {
 
         Ok(count.0 as u64)
     }
+
+    // =========================================================================
+    // Batch Operations (async)
+    // =========================================================================
+
+    /// Create multiple customers - partial success allowed (async)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateCustomer>) -> Result<BatchResult<Customer>> {
+        validate_batch_size(&inputs)?;
+
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(customer) => result.record_success(customer),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple customers - atomic (all-or-nothing) (async)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>> {
+        validate_batch_size(&inputs)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut customers = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let tags = input.tags.clone().unwrap_or_default();
+            let accepts_marketing = input.accepts_marketing.unwrap_or(false);
+
+            // Check email uniqueness within transaction
+            let exists: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM customers WHERE email = $1"
+            )
+            .bind(&input.email)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if exists.0 > 0 {
+                return Err(CommerceError::EmailAlreadyExists(input.email));
+            }
+
+            let tags_json = serde_json::to_value(&tags).unwrap_or_default();
+            let metadata_json = input.metadata.clone();
+
+            sqlx::query(
+                r#"
+                INSERT INTO customers (id, email, first_name, last_name, phone, status,
+                                       accepts_marketing, email_verified, tags, metadata,
+                                       created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                "#,
+            )
+            .bind(id)
+            .bind(&input.email)
+            .bind(&input.first_name)
+            .bind(&input.last_name)
+            .bind(&input.phone)
+            .bind("active")
+            .bind(accepts_marketing)
+            .bind(false)
+            .bind(&tags_json)
+            .bind(&metadata_json)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            customers.push(Customer {
+                id,
+                email: input.email,
+                first_name: input.first_name,
+                last_name: input.last_name,
+                phone: input.phone,
+                status: CustomerStatus::Active,
+                accepts_marketing,
+                email_verified: false,
+                tags,
+                metadata: input.metadata,
+                default_shipping_address_id: None,
+                default_billing_address_id: None,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(customers)
+    }
+
+    /// Update multiple customers - partial success allowed (async)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+        validate_batch_size(&updates)?;
+
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(customer) => result.record_success(customer),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple customers - atomic (all-or-nothing) (async)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+        validate_batch_size(&updates)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut customers = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            let existing_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::CustomerNotFound(id))?;
+            let current_version = existing_row.version;
+            let existing = Self::row_to_customer(existing_row);
+
+            let new_email = input.email.unwrap_or(existing.email);
+            let new_first_name = input.first_name.unwrap_or(existing.first_name);
+            let new_last_name = input.last_name.unwrap_or(existing.last_name);
+            let new_phone = input.phone.or(existing.phone);
+            let new_status = input.status.unwrap_or(existing.status);
+            let new_accepts_marketing = input.accepts_marketing.unwrap_or(existing.accepts_marketing);
+            let new_tags = input.tags.unwrap_or(existing.tags);
+            let new_metadata = input.metadata.or(existing.metadata);
+
+            let tags_json = serde_json::to_value(&new_tags).unwrap_or_default();
+
+            let result = sqlx::query(
+                r#"
+                UPDATE customers
+                SET email = $1, first_name = $2, last_name = $3, phone = $4,
+                    status = $5, accepts_marketing = $6, tags = $7, metadata = $8, updated_at = $9, version = version + 1
+                WHERE id = $10 AND version = $11
+                "#,
+            )
+            .bind(&new_email)
+            .bind(&new_first_name)
+            .bind(&new_last_name)
+            .bind(&new_phone)
+            .bind(new_status.to_string())
+            .bind(new_accepts_marketing)
+            .bind(&tags_json)
+            .bind(&new_metadata)
+            .bind(now)
+            .bind(id)
+            .bind(current_version)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "customer".to_string(),
+                    id: id.to_string(),
+                    expected_version: current_version,
+                });
+            }
+
+            // Fetch the updated customer
+            let updated_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            customers.push(Self::row_to_customer(updated_row));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(customers)
+    }
+
+    /// Delete multiple customers - partial success allowed (async)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple customers - atomic (all-or-nothing) (async)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let now = Utc::now();
+
+        sqlx::query(
+            "UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = ANY($2)"
+        )
+        .bind(now)
+        .bind(&ids)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    /// Get multiple customers by ID (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, CustomerRow>(
+            "SELECT * FROM customers WHERE id = ANY($1)"
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(rows.into_iter().map(Self::row_to_customer).collect())
+    }
 }
 
 impl CustomerRepository for PgCustomerRepository {
@@ -406,6 +650,38 @@ impl CustomerRepository for PgCustomerRepository {
 
     fn count(&self, filter: CustomerFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // =========================================================================
+    // Batch Operations
+    // =========================================================================
+
+    fn create_batch(&self, inputs: Vec<CreateCustomer>) -> Result<BatchResult<Customer>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }
 

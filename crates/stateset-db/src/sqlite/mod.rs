@@ -210,6 +210,46 @@ pub(crate) fn parse_decimal(s: &str) -> rust_decimal::Decimal {
     s.parse().unwrap_or_default()
 }
 
+// ============================================================================
+// Batch Operation Helpers
+// ============================================================================
+
+/// Build SQL IN clause with placeholders for the given count
+/// Example: build_in_clause(3) returns "?, ?, ?"
+pub(crate) fn build_in_clause(count: usize) -> String {
+    std::iter::repeat("?")
+        .take(count)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Convert a slice of UUIDs to boxed parameter vector for rusqlite
+pub(crate) fn uuid_params(ids: &[uuid::Uuid]) -> Vec<Box<dyn rusqlite::ToSql>> {
+    ids.iter()
+        .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::ToSql>)
+        .collect()
+}
+
+/// Convert boxed params to references for rusqlite execution
+pub(crate) fn params_refs(params: &[Box<dyn rusqlite::ToSql>]) -> Vec<&dyn rusqlite::ToSql> {
+    params.iter().map(|p| p.as_ref()).collect()
+}
+
+/// Convert a slice of i64 IDs to boxed parameter vector for rusqlite
+pub(crate) fn i64_params(ids: &[i64]) -> Vec<Box<dyn rusqlite::ToSql>> {
+    ids.iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>)
+        .collect()
+}
+
+/// Convert a slice of strings to boxed parameter vector for rusqlite
+pub(crate) fn string_params(strings: &[String]) -> Vec<Box<dyn rusqlite::ToSql>> {
+    strings
+        .iter()
+        .map(|s| Box::new(s.clone()) as Box<dyn rusqlite::ToSql>)
+        .collect()
+}
+
 // Transaction support implementation
 use crate::DatabaseExt;
 

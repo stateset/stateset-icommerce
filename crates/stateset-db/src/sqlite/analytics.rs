@@ -7,10 +7,10 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::ToSql;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast, FulfillmentMetrics,
-    InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance,
-    Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast, SalesSummary,
-    TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
+    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast,
+    FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
+    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
+    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -994,6 +994,15 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             });
         }
 
+        Ok(results)
+    }
+
+    fn get_sales_summary_batch(&self, queries: Vec<AnalyticsQuery>) -> Result<Vec<SalesSummary>> {
+        validate_batch_size(&queries)?;
+        let mut results = Vec::with_capacity(queries.len());
+        for query in queries {
+            results.push(self.get_sales_summary(query)?);
+        }
         Ok(results)
     }
 }

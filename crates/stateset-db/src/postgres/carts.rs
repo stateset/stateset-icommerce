@@ -5,9 +5,10 @@ use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::{postgres::PgPool, FromRow, Row};
 use stateset_core::{
-    AddCartItem, Cart, CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository,
-    CartStatus, CheckoutResult, CommerceError, CreateCart, FulfillmentType, Result,
-    SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
+    CartPaymentStatus, CartRepository, CartStatus, CheckoutResult, CommerceError, CreateCart,
+    FulfillmentType, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart,
+    UpdateCartItem,
 };
 use uuid::Uuid;
 
@@ -1155,6 +1156,352 @@ impl PgCartRepository {
 
         Ok(count as u64)
     }
+
+    // === Batch Operations ===
+
+    /// Create multiple carts in a batch (async, non-atomic - partial success allowed)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateCart>) -> Result<BatchResult<Cart>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(cart) => result.record_success(cart),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple carts in a batch atomically (async - all-or-nothing)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateCart>) -> Result<Vec<Cart>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut carts = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let cart_number = Self::generate_cart_number();
+            let now = Utc::now();
+            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+            let expires_at = input
+                .expires_in_minutes
+                .map(|mins| now + Duration::minutes(mins));
+
+            let shipping_address_json = input
+                .shipping_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default());
+            let billing_address_json = input
+                .billing_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default());
+            let metadata_json = input.metadata.clone();
+
+            sqlx::query(
+                r#"INSERT INTO carts (
+                    id, cart_number, customer_id, status, currency,
+                    subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
+                    customer_email, customer_name, shipping_address, billing_address,
+                    notes, metadata, expires_at, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)"#,
+            )
+            .bind(id)
+            .bind(&cart_number)
+            .bind(input.customer_id)
+            .bind("active")
+            .bind(&currency)
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(&input.customer_email)
+            .bind(&input.customer_name)
+            .bind(&shipping_address_json)
+            .bind(&billing_address_json)
+            .bind(&input.notes)
+            .bind(&metadata_json)
+            .bind(expires_at)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Add initial items if provided
+            let mut items = vec![];
+            if let Some(input_items) = &input.items {
+                for item_input in input_items {
+                    let item_id = Uuid::new_v4();
+                    let requires_shipping = item_input.requires_shipping.unwrap_or(true);
+                    let total = CartItem::calculate_total(
+                        item_input.quantity,
+                        item_input.unit_price,
+                        Decimal::ZERO,
+                        Decimal::ZERO,
+                    );
+                    let item_metadata_json = item_input.metadata.clone();
+
+                    sqlx::query(
+                        r#"INSERT INTO cart_items (
+                            id, cart_id, product_id, variant_id, sku, name, description,
+                            image_url, quantity, unit_price, original_price, discount_amount,
+                            tax_amount, total, weight, requires_shipping, metadata,
+                            created_at, updated_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)"#,
+                    )
+                    .bind(item_id)
+                    .bind(id)
+                    .bind(item_input.product_id)
+                    .bind(item_input.variant_id)
+                    .bind(&item_input.sku)
+                    .bind(&item_input.name)
+                    .bind(&item_input.description)
+                    .bind(&item_input.image_url)
+                    .bind(item_input.quantity)
+                    .bind(item_input.unit_price)
+                    .bind(item_input.original_price)
+                    .bind(Decimal::ZERO)
+                    .bind(Decimal::ZERO)
+                    .bind(total)
+                    .bind(item_input.weight)
+                    .bind(requires_shipping)
+                    .bind(&item_metadata_json)
+                    .bind(now)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+
+                    items.push(CartItem {
+                        id: item_id,
+                        cart_id: id,
+                        product_id: item_input.product_id,
+                        variant_id: item_input.variant_id,
+                        sku: item_input.sku.clone(),
+                        name: item_input.name.clone(),
+                        description: item_input.description.clone(),
+                        image_url: item_input.image_url.clone(),
+                        quantity: item_input.quantity,
+                        unit_price: item_input.unit_price,
+                        original_price: item_input.original_price,
+                        discount_amount: Decimal::ZERO,
+                        tax_amount: Decimal::ZERO,
+                        total,
+                        weight: item_input.weight,
+                        requires_shipping,
+                        metadata: item_input.metadata.clone(),
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+            }
+
+            // Calculate subtotal
+            let subtotal: Decimal = items.iter().map(|i| i.total).sum();
+
+            sqlx::query("UPDATE carts SET subtotal = $1, grand_total = $2 WHERE id = $3")
+                .bind(subtotal)
+                .bind(subtotal)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            carts.push(Cart {
+                id,
+                cart_number,
+                customer_id: input.customer_id,
+                status: CartStatus::Active,
+                currency,
+                items,
+                subtotal,
+                tax_amount: Decimal::ZERO,
+                shipping_amount: Decimal::ZERO,
+                discount_amount: Decimal::ZERO,
+                grand_total: subtotal,
+                customer_email: input.customer_email,
+                customer_phone: None,
+                customer_name: input.customer_name,
+                shipping_address: input.shipping_address,
+                billing_address: input.billing_address,
+                billing_same_as_shipping: false,
+                fulfillment_type: None,
+                shipping_method: None,
+                shipping_carrier: None,
+                estimated_delivery: None,
+                payment_method: None,
+                payment_token: None,
+                payment_status: CartPaymentStatus::None,
+                coupon_code: None,
+                discount_description: None,
+                order_id: None,
+                order_number: None,
+                notes: input.notes,
+                metadata: input.metadata,
+                inventory_reserved: false,
+                reservation_expires_at: None,
+                expires_at,
+                completed_at: None,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(carts)
+    }
+
+    /// Update multiple carts in a batch (async, non-atomic - partial success allowed)
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateCart)>,
+    ) -> Result<BatchResult<Cart>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(cart) => result.record_success(cart),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple carts in a batch atomically (async - all-or-nothing)
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateCart)>,
+    ) -> Result<Vec<Cart>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut cart_ids = Vec::with_capacity(updates.len());
+        let now = Utc::now();
+
+        for (id, input) in updates {
+            sqlx::query(
+                r#"UPDATE carts SET
+                    customer_id = COALESCE($1, customer_id),
+                    customer_email = COALESCE($2, customer_email),
+                    customer_phone = COALESCE($3, customer_phone),
+                    customer_name = COALESCE($4, customer_name),
+                    shipping_address = COALESCE($5, shipping_address),
+                    billing_address = COALESCE($6, billing_address),
+                    billing_same_as_shipping = COALESCE($7, billing_same_as_shipping),
+                    fulfillment_type = COALESCE($8, fulfillment_type),
+                    shipping_method = COALESCE($9, shipping_method),
+                    shipping_carrier = COALESCE($10, shipping_carrier),
+                    coupon_code = COALESCE($11, coupon_code),
+                    notes = COALESCE($12, notes),
+                    metadata = COALESCE($13, metadata),
+                    updated_at = $14
+                WHERE id = $15"#,
+            )
+            .bind(input.customer_id)
+            .bind(&input.customer_email)
+            .bind(&input.customer_phone)
+            .bind(&input.customer_name)
+            .bind(
+                input
+                    .shipping_address
+                    .as_ref()
+                    .map(|a| serde_json::to_value(a).unwrap_or_default()),
+            )
+            .bind(
+                input
+                    .billing_address
+                    .as_ref()
+                    .map(|a| serde_json::to_value(a).unwrap_or_default()),
+            )
+            .bind(input.billing_same_as_shipping)
+            .bind(input.fulfillment_type.map(|f| f.to_string()))
+            .bind(&input.shipping_method)
+            .bind(&input.shipping_carrier)
+            .bind(&input.coupon_code)
+            .bind(&input.notes)
+            .bind(&input.metadata)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            cart_ids.push(id);
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+
+        // Fetch updated carts
+        let mut carts = Vec::with_capacity(cart_ids.len());
+        for id in cart_ids {
+            if let Some(cart) = self.get_cart_with_items(id).await? {
+                carts.push(cart);
+            }
+        }
+
+        Ok(carts)
+    }
+
+    /// Delete multiple carts in a batch (async, non-atomic - partial success allowed)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple carts in a batch atomically (async - all-or-nothing)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Delete cart items first (foreign key constraint)
+        sqlx::query("DELETE FROM cart_items WHERE cart_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete carts
+        sqlx::query("DELETE FROM carts WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple carts by IDs (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
+        validate_batch_size(&ids)?;
+
+        let rows = sqlx::query_as::<_, CartRow>("SELECT * FROM carts WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut carts = Vec::with_capacity(rows.len());
+        for row in rows {
+            let items = self.get_cart_items_async(row.id).await?;
+            carts.push(row.into_cart(items));
+        }
+
+        Ok(carts)
+    }
 }
 
 impl CartRepository for PgCartRepository {
@@ -1284,6 +1631,36 @@ impl CartRepository for PgCartRepository {
 
     fn count(&self, filter: CartFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateCart>) -> Result<BatchResult<Cart>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateCart>) -> Result<Vec<Cart>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }
 

@@ -1,11 +1,11 @@
 //! SQLite implementation of payment repository
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
 use stateset_core::{
-    CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund,
+    validate_batch_size, BatchResult, CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund,
     Payment, PaymentFilter, PaymentMethod, PaymentRepository,
     PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
     generate_payment_number, generate_refund_number,
@@ -19,6 +19,12 @@ pub struct SqlitePaymentRepository {
 impl SqlitePaymentRepository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
+    }
+
+    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn row_to_payment(row: &Row) -> rusqlite::Result<Payment> {
@@ -456,5 +462,242 @@ impl PaymentRepository for SqlitePaymentRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(payment) => result.record_success(payment),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = chrono::Utc::now();
+            let payment_number = generate_payment_number();
+
+            tx.execute(
+                "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
+                 payment_method, amount, currency, amount_refunded, external_id, processor,
+                 card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
+                 billing_address, description, metadata, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    payment_number.clone(),
+                    input.order_id.map(|id| id.to_string()),
+                    input.invoice_id.map(|id| id.to_string()),
+                    input.customer_id.map(|id| id.to_string()),
+                    PaymentTransactionStatus::Pending.to_string(),
+                    input.payment_method.to_string(),
+                    input.amount.to_string(),
+                    input.currency.clone().unwrap_or_else(|| "USD".to_string()),
+                    "0",
+                    input.external_id.clone(),
+                    input.processor.clone(),
+                    input.card_brand.map(|b| b.to_string()),
+                    input.card_last4.clone(),
+                    input.card_exp_month,
+                    input.card_exp_year,
+                    input.billing_email.clone(),
+                    input.billing_name.clone(),
+                    input.billing_address.clone(),
+                    input.description.clone(),
+                    input.metadata.clone(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+
+            results.push(Payment {
+                id,
+                payment_number,
+                order_id: input.order_id,
+                invoice_id: input.invoice_id,
+                customer_id: input.customer_id,
+                status: PaymentTransactionStatus::Pending,
+                payment_method: input.payment_method,
+                amount: input.amount,
+                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                amount_refunded: rust_decimal::Decimal::ZERO,
+                external_id: input.external_id,
+                processor: input.processor,
+                card_brand: input.card_brand,
+                card_last4: input.card_last4,
+                card_exp_month: input.card_exp_month,
+                card_exp_year: input.card_exp_year,
+                billing_email: input.billing_email,
+                billing_name: input.billing_name,
+                billing_address: input.billing_address,
+                description: input.description,
+                failure_reason: None,
+                failure_code: None,
+                metadata: input.metadata,
+                paid_at: None,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(payment) => result.record_success(payment),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = chrono::Utc::now();
+
+            // Get existing payment to merge with updates
+            let payment: Payment = tx
+                .query_row(
+                    "SELECT * FROM payments WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_payment,
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                    e => map_db_error(e),
+                })?;
+
+            tx.execute(
+                "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
+                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                params![
+                    input.status.unwrap_or(payment.status).to_string(),
+                    input.external_id.or(payment.external_id),
+                    input.failure_reason.or(payment.failure_reason),
+                    input.failure_code.or(payment.failure_code),
+                    input.metadata.or(payment.metadata),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+
+            // Fetch the updated payment
+            let updated_payment = tx
+                .query_row(
+                    "SELECT * FROM payments WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_payment,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(updated_payment);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            let conn = self.conn()?;
+            match conn.execute("DELETE FROM payments WHERE id = ?", [id.to_string()]) {
+                Ok(rows) if rows > 0 => result.record_success(id),
+                Ok(_) => result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &map_db_error(e)),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        // Delete refunds associated with these payments first
+        let sql = format!(
+            "DELETE FROM refunds WHERE payment_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete payments
+        let sql = format!("DELETE FROM payments WHERE id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM payments WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let payments = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_payment)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(payments)
     }
 }

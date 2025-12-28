@@ -1,14 +1,15 @@
 //! SQLite cart repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddCartItem, Cart, CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository,
-    CartStatus, CheckoutResult, CommerceError, CreateCart, FulfillmentType, Result,
-    SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
+    CartPaymentStatus, CartRepository, CartStatus, CheckoutResult, CommerceError, CreateCart,
+    FulfillmentType, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart,
+    UpdateCartItem,
 };
 use uuid::Uuid;
 
@@ -1040,6 +1041,332 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateCart>) -> Result<BatchResult<Cart>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(cart) => result.record_success(cart),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateCart>) -> Result<Vec<Cart>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let cart_number = Self::generate_cart_number();
+            let now = Utc::now();
+            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+
+            let expires_at = input
+                .expires_in_minutes
+                .map(|mins| now + Duration::minutes(mins));
+
+            let shipping_address_json = input
+                .shipping_address
+                .as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default());
+            let billing_address_json = input
+                .billing_address
+                .as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default());
+            let metadata_json = input
+                .metadata
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap_or_default());
+
+            tx.execute(
+                "INSERT INTO carts (id, cart_number, customer_id, status, currency,
+                                   subtotal, tax_amount, shipping_amount, discount_amount, grand_total,
+                                   customer_email, customer_name, shipping_address, billing_address,
+                                   notes, metadata, expires_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &cart_number,
+                    input.customer_id.map(|c| c.to_string()),
+                    "active",
+                    &currency,
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    &input.customer_email,
+                    &input.customer_name,
+                    &shipping_address_json,
+                    &billing_address_json,
+                    &input.notes,
+                    &metadata_json,
+                    expires_at.map(|e| e.to_rfc3339()),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Add initial items if provided
+            let mut items = vec![];
+            if let Some(input_items) = &input.items {
+                for item_input in input_items {
+                    let item = self.add_item_internal(&tx, id, item_input.clone())?;
+                    items.push(item);
+                }
+                self.update_cart_totals(&tx, id)?;
+            }
+
+            let mut cart = Cart {
+                id,
+                cart_number,
+                customer_id: input.customer_id,
+                status: CartStatus::Active,
+                currency,
+                items,
+                subtotal: Decimal::ZERO,
+                tax_amount: Decimal::ZERO,
+                shipping_amount: Decimal::ZERO,
+                discount_amount: Decimal::ZERO,
+                grand_total: Decimal::ZERO,
+                customer_email: input.customer_email,
+                customer_phone: None,
+                customer_name: input.customer_name,
+                shipping_address: input.shipping_address,
+                billing_address: input.billing_address,
+                billing_same_as_shipping: true,
+                fulfillment_type: None,
+                shipping_method: None,
+                shipping_carrier: None,
+                estimated_delivery: None,
+                payment_method: None,
+                payment_token: None,
+                payment_status: CartPaymentStatus::None,
+                coupon_code: None,
+                discount_description: None,
+                order_id: None,
+                order_number: None,
+                notes: input.notes,
+                metadata: input.metadata,
+                inventory_reserved: false,
+                reservation_expires_at: None,
+                expires_at,
+                completed_at: None,
+                created_at: now,
+                updated_at: now,
+            };
+
+            cart.recalculate_totals();
+            results.push(cart);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(cart) => result.record_success(cart),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            let mut update_parts = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(customer_id) = &input.customer_id {
+                update_parts.push("customer_id = ?");
+                params.push(Box::new(customer_id.to_string()));
+            }
+            if let Some(email) = &input.customer_email {
+                update_parts.push("customer_email = ?");
+                params.push(Box::new(email.clone()));
+            }
+            if let Some(phone) = &input.customer_phone {
+                update_parts.push("customer_phone = ?");
+                params.push(Box::new(phone.clone()));
+            }
+            if let Some(name) = &input.customer_name {
+                update_parts.push("customer_name = ?");
+                params.push(Box::new(name.clone()));
+            }
+            if let Some(addr) = &input.shipping_address {
+                update_parts.push("shipping_address = ?");
+                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+            }
+            if let Some(addr) = &input.billing_address {
+                update_parts.push("billing_address = ?");
+                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+            }
+            if let Some(same) = &input.billing_same_as_shipping {
+                update_parts.push("billing_same_as_shipping = ?");
+                params.push(Box::new(if *same { 1 } else { 0 }));
+            }
+            if let Some(ft) = &input.fulfillment_type {
+                update_parts.push("fulfillment_type = ?");
+                params.push(Box::new(ft.to_string()));
+            }
+            if let Some(method) = &input.shipping_method {
+                update_parts.push("shipping_method = ?");
+                params.push(Box::new(method.clone()));
+            }
+            if let Some(carrier) = &input.shipping_carrier {
+                update_parts.push("shipping_carrier = ?");
+                params.push(Box::new(carrier.clone()));
+            }
+            if let Some(coupon) = &input.coupon_code {
+                update_parts.push("coupon_code = ?");
+                params.push(Box::new(coupon.clone()));
+            }
+            if let Some(notes) = &input.notes {
+                update_parts.push("notes = ?");
+                params.push(Box::new(notes.clone()));
+            }
+            if let Some(meta) = &input.metadata {
+                update_parts.push("metadata = ?");
+                params.push(Box::new(serde_json::to_string(meta).unwrap_or_default()));
+            }
+
+            params.push(Box::new(id.to_string()));
+
+            let sql = format!("UPDATE carts SET {} WHERE id = ?", update_parts.join(", "));
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+
+            if rows_affected == 0 {
+                return Err(CommerceError::NotFound);
+            }
+
+            // Fetch the updated cart
+            let cart = tx
+                .query_row(
+                    "SELECT * FROM carts WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_cart,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(cart);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Load items for each cart
+        let conn = self.conn()?;
+        for cart in &mut results {
+            cart.items = Self::load_cart_items_with_conn(&conn, cart.id)?;
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        // Delete cart items first
+        let sql = format!(
+            "DELETE FROM cart_items WHERE cart_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete carts
+        let sql = format!("DELETE FROM carts WHERE id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM carts WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let carts = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_cart)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        // Load items for each cart
+        let mut result = vec![];
+        for mut cart in carts {
+            cart.items = Self::load_cart_items_with_conn(&conn, cart.id)?;
+            result.push(cart);
+        }
+
+        Ok(result)
     }
 }
 

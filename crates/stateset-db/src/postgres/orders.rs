@@ -6,8 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    Address, CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    validate_batch_size, Address, BatchResult, CommerceError, CreateOrder, CreateOrderItem,
+    FulfillmentStatus, Order, OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus,
+    Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -479,6 +480,319 @@ impl PgOrderRepository {
 
         Ok(count.0 as u64)
     }
+
+    /// Create multiple orders in a batch (async, non-atomic)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateOrder>) -> Result<BatchResult<Order>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(order) => result.record_success(order),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple orders in a batch atomically (async)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateOrder>) -> Result<Vec<Order>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut orders = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+
+            // Get next order number
+            let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            let order_number = format!("ORD-{}", order_number.0);
+
+            // Calculate total
+            let total: Decimal = input
+                .items
+                .iter()
+                .map(|i| {
+                    let subtotal = i.unit_price * Decimal::from(i.quantity);
+                    subtotal - i.discount.unwrap_or(Decimal::ZERO) + i.tax_amount.unwrap_or(Decimal::ZERO)
+                })
+                .sum();
+
+            let shipping_address_json = input
+                .shipping_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default());
+            let billing_address_json = input
+                .billing_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default());
+
+            sqlx::query(
+                r#"
+                INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                   currency, payment_status, fulfillment_status, payment_method,
+                                   shipping_method, notes, shipping_address, billing_address,
+                                   created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                "#,
+            )
+            .bind(id)
+            .bind(&order_number)
+            .bind(input.customer_id)
+            .bind("pending")
+            .bind(now)
+            .bind(total)
+            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind("pending")
+            .bind("unfulfilled")
+            .bind(&input.payment_method)
+            .bind(&input.shipping_method)
+            .bind(&input.notes)
+            .bind(&shipping_address_json)
+            .bind(&billing_address_json)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Insert order items
+            let mut items = Vec::new();
+            for item_input in &input.items {
+                let item_id = Uuid::new_v4();
+                let discount = item_input.discount.unwrap_or(Decimal::ZERO);
+                let tax = item_input.tax_amount.unwrap_or(Decimal::ZERO);
+                let item_total = OrderItem::calculate_total(item_input.quantity, item_input.unit_price, discount, tax);
+
+                sqlx::query(
+                    r#"
+                    INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                             quantity, unit_price, discount, tax_amount, total, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    "#,
+                )
+                .bind(item_id)
+                .bind(id)
+                .bind(item_input.product_id)
+                .bind(item_input.variant_id)
+                .bind(&item_input.sku)
+                .bind(&item_input.name)
+                .bind(item_input.quantity)
+                .bind(item_input.unit_price)
+                .bind(discount)
+                .bind(tax)
+                .bind(item_total)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+                items.push(OrderItem {
+                    id: item_id,
+                    order_id: id,
+                    product_id: item_input.product_id,
+                    variant_id: item_input.variant_id,
+                    sku: item_input.sku.clone(),
+                    name: item_input.name.clone(),
+                    quantity: item_input.quantity,
+                    unit_price: item_input.unit_price,
+                    discount,
+                    tax_amount: tax,
+                    total: item_total,
+                });
+            }
+
+            orders.push(Order {
+                id,
+                order_number,
+                customer_id: input.customer_id,
+                status: OrderStatus::Pending,
+                order_date: now,
+                total_amount: total,
+                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                payment_status: PaymentStatus::Pending,
+                fulfillment_status: FulfillmentStatus::Unfulfilled,
+                payment_method: input.payment_method,
+                shipping_method: input.shipping_method,
+                tracking_number: None,
+                notes: input.notes,
+                shipping_address: input.shipping_address,
+                billing_address: input.billing_address,
+                items,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(orders)
+    }
+
+    /// Update multiple orders in a batch (async, non-atomic)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(order) => result.record_success(order),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple orders in a batch atomically (async)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut orders = Vec::with_capacity(updates.len());
+        let now = Utc::now();
+
+        for (id, input) in updates {
+            // Get existing order
+            let existing_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(id))?;
+
+            let existing_items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
+                .bind(id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            let existing = Self::row_to_order(existing_row, existing_items.into_iter().map(Self::row_to_item).collect());
+            let expected_version = existing.version;
+
+            let new_status = input.status.unwrap_or(existing.status);
+            let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
+            let new_fulfillment_status = input.fulfillment_status.unwrap_or(existing.fulfillment_status);
+            let new_tracking = input.tracking_number.or(existing.tracking_number);
+            let new_notes = input.notes.or(existing.notes);
+            let new_shipping = input.shipping_address.or(existing.shipping_address);
+            let new_billing = input.billing_address.or(existing.billing_address);
+
+            let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+            let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+
+            let result = sqlx::query(
+                r#"
+                UPDATE orders
+                SET status = $1, payment_status = $2, fulfillment_status = $3,
+                    tracking_number = $4, notes = $5, shipping_address = $6,
+                    billing_address = $7, updated_at = $8, version = version + 1
+                WHERE id = $9 AND version = $10
+                "#,
+            )
+            .bind(new_status.to_string())
+            .bind(new_payment_status.to_string())
+            .bind(new_fulfillment_status.to_string())
+            .bind(&new_tracking)
+            .bind(&new_notes)
+            .bind(&shipping_json)
+            .bind(&billing_json)
+            .bind(now)
+            .bind(id)
+            .bind(expected_version)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "order".to_string(),
+                    id: id.to_string(),
+                    expected_version,
+                });
+            }
+
+            // Fetch updated order
+            let updated_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            let items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
+                .bind(id)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            orders.push(Self::row_to_order(updated_row, items.into_iter().map(Self::row_to_item).collect()));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(orders)
+    }
+
+    /// Delete multiple orders in a batch (async, non-atomic)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple orders in a batch atomically (async)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Delete order items first (foreign key constraint)
+        sqlx::query("DELETE FROM order_items WHERE order_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete orders
+        sqlx::query("DELETE FROM orders WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple orders by IDs (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
+        validate_batch_size(&ids)?;
+
+        let rows = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let mut orders = Vec::with_capacity(rows.len());
+        for row in rows {
+            let items = self.get_items_async(row.id).await?;
+            orders.push(Self::row_to_order(row, items));
+        }
+
+        Ok(orders)
+    }
 }
 
 impl OrderRepository for PgOrderRepository {
@@ -516,6 +830,34 @@ impl OrderRepository for PgOrderRepository {
 
     fn count(&self, filter: OrderFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    fn create_batch(&self, inputs: Vec<CreateOrder>) -> Result<BatchResult<Order>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateOrder>) -> Result<Vec<Order>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }
 

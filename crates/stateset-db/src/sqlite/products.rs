@@ -1,12 +1,13 @@
 //! SQLite product repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    CommerceError, CreateProduct, CreateProductVariant, Product, ProductFilter,
-    ProductRepository, ProductStatus, ProductType, ProductVariant, Result, UpdateProduct,
+    validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant,
+    Product, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
+    Result, UpdateProduct,
 };
 use uuid::Uuid;
 
@@ -521,6 +522,307 @@ impl ProductRepository for SqliteProductRepository {
             .map_err(map_db_error)?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateProduct>) -> Result<BatchResult<Product>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(product) => result.record_success(product),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
+            let name = input.name.clone();
+            let description = input.description.clone().unwrap_or_default();
+            let product_type = input.product_type.unwrap_or_default();
+            let attributes = input.attributes.clone().unwrap_or_default();
+            let seo = input.seo.clone();
+
+            // Check slug uniqueness
+            let exists: i32 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM products WHERE slug = ?",
+                    [&slug],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+
+            if exists > 0 {
+                return Err(CommerceError::DuplicateSlug(slug));
+            }
+
+            let attributes_json = serde_json::to_string(&attributes).unwrap_or_default();
+            let seo_json = seo.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default());
+
+            tx.execute(
+                "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &name,
+                    &slug,
+                    &description,
+                    product_type.to_string(),
+                    attributes_json,
+                    seo_json,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Create variants inline if provided
+            if let Some(variants) = &input.variants {
+                for (i, variant) in variants.iter().enumerate() {
+                    let variant_id = Uuid::new_v4();
+
+                    // Check SKU uniqueness
+                    let sku_exists: i32 = tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM product_variants WHERE sku = ?",
+                            [&variant.sku],
+                            |row| row.get(0),
+                        )
+                        .map_err(map_db_error)?;
+
+                    if sku_exists > 0 {
+                        return Err(CommerceError::DuplicateSku(variant.sku.clone()));
+                    }
+
+                    let options_json = serde_json::to_string(&variant.options.clone().unwrap_or_default()).unwrap_or_default();
+
+                    tx.execute(
+                        "INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
+                                                       barcode, weight, weight_unit, options, is_default, is_active,
+                                                       created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                        rusqlite::params![
+                            variant_id.to_string(),
+                            id.to_string(),
+                            &variant.sku,
+                            variant.name.as_ref().unwrap_or(&variant.sku),
+                            variant.price.to_string(),
+                            variant.compare_at_price.map(|d| d.to_string()),
+                            variant.cost.map(|d| d.to_string()),
+                            &variant.barcode,
+                            variant.weight.map(|d| d.to_string()),
+                            &variant.weight_unit,
+                            options_json,
+                            (i == 0) as i32,  // First variant is default
+                            now.to_rfc3339(),
+                            now.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(map_db_error)?;
+                }
+            }
+
+            results.push(Product {
+                id,
+                name,
+                slug,
+                description,
+                status: ProductStatus::Draft,
+                product_type,
+                attributes,
+                seo,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(product) => result.record_success(product),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+            let current_version: i32 = tx
+                .query_row(
+                    "SELECT version FROM products WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::ProductNotFound(id),
+                    e => map_db_error(e),
+                })?;
+
+            let mut update_parts = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(name) = &input.name {
+                update_parts.push("name = ?");
+                params.push(Box::new(name.clone()));
+            }
+            if let Some(slug) = &input.slug {
+                update_parts.push("slug = ?");
+                params.push(Box::new(slug.clone()));
+            }
+            if let Some(description) = &input.description {
+                update_parts.push("description = ?");
+                params.push(Box::new(description.clone()));
+            }
+            if let Some(status) = &input.status {
+                update_parts.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(attributes) = &input.attributes {
+                update_parts.push("attributes = ?");
+                params.push(Box::new(serde_json::to_string(attributes).unwrap_or_default()));
+            }
+            if let Some(seo) = &input.seo {
+                update_parts.push("seo = ?");
+                params.push(Box::new(serde_json::to_string(seo).unwrap_or_default()));
+            }
+
+            update_parts.push("version = version + 1");
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(current_version));
+
+            let sql = format!(
+                "UPDATE products SET {} WHERE id = ? AND version = ?",
+                update_parts.join(", ")
+            );
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            if rows_affected == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "product".to_string(),
+                    id: id.to_string(),
+                    expected_version: current_version,
+                });
+            }
+
+            let product = tx
+                .query_row(
+                    "SELECT * FROM products WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_product,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(product);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+
+        // Archive products (soft delete) with IN clause
+        let sql = format!(
+            "UPDATE products SET status = 'archived', updated_at = ? WHERE id IN ({})",
+            placeholders
+        );
+
+        // Build params with timestamp first, then IDs
+        let now = Utc::now().to_rfc3339();
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+        for id in &ids {
+            all_params.push(Box::new(id.to_string()));
+        }
+        let all_params_refs: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
+        tx.execute(&sql, all_params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM products WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let products = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_product)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(products)
     }
 }
 

@@ -1,14 +1,15 @@
 //! SQLite inventory repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, i64_params, map_db_error, params_refs, parse_decimal, string_params};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AdjustInventory, CommerceError, CreateInventoryItem, InventoryBalance, InventoryFilter,
-    InventoryItem, InventoryRepository, InventoryReservation, InventoryTransaction, LocationStock,
-    ReservationStatus, ReserveInventory, Result, StockLevel, TransactionType,
+    validate_batch_size, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
+    InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
+    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
+    TransactionType,
 };
 use uuid::Uuid;
 
@@ -761,6 +762,403 @@ impl InventoryRepository for SqliteInventoryRepository {
             .map_err(map_db_error)?;
 
         Ok(transactions)
+    }
+
+    // === Batch Operations ===
+
+    fn create_item_batch(&self, inputs: Vec<CreateInventoryItem>) -> Result<BatchResult<InventoryItem>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_item(input) {
+                Ok(item) => result.record_success(item),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_item_batch_atomic(&self, inputs: Vec<CreateInventoryItem>) -> Result<Vec<InventoryItem>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let now = Utc::now();
+            let sku = input.sku.clone();
+            let name = input.name.clone();
+            let description = input.description.clone();
+            let unit_of_measure = input.unit_of_measure.clone().unwrap_or_else(|| "EA".to_string());
+
+            // Check SKU uniqueness
+            let exists: i32 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM inventory_items WHERE sku = ?",
+                    [&sku],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+
+            if exists > 0 {
+                return Err(CommerceError::DuplicateSku(sku));
+            }
+
+            tx.execute(
+                "INSERT INTO inventory_items (sku, name, description, unit_of_measure, is_active, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 1, ?, ?)",
+                rusqlite::params![
+                    &sku,
+                    &name,
+                    &description,
+                    &unit_of_measure,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            let item_id = tx.last_insert_rowid();
+
+            // Create initial balance if quantity provided
+            let location_id = input.location_id.unwrap_or(1);
+            let initial_qty = input.initial_quantity.unwrap_or_default();
+
+            tx.execute(
+                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, reorder_point, safety_stock, updated_at)
+                 VALUES (?, ?, ?, '0', ?, ?, ?, ?)",
+                rusqlite::params![
+                    item_id,
+                    location_id,
+                    initial_qty.to_string(),
+                    initial_qty.to_string(),
+                    input.reorder_point.map(|d| d.to_string()),
+                    input.safety_stock.map(|d| d.to_string()),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Record initial transaction if quantity > 0
+            if initial_qty > Decimal::ZERO {
+                tx.execute(
+                    "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reason, created_at)
+                     VALUES (?, ?, 'receipt', ?, 'Initial stock', ?)",
+                    rusqlite::params![item_id, location_id, initial_qty.to_string(), now.to_rfc3339()],
+                )
+                .map_err(map_db_error)?;
+            }
+
+            results.push(InventoryItem {
+                id: item_id,
+                sku,
+                name,
+                description,
+                unit_of_measure,
+                is_active: true,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn adjust_batch(&self, adjustments: Vec<AdjustInventory>) -> Result<BatchResult<InventoryTransaction>> {
+        validate_batch_size(&adjustments)?;
+        let mut result = BatchResult::with_capacity(adjustments.len());
+
+        for (index, input) in adjustments.into_iter().enumerate() {
+            let sku = input.sku.clone();
+            match self.adjust(input) {
+                Ok(transaction) => result.record_success(transaction),
+                Err(e) => result.record_failure(index, Some(sku), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn adjust_batch_atomic(&self, adjustments: Vec<AdjustInventory>) -> Result<Vec<InventoryTransaction>> {
+        validate_batch_size(&adjustments)?;
+        if adjustments.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(adjustments.len());
+        let now = Utc::now();
+
+        for input in adjustments {
+            // Get item directly with this connection
+            let item = tx.query_row(
+                "SELECT * FROM inventory_items WHERE sku = ?",
+                [&input.sku],
+                |row| {
+                    Ok(InventoryItem {
+                        id: row.get("id")?,
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        description: row.get("description")?,
+                        unit_of_measure: row.get("unit_of_measure")?,
+                        is_active: row.get::<_, i32>("is_active")? != 0,
+                        created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                        updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    })
+                },
+            ).map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::InventoryItemNotFound(input.sku.clone()),
+                e => map_db_error(e),
+            })?;
+
+            let location_id = input.location_id.unwrap_or(1);
+
+            // Get or create balance directly with this connection
+            let balance_result = tx.query_row(
+                "SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+                rusqlite::params![item.id, location_id],
+                |row| {
+                    Ok(InventoryBalance {
+                        id: row.get("id")?,
+                        item_id: row.get("item_id")?,
+                        location_id: row.get("location_id")?,
+                        quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
+                        quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
+                        quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
+                        reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
+                        safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                        version: row.get("version")?,
+                        last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
+                        updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    })
+                },
+            );
+
+            let balance = match balance_result {
+                Ok(b) => b,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    tx.execute(
+                        "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, updated_at)
+                         VALUES (?, ?, '0', '0', '0', ?)",
+                        rusqlite::params![item.id, location_id, now.to_rfc3339()],
+                    )
+                    .map_err(map_db_error)?;
+
+                    // Query the newly created balance
+                    tx.query_row(
+                        "SELECT * FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+                        rusqlite::params![item.id, location_id],
+                        |row| {
+                            Ok(InventoryBalance {
+                                id: row.get("id")?,
+                                item_id: row.get("item_id")?,
+                                location_id: row.get("location_id")?,
+                                quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
+                                quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
+                                quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
+                                reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
+                                safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                                version: row.get("version")?,
+                                last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
+                                updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                            })
+                        },
+                    ).map_err(map_db_error)?
+                }
+                Err(e) => return Err(map_db_error(e)),
+            };
+
+            // Calculate new quantities
+            let new_on_hand = balance.quantity_on_hand + input.quantity;
+            let new_available = new_on_hand - balance.quantity_allocated;
+
+            if new_on_hand < Decimal::ZERO {
+                return Err(CommerceError::InsufficientStock {
+                    sku: input.sku.clone(),
+                    requested: input.quantity.abs().to_string(),
+                    available: balance.quantity_on_hand.to_string(),
+                });
+            }
+
+            // Update balance with optimistic locking
+            let current_version = balance.version;
+            let rows_affected = tx.execute(
+                "UPDATE inventory_balances SET quantity_on_hand = ?, quantity_available = ?, version = version + 1, updated_at = ?
+                 WHERE item_id = ? AND location_id = ? AND version = ?",
+                rusqlite::params![
+                    new_on_hand.to_string(),
+                    new_available.to_string(),
+                    now.to_rfc3339(),
+                    item.id,
+                    location_id,
+                    current_version
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            if rows_affected == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "inventory_balance".to_string(),
+                    id: format!("{}:{}", item.id, location_id),
+                    expected_version: current_version,
+                });
+            }
+
+            // Record transaction
+            let tx_type = if input.quantity >= Decimal::ZERO { "receipt" } else { "adjustment" };
+            tx.execute(
+                "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    item.id,
+                    location_id,
+                    tx_type,
+                    input.quantity.to_string(),
+                    input.reference_type,
+                    input.reference_id,
+                    input.reason,
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            let tx_id = tx.last_insert_rowid();
+            results.push(InventoryTransaction {
+                id: tx_id,
+                item_id: item.id,
+                location_id,
+                transaction_type: if input.quantity >= Decimal::ZERO {
+                    TransactionType::Receipt
+                } else {
+                    TransactionType::Adjustment
+                },
+                quantity: input.quantity,
+                reference_type: input.reference_type,
+                reference_id: input.reference_id,
+                reason: Some(input.reason),
+                created_by: None,
+                created_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn get_item_batch(&self, ids: Vec<i64>) -> Result<Vec<InventoryItem>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM inventory_items WHERE id IN ({})", placeholders);
+
+        let params = i64_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let items = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(InventoryItem {
+                    id: row.get("id")?,
+                    sku: row.get("sku")?,
+                    name: row.get("name")?,
+                    description: row.get("description")?,
+                    unit_of_measure: row.get("unit_of_measure")?,
+                    is_active: row.get::<_, i32>("is_active")? != 0,
+                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(items)
+    }
+
+    fn get_stock_batch(&self, skus: Vec<String>) -> Result<Vec<StockLevel>> {
+        validate_batch_size(&skus)?;
+        if skus.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(skus.len());
+        let sql = format!("SELECT * FROM inventory_items WHERE sku IN ({})", placeholders);
+
+        let params = string_params(&skus);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let items: Vec<InventoryItem> = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(InventoryItem {
+                    id: row.get("id")?,
+                    sku: row.get("sku")?,
+                    name: row.get("name")?,
+                    description: row.get("description")?,
+                    unit_of_measure: row.get("unit_of_measure")?,
+                    is_active: row.get::<_, i32>("is_active")? != 0,
+                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        // Build stock levels for each item
+        let mut results = Vec::with_capacity(items.len());
+        for item in items {
+            let mut balance_stmt = conn
+                .prepare(
+                    "SELECT b.*, l.name as location_name
+                     FROM inventory_balances b
+                     LEFT JOIN inventory_locations l ON b.location_id = l.id
+                     WHERE b.item_id = ?",
+                )
+                .map_err(map_db_error)?;
+
+            let locations: Vec<LocationStock> = balance_stmt
+                .query_map([item.id], |row| {
+                    Ok(LocationStock {
+                        location_id: row.get("location_id")?,
+                        location_name: row.get("location_name")?,
+                        on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
+                        allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
+                        available: parse_decimal(&row.get::<_, String>("quantity_available")?),
+                    })
+                })
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?;
+
+            let total_on_hand: Decimal = locations.iter().map(|l| l.on_hand).sum();
+            let total_allocated: Decimal = locations.iter().map(|l| l.allocated).sum();
+            let total_available: Decimal = locations.iter().map(|l| l.available).sum();
+
+            results.push(StockLevel {
+                sku: item.sku,
+                name: item.name,
+                total_on_hand,
+                total_allocated,
+                total_available,
+                locations,
+            });
+        }
+
+        Ok(results)
     }
 }
 

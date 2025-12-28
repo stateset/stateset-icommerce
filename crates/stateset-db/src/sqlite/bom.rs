@@ -1,13 +1,14 @@
 //! SQLite BOM (Bill of Materials) repository implementation
 
+use super::{build_in_clause, params_refs, uuid_params};
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use stateset_core::{
-    BillOfMaterials, BomComponent, BomFilter, BomRepository, BomStatus, CommerceError,
-    CreateBom, CreateBomComponent, Result, UpdateBom,
+    validate_batch_size, BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository,
+    BomStatus, CommerceError, CreateBom, CreateBomComponent, Result, UpdateBom,
 };
 use uuid::Uuid;
 
@@ -19,6 +20,12 @@ pub struct SqliteBomRepository {
 impl SqliteBomRepository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
+    }
+
+    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
     fn parse_bom_status(s: &str) -> BomStatus {
@@ -448,5 +455,373 @@ impl BomRepository for SqliteBomRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateBom>) -> Result<BatchResult<BillOfMaterials>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(bom) => result.record_success(bom),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateBom>) -> Result<Vec<BillOfMaterials>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let bom_number = BillOfMaterials::generate_bom_number();
+            let now = Utc::now();
+            let revision = input.revision.clone().unwrap_or_else(|| "A".to_string());
+
+            tx.execute(
+                "INSERT INTO manufacturing_boms (id, bom_number, product_id, name, description, revision, status, created_by, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    bom_number,
+                    input.product_id.to_string(),
+                    input.name,
+                    input.description,
+                    revision,
+                    input.created_by.map(|u| u.to_string()),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            // Insert components if provided
+            let mut components = Vec::new();
+            if let Some(comp_inputs) = input.components {
+                for comp_input in comp_inputs {
+                    let comp_id = Uuid::new_v4();
+                    let uom = comp_input
+                        .unit_of_measure
+                        .clone()
+                        .unwrap_or_else(|| "each".to_string());
+
+                    tx.execute(
+                        "INSERT INTO manufacturing_bom_components (id, bom_id, component_product_id, component_sku, name, quantity, unit_of_measure, position, notes, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            comp_id.to_string(),
+                            id.to_string(),
+                            comp_input.component_product_id.map(|u| u.to_string()),
+                            comp_input.component_sku,
+                            comp_input.name,
+                            comp_input.quantity.to_string(),
+                            uom,
+                            comp_input.position,
+                            comp_input.notes,
+                            now.to_rfc3339(),
+                            now.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+                    components.push(BomComponent {
+                        id: comp_id,
+                        bom_id: id,
+                        component_product_id: comp_input.component_product_id,
+                        component_sku: comp_input.component_sku,
+                        name: comp_input.name,
+                        quantity: comp_input.quantity,
+                        unit_of_measure: uom,
+                        position: comp_input.position,
+                        notes: comp_input.notes,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+            }
+
+            results.push(BillOfMaterials {
+                id,
+                bom_number,
+                product_id: input.product_id,
+                name: input.name,
+                description: input.description,
+                revision,
+                status: BomStatus::Draft,
+                components,
+                created_by: input.created_by,
+                updated_by: None,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<BatchResult<BillOfMaterials>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(bom) => result.record_success(bom),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<Vec<BillOfMaterials>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            // Fetch existing BOM data within the transaction
+            let existing_data: (String, Option<String>, String, String) = tx
+                .query_row(
+                    "SELECT name, description, revision, status FROM manufacturing_boms WHERE id = ?",
+                    [id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                    _ => CommerceError::DatabaseError(e.to_string()),
+                })?;
+
+            let new_name = input.name.unwrap_or(existing_data.0);
+            let new_description = input.description.or(existing_data.1);
+            let new_revision = input.revision.unwrap_or(existing_data.2);
+            let new_status = input
+                .status
+                .unwrap_or_else(|| Self::parse_bom_status(&existing_data.3));
+
+            tx.execute(
+                "UPDATE manufacturing_boms SET name = ?, description = ?, revision = ?, status = ?, updated_by = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    new_name,
+                    new_description,
+                    new_revision,
+                    new_status.to_string(),
+                    input.updated_by.map(|u| u.to_string()),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            // Fetch updated BOM with full data for the result
+            let bom_data: (String, String, Option<String>, Option<String>, String, String) = tx
+                .query_row(
+                    "SELECT bom_number, product_id, created_by, updated_by, created_at, updated_at
+                     FROM manufacturing_boms WHERE id = ?",
+                    [id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    },
+                )
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            results.push(BillOfMaterials {
+                id,
+                bom_number: bom_data.0,
+                product_id: Uuid::parse_str(&bom_data.1).unwrap_or_default(),
+                name: new_name,
+                description: new_description,
+                revision: new_revision,
+                status: new_status,
+                components: vec![], // Components loaded separately after commit
+                created_by: bom_data.2.and_then(|s| Uuid::parse_str(&s).ok()),
+                updated_by: bom_data.3.and_then(|s| Uuid::parse_str(&s).ok()),
+                created_at: Self::parse_datetime(&bom_data.4),
+                updated_at: Self::parse_datetime(&bom_data.5),
+            });
+        }
+
+        tx.commit()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        // Load components for each BOM after commit
+        for bom in &mut results {
+            bom.components = self.load_components(bom.id)?;
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let placeholders = build_in_clause(ids.len());
+
+        // Mark BOMs as obsolete (soft delete) using IN clause
+        let sql = format!(
+            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = ? WHERE id IN ({})",
+            placeholders
+        );
+
+        // Build params with timestamp first, then IDs
+        let now = Utc::now().to_rfc3339();
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+        all_params.extend(uuid_params(&ids));
+        let all_params_refs: Vec<&dyn rusqlite::ToSql> =
+            all_params.iter().map(|p| p.as_ref()).collect();
+
+        tx.execute(&sql, all_params_refs.as_slice())
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<BillOfMaterials>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!(
+            "SELECT id, bom_number, product_id, name, description, revision, status,
+                    created_by, updated_by, created_at, updated_at
+             FROM manufacturing_boms WHERE id IN ({})",
+            placeholders
+        );
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                ))
+            })
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        let mut bom_data_list = Vec::new();
+        for row in rows {
+            bom_data_list
+                .push(row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?);
+        }
+
+        // Release connection before loading components
+        drop(stmt);
+        drop(conn);
+
+        // Build BOMs and load components
+        let mut boms = Vec::with_capacity(bom_data_list.len());
+        for (
+            id_str,
+            bom_number,
+            product_id,
+            name,
+            description,
+            revision,
+            status,
+            created_by,
+            updated_by,
+            created_at,
+            updated_at,
+        ) in bom_data_list
+        {
+            let bom_id = Uuid::parse_str(&id_str).unwrap_or_default();
+            let components = self.load_components(bom_id)?;
+
+            boms.push(BillOfMaterials {
+                id: bom_id,
+                bom_number,
+                product_id: Uuid::parse_str(&product_id).unwrap_or_default(),
+                name,
+                description,
+                revision,
+                status: Self::parse_bom_status(&status),
+                components,
+                created_by: created_by.and_then(|s| Uuid::parse_str(&s).ok()),
+                updated_by: updated_by.and_then(|s| Uuid::parse_str(&s).ok()),
+                created_at: Self::parse_datetime(&created_at),
+                updated_at: Self::parse_datetime(&updated_at),
+            });
+        }
+
+        Ok(boms)
     }
 }

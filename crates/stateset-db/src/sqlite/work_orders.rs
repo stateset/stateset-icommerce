@@ -1,14 +1,16 @@
 //! SQLite Work Order repository implementation
 
+use super::{build_in_clause, map_db_error, params_refs, uuid_params};
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use stateset_core::{
-    AddWorkOrderMaterial, CommerceError, CreateWorkOrder, CreateWorkOrderTask, Result,
-    TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial,
-    WorkOrderPriority, WorkOrderRepository, WorkOrderStatus, WorkOrderTask,
+    validate_batch_size, AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder,
+    CreateWorkOrderTask, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
+    WorkOrderFilter, WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus,
+    WorkOrderTask,
 };
 use uuid::Uuid;
 
@@ -924,5 +926,418 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateWorkOrder>) -> Result<BatchResult<WorkOrder>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(work_order) => result.record_success(work_order),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let work_order_number = WorkOrder::generate_work_order_number();
+            let now = Utc::now();
+            let priority = input.priority.clone().unwrap_or(WorkOrderPriority::Normal);
+
+            tx.execute(
+                "INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id,
+                 assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, '0', ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    work_order_number,
+                    input.product_id.to_string(),
+                    input.bom_id.map(|u| u.to_string()),
+                    input.work_center_id,
+                    input.assigned_to.map(|u| u.to_string()),
+                    priority.to_string(),
+                    input.quantity_to_build.to_string(),
+                    input.scheduled_start.map(|dt| dt.to_rfc3339()),
+                    input.scheduled_end.map(|dt| dt.to_rfc3339()),
+                    input.notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Insert tasks if provided
+            let mut tasks = Vec::new();
+            if let Some(task_inputs) = input.tasks {
+                for task_input in task_inputs {
+                    let task_id = Uuid::new_v4();
+                    let sequence = task_input.sequence.unwrap_or(1);
+
+                    tx.execute(
+                        "INSERT INTO manufacturing_work_order_tasks (id, work_order_id, sequence, task_name, status, estimated_hours, assigned_to, notes, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+                        rusqlite::params![
+                            task_id.to_string(),
+                            id.to_string(),
+                            sequence,
+                            task_input.task_name,
+                            task_input.estimated_hours.map(|h| h.to_string()),
+                            task_input.assigned_to.map(|u| u.to_string()),
+                            task_input.notes,
+                            now.to_rfc3339(),
+                            now.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(map_db_error)?;
+
+                    tasks.push(WorkOrderTask {
+                        id: task_id,
+                        work_order_id: id,
+                        sequence,
+                        task_name: task_input.task_name,
+                        status: TaskStatus::Pending,
+                        estimated_hours: task_input.estimated_hours,
+                        actual_hours: None,
+                        assigned_to: task_input.assigned_to,
+                        started_at: None,
+                        completed_at: None,
+                        notes: task_input.notes,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+            }
+
+            results.push(WorkOrder {
+                id,
+                work_order_number,
+                product_id: input.product_id,
+                bom_id: input.bom_id,
+                work_center_id: input.work_center_id,
+                assigned_to: input.assigned_to,
+                status: WorkOrderStatus::Planned,
+                priority,
+                quantity_to_build: input.quantity_to_build,
+                quantity_completed: Decimal::ZERO,
+                scheduled_start: input.scheduled_start,
+                scheduled_end: input.scheduled_end,
+                actual_start: None,
+                actual_end: None,
+                notes: input.notes,
+                tasks,
+                materials: vec![],
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdateWorkOrder)>,
+    ) -> Result<BatchResult<WorkOrder>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(work_order) => result.record_success(work_order),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(Uuid, UpdateWorkOrder)>,
+    ) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut updated_ids = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            // Get existing work order data
+            let existing: (String, String, Option<String>, Option<String>, Option<String>, Option<String>) = tx
+                .query_row(
+                    "SELECT status, priority, assigned_to, work_center_id, scheduled_start, scheduled_end
+                     FROM manufacturing_work_orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    )),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                    _ => map_db_error(e),
+                })?;
+
+            let new_status = input
+                .status
+                .map(|s| s.to_string())
+                .unwrap_or(existing.0);
+            let new_priority = input
+                .priority
+                .map(|p| p.to_string())
+                .unwrap_or(existing.1);
+            let new_assigned_to = input
+                .assigned_to
+                .map(|u| Some(u.to_string()))
+                .unwrap_or(existing.2);
+            let new_work_center_id = input.work_center_id.or(existing.3);
+            let new_scheduled_start = input
+                .scheduled_start
+                .map(|dt| Some(dt.to_rfc3339()))
+                .unwrap_or(existing.4);
+            let new_scheduled_end = input
+                .scheduled_end
+                .map(|dt| Some(dt.to_rfc3339()))
+                .unwrap_or(existing.5);
+            let new_notes = input.notes;
+
+            tx.execute(
+                "UPDATE manufacturing_work_orders SET status = ?, priority = ?, assigned_to = ?,
+                 work_center_id = ?, scheduled_start = ?, scheduled_end = ?, notes = COALESCE(?, notes), updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    new_status,
+                    new_priority,
+                    new_assigned_to,
+                    new_work_center_id,
+                    new_scheduled_start,
+                    new_scheduled_end,
+                    new_notes,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            updated_ids.push(id);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Fetch all updated work orders
+        let mut results = Vec::with_capacity(updated_ids.len());
+        for id in updated_ids {
+            if let Some(wo) = self.get(id)? {
+                results.push(wo);
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let param_refs = params_refs(&params);
+
+        // Delete tasks first (foreign key constraint)
+        let sql = format!(
+            "DELETE FROM manufacturing_work_order_tasks WHERE work_order_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, param_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete materials (foreign key constraint)
+        let sql = format!(
+            "DELETE FROM manufacturing_work_order_materials WHERE work_order_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, param_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete work orders (using soft delete - mark as cancelled)
+        let now = Utc::now().to_rfc3339();
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+        all_params.extend(uuid_params(&ids));
+        let all_params_refs = params_refs(&all_params);
+
+        let sql = format!(
+            "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, all_params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Query all work orders in a single query
+        let work_order_data = {
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            let placeholders = build_in_clause(ids.len());
+            let sql = format!(
+                "SELECT id, work_order_number, product_id, bom_id, work_center_id, assigned_to,
+                        status, priority, quantity_to_build, quantity_completed, scheduled_start,
+                        scheduled_end, actual_start, actual_end, notes, created_at, updated_at
+                 FROM manufacturing_work_orders WHERE id IN ({})",
+                placeholders
+            );
+
+            let params = uuid_params(&ids);
+            let param_refs = params_refs(&params);
+
+            let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<String>>(11)?,
+                        row.get::<_, Option<String>>(12)?,
+                        row.get::<_, Option<String>>(13)?,
+                        row.get::<_, Option<String>>(14)?,
+                        row.get::<_, String>(15)?,
+                        row.get::<_, String>(16)?,
+                    ))
+                })
+                .map_err(map_db_error)?;
+
+            let mut data = Vec::new();
+            for row in rows {
+                data.push(row.map_err(map_db_error)?);
+            }
+            data
+        };
+
+        // Build work orders, loading tasks and materials for each
+        let mut work_orders = Vec::with_capacity(work_order_data.len());
+        for (
+            id_str,
+            work_order_number,
+            product_id,
+            bom_id,
+            work_center_id,
+            assigned_to,
+            status,
+            priority,
+            quantity_to_build,
+            quantity_completed,
+            scheduled_start,
+            scheduled_end,
+            actual_start,
+            actual_end,
+            notes,
+            created_at,
+            updated_at,
+        ) in work_order_data
+        {
+            let wo_id = Uuid::parse_str(&id_str).unwrap_or_default();
+            let tasks = self.load_tasks(wo_id)?;
+            let materials = self.load_materials(wo_id)?;
+
+            work_orders.push(WorkOrder {
+                id: wo_id,
+                work_order_number,
+                product_id: Uuid::parse_str(&product_id).unwrap_or_default(),
+                bom_id: bom_id.and_then(|s| Uuid::parse_str(&s).ok()),
+                work_center_id,
+                assigned_to: assigned_to.and_then(|s| Uuid::parse_str(&s).ok()),
+                status: Self::parse_status(&status),
+                priority: Self::parse_priority(&priority),
+                quantity_to_build: Decimal::from_str(&quantity_to_build).unwrap_or_default(),
+                quantity_completed: Decimal::from_str(&quantity_completed).unwrap_or_default(),
+                scheduled_start: Self::parse_optional_datetime(scheduled_start),
+                scheduled_end: Self::parse_optional_datetime(scheduled_end),
+                actual_start: Self::parse_optional_datetime(actual_start),
+                actual_end: Self::parse_optional_datetime(actual_end),
+                notes,
+                tasks,
+                materials,
+                version: 1,
+                created_at: Self::parse_datetime(&created_at),
+                updated_at: Self::parse_datetime(&updated_at),
+            });
+        }
+
+        Ok(work_orders)
     }
 }

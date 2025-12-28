@@ -1,14 +1,14 @@
 //! SQLite implementation of warranty repository
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
 use stateset_core::{
-    ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
-    Result, UpdateWarranty, UpdateWarrantyClaim, Warranty, WarrantyClaim,
-    WarrantyClaimFilter, WarrantyFilter, WarrantyRepository, WarrantyStatus,
-    generate_warranty_number, generate_claim_number,
+    validate_batch_size, BatchResult, ClaimResolution, ClaimStatus, CommerceError,
+    CreateWarranty, CreateWarrantyClaim, Result, UpdateWarranty, UpdateWarrantyClaim,
+    Warranty, WarrantyClaim, WarrantyClaimFilter, WarrantyFilter, WarrantyRepository,
+    WarrantyStatus, generate_claim_number, generate_warranty_number,
 };
 use uuid::Uuid;
 
@@ -471,5 +471,245 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(warranty) => result.record_success(warranty),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = chrono::Utc::now();
+            let warranty_number = generate_warranty_number();
+            let purchase_date = input.purchase_date.unwrap_or(now);
+            let start_date = input.start_date.unwrap_or(purchase_date);
+
+            let end_date = input.end_date.or_else(|| {
+                input.duration_months.map(|months| {
+                    start_date + chrono::Duration::days(months as i64 * 30)
+                })
+            });
+
+            tx.execute(
+                "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
+                 product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
+                 purchase_date, start_date, end_date, duration_months, max_coverage_amount, deductible,
+                 max_claims, claims_used, terms, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    warranty_number.clone(),
+                    input.customer_id.to_string(),
+                    input.order_id.map(|id| id.to_string()),
+                    input.order_item_id.map(|id| id.to_string()),
+                    input.product_id.map(|id| id.to_string()),
+                    input.sku.clone(),
+                    input.serial_number.clone(),
+                    WarrantyStatus::Active.to_string(),
+                    input.warranty_type.clone().unwrap_or_default().to_string(),
+                    input.provider.clone(),
+                    input.coverage_description.clone(),
+                    purchase_date.to_rfc3339(),
+                    start_date.to_rfc3339(),
+                    end_date.map(|d| d.to_rfc3339()),
+                    input.duration_months,
+                    input.max_coverage_amount.map(|d| d.to_string()),
+                    input.deductible.map(|d| d.to_string()),
+                    input.max_claims,
+                    0,
+                    input.terms.clone(),
+                    input.notes.clone(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+
+            results.push(Warranty {
+                id,
+                warranty_number,
+                customer_id: input.customer_id,
+                order_id: input.order_id,
+                order_item_id: input.order_item_id,
+                product_id: input.product_id,
+                sku: input.sku,
+                serial_number: input.serial_number,
+                status: WarrantyStatus::Active,
+                warranty_type: input.warranty_type.unwrap_or_default(),
+                provider: input.provider,
+                coverage_description: input.coverage_description,
+                purchase_date,
+                start_date,
+                end_date,
+                duration_months: input.duration_months,
+                max_coverage_amount: input.max_coverage_amount,
+                deductible: input.deductible,
+                max_claims: input.max_claims,
+                claims_used: 0,
+                terms: input.terms,
+                notes: input.notes,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(warranty) => result.record_success(warranty),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = chrono::Utc::now();
+
+            // Get current warranty
+            let warranty: Warranty = tx.query_row(
+                "SELECT * FROM warranties WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_warranty,
+            ).map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+                e => map_db_error(e),
+            })?;
+
+            tx.execute(
+                "UPDATE warranties SET status = ?, serial_number = ?, end_date = ?,
+                 coverage_description = ?, terms = ?, notes = ?, updated_at = ? WHERE id = ?",
+                params![
+                    input.status.unwrap_or(warranty.status).to_string(),
+                    input.serial_number.or(warranty.serial_number),
+                    input.end_date.map(|d| d.to_rfc3339()).or(warranty.end_date.map(|d| d.to_rfc3339())),
+                    input.coverage_description.or(warranty.coverage_description),
+                    input.terms.or(warranty.terms),
+                    input.notes.or(warranty.notes),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+
+            // Fetch updated warranty
+            let updated: Warranty = tx.query_row(
+                "SELECT * FROM warranties WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_warranty,
+            ).map_err(map_db_error)?;
+
+            results.push(updated);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.void(id) {
+                Ok(_) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let now = chrono::Utc::now();
+
+        // Void warranties (set status to voided) rather than hard delete
+        let sql = format!(
+            "UPDATE warranties SET status = ?, updated_at = ? WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params.push(Box::new(WarrantyStatus::Voided.to_string()));
+        params.push(Box::new(now.to_rfc3339()));
+        for id in &ids {
+            params.push(Box::new(id.to_string()));
+        }
+        let params_refs = params_refs(&params);
+
+        tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM warranties WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let warranties = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_warranty)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(warranties)
     }
 }

@@ -7,11 +7,11 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    AnalyticsQuery, AnalyticsRepository, CommerceError, CustomerMetrics, DemandForecast,
-    FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
-    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod,
-    RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct,
-    TopReturnedProduct, Trend,
+    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CommerceError, CustomerMetrics,
+    DemandForecast, FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem,
+    OrderStatusBreakdown, ProductPerformance, Result, ReturnMetrics, ReturnReasonCount,
+    RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer,
+    TopProduct, TopReturnedProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -1000,5 +1000,14 @@ impl AnalyticsRepository for PgAnalyticsRepository {
         granularity: TimeGranularity,
     ) -> Result<Vec<RevenueForecast>> {
         super::block_on(self.get_revenue_forecast_async(periods_ahead, granularity))
+    }
+
+    fn get_sales_summary_batch(&self, queries: Vec<AnalyticsQuery>) -> Result<Vec<SalesSummary>> {
+        validate_batch_size(&queries)?;
+        let mut results = Vec::with_capacity(queries.len());
+        for query in queries {
+            results.push(self.get_sales_summary(query)?);
+        }
+        Ok(results)
     }
 }

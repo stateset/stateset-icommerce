@@ -3,7 +3,7 @@
 //! These traits define the interface for data persistence.
 //! Implementations can be SQLite, PostgreSQL, in-memory, etc.
 
-use crate::errors::Result;
+use crate::errors::{BatchResult, Result};
 use crate::models::*;
 use uuid::Uuid;
 
@@ -35,6 +35,29 @@ pub trait OrderRepository {
 
     /// Count orders matching filter
     fn count(&self, filter: OrderFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple orders - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateOrder>) -> Result<BatchResult<Order>>;
+
+    /// Create multiple orders - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateOrder>) -> Result<Vec<Order>>;
+
+    /// Update multiple orders - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>>;
+
+    /// Update multiple orders - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>>;
+
+    /// Delete multiple orders - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple orders - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple orders by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>>;
 }
 
 /// Inventory repository trait
@@ -77,6 +100,26 @@ pub trait InventoryRepository {
 
     /// Get transaction history
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>>;
+
+    // === Batch Operations ===
+
+    /// Create multiple inventory items - partial success allowed
+    fn create_item_batch(&self, inputs: Vec<CreateInventoryItem>) -> Result<BatchResult<InventoryItem>>;
+
+    /// Create multiple inventory items - atomic (all-or-nothing)
+    fn create_item_batch_atomic(&self, inputs: Vec<CreateInventoryItem>) -> Result<Vec<InventoryItem>>;
+
+    /// Adjust multiple inventory quantities - partial success allowed
+    fn adjust_batch(&self, adjustments: Vec<AdjustInventory>) -> Result<BatchResult<InventoryTransaction>>;
+
+    /// Adjust multiple inventory quantities - atomic (all-or-nothing)
+    fn adjust_batch_atomic(&self, adjustments: Vec<AdjustInventory>) -> Result<Vec<InventoryTransaction>>;
+
+    /// Get multiple inventory items by ID
+    fn get_item_batch(&self, ids: Vec<i64>) -> Result<Vec<InventoryItem>>;
+
+    /// Get stock levels for multiple SKUs
+    fn get_stock_batch(&self, skus: Vec<String>) -> Result<Vec<StockLevel>>;
 }
 
 /// Customer repository trait
@@ -116,6 +159,29 @@ pub trait CustomerRepository {
 
     /// Count customers matching filter
     fn count(&self, filter: CustomerFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple customers - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateCustomer>) -> Result<BatchResult<Customer>>;
+
+    /// Create multiple customers - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>>;
+
+    /// Update multiple customers - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>>;
+
+    /// Update multiple customers - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>>;
+
+    /// Delete multiple customers - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple customers - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple customers by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>>;
 }
 
 /// Product repository trait
@@ -158,6 +224,29 @@ pub trait ProductRepository {
 
     /// Count products matching filter
     fn count(&self, filter: ProductFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple products - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateProduct>) -> Result<BatchResult<Product>>;
+
+    /// Create multiple products - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>>;
+
+    /// Update multiple products - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>>;
+
+    /// Update multiple products - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>>;
+
+    /// Delete multiple products - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple products - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple products by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>>;
 }
 
 /// Return repository trait
@@ -188,6 +277,29 @@ pub trait ReturnRepository {
 
     /// Count returns matching filter
     fn count(&self, filter: ReturnFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple returns - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateReturn>) -> Result<BatchResult<Return>>;
+
+    /// Create multiple returns - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateReturn>) -> Result<Vec<Return>>;
+
+    /// Update multiple returns - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>>;
+
+    /// Update multiple returns - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>>;
+
+    /// Delete multiple returns - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple returns - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple returns by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>>;
 }
 
 /// Event handler trait for domain events
@@ -233,6 +345,29 @@ pub trait BomRepository {
 
     /// Count BOMs matching filter
     fn count(&self, filter: BomFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple BOMs - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateBom>) -> Result<BatchResult<BillOfMaterials>>;
+
+    /// Create multiple BOMs - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateBom>) -> Result<Vec<BillOfMaterials>>;
+
+    /// Update multiple BOMs - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<BatchResult<BillOfMaterials>>;
+
+    /// Update multiple BOMs - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<Vec<BillOfMaterials>>;
+
+    /// Delete multiple BOMs - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple BOMs - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple BOMs by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<BillOfMaterials>>;
 }
 
 /// Work Order repository trait
@@ -301,6 +436,29 @@ pub trait WorkOrderRepository {
 
     /// Count work orders matching filter
     fn count(&self, filter: WorkOrderFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple work orders - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateWorkOrder>) -> Result<BatchResult<WorkOrder>>;
+
+    /// Create multiple work orders - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>>;
+
+    /// Update multiple work orders - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>>;
+
+    /// Update multiple work orders - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>>;
+
+    /// Delete multiple work orders - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple work orders - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple work orders by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<WorkOrder>>;
 }
 
 /// Shipment repository trait
@@ -376,6 +534,29 @@ pub trait ShipmentRepository {
 
     /// Count shipments matching filter
     fn count(&self, filter: ShipmentFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple shipments - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>>;
+
+    /// Create multiple shipments - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>>;
+
+    /// Update multiple shipments - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>>;
+
+    /// Update multiple shipments - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>>;
+
+    /// Delete multiple shipments - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple shipments - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple shipments by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>>;
 }
 
 /// Payment repository trait
@@ -448,6 +629,29 @@ pub trait PaymentRepository {
 
     /// Count payments matching filter
     fn count(&self, filter: PaymentFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple payments - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>>;
+
+    /// Create multiple payments - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>>;
+
+    /// Update multiple payments - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>>;
+
+    /// Update multiple payments - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>>;
+
+    /// Delete multiple payments - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple payments - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple payments by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>>;
 }
 
 /// Warranty repository trait
@@ -523,6 +727,29 @@ pub trait WarrantyRepository {
 
     /// Count claims matching filter
     fn count_claims(&self, filter: WarrantyClaimFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple warranties - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>>;
+
+    /// Create multiple warranties - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>>;
+
+    /// Update multiple warranties - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>>;
+
+    /// Update multiple warranties - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>>;
+
+    /// Delete multiple warranties - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple warranties - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple warranties by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>>;
 }
 
 /// Purchase Order repository trait
@@ -611,6 +838,29 @@ pub trait PurchaseOrderRepository {
 
     /// Count suppliers matching filter
     fn count_suppliers(&self, filter: SupplierFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple purchase orders - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreatePurchaseOrder>) -> Result<BatchResult<PurchaseOrder>>;
+
+    /// Create multiple purchase orders - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreatePurchaseOrder>) -> Result<Vec<PurchaseOrder>>;
+
+    /// Update multiple purchase orders - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdatePurchaseOrder)>) -> Result<BatchResult<PurchaseOrder>>;
+
+    /// Update multiple purchase orders - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePurchaseOrder)>) -> Result<Vec<PurchaseOrder>>;
+
+    /// Delete multiple purchase orders - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple purchase orders - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple purchase orders by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>>;
 }
 
 /// Invoice repository trait
@@ -679,6 +929,29 @@ pub trait InvoiceRepository {
 
     /// Count invoices matching filter
     fn count(&self, filter: InvoiceFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple invoices - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateInvoice>) -> Result<BatchResult<Invoice>>;
+
+    /// Create multiple invoices - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateInvoice>) -> Result<Vec<Invoice>>;
+
+    /// Update multiple invoices - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>>;
+
+    /// Update multiple invoices - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>>;
+
+    /// Delete multiple invoices - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple invoices - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple invoices by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>>;
 }
 
 /// Cart/Checkout repository trait
@@ -787,6 +1060,29 @@ pub trait CartRepository {
 
     /// Count carts matching filter
     fn count(&self, filter: CartFilter) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple carts - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateCart>) -> Result<BatchResult<Cart>>;
+
+    /// Create multiple carts - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateCart>) -> Result<Vec<Cart>>;
+
+    /// Update multiple carts - partial success allowed
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>>;
+
+    /// Update multiple carts - atomic (all-or-nothing)
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>>;
+
+    /// Delete multiple carts - partial success allowed
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple carts - atomic (all-or-nothing)
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple carts by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>>;
 }
 
 /// Analytics repository trait
@@ -838,6 +1134,11 @@ pub trait AnalyticsRepository {
 
     /// Get revenue forecast
     fn get_revenue_forecast(&self, periods_ahead: u32, granularity: TimeGranularity) -> Result<Vec<RevenueForecast>>;
+
+    // === Batch Operations ===
+
+    /// Get multiple sales summaries for different queries
+    fn get_sales_summary_batch(&self, queries: Vec<AnalyticsQuery>) -> Result<Vec<SalesSummary>>;
 }
 
 /// Currency and exchange rate repository trait
@@ -868,6 +1169,21 @@ pub trait CurrencyRepository {
 
     /// Update store currency settings
     fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings>;
+
+    // === Batch Operations ===
+
+    /// Set multiple exchange rates - atomic (all-or-nothing)
+    /// Note: set_rates already exists as a partial-success batch operation
+    fn set_rates_atomic(&self, rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>>;
+
+    /// Delete multiple exchange rates - partial success allowed
+    fn delete_rates_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
+
+    /// Delete multiple exchange rates - atomic (all-or-nothing)
+    fn delete_rates_atomic(&self, ids: Vec<Uuid>) -> Result<()>;
+
+    /// Get multiple exchange rates by currency pairs
+    fn get_rates_batch(&self, pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>>;
 }
 
 /// Optional: Transaction support trait

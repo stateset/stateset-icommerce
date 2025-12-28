@@ -1,13 +1,14 @@
 //! SQLite order repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    validate_batch_size, BatchResult, CommerceError, CreateOrder, CreateOrderItem,
+    FulfillmentStatus, Order, OrderFilter, OrderItem, OrderRepository, OrderStatus,
+    PaymentStatus, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -500,6 +501,342 @@ impl OrderRepository for SqliteOrderRepository {
             .map_err(map_db_error)?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateOrder>) -> Result<BatchResult<Order>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(order) => result.record_success(order),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateOrder>) -> Result<Vec<Order>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let order_number = Self::generate_order_number();
+            let now = Utc::now();
+            let currency = input.currency.clone().unwrap_or_else(|| "USD".to_string());
+
+            let total: Decimal = input
+                .items
+                .iter()
+                .map(|item| {
+                    let subtotal = item.unit_price * Decimal::from(item.quantity);
+                    let discount = item.discount.unwrap_or_default();
+                    let tax = item.tax_amount.unwrap_or_default();
+                    subtotal - discount + tax
+                })
+                .sum();
+
+            let shipping_address_json = input
+                .shipping_address
+                .as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default());
+            let billing_address_json = input
+                .billing_address
+                .as_ref()
+                .map(|a| serde_json::to_string(a).unwrap_or_default());
+
+            tx.execute(
+                "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                     currency, payment_status, fulfillment_status, payment_method,
+                                     shipping_method, notes, shipping_address, billing_address,
+                                     created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &order_number,
+                    input.customer_id.to_string(),
+                    "pending",
+                    now.to_rfc3339(),
+                    total.to_string(),
+                    &currency,
+                    "pending",
+                    "unfulfilled",
+                    &input.payment_method,
+                    &input.shipping_method,
+                    &input.notes,
+                    &shipping_address_json,
+                    &billing_address_json,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            let mut items = Vec::with_capacity(input.items.len());
+            for item in &input.items {
+                let item_id = Uuid::new_v4();
+                let item_total = OrderItem::calculate_total(
+                    item.quantity,
+                    item.unit_price,
+                    item.discount.unwrap_or_default(),
+                    item.tax_amount.unwrap_or_default(),
+                );
+
+                tx.execute(
+                    "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                              quantity, unit_price, discount, tax_amount, total)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item.product_id.to_string(),
+                        item.variant_id.map(|v| v.to_string()),
+                        &item.sku,
+                        &item.name,
+                        item.quantity,
+                        item.unit_price.to_string(),
+                        item.discount.unwrap_or_default().to_string(),
+                        item.tax_amount.unwrap_or_default().to_string(),
+                        item_total.to_string(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+
+                items.push(OrderItem {
+                    id: item_id,
+                    order_id: id,
+                    product_id: item.product_id,
+                    variant_id: item.variant_id,
+                    sku: item.sku.clone(),
+                    name: item.name.clone(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    discount: item.discount.unwrap_or_default(),
+                    tax_amount: item.tax_amount.unwrap_or_default(),
+                    total: item_total,
+                });
+            }
+
+            results.push(Order {
+                id,
+                order_number,
+                customer_id: input.customer_id,
+                status: OrderStatus::Pending,
+                order_date: now,
+                total_amount: total,
+                currency,
+                payment_status: PaymentStatus::Pending,
+                fulfillment_status: FulfillmentStatus::Unfulfilled,
+                payment_method: input.payment_method,
+                shipping_method: input.shipping_method,
+                tracking_number: None,
+                notes: input.notes,
+                shipping_address: input.shipping_address,
+                billing_address: input.billing_address,
+                items,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(order) => result.record_success(order),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // For atomic updates, we use a transaction and fail on any error
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+            let current_version: i32 = tx
+                .query_row(
+                    "SELECT version FROM orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
+                    e => map_db_error(e),
+                })?;
+
+            let mut update_parts = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(status) = &input.status {
+                update_parts.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(payment_status) = &input.payment_status {
+                update_parts.push("payment_status = ?");
+                params.push(Box::new(payment_status.to_string()));
+            }
+            if let Some(fulfillment_status) = &input.fulfillment_status {
+                update_parts.push("fulfillment_status = ?");
+                params.push(Box::new(fulfillment_status.to_string()));
+            }
+            if let Some(tracking) = &input.tracking_number {
+                update_parts.push("tracking_number = ?");
+                params.push(Box::new(tracking.clone()));
+            }
+            if let Some(notes) = &input.notes {
+                update_parts.push("notes = ?");
+                params.push(Box::new(notes.clone()));
+            }
+            if let Some(addr) = &input.shipping_address {
+                update_parts.push("shipping_address = ?");
+                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+            }
+            if let Some(addr) = &input.billing_address {
+                update_parts.push("billing_address = ?");
+                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+            }
+
+            update_parts.push("version = version + 1");
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(current_version));
+
+            let sql = format!(
+                "UPDATE orders SET {} WHERE id = ? AND version = ?",
+                update_parts.join(", ")
+            );
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            if rows_affected == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "order".to_string(),
+                    id: id.to_string(),
+                    expected_version: current_version,
+                });
+            }
+
+            let order = tx
+                .query_row(
+                    "SELECT * FROM orders WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_order,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(order);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Load items for each order
+        let conn = self.conn()?;
+        for order in &mut results {
+            order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        // Delete order items first
+        let sql = format!(
+            "DELETE FROM order_items WHERE order_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete orders
+        let sql = format!("DELETE FROM orders WHERE id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM orders WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let orders = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_order)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        // Load items for each order
+        let mut result = vec![];
+        for mut order in orders {
+            order.items = Self::load_order_items_with_conn(&conn, order.id)?;
+            result.push(order);
+        }
+
+        Ok(result)
     }
 }
 

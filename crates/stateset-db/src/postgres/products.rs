@@ -6,9 +6,9 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    CommerceError, CreateProduct, CreateProductVariant, Product, ProductAttribute, ProductFilter,
-    ProductRepository, ProductStatus, ProductType, ProductVariant, Result, SeoMetadata,
-    UpdateProduct, VariantOption,
+    validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product,
+    ProductAttribute, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
+    Result, SeoMetadata, UpdateProduct, VariantOption,
 };
 use uuid::Uuid;
 
@@ -424,6 +424,256 @@ impl PgProductRepository {
 
         Ok(count.0 as u64)
     }
+
+    // === Batch Operations (async) ===
+
+    /// Create multiple products - partial success allowed (async)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateProduct>) -> Result<BatchResult<Product>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(product) => result.record_success(product),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple products - atomic (all-or-nothing) (async)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut products = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
+            let description = input.description.clone().unwrap_or_default();
+            let product_type = input.product_type.unwrap_or_default();
+            let attributes = input.attributes.clone().unwrap_or_default();
+
+            let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
+            let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+
+            sqlx::query(
+                r#"
+                INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                "#,
+            )
+            .bind(id)
+            .bind(&input.name)
+            .bind(&slug)
+            .bind(&description)
+            .bind("draft")
+            .bind(format!("{:?}", product_type).to_lowercase())
+            .bind(&attributes_json)
+            .bind(&seo_json)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Create variants if provided
+            if let Some(variant_inputs) = &input.variants {
+                for (i, vi) in variant_inputs.iter().enumerate() {
+                    let variant_id = Uuid::new_v4();
+                    let options = vi.options.clone().unwrap_or_default();
+                    let options_json = serde_json::to_value(&options).unwrap_or_default();
+
+                    sqlx::query(
+                        r#"
+                        INSERT INTO product_variants (id, product_id, sku, name, price, compare_at_price, cost,
+                                                      barcode, weight, weight_unit, options, is_default, is_active,
+                                                      created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                        "#,
+                    )
+                    .bind(variant_id)
+                    .bind(id)
+                    .bind(&vi.sku)
+                    .bind(vi.name.as_deref().unwrap_or(&vi.sku))
+                    .bind(vi.price)
+                    .bind(vi.compare_at_price)
+                    .bind(vi.cost)
+                    .bind(&vi.barcode)
+                    .bind(vi.weight)
+                    .bind(&vi.weight_unit)
+                    .bind(&options_json)
+                    .bind(vi.is_default.unwrap_or(i == 0))
+                    .bind(true)
+                    .bind(now)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+            }
+
+            products.push(Product {
+                id,
+                name: input.name,
+                slug,
+                description,
+                status: ProductStatus::Draft,
+                product_type,
+                attributes,
+                seo: input.seo,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(products)
+    }
+
+    /// Update multiple products - partial success allowed (async)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(product) => result.record_success(product),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple products - atomic (all-or-nothing) (async)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut products = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::ProductNotFound(id))?;
+            let current_version = existing_row.version;
+            let existing = Self::row_to_product(existing_row);
+
+            let new_name = input.name.unwrap_or(existing.name);
+            let new_slug = input.slug.unwrap_or(existing.slug);
+            let new_description = input.description.unwrap_or(existing.description);
+            let new_status = input.status.unwrap_or(existing.status);
+            let new_attributes = input.attributes.unwrap_or(existing.attributes);
+            let new_seo = input.seo.or(existing.seo);
+
+            let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
+            let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+
+            let result = sqlx::query(
+                r#"
+                UPDATE products
+                SET name = $1, slug = $2, description = $3, status = $4,
+                    attributes = $5, seo = $6, updated_at = $7, version = version + 1
+                WHERE id = $8 AND version = $9
+                "#,
+            )
+            .bind(&new_name)
+            .bind(&new_slug)
+            .bind(&new_description)
+            .bind(new_status.to_string())
+            .bind(&attributes_json)
+            .bind(&seo_json)
+            .bind(now)
+            .bind(id)
+            .bind(current_version)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "product".to_string(),
+                    id: id.to_string(),
+                    expected_version: current_version,
+                });
+            }
+
+            products.push(Product {
+                id,
+                name: new_name,
+                slug: new_slug,
+                description: new_description,
+                status: new_status,
+                product_type: existing.product_type,
+                attributes: new_attributes,
+                seo: new_seo,
+                created_at: existing.created_at,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(products)
+    }
+
+    /// Delete multiple products - partial success allowed (async)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple products - atomic (all-or-nothing) (async)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = ANY($2)")
+            .bind(now)
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple products by ID (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        Ok(rows.into_iter().map(Self::row_to_product).collect())
+    }
 }
 
 impl ProductRepository for PgProductRepository {
@@ -477,6 +727,36 @@ impl ProductRepository for PgProductRepository {
 
     fn count(&self, filter: ProductFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateProduct>) -> Result<BatchResult<Product>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }
 

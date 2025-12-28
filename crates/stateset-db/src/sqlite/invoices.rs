@@ -1,13 +1,13 @@
 //! SQLite implementation of invoice repository
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::{params, Row};
 use stateset_core::{
-    CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
-    InvoiceItem, InvoiceRepository, InvoiceStatus,
+    validate_batch_size, BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem,
+    Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
     RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number,
 };
 use uuid::Uuid;
@@ -634,5 +634,381 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateInvoice>) -> Result<BatchResult<Invoice>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(invoice) => result.record_success(invoice),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateInvoice>) -> Result<Vec<Invoice>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = chrono::Utc::now();
+            let invoice_number = generate_invoice_number();
+            let invoice_date = input.invoice_date.unwrap_or(now);
+            let due_date = input.due_date.unwrap_or_else(|| {
+                invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
+            });
+
+            tx.execute(
+                "INSERT INTO invoices (id, invoice_number, customer_id, order_id, status, invoice_type,
+                 invoice_date, due_date, payment_terms, currency, billing_name, billing_email,
+                 billing_address, billing_city, billing_state, billing_postal_code, billing_country,
+                 subtotal, discount_amount, discount_percent, tax_amount, tax_rate, shipping_amount,
+                 total, amount_paid, balance_due, po_number, notes, terms, footer, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    invoice_number.clone(),
+                    input.customer_id.to_string(),
+                    input.order_id.map(|id| id.to_string()),
+                    InvoiceStatus::Draft.to_string(),
+                    input.invoice_type.clone().unwrap_or_default().to_string(),
+                    invoice_date.to_rfc3339(),
+                    due_date.to_rfc3339(),
+                    input.payment_terms.clone(),
+                    input.currency.clone().unwrap_or_else(|| "USD".to_string()),
+                    input.billing_name.clone(),
+                    input.billing_email.clone(),
+                    input.billing_address.clone(),
+                    input.billing_city.clone(),
+                    input.billing_state.clone(),
+                    input.billing_postal_code.clone(),
+                    input.billing_country.clone(),
+                    "0",
+                    input.discount_amount.unwrap_or_default().to_string(),
+                    input.discount_percent.map(|d| d.to_string()),
+                    input.tax_amount.unwrap_or_default().to_string(),
+                    input.tax_rate.map(|d| d.to_string()),
+                    input.shipping_amount.unwrap_or_default().to_string(),
+                    "0",
+                    "0",
+                    "0",
+                    input.po_number.clone(),
+                    input.notes.clone(),
+                    input.terms.clone(),
+                    input.footer.clone(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+
+            // Add items
+            let mut items = Vec::with_capacity(input.items.len());
+            for (i, item) in input.items.into_iter().enumerate() {
+                let item_id = Uuid::new_v4();
+                let mut item_with_order = item;
+                if item_with_order.sort_order.is_none() {
+                    item_with_order.sort_order = Some(i as i32);
+                }
+
+                let line_total = item_with_order.quantity * item_with_order.unit_price
+                    - item_with_order.discount_amount.unwrap_or_default()
+                    + item_with_order.tax_amount.unwrap_or_default();
+
+                tx.execute(
+                    "INSERT INTO invoice_items (id, invoice_id, order_item_id, product_id, sku, description,
+                     quantity, unit_of_measure, unit_price, discount_amount, tax_amount, line_total,
+                     sort_order, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item_with_order.order_item_id.map(|id| id.to_string()),
+                        item_with_order.product_id.map(|id| id.to_string()),
+                        item_with_order.sku.clone(),
+                        item_with_order.description.clone(),
+                        item_with_order.quantity.to_string(),
+                        item_with_order.unit_of_measure.clone(),
+                        item_with_order.unit_price.to_string(),
+                        item_with_order.discount_amount.unwrap_or_default().to_string(),
+                        item_with_order.tax_amount.unwrap_or_default().to_string(),
+                        line_total.to_string(),
+                        item_with_order.sort_order.unwrap_or(0),
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+
+                items.push(InvoiceItem {
+                    id: item_id,
+                    invoice_id: id,
+                    order_item_id: item_with_order.order_item_id,
+                    product_id: item_with_order.product_id,
+                    sku: item_with_order.sku,
+                    description: item_with_order.description,
+                    quantity: item_with_order.quantity,
+                    unit_of_measure: item_with_order.unit_of_measure,
+                    unit_price: item_with_order.unit_price,
+                    discount_amount: item_with_order.discount_amount.unwrap_or_default(),
+                    tax_amount: item_with_order.tax_amount.unwrap_or_default(),
+                    line_total,
+                    sort_order: item_with_order.sort_order.unwrap_or(0),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+
+            // Recalculate totals
+            Self::recalculate_with_conn(&tx, id)?;
+
+            // Query for the computed invoice values
+            let invoice = tx.query_row(
+                "SELECT * FROM invoices WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_invoice,
+            ).map_err(map_db_error)?;
+
+            results.push(Invoice {
+                id,
+                invoice_number,
+                customer_id: input.customer_id,
+                order_id: input.order_id,
+                status: InvoiceStatus::Draft,
+                invoice_type: input.invoice_type.unwrap_or_default(),
+                invoice_date,
+                due_date,
+                payment_terms: input.payment_terms,
+                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                billing_name: input.billing_name,
+                billing_email: input.billing_email,
+                billing_address: input.billing_address,
+                billing_city: input.billing_city,
+                billing_state: input.billing_state,
+                billing_postal_code: input.billing_postal_code,
+                billing_country: input.billing_country,
+                subtotal: invoice.subtotal,
+                discount_amount: input.discount_amount.unwrap_or_default(),
+                discount_percent: input.discount_percent,
+                tax_amount: input.tax_amount.unwrap_or_default(),
+                tax_rate: input.tax_rate,
+                shipping_amount: input.shipping_amount.unwrap_or_default(),
+                total: invoice.total,
+                amount_paid: Decimal::ZERO,
+                balance_due: invoice.balance_due,
+                po_number: input.po_number,
+                notes: input.notes,
+                terms: input.terms,
+                footer: input.footer,
+                sent_at: None,
+                viewed_at: None,
+                paid_at: None,
+                voided_at: None,
+                items,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(invoice) => result.record_success(invoice),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = chrono::Utc::now();
+            let invoice = tx
+                .query_row(
+                    "SELECT * FROM invoices WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_invoice,
+                )
+                .map_err(map_db_error)?;
+
+            tx.execute(
+                "UPDATE invoices SET due_date = ?, payment_terms = ?, billing_name = ?, billing_email = ?,
+                 billing_address = ?, billing_city = ?, billing_state = ?, billing_postal_code = ?,
+                 billing_country = ?, discount_amount = ?, discount_percent = ?, tax_amount = ?,
+                 tax_rate = ?, shipping_amount = ?, po_number = ?, notes = ?, terms = ?, footer = ?,
+                 updated_at = ? WHERE id = ?",
+                params![
+                    input.due_date.map(|d| d.to_rfc3339()).unwrap_or_else(|| invoice.due_date.to_rfc3339()),
+                    input.payment_terms.or(invoice.payment_terms.clone()),
+                    input.billing_name.or(invoice.billing_name.clone()),
+                    input.billing_email.or(invoice.billing_email.clone()),
+                    input.billing_address.or(invoice.billing_address.clone()),
+                    input.billing_city.or(invoice.billing_city.clone()),
+                    input.billing_state.or(invoice.billing_state.clone()),
+                    input.billing_postal_code.or(invoice.billing_postal_code.clone()),
+                    input.billing_country.or(invoice.billing_country.clone()),
+                    input.discount_amount.unwrap_or(invoice.discount_amount).to_string(),
+                    input.discount_percent.map(|d| d.to_string()).or(invoice.discount_percent.map(|d| d.to_string())),
+                    input.tax_amount.unwrap_or(invoice.tax_amount).to_string(),
+                    input.tax_rate.map(|d| d.to_string()).or(invoice.tax_rate.map(|d| d.to_string())),
+                    input.shipping_amount.unwrap_or(invoice.shipping_amount).to_string(),
+                    input.po_number.or(invoice.po_number.clone()),
+                    input.notes.or(invoice.notes.clone()),
+                    input.terms.or(invoice.terms.clone()),
+                    input.footer.or(invoice.footer.clone()),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+
+            Self::recalculate_with_conn(&tx, id)?;
+
+            let updated_invoice = tx
+                .query_row(
+                    "SELECT * FROM invoices WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_invoice,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(updated_invoice);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Load items for each invoice
+        let conn = self.conn()?;
+        for invoice in &mut results {
+            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        // Check that all invoices are in Draft status before deleting
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        {
+            let sql = format!(
+                "SELECT id, status FROM invoices WHERE id IN ({})",
+                placeholders
+            );
+            let mut stmt = tx.prepare(&sql).map_err(map_db_error)?;
+            let rows = stmt
+                .query_map(params_refs.as_slice(), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(map_db_error)?;
+
+            for row in rows {
+                let (id_str, status) = row.map_err(map_db_error)?;
+                if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+                    return Err(CommerceError::ValidationError(format!(
+                        "Can only delete draft invoices. Invoice {} has status {}",
+                        id_str, status
+                    )));
+                }
+            }
+        }
+
+        // Delete invoice items first
+        let sql = format!(
+            "DELETE FROM invoice_items WHERE invoice_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete invoices
+        let sql = format!("DELETE FROM invoices WHERE id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM invoices WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let invoices = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_invoice)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        // Load items for each invoice
+        let mut result = vec![];
+        for mut invoice in invoices {
+            invoice.items = Self::get_invoice_items_with_conn(&conn, invoice.id)?;
+            result.push(invoice);
+        }
+
+        Ok(result)
     }
 }

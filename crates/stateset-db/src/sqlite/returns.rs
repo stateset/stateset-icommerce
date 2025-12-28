@@ -1,13 +1,13 @@
 //! SQLite return repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateReturn, ItemCondition, Result, Return, ReturnFilter, ReturnItem,
-    ReturnReason, ReturnRepository, ReturnStatus, UpdateReturn,
+    validate_batch_size, BatchResult, CommerceError, CreateReturn, ItemCondition, Result, Return,
+    ReturnFilter, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -73,6 +73,19 @@ impl SqliteReturnRepository {
             .map_err(map_db_error)?;
 
         Ok(items)
+    }
+
+    /// Delete a return and its items
+    fn delete(&self, id: Uuid) -> Result<()> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        tx.execute("DELETE FROM return_items WHERE return_id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
+        tx.execute("DELETE FROM returns WHERE id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
     }
 }
 
@@ -463,6 +476,345 @@ impl ReturnRepository for SqliteReturnRepository {
             .map_err(map_db_error)?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateReturn>) -> Result<BatchResult<Return>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(ret) => result.record_success(ret),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateReturn>) -> Result<Vec<Return>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+
+            // Get order to get customer_id
+            let customer_id: String = tx
+                .query_row(
+                    "SELECT customer_id FROM orders WHERE id = ?",
+                    [input.order_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+
+            tx.execute(
+                "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    input.order_id.to_string(),
+                    customer_id,
+                    input.reason.to_string(),
+                    input.reason_details,
+                    input.notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Insert return items
+            let mut items = Vec::with_capacity(input.items.len());
+            for item in &input.items {
+                let item_id = Uuid::new_v4();
+
+                // Get order item details
+                let (sku, name, unit_price): (String, String, String) = tx
+                    .query_row(
+                        "SELECT sku, name, unit_price FROM order_items WHERE id = ?",
+                        [item.order_item_id.to_string()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(map_db_error)?;
+
+                let refund_amount = parse_decimal(&unit_price) * Decimal::from(item.quantity);
+
+                tx.execute(
+                    "INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item.order_item_id.to_string(),
+                        sku.clone(),
+                        name.clone(),
+                        item.quantity,
+                        item.condition.unwrap_or_default().to_string(),
+                        refund_amount.to_string(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+
+                items.push(ReturnItem {
+                    id: item_id,
+                    return_id: id,
+                    order_item_id: item.order_item_id,
+                    sku,
+                    name,
+                    quantity: item.quantity,
+                    condition: item.condition.unwrap_or_default(),
+                    refund_amount,
+                });
+            }
+
+            // Calculate total refund amount
+            let total_refund: f64 = tx
+                .query_row(
+                    "SELECT COALESCE(SUM(CAST(refund_amount AS REAL)), 0) FROM return_items WHERE return_id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+
+            tx.execute(
+                "UPDATE returns SET refund_amount = ? WHERE id = ?",
+                rusqlite::params![total_refund.to_string(), id.to_string()],
+            )
+            .map_err(map_db_error)?;
+
+            results.push(Return {
+                id,
+                order_id: input.order_id,
+                customer_id: customer_id.parse().unwrap_or_default(),
+                status: ReturnStatus::Requested,
+                reason: input.reason,
+                reason_details: input.reason_details,
+                refund_amount: Some(Decimal::try_from(total_refund).unwrap_or_default()),
+                refund_method: None,
+                tracking_number: None,
+                items,
+                notes: input.notes,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(ret) => result.record_success(ret),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+
+            let mut update_parts = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(status) = &input.status {
+                update_parts.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(tracking) = &input.tracking_number {
+                update_parts.push("tracking_number = ?");
+                params.push(Box::new(tracking.clone()));
+            }
+            if let Some(amount) = &input.refund_amount {
+                update_parts.push("refund_amount = ?");
+                params.push(Box::new(amount.to_string()));
+            }
+            if let Some(method) = &input.refund_method {
+                update_parts.push("refund_method = ?");
+                params.push(Box::new(method.clone()));
+            }
+            if let Some(notes) = &input.notes {
+                update_parts.push("notes = ?");
+                params.push(Box::new(notes.clone()));
+            }
+
+            params.push(Box::new(id.to_string()));
+
+            let sql = format!("UPDATE returns SET {} WHERE id = ?", update_parts.join(", "));
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            if rows_affected == 0 {
+                return Err(CommerceError::ReturnNotFound(id));
+            }
+
+            // Fetch the updated return
+            let ret = tx
+                .query_row(
+                    "SELECT * FROM returns WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_return,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(ret);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+
+        // Load items for each return
+        let conn = self.conn()?;
+        for ret in &mut results {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                     FROM return_items WHERE return_id = ?",
+                )
+                .map_err(map_db_error)?;
+
+            ret.items = stmt
+                .query_map([ret.id.to_string()], |row| {
+                    Ok(ReturnItem {
+                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
+                        order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        quantity: row.get("quantity")?,
+                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                    })
+                })
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?;
+        }
+
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        // Delete return items first
+        let sql = format!(
+            "DELETE FROM return_items WHERE return_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete returns
+        let sql = format!("DELETE FROM returns WHERE id IN ({})", placeholders);
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM returns WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let returns = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_return)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        // Load items for each return
+        let mut result = vec![];
+        for mut ret in returns {
+            let mut item_stmt = conn
+                .prepare(
+                    "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                     FROM return_items WHERE return_id = ?",
+                )
+                .map_err(map_db_error)?;
+
+            ret.items = item_stmt
+                .query_map([ret.id.to_string()], |row| {
+                    Ok(ReturnItem {
+                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
+                        order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        quantity: row.get("quantity")?,
+                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                    })
+                })
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?;
+
+            result.push(ret);
+        }
+
+        Ok(result)
     }
 }
 

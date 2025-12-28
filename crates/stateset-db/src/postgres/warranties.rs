@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    generate_claim_number, generate_warranty_number, ClaimResolution, ClaimStatus, CommerceError,
-    CreateWarranty, CreateWarrantyClaim, Result, UpdateWarranty, UpdateWarrantyClaim, Warranty,
-    WarrantyClaim, WarrantyClaimFilter, WarrantyFilter, WarrantyRepository, WarrantyStatus,
-    WarrantyType,
+    generate_claim_number, generate_warranty_number, validate_batch_size, BatchResult,
+    ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim, Result,
+    UpdateWarranty, UpdateWarrantyClaim, Warranty, WarrantyClaim, WarrantyClaimFilter,
+    WarrantyFilter, WarrantyRepository, WarrantyStatus, WarrantyType,
 };
 use uuid::Uuid;
 
@@ -625,6 +625,254 @@ impl PgWarrantyRepository {
         let (count,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;
         Ok(count as u64)
     }
+
+    // =========================================================================
+    // Batch Operations
+    // =========================================================================
+
+    /// Create multiple warranties in a batch (async, partial success)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(warranty) => result.record_success(warranty),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple warranties atomically (async, all-or-nothing)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut warranties = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let warranty_number = generate_warranty_number();
+            let purchase_date = input.purchase_date.unwrap_or(now);
+            let start_date = input.start_date.unwrap_or(purchase_date);
+
+            let end_date = input.end_date.or_else(|| {
+                input.duration_months.map(|months| {
+                    start_date + chrono::Duration::days(months as i64 * 30)
+                })
+            });
+
+            let status = WarrantyStatus::Active;
+            let warranty_type = input.warranty_type.unwrap_or_default();
+
+            sqlx::query(
+                "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
+                 product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
+                 purchase_date, start_date, end_date, duration_months, max_coverage_amount, deductible,
+                 max_claims, claims_used, terms, notes, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
+            )
+            .bind(id)
+            .bind(&warranty_number)
+            .bind(input.customer_id)
+            .bind(input.order_id)
+            .bind(input.order_item_id)
+            .bind(input.product_id)
+            .bind(&input.sku)
+            .bind(&input.serial_number)
+            .bind(status.to_string())
+            .bind(warranty_type.to_string())
+            .bind(&input.provider)
+            .bind(&input.coverage_description)
+            .bind(purchase_date)
+            .bind(start_date)
+            .bind(end_date)
+            .bind(input.duration_months)
+            .bind(input.max_coverage_amount)
+            .bind(input.deductible)
+            .bind(input.max_claims)
+            .bind(0i32)
+            .bind(&input.terms)
+            .bind(&input.notes)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            warranties.push(Warranty {
+                id,
+                warranty_number,
+                customer_id: input.customer_id,
+                order_id: input.order_id,
+                order_item_id: input.order_item_id,
+                product_id: input.product_id,
+                sku: input.sku,
+                serial_number: input.serial_number,
+                status,
+                warranty_type,
+                provider: input.provider,
+                coverage_description: input.coverage_description,
+                purchase_date,
+                start_date,
+                end_date,
+                duration_months: input.duration_months,
+                max_coverage_amount: input.max_coverage_amount,
+                deductible: input.deductible,
+                max_claims: input.max_claims,
+                claims_used: 0,
+                terms: input.terms,
+                notes: input.notes,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(warranties)
+    }
+
+    /// Update multiple warranties in a batch (async, partial success)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(warranty) => result.record_success(warranty),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple warranties atomically (async, all-or-nothing)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut warranties = Vec::with_capacity(updates.len());
+        let now = Utc::now();
+
+        for (id, input) in updates {
+            // Get existing warranty
+            let row = sqlx::query_as::<_, WarrantyRow>(
+                "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
+                 serial_number, status, warranty_type, provider, coverage_description, purchase_date,
+                 start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
+                 claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1 FOR UPDATE"
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+
+            let warranty = Self::row_to_warranty(row);
+
+            sqlx::query(
+                "UPDATE warranties SET status = $1, serial_number = $2, end_date = $3,
+                 coverage_description = $4, terms = $5, notes = $6, updated_at = $7 WHERE id = $8"
+            )
+            .bind(input.status.unwrap_or(warranty.status).to_string())
+            .bind(input.serial_number.or(warranty.serial_number.clone()))
+            .bind(input.end_date.or(warranty.end_date))
+            .bind(input.coverage_description.or(warranty.coverage_description.clone()))
+            .bind(input.terms.or(warranty.terms.clone()))
+            .bind(input.notes.or(warranty.notes.clone()))
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Fetch updated warranty
+            let updated_row = sqlx::query_as::<_, WarrantyRow>(
+                "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
+                 serial_number, status, warranty_type, provider, coverage_description, purchase_date,
+                 start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
+                 claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1"
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            warranties.push(Self::row_to_warranty(updated_row));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(warranties)
+    }
+
+    /// Delete multiple warranties in a batch (async, partial success)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match sqlx::query("DELETE FROM warranties WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db_error)
+            {
+                Ok(res) => {
+                    if res.rows_affected() > 0 {
+                        result.record_success(id);
+                    } else {
+                        result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound);
+                    }
+                }
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple warranties atomically (async, all-or-nothing)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Delete warranty claims first (foreign key constraint)
+        sqlx::query("DELETE FROM warranty_claims WHERE warranty_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete warranties
+        sqlx::query("DELETE FROM warranties WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple warranties by IDs (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
+        validate_batch_size(&ids)?;
+
+        let rows = sqlx::query_as::<_, WarrantyRow>(
+            "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
+             serial_number, status, warranty_type, provider, coverage_description, purchase_date,
+             start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
+             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = ANY($1)"
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(rows.into_iter().map(Self::row_to_warranty).collect())
+    }
 }
 
 impl WarrantyRepository for PgWarrantyRepository {
@@ -718,5 +966,35 @@ impl WarrantyRepository for PgWarrantyRepository {
 
     fn count_claims(&self, filter: WarrantyClaimFilter) -> Result<u64> {
         super::block_on(self.count_claims_async(filter))
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }

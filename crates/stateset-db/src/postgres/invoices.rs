@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::{postgres::PgPool, FromRow, Row};
 use stateset_core::{
-    CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem,
-    InvoiceRepository, InvoiceStatus, InvoiceType, RecordInvoicePayment, Result, UpdateInvoice,
-    generate_invoice_number,
+    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
+    InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, RecordInvoicePayment, Result,
+    UpdateInvoice, generate_invoice_number, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -870,6 +870,423 @@ impl PgInvoiceRepository {
 
         Ok(count as u64)
     }
+
+    // ========================================================================
+    // Batch Operations (async)
+    // ========================================================================
+
+    /// Create multiple invoices in a batch (async, non-atomic with partial success)
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateInvoice>,
+    ) -> Result<BatchResult<Invoice>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(invoice) => result.record_success(invoice),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple invoices in a batch (async, non-atomic with partial success)
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateInvoice)>,
+    ) -> Result<BatchResult<Invoice>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(invoice) => result.record_success(invoice),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple invoices in a batch (async, non-atomic with partial success)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple invoices in a batch atomically (async, all-or-nothing)
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateInvoice>,
+    ) -> Result<Vec<Invoice>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut invoices = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let invoice_number = generate_invoice_number();
+            let invoice_date = input.invoice_date.unwrap_or(now);
+            let due_date = input.due_date.unwrap_or_else(|| {
+                invoice_date + chrono::Duration::days(input.days_until_due.unwrap_or(30) as i64)
+            });
+
+            sqlx::query(
+                r#"INSERT INTO invoices (
+                    id, invoice_number, customer_id, order_id, status, invoice_type,
+                    invoice_date, due_date, payment_terms, currency, billing_name, billing_email,
+                    billing_address, billing_city, billing_state, billing_postal_code, billing_country,
+                    subtotal, discount_amount, discount_percent, tax_amount, tax_rate, shipping_amount,
+                    total, amount_paid, balance_due, po_number, notes, terms, footer, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                    $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+                )"#,
+            )
+            .bind(id)
+            .bind(&invoice_number)
+            .bind(input.customer_id)
+            .bind(input.order_id)
+            .bind(InvoiceStatus::Draft.to_string())
+            .bind(input.invoice_type.unwrap_or_default().to_string())
+            .bind(invoice_date)
+            .bind(due_date)
+            .bind(&input.payment_terms)
+            .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
+            .bind(&input.billing_name)
+            .bind(&input.billing_email)
+            .bind(&input.billing_address)
+            .bind(&input.billing_city)
+            .bind(&input.billing_state)
+            .bind(&input.billing_postal_code)
+            .bind(&input.billing_country)
+            .bind(Decimal::ZERO)
+            .bind(input.discount_amount.unwrap_or_default())
+            .bind(input.discount_percent)
+            .bind(input.tax_amount.unwrap_or_default())
+            .bind(input.tax_rate)
+            .bind(input.shipping_amount.unwrap_or_default())
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(Decimal::ZERO)
+            .bind(&input.po_number)
+            .bind(&input.notes)
+            .bind(&input.terms)
+            .bind(&input.footer)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Add items
+            let mut items = Vec::new();
+            for (i, item) in input.items.into_iter().enumerate() {
+                let item_id = Uuid::new_v4();
+                let sort_order = item.sort_order.unwrap_or(i as i32);
+                let line_total = item.quantity * item.unit_price
+                    - item.discount_amount.unwrap_or_default()
+                    + item.tax_amount.unwrap_or_default();
+
+                sqlx::query(
+                    r#"INSERT INTO invoice_items (
+                        id, invoice_id, order_item_id, product_id, sku, description,
+                        quantity, unit_of_measure, unit_price, discount_amount, tax_amount, line_total,
+                        sort_order, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+                )
+                .bind(item_id)
+                .bind(id)
+                .bind(item.order_item_id)
+                .bind(item.product_id)
+                .bind(&item.sku)
+                .bind(&item.description)
+                .bind(item.quantity)
+                .bind(&item.unit_of_measure)
+                .bind(item.unit_price)
+                .bind(item.discount_amount.unwrap_or_default())
+                .bind(item.tax_amount.unwrap_or_default())
+                .bind(line_total)
+                .bind(sort_order)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+                items.push(InvoiceItem {
+                    id: item_id,
+                    invoice_id: id,
+                    order_item_id: item.order_item_id,
+                    product_id: item.product_id,
+                    sku: item.sku,
+                    description: item.description,
+                    quantity: item.quantity,
+                    unit_of_measure: item.unit_of_measure,
+                    unit_price: item.unit_price,
+                    discount_amount: item.discount_amount.unwrap_or_default(),
+                    tax_amount: item.tax_amount.unwrap_or_default(),
+                    line_total,
+                    sort_order,
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+
+            // Recalculate totals within transaction
+            let subtotal: Decimal = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let discount_amount = input.discount_amount.unwrap_or_default();
+            let tax_amount = input.tax_amount.unwrap_or_default();
+            let shipping_amount = input.shipping_amount.unwrap_or_default();
+            let total = subtotal - discount_amount + tax_amount + shipping_amount;
+            let balance_due = total;
+
+            sqlx::query(
+                "UPDATE invoices SET subtotal = $1, total = $2, balance_due = $3 WHERE id = $4",
+            )
+            .bind(subtotal)
+            .bind(total)
+            .bind(balance_due)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            invoices.push(Invoice {
+                id,
+                invoice_number,
+                customer_id: input.customer_id,
+                order_id: input.order_id,
+                status: InvoiceStatus::Draft,
+                invoice_type: input.invoice_type.unwrap_or_default(),
+                invoice_date,
+                due_date,
+                payment_terms: input.payment_terms,
+                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                billing_name: input.billing_name,
+                billing_email: input.billing_email,
+                billing_address: input.billing_address,
+                billing_city: input.billing_city,
+                billing_state: input.billing_state,
+                billing_postal_code: input.billing_postal_code,
+                billing_country: input.billing_country,
+                subtotal,
+                discount_amount,
+                discount_percent: input.discount_percent,
+                tax_amount,
+                tax_rate: input.tax_rate,
+                shipping_amount,
+                total,
+                amount_paid: Decimal::ZERO,
+                balance_due,
+                po_number: input.po_number,
+                notes: input.notes,
+                terms: input.terms,
+                footer: input.footer,
+                sent_at: None,
+                viewed_at: None,
+                paid_at: None,
+                voided_at: None,
+                items,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoices)
+    }
+
+    /// Update multiple invoices in a batch atomically (async, all-or-nothing)
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateInvoice)>,
+    ) -> Result<Vec<Invoice>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut invoices = Vec::with_capacity(updates.len());
+        let now = Utc::now();
+
+        for (id, input) in updates {
+            // Get existing invoice with lock
+            let existing_row: InvoiceRow =
+                sqlx::query_as("SELECT * FROM invoices WHERE id = $1 FOR UPDATE")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::NotFound)?;
+
+            sqlx::query(
+                r#"UPDATE invoices SET
+                    due_date = $1, payment_terms = $2, billing_name = $3, billing_email = $4,
+                    billing_address = $5, billing_city = $6, billing_state = $7, billing_postal_code = $8,
+                    billing_country = $9, discount_amount = $10, discount_percent = $11, tax_amount = $12,
+                    tax_rate = $13, shipping_amount = $14, po_number = $15, notes = $16, terms = $17,
+                    footer = $18, updated_at = $19
+                WHERE id = $20"#,
+            )
+            .bind(input.due_date.unwrap_or(existing_row.due_date))
+            .bind(input.payment_terms.or(existing_row.payment_terms.clone()))
+            .bind(input.billing_name.or(existing_row.billing_name.clone()))
+            .bind(input.billing_email.or(existing_row.billing_email.clone()))
+            .bind(input.billing_address.or(existing_row.billing_address.clone()))
+            .bind(input.billing_city.or(existing_row.billing_city.clone()))
+            .bind(input.billing_state.or(existing_row.billing_state.clone()))
+            .bind(input.billing_postal_code.or(existing_row.billing_postal_code.clone()))
+            .bind(input.billing_country.or(existing_row.billing_country.clone()))
+            .bind(input.discount_amount.unwrap_or(existing_row.discount_amount))
+            .bind(input.discount_percent.or(existing_row.discount_percent))
+            .bind(input.tax_amount.unwrap_or(existing_row.tax_amount))
+            .bind(input.tax_rate.or(existing_row.tax_rate))
+            .bind(input.shipping_amount.unwrap_or(existing_row.shipping_amount))
+            .bind(input.po_number.or(existing_row.po_number.clone()))
+            .bind(input.notes.or(existing_row.notes.clone()))
+            .bind(input.terms.or(existing_row.terms.clone()))
+            .bind(input.footer.or(existing_row.footer.clone()))
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Recalculate totals
+            let subtotal: Decimal = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let discount_amount = input.discount_amount.unwrap_or(existing_row.discount_amount);
+            let tax_amount = input.tax_amount.unwrap_or(existing_row.tax_amount);
+            let shipping_amount = input.shipping_amount.unwrap_or(existing_row.shipping_amount);
+            let total = subtotal - discount_amount + tax_amount + shipping_amount;
+
+            // Get current amount_paid to calculate balance
+            let amount_paid: Decimal =
+                sqlx::query_scalar("SELECT amount_paid FROM invoices WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+            let balance_due = total - amount_paid;
+
+            sqlx::query(
+                "UPDATE invoices SET subtotal = $1, total = $2, balance_due = $3, updated_at = $4 WHERE id = $5",
+            )
+            .bind(subtotal)
+            .bind(total)
+            .bind(balance_due)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Fetch updated invoice
+            let updated_row: InvoiceRow = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            let items: Vec<InvoiceItemRow> = sqlx::query_as(
+                "SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order",
+            )
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            invoices.push(updated_row.into_invoice(items.into_iter().map(|r| r.into()).collect()));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoices)
+    }
+
+    /// Delete multiple invoices in a batch atomically (async, all-or-nothing)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Verify all invoices are in draft status before deleting
+        let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM invoices WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        for (id, status) in &statuses {
+            if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+                return Err(CommerceError::ValidationError(format!(
+                    "Invoice {} is not in draft status and cannot be deleted",
+                    id
+                )));
+            }
+        }
+
+        // Delete invoice items first (foreign key constraint)
+        sqlx::query("DELETE FROM invoice_items WHERE invoice_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete invoices
+        sqlx::query("DELETE FROM invoices WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple invoices by IDs (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
+        validate_batch_size(&ids)?;
+
+        let rows: Vec<InvoiceRow> =
+            sqlx::query_as("SELECT * FROM invoices WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
+
+        let mut invoices = Vec::with_capacity(rows.len());
+        for row in rows {
+            let items = self.get_invoice_items_async(row.id).await?;
+            invoices.push(row.into_invoice(items));
+        }
+
+        Ok(invoices)
+    }
 }
 
 impl InvoiceRepository for PgInvoiceRepository {
@@ -955,5 +1372,35 @@ impl InvoiceRepository for PgInvoiceRepository {
 
     fn count(&self, filter: InvoiceFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateInvoice>) -> Result<BatchResult<Invoice>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateInvoice>) -> Result<Vec<Invoice>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }

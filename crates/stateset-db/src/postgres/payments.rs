@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    generate_payment_number, generate_refund_number, CardBrand, CommerceError, CreatePayment,
-    CreatePaymentMethod, CreateRefund, Payment, PaymentFilter, PaymentMethod, PaymentMethodType,
-    PaymentRepository, PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment,
+    generate_payment_number, generate_refund_number, validate_batch_size, BatchResult, CardBrand,
+    CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
+    PaymentMethod, PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund,
+    RefundStatus, Result, UpdatePayment,
 };
 use uuid::Uuid;
 
@@ -630,6 +631,267 @@ impl PgPaymentRepository {
         let (count,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;
         Ok(count as u64)
     }
+
+    /// Delete payment (async) - hard delete
+    pub async fn delete_async(&self, id: Uuid) -> Result<()> {
+        // Delete associated refunds first
+        sqlx::query("DELETE FROM refunds WHERE payment_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        sqlx::query("DELETE FROM payments WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Batch Operations (async)
+    // =========================================================================
+
+    /// Create multiple payments - partial success allowed (async)
+    pub async fn create_batch_async(&self, inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>> {
+        validate_batch_size(&inputs)?;
+
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(payment) => result.record_success(payment),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple payments - atomic (all-or-nothing) (async)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>> {
+        validate_batch_size(&inputs)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut payments = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let payment_number = generate_payment_number();
+
+            sqlx::query(
+                "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
+                 payment_method, amount, currency, amount_refunded, external_id, processor,
+                 card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
+                 billing_address, description, metadata, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
+            )
+            .bind(id)
+            .bind(&payment_number)
+            .bind(input.order_id)
+            .bind(input.invoice_id)
+            .bind(input.customer_id)
+            .bind(PaymentTransactionStatus::Pending.to_string())
+            .bind(input.payment_method.to_string())
+            .bind(input.amount)
+            .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
+            .bind(Decimal::ZERO)
+            .bind(&input.external_id)
+            .bind(&input.processor)
+            .bind(input.card_brand.map(|b| b.to_string()))
+            .bind(&input.card_last4)
+            .bind(input.card_exp_month)
+            .bind(input.card_exp_year)
+            .bind(&input.billing_email)
+            .bind(&input.billing_name)
+            .bind(&input.billing_address)
+            .bind(&input.description)
+            .bind(&input.metadata)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            payments.push(Payment {
+                id,
+                payment_number,
+                order_id: input.order_id,
+                invoice_id: input.invoice_id,
+                customer_id: input.customer_id,
+                status: PaymentTransactionStatus::Pending,
+                payment_method: input.payment_method,
+                amount: input.amount,
+                currency: input.currency.unwrap_or_else(|| "USD".to_string()),
+                amount_refunded: Decimal::ZERO,
+                external_id: input.external_id,
+                processor: input.processor,
+                card_brand: input.card_brand,
+                card_last4: input.card_last4,
+                card_exp_month: input.card_exp_month,
+                card_exp_year: input.card_exp_year,
+                billing_email: input.billing_email,
+                billing_name: input.billing_name,
+                billing_address: input.billing_address,
+                description: input.description,
+                failure_reason: None,
+                failure_code: None,
+                metadata: input.metadata,
+                paid_at: None,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(payments)
+    }
+
+    /// Update multiple payments - partial success allowed (async)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+        validate_batch_size(&updates)?;
+
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(payment) => result.record_success(payment),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple payments - atomic (all-or-nothing) (async)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+        validate_batch_size(&updates)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut payments = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let payment = sqlx::query_as::<_, PaymentRow>(
+                "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+                 amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+                 card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+                 description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+                 FROM payments WHERE id = $1"
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?
+            .map(Self::row_to_payment)
+            .ok_or(CommerceError::NotFound)?;
+
+            let now = Utc::now();
+
+            sqlx::query(
+                "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
+                 failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7"
+            )
+            .bind(input.status.unwrap_or(payment.status).to_string())
+            .bind(input.external_id.or(payment.external_id))
+            .bind(input.failure_reason.or(payment.failure_reason))
+            .bind(input.failure_code.or(payment.failure_code))
+            .bind(input.metadata.or(payment.metadata))
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Fetch the updated payment
+            let updated_row = sqlx::query_as::<_, PaymentRow>(
+                "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+                 amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+                 card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+                 description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+                 FROM payments WHERE id = $1"
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            payments.push(Self::row_to_payment(updated_row));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(payments)
+    }
+
+    /// Delete multiple payments - partial success allowed (async)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple payments - atomic (all-or-nothing) (async)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Delete associated refunds first (foreign key constraint)
+        sqlx::query("DELETE FROM refunds WHERE payment_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete payments
+        sqlx::query("DELETE FROM payments WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple payments by ID (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, PaymentRow>(
+            "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+             description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+             FROM payments WHERE id = ANY($1)"
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(rows.into_iter().map(Self::row_to_payment).collect())
+    }
 }
 
 impl PaymentRepository for PgPaymentRepository {
@@ -719,5 +981,37 @@ impl PaymentRepository for PgPaymentRepository {
 
     fn count(&self, filter: PaymentFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // =========================================================================
+    // Batch Operations
+    // =========================================================================
+
+    fn create_batch(&self, inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Payment>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }

@@ -1,16 +1,15 @@
 //! SQLite implementation of purchase order repository
 
-use super::{map_db_error, parse_decimal};
+use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::{params, Row};
 use stateset_core::{
-    CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
-    PurchaseOrder, PurchaseOrderFilter, PurchaseOrderItem,
-    PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems,
-    Result, Supplier, SupplierFilter, UpdatePurchaseOrder, UpdateSupplier,
-    generate_po_number, generate_supplier_code,
+    validate_batch_size, BatchResult, CommerceError, CreatePurchaseOrder, CreatePurchaseOrderItem,
+    CreateSupplier, PurchaseOrder, PurchaseOrderFilter, PurchaseOrderItem,
+    PurchaseOrderRepository, PurchaseOrderStatus, ReceivePurchaseOrderItems, Result, Supplier,
+    SupplierFilter, UpdatePurchaseOrder, UpdateSupplier, generate_po_number, generate_supplier_code,
 };
 use uuid::Uuid;
 
@@ -856,5 +855,297 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
         let count: i64 = conn.query_row(&sql, [], |row| row.get(0)).map_err(map_db_error)?;
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreatePurchaseOrder>) -> Result<BatchResult<PurchaseOrder>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(po) => result.record_success(po),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreatePurchaseOrder>) -> Result<Vec<PurchaseOrder>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            // Get supplier for defaults
+            let supplier = Self::get_supplier_with_conn(&tx, input.supplier_id)?
+                .ok_or(CommerceError::NotFound)?;
+
+            let id = Uuid::new_v4();
+            let now = chrono::Utc::now();
+            let po_number = generate_po_number();
+            let order_date = input.order_date.unwrap_or(now);
+
+            tx.execute(
+                "INSERT INTO purchase_orders (id, po_number, supplier_id, status, order_date,
+                 expected_date, ship_to_address, ship_to_city, ship_to_state, ship_to_postal_code,
+                 ship_to_country, payment_terms, currency, subtotal, tax_amount, shipping_cost,
+                 discount_amount, total, amount_paid, notes, supplier_notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    po_number,
+                    input.supplier_id.to_string(),
+                    PurchaseOrderStatus::Draft.to_string(),
+                    order_date.to_rfc3339(),
+                    input.expected_date.map(|d| d.to_rfc3339()),
+                    input.ship_to_address,
+                    input.ship_to_city,
+                    input.ship_to_state,
+                    input.ship_to_postal_code,
+                    input.ship_to_country,
+                    input.payment_terms.unwrap_or(supplier.payment_terms).to_string(),
+                    input.currency.unwrap_or(supplier.currency),
+                    "0",
+                    input.tax_amount.unwrap_or_default().to_string(),
+                    input.shipping_cost.unwrap_or_default().to_string(),
+                    input.discount_amount.unwrap_or_default().to_string(),
+                    "0",
+                    "0",
+                    input.notes,
+                    input.supplier_notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            // Add items
+            for item in &input.items {
+                let item_id = Uuid::new_v4();
+                let line_total = item.quantity * item.unit_cost
+                    - item.discount_amount.unwrap_or_default()
+                    + item.tax_amount.unwrap_or_default();
+
+                tx.execute(
+                    "INSERT INTO purchase_order_items (id, purchase_order_id, product_id, sku, name,
+                     supplier_sku, quantity_ordered, quantity_received, unit_of_measure, unit_cost,
+                     line_total, tax_amount, discount_amount, expected_date, notes, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item.product_id.map(|id| id.to_string()),
+                        item.sku,
+                        item.name,
+                        item.supplier_sku,
+                        item.quantity.to_string(),
+                        "0",
+                        item.unit_of_measure,
+                        item.unit_cost.to_string(),
+                        line_total.to_string(),
+                        item.tax_amount.unwrap_or_default().to_string(),
+                        item.discount_amount.unwrap_or_default().to_string(),
+                        item.expected_date.map(|d| d.to_rfc3339()),
+                        item.notes,
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                    ],
+                )
+                .map_err(map_db_error)?;
+            }
+
+            // Recalculate totals
+            Self::recalculate_totals_with_conn(&tx, id)?;
+
+            // Get the created PO
+            let po = Self::get_po_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
+            results.push(po);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<BatchResult<PurchaseOrder>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(po) => result.record_success(po),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<Vec<PurchaseOrder>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = chrono::Utc::now();
+            let po = tx
+                .query_row(
+                    "SELECT * FROM purchase_orders WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_po,
+                )
+                .map_err(map_db_error)?;
+
+            tx.execute(
+                "UPDATE purchase_orders SET expected_date = ?, ship_to_address = ?, ship_to_city = ?,
+                 ship_to_state = ?, ship_to_postal_code = ?, ship_to_country = ?, payment_terms = ?,
+                 tax_amount = ?, shipping_cost = ?, discount_amount = ?, notes = ?, supplier_notes = ?,
+                 supplier_reference = ?, updated_at = ? WHERE id = ?",
+                params![
+                    input
+                        .expected_date
+                        .map(|d| d.to_rfc3339())
+                        .or(po.expected_date.map(|d| d.to_rfc3339())),
+                    input.ship_to_address.or(po.ship_to_address),
+                    input.ship_to_city.or(po.ship_to_city),
+                    input.ship_to_state.or(po.ship_to_state),
+                    input.ship_to_postal_code.or(po.ship_to_postal_code),
+                    input.ship_to_country.or(po.ship_to_country),
+                    input.payment_terms.unwrap_or(po.payment_terms).to_string(),
+                    input.tax_amount.unwrap_or(po.tax_amount).to_string(),
+                    input.shipping_cost.unwrap_or(po.shipping_cost).to_string(),
+                    input.discount_amount.unwrap_or(po.discount_amount).to_string(),
+                    input.notes.or(po.notes),
+                    input.supplier_notes.or(po.supplier_notes),
+                    input.supplier_reference.or(po.supplier_reference),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            Self::recalculate_totals_with_conn(&tx, id)?;
+
+            let updated_po = Self::get_po_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
+            results.push(updated_po);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        // Verify all POs are in draft status before deleting
+        for id in &ids {
+            let status: String = tx
+                .query_row(
+                    "SELECT status FROM purchase_orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+
+            if status.parse::<PurchaseOrderStatus>().unwrap_or_default()
+                != PurchaseOrderStatus::Draft
+            {
+                return Err(CommerceError::ValidationError(
+                    "Can only delete draft purchase orders".to_string(),
+                ));
+            }
+        }
+
+        let placeholders = build_in_clause(ids.len());
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        // Delete purchase order items first
+        let sql = format!(
+            "DELETE FROM purchase_order_items WHERE purchase_order_id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        // Delete purchase orders
+        let sql = format!(
+            "DELETE FROM purchase_orders WHERE id IN ({})",
+            placeholders
+        );
+        tx.execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!(
+            "SELECT * FROM purchase_orders WHERE id IN ({})",
+            placeholders
+        );
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_po)
+            .map_err(map_db_error)?;
+
+        let mut orders = Vec::new();
+        for row in rows {
+            let mut po = row.map_err(map_db_error)?;
+            po.items = Self::get_po_items_with_conn(&conn, po.id)?;
+            orders.push(po);
+        }
+
+        Ok(orders)
     }
 }

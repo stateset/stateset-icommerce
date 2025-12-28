@@ -1,12 +1,13 @@
 //! SQLite customer repository implementation
 
-use super::map_db_error;
+use super::{build_in_clause, map_db_error, params_refs, uuid_params};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    AddressType, CommerceError, CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress,
-    CustomerFilter, CustomerRepository, CustomerStatus, Result, UpdateCustomer,
+    validate_batch_size, AddressType, BatchResult, CommerceError, CreateCustomer,
+    CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter, CustomerRepository,
+    CustomerStatus, Result, UpdateCustomer,
 };
 use uuid::Uuid;
 
@@ -477,6 +478,281 @@ impl CustomerRepository for SqliteCustomerRepository {
             .map_err(map_db_error)?;
 
         Ok(count as u64)
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateCustomer>) -> Result<BatchResult<Customer>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create(input) {
+                Ok(customer) => result.record_success(customer),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>> {
+        validate_batch_size(&inputs)?;
+        if inputs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let now = Utc::now();
+            let tags = input.tags.clone().unwrap_or_default();
+            let metadata = input.metadata.clone();
+            let email = input.email.clone();
+            let first_name = input.first_name.clone();
+            let last_name = input.last_name.clone();
+            let phone = input.phone.clone();
+            let accepts_marketing = input.accepts_marketing.unwrap_or(false);
+
+            // Check email uniqueness
+            let exists: i32 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM customers WHERE email = ?",
+                    [&input.email],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+
+            if exists > 0 {
+                return Err(CommerceError::EmailAlreadyExists(input.email));
+            }
+
+            let tags_json = serde_json::to_string(&tags).unwrap_or_default();
+            let metadata_json = metadata
+                .as_ref()
+                .map(|m| serde_json::to_string(m).unwrap_or_default());
+
+            tx.execute(
+                "INSERT INTO customers (id, email, first_name, last_name, phone, status,
+                                        accepts_marketing, email_verified, tags, metadata,
+                                        created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &email,
+                    &first_name,
+                    &last_name,
+                    &phone,
+                    "active",
+                    accepts_marketing as i32,
+                    0,
+                    tags_json,
+                    metadata_json,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            )
+            .map_err(map_db_error)?;
+
+            results.push(Customer {
+                id,
+                email,
+                first_name,
+                last_name,
+                phone,
+                status: CustomerStatus::Active,
+                accepts_marketing,
+                email_verified: false,
+                tags,
+                metadata,
+                default_shipping_address_id: None,
+                default_billing_address_id: None,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update(id, input) {
+                Ok(customer) => result.record_success(customer),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+        validate_batch_size(&updates)?;
+        if updates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let mut results = Vec::with_capacity(updates.len());
+
+        for (id, input) in updates {
+            let now = Utc::now();
+            let current_version: i32 = tx
+                .query_row(
+                    "SELECT version FROM customers WHERE id = ?",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => CommerceError::CustomerNotFound(id),
+                    e => map_db_error(e),
+                })?;
+
+            let mut update_parts = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(email) = &input.email {
+                update_parts.push("email = ?");
+                params.push(Box::new(email.clone()));
+            }
+            if let Some(first_name) = &input.first_name {
+                update_parts.push("first_name = ?");
+                params.push(Box::new(first_name.clone()));
+            }
+            if let Some(last_name) = &input.last_name {
+                update_parts.push("last_name = ?");
+                params.push(Box::new(last_name.clone()));
+            }
+            if let Some(phone) = &input.phone {
+                update_parts.push("phone = ?");
+                params.push(Box::new(phone.clone()));
+            }
+            if let Some(status) = &input.status {
+                update_parts.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(accepts_marketing) = &input.accepts_marketing {
+                update_parts.push("accepts_marketing = ?");
+                params.push(Box::new(*accepts_marketing as i32));
+            }
+            if let Some(tags) = &input.tags {
+                update_parts.push("tags = ?");
+                params.push(Box::new(serde_json::to_string(tags).unwrap_or_default()));
+            }
+            if let Some(metadata) = &input.metadata {
+                update_parts.push("metadata = ?");
+                params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
+            }
+
+            update_parts.push("version = version + 1");
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(current_version));
+
+            let sql = format!(
+                "UPDATE customers SET {} WHERE id = ? AND version = ?",
+                update_parts.join(", ")
+            );
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            if rows_affected == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "customer".to_string(),
+                    id: id.to_string(),
+                    expected_version: current_version,
+                });
+            }
+
+            let customer = tx
+                .query_row(
+                    "SELECT * FROM customers WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_customer,
+                )
+                .map_err(map_db_error)?;
+
+            results.push(customer);
+        }
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(results)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete(id) {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        let placeholders = build_in_clause(ids.len());
+
+        // Soft delete by setting status to 'deleted'
+        let now = Utc::now();
+        let sql = format!(
+            "UPDATE customers SET status = 'deleted', updated_at = ? WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+        for id in &ids {
+            all_params.push(Box::new(id.to_string()));
+        }
+        let all_params_refs: Vec<&dyn rusqlite::ToSql> =
+            all_params.iter().map(|p| p.as_ref()).collect();
+
+        tx.execute(&sql, all_params_refs.as_slice())
+            .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
+        validate_batch_size(&ids)?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.conn()?;
+        let placeholders = build_in_clause(ids.len());
+        let sql = format!("SELECT * FROM customers WHERE id IN ({})", placeholders);
+
+        let params = uuid_params(&ids);
+        let params_refs = params_refs(&params);
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let customers = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_customer)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(customers)
     }
 }
 

@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    AdjustInventory, CommerceError, CreateInventoryItem, InventoryBalance, InventoryFilter,
-    InventoryItem, InventoryRepository, InventoryReservation, InventoryTransaction, LocationStock,
-    ReservationStatus, ReserveInventory, Result, StockLevel, TransactionType,
+    validate_batch_size, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
+    InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
+    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
+    TransactionType,
 };
 use uuid::Uuid;
 
@@ -605,6 +606,305 @@ impl PgInventoryRepository {
 
         Ok(rows.into_iter().map(Self::row_to_transaction).collect())
     }
+
+    // ========================================================================
+    // Batch Operations (async)
+    // ========================================================================
+
+    /// Create multiple inventory items - partial success allowed (async)
+    pub async fn create_item_batch_async(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<BatchResult<InventoryItem>> {
+        validate_batch_size(&inputs)?;
+
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_item_async(input).await {
+                Ok(item) => result.record_success(item),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple inventory items - atomic (all-or-nothing) (async)
+    pub async fn create_item_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<Vec<InventoryItem>> {
+        validate_batch_size(&inputs)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut items = Vec::with_capacity(inputs.len());
+        let now = Utc::now();
+
+        for input in inputs {
+            let row: (i64,) = sqlx::query_as(
+                r#"
+                INSERT INTO inventory_items (sku, name, description, unit_of_measure, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+                "#,
+            )
+            .bind(&input.sku)
+            .bind(&input.name)
+            .bind(&input.description)
+            .bind(input.unit_of_measure.as_deref().unwrap_or("EA"))
+            .bind(true)
+            .bind(now)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let id = row.0;
+            let location_id = input.location_id.unwrap_or(1);
+
+            // Create initial balance
+            let initial_qty = input.initial_quantity.unwrap_or(Decimal::ZERO);
+            sqlx::query(
+                r#"
+                INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated,
+                                                quantity_available, reorder_point, safety_stock, version, updated_at)
+                VALUES ($1, $2, $3, 0, $4, $5, $6, 1, $7)
+                "#,
+            )
+            .bind(id)
+            .bind(location_id)
+            .bind(initial_qty)
+            .bind(initial_qty)
+            .bind(input.reorder_point)
+            .bind(input.safety_stock)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            items.push(InventoryItem {
+                id,
+                sku: input.sku,
+                name: input.name,
+                description: input.description,
+                unit_of_measure: input.unit_of_measure.unwrap_or_else(|| "EA".to_string()),
+                is_active: true,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(items)
+    }
+
+    /// Adjust multiple inventory quantities - partial success allowed (async)
+    pub async fn adjust_batch_async(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<BatchResult<InventoryTransaction>> {
+        validate_batch_size(&adjustments)?;
+
+        let mut result = BatchResult::with_capacity(adjustments.len());
+
+        for (index, adjustment) in adjustments.into_iter().enumerate() {
+            let sku = adjustment.sku.clone();
+            match self.adjust_async(adjustment).await {
+                Ok(tx) => result.record_success(tx),
+                Err(e) => result.record_failure(index, Some(sku), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Adjust multiple inventory quantities - atomic (all-or-nothing) (async)
+    pub async fn adjust_batch_atomic_async(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<Vec<InventoryTransaction>> {
+        validate_batch_size(&adjustments)?;
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut transactions = Vec::with_capacity(adjustments.len());
+        let now = Utc::now();
+
+        for input in adjustments {
+            let location_id = input.location_id.unwrap_or(1);
+
+            // Get item ID
+            let item: (i64,) = sqlx::query_as("SELECT id FROM inventory_items WHERE sku = $1")
+                .bind(&input.sku)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|_| CommerceError::InventoryItemNotFound(input.sku.clone()))?;
+
+            let item_id = item.0;
+
+            // Get current version for optimistic locking
+            let balance: (i32,) = sqlx::query_as(
+                "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+            )
+            .bind(item_id)
+            .bind(location_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let current_version = balance.0;
+
+            // Update balance with optimistic locking
+            let result = sqlx::query(
+                r#"
+                UPDATE inventory_balances
+                SET quantity_on_hand = quantity_on_hand + $1,
+                    quantity_available = quantity_on_hand + $1 - quantity_allocated,
+                    version = version + 1,
+                    updated_at = $2
+                WHERE item_id = $3 AND location_id = $4 AND version = $5
+                "#,
+            )
+            .bind(input.quantity)
+            .bind(now)
+            .bind(item_id)
+            .bind(location_id)
+            .bind(current_version)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() == 0 {
+                return Err(CommerceError::VersionConflict {
+                    entity: "inventory_balance".to_string(),
+                    id: format!("{}:{}", item_id, location_id),
+                    expected_version: current_version,
+                });
+            }
+
+            // Record transaction
+            let tx_row: (i64,) = sqlx::query_as(
+                r#"
+                INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity,
+                                                    reference_type, reference_id, reason, created_at)
+                VALUES ($1, $2, 'adjustment', $3, $4, $5, $6, $7)
+                RETURNING id
+                "#,
+            )
+            .bind(item_id)
+            .bind(location_id)
+            .bind(input.quantity)
+            .bind(&input.reference_type)
+            .bind(&input.reference_id)
+            .bind(&input.reason)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            transactions.push(InventoryTransaction {
+                id: tx_row.0,
+                item_id,
+                location_id,
+                transaction_type: TransactionType::Adjustment,
+                quantity: input.quantity,
+                reference_type: input.reference_type,
+                reference_id: input.reference_id,
+                reason: Some(input.reason),
+                created_by: None,
+                created_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(transactions)
+    }
+
+    /// Get multiple inventory items by ID (async)
+    pub async fn get_item_batch_async(&self, ids: Vec<i64>) -> Result<Vec<InventoryItem>> {
+        validate_batch_size(&ids)?;
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query_as::<_, InventoryItemRow>(
+            "SELECT * FROM inventory_items WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(rows.into_iter().map(Self::row_to_item).collect())
+    }
+
+    /// Get stock levels for multiple SKUs (async)
+    pub async fn get_stock_batch_async(&self, skus: Vec<String>) -> Result<Vec<StockLevel>> {
+        validate_batch_size(&skus)?;
+
+        if skus.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Get all items matching the SKUs
+        let item_rows = sqlx::query_as::<_, InventoryItemRow>(
+            "SELECT * FROM inventory_items WHERE sku = ANY($1)",
+        )
+        .bind(&skus)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if item_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Collect item IDs for batch balance lookup
+        let item_ids: Vec<i64> = item_rows.iter().map(|r| r.id).collect();
+
+        // Get all balances for these items
+        let balance_rows = sqlx::query_as::<_, InventoryBalanceRow>(
+            "SELECT * FROM inventory_balances WHERE item_id = ANY($1)",
+        )
+        .bind(&item_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        // Build StockLevel for each item
+        let mut results = Vec::with_capacity(item_rows.len());
+        for item in item_rows {
+            let mut total_on_hand = Decimal::ZERO;
+            let mut total_allocated = Decimal::ZERO;
+            let mut total_available = Decimal::ZERO;
+            let mut locations = Vec::new();
+
+            for b in balance_rows.iter().filter(|b| b.item_id == item.id) {
+                total_on_hand += b.quantity_on_hand;
+                total_allocated += b.quantity_allocated;
+                total_available += b.quantity_available;
+                locations.push(LocationStock {
+                    location_id: b.location_id,
+                    location_name: None,
+                    on_hand: b.quantity_on_hand,
+                    allocated: b.quantity_allocated,
+                    available: b.quantity_available,
+                });
+            }
+
+            results.push(StockLevel {
+                sku: item.sku,
+                name: item.name,
+                total_on_hand,
+                total_allocated,
+                total_available,
+                locations,
+            });
+        }
+
+        Ok(results)
+    }
 }
 
 impl InventoryRepository for PgInventoryRepository {
@@ -658,6 +958,32 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
         super::block_on(self.get_transactions_async(item_id, limit))
+    }
+
+    // === Batch Operations ===
+
+    fn create_item_batch(&self, inputs: Vec<CreateInventoryItem>) -> Result<BatchResult<InventoryItem>> {
+        super::block_on(self.create_item_batch_async(inputs))
+    }
+
+    fn create_item_batch_atomic(&self, inputs: Vec<CreateInventoryItem>) -> Result<Vec<InventoryItem>> {
+        super::block_on(self.create_item_batch_atomic_async(inputs))
+    }
+
+    fn adjust_batch(&self, adjustments: Vec<AdjustInventory>) -> Result<BatchResult<InventoryTransaction>> {
+        super::block_on(self.adjust_batch_async(adjustments))
+    }
+
+    fn adjust_batch_atomic(&self, adjustments: Vec<AdjustInventory>) -> Result<Vec<InventoryTransaction>> {
+        super::block_on(self.adjust_batch_atomic_async(adjustments))
+    }
+
+    fn get_item_batch(&self, ids: Vec<i64>) -> Result<Vec<InventoryItem>> {
+        super::block_on(self.get_item_batch_async(ids))
+    }
+
+    fn get_stock_batch(&self, skus: Vec<String>) -> Result<Vec<StockLevel>> {
+        super::block_on(self.get_stock_batch_async(skus))
     }
 }
 

@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    AddWorkOrderMaterial, CommerceError, CreateWorkOrder, CreateWorkOrderTask, Result,
-    TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder, WorkOrderFilter,
-    WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus, WorkOrderTask,
+    validate_batch_size, AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder,
+    CreateWorkOrderTask, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
+    WorkOrderFilter, WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus,
+    WorkOrderTask,
 };
 use uuid::Uuid;
 
@@ -628,6 +629,288 @@ impl PgWorkOrderRepository {
 
         Ok(count.0 as u64)
     }
+
+    // === Batch Operations ===
+
+    /// Create multiple work orders in a batch (async, non-atomic)
+    pub async fn create_batch_async(&self, inputs: Vec<CreateWorkOrder>) -> Result<BatchResult<WorkOrder>> {
+        validate_batch_size(&inputs)?;
+        let mut result = BatchResult::with_capacity(inputs.len());
+
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_async(input).await {
+                Ok(work_order) => result.record_success(work_order),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Create multiple work orders in a batch atomically (async)
+    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&inputs)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut work_orders = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            let id = Uuid::new_v4();
+            let work_order_number = WorkOrder::generate_work_order_number();
+            let now = Utc::now();
+            let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
+
+            sqlx::query(
+                r#"
+                INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id, assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, 'planned', $7, $8, 0, $9, $10, $11, $12, $13)
+                "#,
+            )
+            .bind(id)
+            .bind(&work_order_number)
+            .bind(input.product_id)
+            .bind(input.bom_id)
+            .bind(&input.work_center_id)
+            .bind(input.assigned_to)
+            .bind(priority.to_string())
+            .bind(input.quantity_to_build)
+            .bind(input.scheduled_start)
+            .bind(input.scheduled_end)
+            .bind(&input.notes)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Create tasks if provided
+            let mut tasks = Vec::new();
+            if let Some(task_inputs) = input.tasks {
+                for task_input in task_inputs {
+                    let task_id = Uuid::new_v4();
+                    let sequence = task_input.sequence.unwrap_or(1);
+
+                    sqlx::query(
+                        r#"
+                        INSERT INTO manufacturing_work_order_tasks (id, work_order_id, sequence, task_name, status, estimated_hours, assigned_to, notes, created_at, updated_at)
+                        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9)
+                        "#,
+                    )
+                    .bind(task_id)
+                    .bind(id)
+                    .bind(sequence)
+                    .bind(&task_input.task_name)
+                    .bind(task_input.estimated_hours)
+                    .bind(task_input.assigned_to)
+                    .bind(&task_input.notes)
+                    .bind(now)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+
+                    tasks.push(WorkOrderTask {
+                        id: task_id,
+                        work_order_id: id,
+                        sequence,
+                        task_name: task_input.task_name,
+                        status: TaskStatus::Pending,
+                        estimated_hours: task_input.estimated_hours,
+                        actual_hours: None,
+                        assigned_to: task_input.assigned_to,
+                        started_at: None,
+                        completed_at: None,
+                        notes: task_input.notes,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+            }
+
+            work_orders.push(WorkOrder {
+                id,
+                work_order_number,
+                product_id: input.product_id,
+                bom_id: input.bom_id,
+                work_center_id: input.work_center_id,
+                assigned_to: input.assigned_to,
+                status: WorkOrderStatus::Planned,
+                priority,
+                quantity_to_build: input.quantity_to_build,
+                quantity_completed: Decimal::ZERO,
+                scheduled_start: input.scheduled_start,
+                scheduled_end: input.scheduled_end,
+                actual_start: None,
+                actual_end: None,
+                notes: input.notes,
+                tasks,
+                materials: vec![],
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(work_orders)
+    }
+
+    /// Update multiple work orders in a batch (async, non-atomic)
+    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>> {
+        validate_batch_size(&updates)?;
+        let mut result = BatchResult::with_capacity(updates.len());
+
+        for (index, (id, input)) in updates.into_iter().enumerate() {
+            match self.update_async(id, input).await {
+                Ok(work_order) => result.record_success(work_order),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Update multiple work orders in a batch atomically (async)
+    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&updates)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut work_orders = Vec::with_capacity(updates.len());
+        let now = Utc::now();
+
+        for (id, input) in updates {
+            // Get existing work order with lock
+            let existing_row = sqlx::query_as::<_, WorkOrderRow>(
+                "SELECT * FROM manufacturing_work_orders WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+
+            let new_status = input.status.unwrap_or(Self::parse_status(&existing_row.status));
+            let new_priority = input.priority.unwrap_or(Self::parse_priority(&existing_row.priority));
+            let new_assigned_to = input.assigned_to.or(existing_row.assigned_to);
+            let new_notes = input.notes.or(existing_row.notes.clone());
+            let new_work_center_id = input.work_center_id.or(existing_row.work_center_id.clone());
+
+            sqlx::query(
+                "UPDATE manufacturing_work_orders SET status = $1, priority = $2, assigned_to = $3, work_center_id = $4, scheduled_start = $5, scheduled_end = $6, notes = $7, updated_at = $8 WHERE id = $9",
+            )
+            .bind(new_status.to_string())
+            .bind(new_priority.to_string())
+            .bind(new_assigned_to)
+            .bind(&new_work_center_id)
+            .bind(input.scheduled_start.or(existing_row.scheduled_start))
+            .bind(input.scheduled_end.or(existing_row.scheduled_end))
+            .bind(&new_notes)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            // Fetch updated work order
+            let updated_row = sqlx::query_as::<_, WorkOrderRow>(
+                "SELECT * FROM manufacturing_work_orders WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let tasks = sqlx::query_as::<_, WorkOrderTaskRow>(
+                "SELECT * FROM manufacturing_work_order_tasks WHERE work_order_id = $1 ORDER BY sequence",
+            )
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            let materials = sqlx::query_as::<_, WorkOrderMaterialRow>(
+                "SELECT * FROM manufacturing_work_order_materials WHERE work_order_id = $1",
+            )
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            work_orders.push(Self::row_to_work_order(
+                updated_row,
+                tasks.into_iter().map(Self::row_to_task).collect(),
+                materials.into_iter().map(Self::row_to_material).collect(),
+            ));
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(work_orders)
+    }
+
+    /// Delete multiple work orders in a batch (async, non-atomic)
+    pub async fn delete_batch_async(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        validate_batch_size(&ids)?;
+        let mut result = BatchResult::with_capacity(ids.len());
+
+        for (index, id) in ids.into_iter().enumerate() {
+            match self.delete_async(id).await {
+                Ok(()) => result.record_success(id),
+                Err(e) => result.record_failure(index, Some(id.to_string()), &e),
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Delete multiple work orders in a batch atomically (async)
+    pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
+        validate_batch_size(&ids)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Delete materials first (foreign key constraint)
+        sqlx::query("DELETE FROM manufacturing_work_order_materials WHERE work_order_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete tasks (foreign key constraint)
+        sqlx::query("DELETE FROM manufacturing_work_order_tasks WHERE work_order_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        // Delete work orders
+        sqlx::query("DELETE FROM manufacturing_work_orders WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Get multiple work orders by IDs (async)
+    pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<WorkOrder>> {
+        validate_batch_size(&ids)?;
+
+        let rows = sqlx::query_as::<_, WorkOrderRow>(
+            "SELECT * FROM manufacturing_work_orders WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut work_orders = Vec::with_capacity(rows.len());
+        for row in rows {
+            let tasks = self.get_tasks_async(row.id).await?;
+            let materials = self.get_materials_async_internal(row.id).await?;
+            work_orders.push(Self::row_to_work_order(row, tasks, materials));
+        }
+
+        Ok(work_orders)
+    }
 }
 
 impl WorkOrderRepository for PgWorkOrderRepository {
@@ -713,5 +996,35 @@ impl WorkOrderRepository for PgWorkOrderRepository {
 
     fn count(&self, filter: WorkOrderFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
+    }
+
+    // === Batch Operations ===
+
+    fn create_batch(&self, inputs: Vec<CreateWorkOrder>) -> Result<BatchResult<WorkOrder>> {
+        super::block_on(self.create_batch_async(inputs))
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>> {
+        super::block_on(self.create_batch_atomic_async(inputs))
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>> {
+        super::block_on(self.update_batch_async(updates))
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>> {
+        super::block_on(self.update_batch_atomic_async(updates))
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        super::block_on(self.delete_batch_async(ids))
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        super::block_on(self.delete_batch_atomic_async(ids))
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<WorkOrder>> {
+        super::block_on(self.get_batch_async(ids))
     }
 }
