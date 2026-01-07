@@ -1,11 +1,34 @@
 {
-  "name": "stateset-example",
+  "name": "stateset-node-examples",
   "version": "0.1.7",
-  "description": "StateSet iCommerce Node.js Example",
-  "main": "basic_usage.js",
+  "description": "StateSet iCommerce Node.js Examples - Comprehensive examples demonstrating all features",
+  "main": "01_getting_started.js",
   "scripts": {
-    "start": "node basic_usage.js"
+    "start": "node 01_getting_started.js",
+    "01:start": "node 01_getting_started.js",
+    "02:cart": "node 02_cart_and_checkout.js",
+    "03:analytics": "node 03_analytics_and_forecasting.js",
+    "04:subscriptions": "node 04_subscriptions.js",
+    "05:promotions": "node 05_promotions.js",
+    "06:currency": "node 06_currency.js",
+    "07:tax": "node 07_tax.js",
+    "08:manufacturing": "node 08_manufacturing.js",
+    "09:workflow": "node 09_full_workflow.js",
+    "10:fulfillment": "node 10_payments_and_fulfillment.js",
+    "11:b2b": "node 11_b2b_operations.js",
+    "all": "npm run 01:start && npm run 02:cart && npm run 03:analytics && npm run 04:subscriptions && npm run 05:promotions && npm run 06:currency && npm run 07:tax && npm run 08:manufacturing && npm run 09:workflow && npm run 10:fulfillment && npm run 11:b2b",
+    "basic": "node basic_usage.js"
   },
+  "keywords": [
+    "stateset",
+    "commerce",
+    "ecommerce",
+    "examples",
+    "node",
+    "embedded"
+  ],
+  "author": "StateSet <support@stateset.com>",
+  "license": "MIT",
   "dependencies": {
     "@stateset/embedded": "^0.1.7"
   }
