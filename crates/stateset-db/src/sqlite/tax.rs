@@ -692,7 +692,7 @@ impl SqliteTaxRepository {
 
         let origin_address_json = settings.origin_address
             .as_ref()
-            .map(|a| serde_json::to_string(a))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -927,7 +927,7 @@ impl SqliteTaxRepository {
         let breakdown_json = serde_json::to_string(&result.tax_breakdown)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let exemption_json = result.exemption_details.as_ref()
-            .map(|e| serde_json::to_string(e))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 

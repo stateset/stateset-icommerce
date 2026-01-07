@@ -168,9 +168,8 @@ fn test_jurisdiction_listing() {
     let jurisdictions = commerce.tax().list_jurisdictions(Default::default())
         .expect("Failed to list jurisdictions");
 
-    // Should have some seeded jurisdictions (US states, EU countries, Canadian provinces)
-    // This depends on migration seeding
-    assert!(jurisdictions.len() >= 0); // Allow empty if not seeded
+    // Should return successfully (may be empty if not seeded)
+    let _ = jurisdictions.len();
 }
 
 #[test]
@@ -181,8 +180,8 @@ fn test_rate_listing() {
     let rates = commerce.tax().list_rates(Default::default())
         .expect("Failed to list rates");
 
-    // Should have seeded rates
-    assert!(rates.len() >= 0); // Allow empty if not seeded
+    // Should return successfully (may be empty if not seeded)
+    let _ = rates.len();
 }
 
 #[test]

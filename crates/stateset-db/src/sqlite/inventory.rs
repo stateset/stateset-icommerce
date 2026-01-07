@@ -6,7 +6,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
+    validate_batch_size, validate_sku, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
     InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
     InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
     TransactionType,
@@ -32,6 +32,9 @@ impl SqliteInventoryRepository {
 
 impl InventoryRepository for SqliteInventoryRepository {
     fn create_item(&self, input: CreateInventoryItem) -> Result<InventoryItem> {
+        // Validate SKU format
+        validate_sku(&input.sku)?;
+
         let conn = self.conn()?;
         let now = Utc::now();
         let sku = input.sku.clone();
@@ -256,6 +259,16 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn adjust(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
+        // Validate SKU format
+        validate_sku(&input.sku)?;
+
+        // Validate that adjustment quantity is not zero
+        if input.quantity.is_zero() {
+            return Err(CommerceError::ValidationError(
+                "Adjustment quantity cannot be zero".into()
+            ));
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();

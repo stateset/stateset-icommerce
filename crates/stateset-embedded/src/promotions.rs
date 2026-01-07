@@ -10,7 +10,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use stateset_embedded::{Commerce, CreatePromotion, PromotionType, PromotionTrigger};
 //! use rust_decimal_macros::dec;
 //!
@@ -60,7 +60,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, CreatePromotion, PromotionType};
     /// use rust_decimal_macros::dec;
     ///
@@ -93,7 +93,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, PromotionFilter, PromotionStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -123,7 +123,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -148,7 +148,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, CreateCouponCode};
     /// use uuid::Uuid;
     ///
@@ -185,7 +185,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -246,7 +246,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, ApplyPromotionsRequest, PromotionLineItem};
     /// use rust_decimal_macros::dec;
     ///

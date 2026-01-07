@@ -26,7 +26,7 @@ impl SqliteCurrencyRepository {
     }
 
     fn parse_currency(s: &str) -> Result<Currency> {
-        Currency::from_str(s).map_err(|e| CommerceError::ValidationError(e))
+        Currency::from_str(s).map_err(CommerceError::ValidationError)
     }
 
     fn parse_datetime(s: &str) -> DateTime<Utc> {

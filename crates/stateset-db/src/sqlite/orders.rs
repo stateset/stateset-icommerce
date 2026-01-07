@@ -6,9 +6,9 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateOrder, CreateOrderItem,
-    FulfillmentStatus, Order, OrderFilter, OrderItem, OrderRepository, OrderStatus,
-    PaymentStatus, Result, UpdateOrder,
+    validate_batch_size, validate_currency_code, validate_price, BatchResult, CommerceError,
+    CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderItem,
+    OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -29,9 +29,12 @@ impl SqliteOrderRepository {
     }
 
     fn generate_order_number() -> String {
-        let timestamp = Utc::now().timestamp();
-        let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
-        format!("ORD-{}-{:04}", timestamp, random)
+        let now = Utc::now();
+        let timestamp = now.timestamp();
+        let nanos = now.timestamp_subsec_nanos();
+        // Use 8 hex chars from UUID for better entropy (over 4 billion combinations)
+        let random: u32 = (Uuid::new_v4().as_u128() % 0xFFFFFFFF) as u32;
+        format!("ORD-{}-{:06}-{:08X}", timestamp, nanos / 1000, random)
     }
 
     fn row_to_order(row: &rusqlite::Row) -> rusqlite::Result<Order> {
@@ -110,6 +113,31 @@ impl SqliteOrderRepository {
 
 impl OrderRepository for SqliteOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
+        // Validate currency if provided
+        if let Some(ref currency) = input.currency {
+            validate_currency_code(currency)?;
+        }
+
+        // Validate items
+        if input.items.is_empty() {
+            return Err(CommerceError::ValidationError("Order must have at least one item".into()));
+        }
+
+        for item in &input.items {
+            // Validate quantity (must be positive)
+            if item.quantity <= 0 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Item quantity must be positive, got {} for '{}'",
+                    item.quantity, item.name
+                )));
+            }
+            // Validate price
+            validate_price(item.unit_price)?;
+            if let Some(discount) = item.discount {
+                validate_price(discount)?;
+            }
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
@@ -857,13 +885,14 @@ impl SqliteOrderRepository {
                 e => map_db_error(e),
             })?;
 
-        let total: String = conn
+        let total: f64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(CAST(total AS REAL)), 0) FROM order_items WHERE order_id = ?",
                 [order_id.to_string()],
                 |row| row.get(0),
             )
             .map_err(map_db_error)?;
+        let total = format!("{:.2}", total);
 
         let rows_affected = conn
             .execute(

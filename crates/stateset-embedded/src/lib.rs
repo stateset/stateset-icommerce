@@ -127,19 +127,31 @@ mod carts;
 mod commerce;
 mod currency;
 mod customers;
+mod fulfillment;
 mod inventory;
 mod invoices;
+mod lots;
 mod orders;
 mod payments;
 mod products;
 mod promotions;
 mod purchase_orders;
+mod quality;
+mod receiving;
 mod returns;
+mod serials;
 mod shipments;
 mod subscriptions;
 mod tax;
+mod warehouse;
 mod warranties;
 mod work_orders;
+mod accounts_payable;
+mod accounts_receivable;
+mod cost_accounting;
+mod credit;
+mod backorder;
+mod general_ledger;
 
 #[cfg(feature = "postgres")]
 mod async_commerce;
@@ -164,19 +176,31 @@ pub use carts::Carts;
 pub use commerce::{Commerce, CommerceBuilder};
 pub use currency::CurrencyOps;
 pub use customers::Customers;
+pub use fulfillment::Fulfillment;
 pub use inventory::Inventory;
 pub use invoices::Invoices;
+pub use lots::Lots;
 pub use orders::Orders;
 pub use payments::Payments;
 pub use products::Products;
 pub use promotions::Promotions;
 pub use purchase_orders::PurchaseOrders;
+pub use quality::Quality;
+pub use receiving::Receiving;
 pub use returns::Returns;
+pub use serials::Serials;
 pub use shipments::Shipments;
 pub use subscriptions::Subscriptions;
 pub use tax::Tax;
+pub use warehouse::WarehouseOps;
 pub use warranties::Warranties;
 pub use work_orders::WorkOrders;
+pub use accounts_payable::AccountsPayable;
+pub use accounts_receivable::AccountsReceivable;
+pub use cost_accounting::CostAccounting;
+pub use credit::Credit;
+pub use backorder::Backorders;
+pub use general_ledger::GeneralLedger;
 
 // Async API for PostgreSQL (feature-gated)
 #[cfg(feature = "postgres")]
@@ -475,4 +499,302 @@ pub use stateset_core::{
     UpdateSubscriptionPlan,
     generate_plan_code,
     generate_subscription_number,
+    // Quality Control types
+    CompleteInspection,
+    CreateDefectCode,
+    CreateInspection,
+    CreateInspectionItem,
+    CreateNcr,
+    CreateNonConformance,
+    CreateQualityHold,
+    DefectCode,
+    Disposition,
+    HoldType,
+    Inspection,
+    InspectionFilter,
+    InspectionItem,
+    InspectionResult,
+    InspectionStatus,
+    InspectionType,
+    NonConformance,
+    NonConformanceFilter,
+    NonConformanceSource,
+    NcrStatus,
+    QualityHold,
+    QualityHoldFilter,
+    RecordInspectionResult,
+    ReleaseQualityHold,
+    Severity,
+    UpdateInspection,
+    UpdateNonConformance,
+    // Lot/Batch Tracking types
+    AddLotCertificate,
+    AdjustLot,
+    CertificateType,
+    ConsumeLot,
+    CreateLot,
+    Lot,
+    LotCertificate,
+    LotFilter,
+    LotLocation,
+    LotStatus,
+    LotTransaction,
+    LotTransactionType,
+    MergeLots,
+    ReserveLot,
+    SplitLot,
+    TraceabilityResult,
+    TraceNode,
+    TraceNodeType,
+    TransferLot,
+    UpdateLot,
+    // Serial Number types
+    ChangeSerialStatus,
+    CreateSerial,
+    CreateSerialNumber,
+    CreateSerialNumbersBulk,
+    MoveSerial,
+    ReserveSerialNumber,
+    SerialEventType,
+    SerialFilter,
+    SerialHistory,
+    SerialHistoryFilter,
+    SerialLookupResult,
+    SerialNumber,
+    SerialReservation,
+    SerialStatus,
+    SerialValidation,
+    TransferSerialOwnership,
+    UpdateSerialNumber,
+    WarrantyLookupStatus,
+    // Warehouse & Location types
+    AdjustLocationInventory,
+    CreateLocation,
+    CreateWarehouse,
+    CreateWarehouseLocation,
+    CreateZone,
+    Location,
+    LocationFilter,
+    LocationInventory,
+    LocationInventoryFilter,
+    LocationMovement,
+    LocationType,
+    MoveInventory,
+    MovementFilter,
+    MovementType,
+    UpdateLocation,
+    UpdateWarehouse,
+    UpdateZone,
+    Warehouse,
+    WarehouseAddress,
+    WarehouseFilter,
+    WarehouseType,
+    Zone,
+    // Receiving types
+    CompletePutAway,
+    CreatePutAway,
+    CreateReceipt,
+    CreateReceiptItem,
+    CreateReceiptLine,
+    PutAway,
+    PutAwayFilter,
+    PutAwayStatus,
+    Receipt,
+    ReceiptFilter,
+    ReceiptItem,
+    ReceiptItemStatus,
+    ReceiptStatus,
+    ReceiptType,
+    ReceiveItems,
+    ReceiveItemLine,
+    UpdateReceipt,
+    // Fulfillment types
+    AddCarton,
+    AddCartonItem,
+    Carton,
+    CartonItem,
+    CompletePick,
+    CompleteShip,
+    CreatePackTask,
+    CreatePickTask,
+    CreateShipTask,
+    CreateWave,
+    PackStatus,
+    PackTask,
+    PackTaskFilter,
+    PackageType,
+    PickStatus,
+    PickTask,
+    PickTaskFilter,
+    ShipStatus,
+    ShipTask,
+    ShipTaskFilter,
+    Wave,
+    WaveFilter,
+    WaveStatus,
+    WaveType,
+    // Accounts Payable types
+    ApAgingSummary,
+    Bill,
+    BillFilter,
+    BillItem,
+    BillPayment,
+    BillPaymentFilter,
+    BillStatus,
+    CreateBill,
+    CreateBillItem,
+    CreateBillPayment,
+    CreatePaymentRun,
+    PayBill,
+    PaymentAllocation,
+    PaymentAllocationInput,
+    PaymentMethodAP,
+    PaymentRun,
+    PaymentRunFilter,
+    PaymentRunStatus,
+    PaymentStatusAP,
+    SupplierApSummary,
+    UpdateBill,
+    generate_bill_number,
+    generate_ap_payment_number,
+    generate_payment_run_number,
+    // Cost Accounting types
+    CostAdjustment,
+    CostAdjustmentFilter,
+    CostAdjustmentStatus,
+    CostAdjustmentType,
+    CostLayer,
+    CostLayerFilter,
+    CostLayerSource,
+    CostMethod,
+    CostRollup,
+    CostTransaction,
+    CostTransactionFilter,
+    CostTransactionType,
+    CostVariance,
+    CostVarianceFilter,
+    CreateCostAdjustment,
+    CreateCostLayer,
+    InventoryValuation,
+    IssueCostLayers,
+    ItemCost,
+    ItemCostFilter,
+    RecordCostVariance,
+    SetItemCost,
+    SkuCostSummary,
+    VarianceType,
+    generate_cost_adjustment_number,
+    // Credit types
+    CreateCreditAccount,
+    CreditAccount,
+    CreditAccountFilter,
+    CreditAccountStatus,
+    CreditAgingBucket,
+    CreditApplication,
+    CreditApplicationFilter,
+    CreditApplicationStatus,
+    CreditCheckResult,
+    CreditHold,
+    CreditHoldFilter,
+    CreditHoldStatus,
+    CreditHoldType,
+    CreditTransaction,
+    CreditTransactionFilter,
+    CreditTransactionType,
+    CustomerCreditSummary,
+    PlaceCreditHold,
+    RecordCreditTransaction,
+    ReleaseCreditHold,
+    ReviewCreditApplication,
+    RiskRating,
+    SubmitCreditApplication,
+    UpdateCreditAccount,
+    generate_credit_application_number,
+    // Backorder types
+    AllocateBackorder,
+    AllocationStatus,
+    Backorder,
+    BackorderAllocation,
+    BackorderFilter,
+    BackorderFulfillment,
+    BackorderPriority,
+    BackorderStatus,
+    BackorderSummary,
+    CreateBackorder,
+    FulfillBackorder,
+    FulfillmentSourceType,
+    SkuBackorderSummary,
+    UpdateBackorder,
+    generate_backorder_number,
+    // Accounts Receivable types
+    ApplyCreditMemo,
+    ApplyPaymentToInvoices,
+    ArAgingFilter,
+    ArAgingSummary,
+    ArPaymentApplication,
+    CollectionActivity,
+    CollectionActivityFilter,
+    CollectionActivityType,
+    CollectionStatus,
+    CreateCollectionActivity,
+    CreateCreditMemo,
+    CreateWriteOff,
+    CreditMemo,
+    CreditMemoFilter,
+    CreditMemoReason,
+    CreditMemoStatus,
+    CustomerArAging,
+    CustomerArSummary,
+    CustomerStatement,
+    DunningLetterType,
+    GenerateStatementRequest,
+    PaymentApplicationLine,
+    AgingBucket,
+    CreditMemoApplication,
+    StatementLineItem,
+    StatementTransactionType,
+    WriteOff,
+    WriteOffFilter,
+    WriteOffReason,
+    generate_credit_memo_number,
+    generate_write_off_number,
+    // General Ledger types
+    AccountStatus,
+    AccountSubType,
+    AccountType,
+    AutoPostingConfig,
+    BalanceSheet,
+    BalanceSheetLine,
+    BalanceSide,
+    BatchResult,
+    CreateAutoPostingConfig,
+    CreateGlAccount,
+    CreateGlPeriod,
+    CreateJournalEntry,
+    CreateJournalEntryLine,
+    GlAccount,
+    GlAccountFilter,
+    GlPeriod,
+    GlPeriodFilter,
+    IncomeStatement,
+    IncomeStatementLine,
+    JournalEntry,
+    JournalEntryFilter,
+    JournalEntryLine,
+    JournalEntrySource,
+    JournalEntryStatus,
+    JournalEntryType,
+    PeriodStatus,
+    TrialBalance,
+    TrialBalanceLine,
+    UpdateGlAccount,
+    generate_journal_entry_number,
+    // Validation utilities
+    validate_email,
+    validate_sku,
+    validate_phone,
+    validate_currency_code,
+    validate_postal_code,
+    validate_quantity,
+    validate_price,
 };

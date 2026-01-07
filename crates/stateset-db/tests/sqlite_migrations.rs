@@ -33,7 +33,7 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    assert_eq!(applied, 8, "expected all embedded migrations to apply");
+    assert_eq!(applied, 25, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",

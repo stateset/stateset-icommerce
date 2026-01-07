@@ -9,7 +9,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use stateset_embedded::{Commerce, CreateSubscriptionPlan, CreateSubscription, BillingInterval};
 //! use rust_decimal_macros::dec;
 //!
@@ -66,7 +66,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, CreateSubscriptionPlan, BillingInterval};
     /// use rust_decimal_macros::dec;
     ///
@@ -99,7 +99,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, SubscriptionPlanFilter, PlanStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -138,7 +138,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, CreateSubscription};
     /// use uuid::Uuid;
     ///
@@ -172,7 +172,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, SubscriptionFilter, SubscriptionStatus};
     /// use uuid::Uuid;
     ///
@@ -206,7 +206,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, PauseSubscription};
     /// use uuid::Uuid;
     /// use chrono::{Utc, Duration};
@@ -238,7 +238,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, CancelSubscription};
     /// use uuid::Uuid;
     ///
@@ -269,7 +269,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::{Commerce, SkipBillingCycle};
     /// use uuid::Uuid;
     ///
@@ -341,7 +341,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///

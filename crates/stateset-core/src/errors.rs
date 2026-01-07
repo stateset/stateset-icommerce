@@ -320,3 +320,284 @@ pub fn validate_batch_size<T>(items: &[T]) -> Result<()> {
     }
     Ok(())
 }
+
+/// Validate an email address format
+///
+/// Performs basic email validation checking for:
+/// - Non-empty string
+/// - Contains exactly one @ symbol
+/// - Has non-empty local and domain parts
+/// - Domain contains at least one dot
+/// - No whitespace characters
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_email;
+///
+/// assert!(validate_email("user@example.com").is_ok());
+/// assert!(validate_email("invalid").is_err());
+/// assert!(validate_email("").is_err());
+/// ```
+pub fn validate_email(email: &str) -> Result<()> {
+    let email = email.trim();
+
+    if email.is_empty() {
+        return Err(CommerceError::ValidationError("Email cannot be empty".into()));
+    }
+
+    if email.contains(char::is_whitespace) {
+        return Err(CommerceError::ValidationError("Email cannot contain whitespace".into()));
+    }
+
+    let parts: Vec<&str> = email.split('@').collect();
+    if parts.len() != 2 {
+        return Err(CommerceError::ValidationError(
+            "Email must contain exactly one @ symbol".into()
+        ));
+    }
+
+    let (local, domain) = (parts[0], parts[1]);
+
+    if local.is_empty() {
+        return Err(CommerceError::ValidationError(
+            "Email local part (before @) cannot be empty".into()
+        ));
+    }
+
+    if domain.is_empty() {
+        return Err(CommerceError::ValidationError(
+            "Email domain (after @) cannot be empty".into()
+        ));
+    }
+
+    if !domain.contains('.') {
+        return Err(CommerceError::ValidationError(
+            "Email domain must contain at least one dot".into()
+        ));
+    }
+
+    // Check domain doesn't start or end with a dot
+    if domain.starts_with('.') || domain.ends_with('.') {
+        return Err(CommerceError::ValidationError(
+            "Email domain cannot start or end with a dot".into()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a SKU format
+///
+/// SKUs must:
+/// - Be non-empty
+/// - Be 1-100 characters
+/// - Contain only alphanumeric characters, hyphens, and underscores
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_sku;
+///
+/// assert!(validate_sku("SKU-001").is_ok());
+/// assert!(validate_sku("WIDGET_BLUE_XL").is_ok());
+/// assert!(validate_sku("").is_err());
+/// assert!(validate_sku("sku with spaces").is_err());
+/// ```
+pub fn validate_sku(sku: &str) -> Result<()> {
+    let sku = sku.trim();
+
+    if sku.is_empty() {
+        return Err(CommerceError::ValidationError("SKU cannot be empty".into()));
+    }
+
+    if sku.len() > 100 {
+        return Err(CommerceError::ValidationError(
+            "SKU cannot exceed 100 characters".into()
+        ));
+    }
+
+    if !sku.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err(CommerceError::ValidationError(
+            "SKU can only contain alphanumeric characters, hyphens, and underscores".into()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a phone number format (basic validation)
+///
+/// This performs basic phone number validation:
+/// - Non-empty
+/// - Contains only digits, spaces, parentheses, hyphens, and plus sign
+/// - Has at least 7 digits (minimum for local numbers)
+/// - Has at most 15 digits (ITU-T E.164 standard)
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_phone;
+///
+/// assert!(validate_phone("+1 (555) 123-4567").is_ok());
+/// assert!(validate_phone("5551234567").is_ok());
+/// assert!(validate_phone("123").is_err()); // Too short
+/// assert!(validate_phone("").is_err());
+/// ```
+pub fn validate_phone(phone: &str) -> Result<()> {
+    let phone = phone.trim();
+
+    if phone.is_empty() {
+        return Err(CommerceError::ValidationError("Phone number cannot be empty".into()));
+    }
+
+    // Check for valid characters
+    if !phone.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '-' || c == '(' || c == ')' || c == '+') {
+        return Err(CommerceError::ValidationError(
+            "Phone number contains invalid characters".into()
+        ));
+    }
+
+    // Count digits
+    let digit_count = phone.chars().filter(|c| c.is_ascii_digit()).count();
+
+    if digit_count < 7 {
+        return Err(CommerceError::ValidationError(
+            "Phone number must have at least 7 digits".into()
+        ));
+    }
+
+    if digit_count > 15 {
+        return Err(CommerceError::ValidationError(
+            "Phone number cannot exceed 15 digits".into()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a currency code (ISO 4217 format)
+///
+/// Currency codes must be exactly 3 uppercase letters.
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_currency_code;
+///
+/// assert!(validate_currency_code("USD").is_ok());
+/// assert!(validate_currency_code("EUR").is_ok());
+/// assert!(validate_currency_code("usd").is_err()); // lowercase
+/// assert!(validate_currency_code("US").is_err()); // too short
+/// assert!(validate_currency_code("USDD").is_err()); // too long
+/// ```
+pub fn validate_currency_code(code: &str) -> Result<()> {
+    if code.len() != 3 {
+        return Err(CommerceError::ValidationError(
+            "Currency code must be exactly 3 characters".into()
+        ));
+    }
+
+    if !code.chars().all(|c| c.is_ascii_uppercase()) {
+        return Err(CommerceError::ValidationError(
+            "Currency code must be uppercase letters only".into()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a postal/ZIP code format (basic validation)
+///
+/// This performs basic postal code validation:
+/// - Non-empty
+/// - 3-10 characters
+/// - Contains only alphanumeric characters, spaces, and hyphens
+///
+/// Note: This is a generic validator. For country-specific validation,
+/// use dedicated validators.
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_postal_code;
+///
+/// assert!(validate_postal_code("12345").is_ok());
+/// assert!(validate_postal_code("12345-6789").is_ok());
+/// assert!(validate_postal_code("SW1A 1AA").is_ok()); // UK format
+/// assert!(validate_postal_code("").is_err());
+/// ```
+pub fn validate_postal_code(code: &str) -> Result<()> {
+    let code = code.trim();
+
+    if code.is_empty() {
+        return Err(CommerceError::ValidationError("Postal code cannot be empty".into()));
+    }
+
+    if code.len() < 3 {
+        return Err(CommerceError::ValidationError(
+            "Postal code must be at least 3 characters".into()
+        ));
+    }
+
+    if code.len() > 10 {
+        return Err(CommerceError::ValidationError(
+            "Postal code cannot exceed 10 characters".into()
+        ));
+    }
+
+    if !code.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') {
+        return Err(CommerceError::ValidationError(
+            "Postal code contains invalid characters".into()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate a quantity value
+///
+/// Quantities must be positive (greater than zero).
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_quantity;
+/// use rust_decimal_macros::dec;
+///
+/// assert!(validate_quantity(dec!(1)).is_ok());
+/// assert!(validate_quantity(dec!(0.5)).is_ok());
+/// assert!(validate_quantity(dec!(0)).is_err());
+/// assert!(validate_quantity(dec!(-1)).is_err());
+/// ```
+pub fn validate_quantity(qty: rust_decimal::Decimal) -> Result<()> {
+    if qty <= rust_decimal::Decimal::ZERO {
+        return Err(CommerceError::ValidationError(
+            "Quantity must be greater than zero".into()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a price/amount value
+///
+/// Prices must be non-negative (zero or greater).
+///
+/// # Example
+///
+/// ```
+/// use stateset_core::validate_price;
+/// use rust_decimal_macros::dec;
+///
+/// assert!(validate_price(dec!(0)).is_ok());
+/// assert!(validate_price(dec!(99.99)).is_ok());
+/// assert!(validate_price(dec!(-1)).is_err());
+/// ```
+pub fn validate_price(price: rust_decimal::Decimal) -> Result<()> {
+    if price < rust_decimal::Decimal::ZERO {
+        return Err(CommerceError::ValidationError(
+            "Price cannot be negative".into()
+        ));
+    }
+    Ok(())
+}

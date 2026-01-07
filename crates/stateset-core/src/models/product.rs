@@ -119,6 +119,7 @@ pub struct SeoMetadata {
 
 /// Input for creating a product
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CreateProduct {
     pub name: String,
     pub slug: Option<String>,
@@ -129,19 +130,6 @@ pub struct CreateProduct {
     pub variants: Option<Vec<CreateProductVariant>>,
 }
 
-impl Default for CreateProduct {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            slug: None,
-            description: None,
-            product_type: None,
-            attributes: None,
-            seo: None,
-            variants: None,
-        }
-    }
-}
 
 /// Input for creating a product variant
 #[derive(Debug, Clone, Serialize, Deserialize)]

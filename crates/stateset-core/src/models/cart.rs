@@ -98,7 +98,7 @@ pub struct CartItem {
 }
 
 /// Cart address (detailed for checkout)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CartAddress {
     pub first_name: String,
     pub last_name: String,
@@ -111,24 +111,6 @@ pub struct CartAddress {
     pub country: String,
     pub phone: Option<String>,
     pub email: Option<String>,
-}
-
-impl Default for CartAddress {
-    fn default() -> Self {
-        Self {
-            first_name: String::new(),
-            last_name: String::new(),
-            company: None,
-            line1: String::new(),
-            line2: None,
-            city: String::new(),
-            state: None,
-            postal_code: String::new(),
-            country: String::new(),
-            phone: None,
-            email: None,
-        }
-    }
 }
 
 impl From<CartAddress> for Address {
@@ -281,7 +263,7 @@ pub struct ShippingRate {
 }
 
 /// Input for creating a new cart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateCart {
     pub customer_id: Option<Uuid>,
     pub customer_email: Option<String>,
@@ -293,23 +275,6 @@ pub struct CreateCart {
     pub notes: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub expires_in_minutes: Option<i64>,
-}
-
-impl Default for CreateCart {
-    fn default() -> Self {
-        Self {
-            customer_id: None,
-            customer_email: None,
-            customer_name: None,
-            currency: None,
-            items: None,
-            shipping_address: None,
-            billing_address: None,
-            notes: None,
-            metadata: None,
-            expires_in_minutes: None,
-        }
-    }
 }
 
 /// Input for adding an item to cart
@@ -384,21 +349,11 @@ pub struct SetCartShipping {
 }
 
 /// Input for setting payment on cart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SetCartPayment {
     pub payment_method: String,
     pub payment_token: Option<String>,
     pub billing_address: Option<CartAddress>,
-}
-
-impl Default for SetCartPayment {
-    fn default() -> Self {
-        Self {
-            payment_method: String::new(),
-            payment_token: None,
-            billing_address: None,
-        }
-    }
 }
 
 /// Input for applying discount/coupon

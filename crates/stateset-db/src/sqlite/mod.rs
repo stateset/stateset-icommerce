@@ -5,36 +5,60 @@ mod bom;
 mod carts;
 mod currency;
 mod customers;
+mod fulfillment;
 mod inventory;
 mod invoices;
+mod lots;
 mod orders;
 mod payments;
 mod products;
 mod promotions;
 mod purchase_orders;
+mod quality;
+mod receiving;
 mod returns;
+mod serials;
 mod shipments;
 mod subscriptions;
 mod tax;
+mod warehouse;
 mod warranties;
 mod work_orders;
+mod accounts_payable;
+mod accounts_receivable;
+mod cost_accounting;
+mod credit;
+mod backorder;
+mod general_ledger;
 
+pub use accounts_payable::*;
+pub use accounts_receivable::*;
+pub use backorder::*;
+pub use cost_accounting::*;
+pub use credit::*;
+pub use general_ledger::*;
 pub use analytics::*;
 pub use bom::*;
 pub use carts::*;
 pub use currency::*;
 pub use customers::*;
+pub use fulfillment::*;
 pub use inventory::*;
 pub use invoices::*;
+pub use lots::*;
 pub use orders::*;
 pub use payments::*;
 pub use products::*;
 pub use promotions::*;
 pub use purchase_orders::*;
+pub use quality::*;
+pub use receiving::*;
 pub use returns::*;
+pub use serials::*;
 pub use shipments::*;
 pub use subscriptions::*;
 pub use tax::*;
+pub use warehouse::*;
 pub use warranties::*;
 pub use work_orders::*;
 
@@ -53,12 +77,27 @@ pub struct SqliteDatabase {
 impl SqliteDatabase {
     /// Create a new SQLite database connection
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::Duration;
 
-        // For in-memory databases, use SqliteConnectionManager::memory() with pool size 1
-        // This ensures all operations use the same in-memory database
-        let (manager, max_connections) = if config.url == ":memory:" {
-            (SqliteConnectionManager::memory(), 1)
+        // Counter to generate unique database names for each in-memory instance
+        static MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        // For in-memory databases, use shared-cache mode with a unique URI to allow multiple
+        // connections to access the same in-memory database. Each Commerce instance gets its
+        // own unique database name to ensure test isolation.
+        let is_memory = config.url == ":memory:";
+        let (manager, max_connections) = if is_memory {
+            // Generate unique database name for this instance
+            let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let uri = format!("file:memdb_{}?mode=memory&cache=shared", db_id);
+            let manager = SqliteConnectionManager::file(&uri).with_flags(
+                OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | OpenFlags::SQLITE_OPEN_CREATE
+                    | OpenFlags::SQLITE_OPEN_FULL_MUTEX
+                    | OpenFlags::SQLITE_OPEN_URI,
+            );
+            (manager, 5) // Allow up to 5 connections for in-memory databases
         } else {
             let manager = SqliteConnectionManager::file(&config.url).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -80,7 +119,18 @@ impl SqliteDatabase {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Enable foreign keys
-        conn.execute("PRAGMA foreign_keys = ON", [])
+        conn.execute_batch("PRAGMA foreign_keys = ON")
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+        // Enable WAL mode for better concurrent performance (for file-based databases only)
+        // Note: WAL mode is not supported for in-memory shared-cache databases
+        if !is_memory {
+            conn.execute_batch("PRAGMA journal_mode = WAL")
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        }
+
+        // Set busy timeout to wait for locks instead of failing immediately
+        conn.execute_batch("PRAGMA busy_timeout = 5000")
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         migrations::run_migrations(&conn)
@@ -191,6 +241,66 @@ impl SqliteDatabase {
         SqliteSubscriptionRepository::new(self.pool.clone())
     }
 
+    /// Get quality repository
+    pub fn quality(&self) -> SqliteQualityRepository {
+        SqliteQualityRepository::new(self.pool.clone())
+    }
+
+    /// Get lots repository
+    pub fn lots(&self) -> SqliteLotRepository {
+        SqliteLotRepository::new(self.pool.clone())
+    }
+
+    /// Get serials repository
+    pub fn serials(&self) -> SqliteSerialRepository {
+        SqliteSerialRepository::new(self.pool.clone())
+    }
+
+    /// Get warehouse repository
+    pub fn warehouse(&self) -> SqliteWarehouseRepository {
+        SqliteWarehouseRepository::new(self.pool.clone())
+    }
+
+    /// Get receiving repository
+    pub fn receiving(&self) -> SqliteReceivingRepository {
+        SqliteReceivingRepository::new(self.pool.clone())
+    }
+
+    /// Get fulfillment repository
+    pub fn fulfillment(&self) -> SqliteFulfillmentRepository {
+        SqliteFulfillmentRepository::new(self.pool.clone())
+    }
+
+    /// Get accounts payable repository
+    pub fn accounts_payable(&self) -> SqliteAccountsPayableRepository {
+        SqliteAccountsPayableRepository::new(self.pool.clone())
+    }
+
+    /// Get cost accounting repository
+    pub fn cost_accounting(&self) -> SqliteCostAccountingRepository {
+        SqliteCostAccountingRepository::new(self.pool.clone())
+    }
+
+    /// Get credit repository
+    pub fn credit(&self) -> SqliteCreditRepository {
+        SqliteCreditRepository::new(self.pool.clone())
+    }
+
+    /// Get backorder repository
+    pub fn backorder(&self) -> SqliteBackorderRepository {
+        SqliteBackorderRepository::new(self.pool.clone())
+    }
+
+    /// Get accounts receivable repository
+    pub fn accounts_receivable(&self) -> SqliteAccountsReceivableRepository {
+        SqliteAccountsReceivableRepository::new(self.pool.clone())
+    }
+
+    /// Get general ledger repository
+    pub fn general_ledger(&self) -> SqliteGeneralLedgerRepository {
+        SqliteGeneralLedgerRepository::new(self.pool.clone())
+    }
+
     /// Get underlying pool (for advanced use)
     pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
         &self.pool
@@ -217,8 +327,7 @@ pub(crate) fn parse_decimal(s: &str) -> rust_decimal::Decimal {
 /// Build SQL IN clause with placeholders for the given count
 /// Example: build_in_clause(3) returns "?, ?, ?"
 pub(crate) fn build_in_clause(count: usize) -> String {
-    std::iter::repeat("?")
-        .take(count)
+    std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
 }

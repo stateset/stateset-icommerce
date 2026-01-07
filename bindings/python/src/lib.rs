@@ -193,6 +193,102 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Get the quality control API.
+    #[getter]
+    fn quality(&self) -> QualityApi {
+        QualityApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the lots/batch tracking API.
+    #[getter]
+    fn lots(&self) -> LotsApi {
+        LotsApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the serial numbers API.
+    #[getter]
+    fn serials(&self) -> SerialsApi {
+        SerialsApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the warehouse API.
+    #[getter]
+    fn warehouse(&self) -> WarehouseApi {
+        WarehouseApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the receiving API.
+    #[getter]
+    fn receiving(&self) -> ReceivingApi {
+        ReceivingApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the fulfillment API.
+    #[getter]
+    fn fulfillment(&self) -> FulfillmentApi {
+        FulfillmentApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the accounts payable API.
+    #[getter]
+    fn accounts_payable(&self) -> AccountsPayableApi {
+        AccountsPayableApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the accounts receivable API.
+    #[getter]
+    fn accounts_receivable(&self) -> AccountsReceivableApi {
+        AccountsReceivableApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the cost accounting API.
+    #[getter]
+    fn cost_accounting(&self) -> CostAccountingApi {
+        CostAccountingApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the credit management API.
+    #[getter]
+    fn credit(&self) -> CreditApi {
+        CreditApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the backorder management API.
+    #[getter]
+    fn backorder(&self) -> BackorderApi {
+        BackorderApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Get the general ledger API.
+    #[getter]
+    fn general_ledger(&self) -> GeneralLedgerApi {
+        GeneralLedgerApi {
+            commerce: self.inner.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -5862,7 +5958,7 @@ impl Subscriptions {
                 name,
                 description,
                 billing_interval: interval,
-                custom_interval_days: None,
+                custom_interval_days: billing_interval_count,
                 price: Decimal::from_f64_retain(price).ok_or_else(|| PyValueError::new_err("Invalid price"))?,
                 currency: Some(currency.unwrap_or_else(|| "USD".to_string())),
                 setup_fee: setup_fee.map(|f| Decimal::from_f64_retain(f).unwrap_or_default()),
@@ -7649,6 +7745,1451 @@ impl TaxApi {
 }
 
 // ============================================================================
+// Quality Control Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Inspection {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    inspection_number: String,
+    #[pyo3(get)]
+    inspection_type: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    reference_type: String,
+    #[pyo3(get)]
+    reference_id: String,
+    #[pyo3(get)]
+    inspector_id: Option<String>,
+    #[pyo3(get)]
+    notes: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+#[pymethods]
+impl Inspection {
+    fn __repr__(&self) -> String {
+        format!("Inspection(number='{}', status='{}')", self.inspection_number, self.status)
+    }
+}
+
+impl From<stateset_core::Inspection> for Inspection {
+    fn from(i: stateset_core::Inspection) -> Self {
+        Self {
+            id: i.id.to_string(),
+            inspection_number: i.inspection_number,
+            inspection_type: format!("{:?}", i.inspection_type),
+            status: format!("{:?}", i.status),
+            reference_type: i.reference_type,
+            reference_id: i.reference_id.to_string(),
+            inspector_id: i.inspector_id,
+            notes: i.notes,
+            created_at: i.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct NonConformance {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    ncr_number: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    description: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    source: String,
+    #[pyo3(get)]
+    severity: String,
+    #[pyo3(get)]
+    quantity_affected: f64,
+}
+
+impl From<stateset_core::NonConformance> for NonConformance {
+    fn from(n: stateset_core::NonConformance) -> Self {
+        Self {
+            id: n.id.to_string(),
+            ncr_number: n.ncr_number,
+            sku: n.sku,
+            description: n.description,
+            status: format!("{:?}", n.status),
+            source: format!("{:?}", n.source),
+            severity: format!("{:?}", n.severity),
+            quantity_affected: n.quantity_affected.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct QualityHold {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    reason: String,
+    #[pyo3(get)]
+    quantity_held: f64,
+    #[pyo3(get)]
+    hold_type: String,
+    #[pyo3(get)]
+    placed_by: String,
+}
+
+impl From<stateset_core::QualityHold> for QualityHold {
+    fn from(h: stateset_core::QualityHold) -> Self {
+        Self {
+            id: h.id.to_string(),
+            sku: h.sku,
+            reason: h.reason,
+            quantity_held: h.quantity_held.to_string().parse().unwrap_or(0.0),
+            hold_type: format!("{:?}", h.hold_type),
+            placed_by: h.placed_by,
+        }
+    }
+}
+
+// ============================================================================
+// Quality Control API
+// ============================================================================
+
+#[pyclass]
+pub struct QualityApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl QualityApi {
+    #[pyo3(signature = (reference_type, reference_id, inspection_type, inspector_id=None))]
+    fn create_inspection(&self, reference_type: String, reference_id: String, inspection_type: String, inspector_id: Option<String>) -> PyResult<Inspection> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let itype = match inspection_type.to_lowercase().as_str() {
+            "incoming" => stateset_core::InspectionType::Incoming,
+            "receiving" => stateset_core::InspectionType::Receiving,
+            "in_process" => stateset_core::InspectionType::InProcess,
+            "final" => stateset_core::InspectionType::Final,
+            "random" => stateset_core::InspectionType::Random,
+            _ => stateset_core::InspectionType::Incoming,
+        };
+        let ref_uuid = reference_id.parse().map_err(|_| PyValueError::new_err("Invalid reference UUID"))?;
+        let inspection = commerce.quality().create_inspection(stateset_core::CreateInspection {
+            inspection_type: itype,
+            reference_type,
+            reference_id: ref_uuid,
+            inspector_id,
+            ..Default::default()
+        }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(inspection.into())
+    }
+
+    fn get_inspection(&self, id: String) -> PyResult<Option<Inspection>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let inspection = commerce.quality().get_inspection(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(inspection.map(|i| i.into()))
+    }
+
+    fn list_inspections(&self) -> PyResult<Vec<Inspection>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let inspections = commerce.quality().list_inspections(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(inspections.into_iter().map(|i| i.into()).collect())
+    }
+
+    fn complete_inspection(&self, id: String) -> PyResult<Inspection> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let inspection = commerce.quality().complete_inspection(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(inspection.into())
+    }
+
+    fn create_ncr(&self, sku: String, description: String, quantity_affected: f64, source: String, severity: String) -> PyResult<NonConformance> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let src = match source.to_lowercase().as_str() {
+            "inspection" => stateset_core::NonConformanceSource::Inspection,
+            "production" | "production_defect" => stateset_core::NonConformanceSource::ProductionDefect,
+            "customer" | "customer_complaint" => stateset_core::NonConformanceSource::CustomerComplaint,
+            "supplier" | "supplier_issue" => stateset_core::NonConformanceSource::SupplierIssue,
+            "internal_audit" => stateset_core::NonConformanceSource::InternalAudit,
+            "shipping_damage" => stateset_core::NonConformanceSource::ShippingDamage,
+            _ => stateset_core::NonConformanceSource::Inspection,
+        };
+        let sev = match severity.to_lowercase().as_str() {
+            "critical" => stateset_core::Severity::Critical,
+            "major" => stateset_core::Severity::Major,
+            "minor" => stateset_core::Severity::Minor,
+            "observation" => stateset_core::Severity::Observation,
+            _ => stateset_core::Severity::Minor,
+        };
+        let ncr = commerce.quality().create_ncr(stateset_core::CreateNonConformance {
+            sku, description, quantity_affected: Decimal::from_f64_retain(quantity_affected).unwrap_or_default(),
+            source: src, severity: sev, ..Default::default()
+        }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(ncr.into())
+    }
+
+    fn list_ncrs(&self) -> PyResult<Vec<NonConformance>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let ncrs = commerce.quality().list_ncrs(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(ncrs.into_iter().map(|n| n.into()).collect())
+    }
+
+    fn create_hold(&self, sku: String, reason: String, quantity: f64) -> PyResult<QualityHold> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let hold = commerce.quality().create_hold(stateset_core::CreateQualityHold {
+            sku, reason, quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(), ..Default::default()
+        }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(hold.into())
+    }
+
+    #[pyo3(signature = (id, released_by, release_notes=None))]
+    fn release_hold(&self, id: String, released_by: String, release_notes: Option<String>) -> PyResult<QualityHold> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let hold = commerce.quality().release_hold(uuid, stateset_core::ReleaseQualityHold { released_by, release_notes }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(hold.into())
+    }
+}
+
+// ============================================================================
+// Lot/Batch Tracking Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Lot {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    lot_number: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    quantity_remaining: f64,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    expiration_date: Option<String>,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::Lot> for Lot {
+    fn from(l: stateset_core::Lot) -> Self {
+        Self {
+            id: l.id.to_string(),
+            lot_number: l.lot_number,
+            sku: l.sku,
+            quantity_remaining: l.quantity_remaining.to_string().parse().unwrap_or(0.0),
+            status: format!("{:?}", l.status),
+            expiration_date: l.expiration_date.map(|d| d.to_rfc3339()),
+            created_at: l.created_at.to_rfc3339(),
+        }
+    }
+}
+
+// ============================================================================
+// Lots API
+// ============================================================================
+
+#[pyclass]
+pub struct LotsApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl LotsApi {
+    #[pyo3(signature = (sku, lot_number, quantity, expiration_date=None))]
+    fn create_lot(&self, sku: String, lot_number: String, quantity: f64, expiration_date: Option<String>) -> PyResult<Lot> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let exp = expiration_date.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()).map(|dt| dt.with_timezone(&chrono::Utc));
+        let lot = commerce.lots().create(stateset_core::CreateLot {
+            sku, lot_number: Some(lot_number), quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(), expiration_date: exp, ..Default::default()
+        }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lot.into())
+    }
+
+    fn get_lot(&self, id: String) -> PyResult<Option<Lot>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let lot = commerce.lots().get(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lot.map(|l| l.into()))
+    }
+
+    fn list_lots(&self) -> PyResult<Vec<Lot>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let lots = commerce.lots().list(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lots.into_iter().map(|l| l.into()).collect())
+    }
+
+    fn get_lots_by_sku(&self, sku: String) -> PyResult<Vec<Lot>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let lots = commerce.lots().get_available_lots_for_sku(&sku).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lots.into_iter().map(|l| l.into()).collect())
+    }
+
+    fn quarantine_lot(&self, id: String, reason: String) -> PyResult<Lot> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let lot = commerce.lots().quarantine(uuid, &reason).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lot.into())
+    }
+
+    fn get_expiring_lots(&self, days_ahead: i32) -> PyResult<Vec<Lot>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let lots = commerce.lots().get_expiring_lots(days_ahead).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(lots.into_iter().map(|l| l.into()).collect())
+    }
+}
+
+// ============================================================================
+// Serial Number Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct SerialNumber {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    serial: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::SerialNumber> for SerialNumber {
+    fn from(s: stateset_core::SerialNumber) -> Self {
+        Self {
+            id: s.id.to_string(),
+            serial: s.serial,
+            sku: s.sku,
+            status: format!("{:?}", s.status),
+            created_at: s.created_at.to_rfc3339(),
+        }
+    }
+}
+
+// ============================================================================
+// Serials API
+// ============================================================================
+
+#[pyclass]
+pub struct SerialsApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl SerialsApi {
+    #[pyo3(signature = (sku, serial=None))]
+    fn create(&self, sku: String, serial: Option<String>) -> PyResult<SerialNumber> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let s = commerce.serials().create(stateset_core::CreateSerialNumber { sku, serial, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(s.into())
+    }
+
+    fn get_by_serial(&self, serial: String) -> PyResult<Option<SerialNumber>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let s = commerce.serials().get_by_serial(&serial).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(s.map(|s| s.into()))
+    }
+
+    fn list(&self) -> PyResult<Vec<SerialNumber>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let serials = commerce.serials().list(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(serials.into_iter().map(|s| s.into()).collect())
+    }
+
+    fn change_status(&self, id: String, status: String) -> PyResult<SerialNumber> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let serial_status = match status.to_lowercase().as_str() {
+            "available" => stateset_core::SerialStatus::Available,
+            "sold" => stateset_core::SerialStatus::Sold,
+            "returned" => stateset_core::SerialStatus::Returned,
+            "scrapped" => stateset_core::SerialStatus::Scrapped,
+            "reserved" => stateset_core::SerialStatus::Reserved,
+            "shipped" => stateset_core::SerialStatus::Shipped,
+            "quarantine" | "quarantined" => stateset_core::SerialStatus::Quarantined,
+            _ => stateset_core::SerialStatus::Available,
+        };
+        let serial = commerce.serials().change_status(stateset_core::ChangeSerialStatus { serial_id: uuid, new_status: serial_status, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(serial.into())
+    }
+}
+
+// ============================================================================
+// Warehouse Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Warehouse {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    address: Option<String>,
+    #[pyo3(get)]
+    is_active: bool,
+}
+
+impl From<stateset_core::Warehouse> for Warehouse {
+    fn from(w: stateset_core::Warehouse) -> Self {
+        // Convert WarehouseAddress to a simple string representation
+        let addr_str = if w.address.street1.is_empty() && w.address.city.is_empty() {
+            None
+        } else {
+            Some(format!("{}, {}, {}", w.address.street1, w.address.city, w.address.country))
+        };
+        Self { id: w.id.to_string(), code: w.code, name: w.name, address: addr_str, is_active: w.is_active }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct WarehouseLocation {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    warehouse_id: String,
+    #[pyo3(get)]
+    code: String,
+    #[pyo3(get)]
+    location_type: String,
+}
+
+impl From<stateset_core::Location> for WarehouseLocation {
+    fn from(l: stateset_core::Location) -> Self {
+        Self { id: l.id.to_string(), warehouse_id: l.warehouse_id.to_string(), code: l.code, location_type: format!("{:?}", l.location_type) }
+    }
+}
+
+// ============================================================================
+// Warehouse API
+// ============================================================================
+
+#[pyclass]
+pub struct WarehouseApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl WarehouseApi {
+    #[pyo3(signature = (code, name, address=None))]
+    fn create_warehouse(&self, code: String, name: String, address: Option<String>) -> PyResult<Warehouse> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let _ = address; // Address is simplified - WarehouseAddress uses Default
+        let warehouse = commerce.warehouse().create_warehouse(stateset_core::CreateWarehouse { code, name, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(warehouse.into())
+    }
+
+    fn get_warehouse(&self, id: String) -> PyResult<Option<Warehouse>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wh_id: i32 = id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let warehouse = commerce.warehouse().get_warehouse(wh_id).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(warehouse.map(|w| w.into()))
+    }
+
+    fn list_warehouses(&self) -> PyResult<Vec<Warehouse>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let warehouses = commerce.warehouse().list_warehouses(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(warehouses.into_iter().map(|w| w.into()).collect())
+    }
+
+    #[pyo3(signature = (warehouse_id, code, location_type=None))]
+    fn create_location(&self, warehouse_id: String, code: String, location_type: Option<String>) -> PyResult<WarehouseLocation> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wh_id: i32 = warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let loc_type = location_type.map(|t| match t.to_lowercase().as_str() {
+            "pick" | "picking" => stateset_core::LocationType::Pick,
+            "bulk" => stateset_core::LocationType::Bulk,
+            "receiving" => stateset_core::LocationType::Receiving,
+            "shipping" => stateset_core::LocationType::Shipping,
+            "staging" => stateset_core::LocationType::Staging,
+            "quarantine" => stateset_core::LocationType::Quarantine,
+            _ => stateset_core::LocationType::Bulk,
+        }).unwrap_or(stateset_core::LocationType::Bulk);
+        let location = commerce.warehouse().create_location(stateset_core::CreateLocation { warehouse_id: wh_id, code: Some(code), location_type: loc_type, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(location.into())
+    }
+
+    fn get_locations_for_warehouse(&self, warehouse_id: String) -> PyResult<Vec<WarehouseLocation>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wh_id: i32 = warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let locations = commerce.warehouse().get_locations_for_warehouse(wh_id).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(locations.into_iter().map(|l| l.into()).collect())
+    }
+}
+
+// ============================================================================
+// Receiving Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Receipt {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    receipt_number: String,
+    #[pyo3(get)]
+    receipt_type: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    reference_id: Option<String>,
+    #[pyo3(get)]
+    supplier_id: Option<String>,
+    #[pyo3(get)]
+    warehouse_id: String,
+    #[pyo3(get)]
+    created_at: String,
+}
+
+impl From<stateset_core::Receipt> for Receipt {
+    fn from(r: stateset_core::Receipt) -> Self {
+        Self {
+            id: r.id.to_string(), receipt_number: r.receipt_number, receipt_type: format!("{:?}", r.receipt_type),
+            status: format!("{:?}", r.status), reference_id: r.reference_id.map(|id| id.to_string()),
+            supplier_id: r.supplier_id.map(|id| id.to_string()), warehouse_id: r.warehouse_id.to_string(),
+            created_at: r.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct ReceiptLine {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    receipt_id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    expected_quantity: f64,
+    #[pyo3(get)]
+    received_quantity: f64,
+    #[pyo3(get)]
+    unit_cost: Option<f64>,
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::ReceiptItem> for ReceiptLine {
+    fn from(l: stateset_core::ReceiptItem) -> Self {
+        Self {
+            id: l.id.to_string(), receipt_id: l.receipt_id.to_string(), sku: l.sku,
+            expected_quantity: l.expected_quantity.to_string().parse().unwrap_or(0.0),
+            received_quantity: l.received_quantity.to_string().parse().unwrap_or(0.0),
+            unit_cost: l.unit_cost.map(|c| c.to_string().parse().unwrap_or(0.0)),
+            status: format!("{:?}", l.status),
+        }
+    }
+}
+
+// ============================================================================
+// Receiving API
+// ============================================================================
+
+#[pyclass]
+pub struct ReceivingApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl ReceivingApi {
+    #[pyo3(signature = (warehouse_id, supplier_id=None))]
+    fn create_receipt(&self, warehouse_id: String, supplier_id: Option<String>) -> PyResult<Receipt> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wh_id: i32 = warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let sup_uuid = supplier_id.and_then(|id| id.parse().ok());
+        let receipt = commerce.receiving().create_receipt(stateset_core::CreateReceipt { warehouse_id: wh_id, supplier_id: sup_uuid, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(receipt.into())
+    }
+
+    fn get_receipt(&self, id: String) -> PyResult<Option<Receipt>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let receipt = commerce.receiving().get_receipt(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(receipt.map(|r| r.into()))
+    }
+
+    fn list_receipts(&self) -> PyResult<Vec<Receipt>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let receipts = commerce.receiving().list_receipts(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(receipts.into_iter().map(|r| r.into()).collect())
+    }
+
+    fn get_receipt_items(&self, receipt_id: String) -> PyResult<Vec<ReceiptLine>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = receipt_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let items = commerce.receiving().get_receipt_items(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(items.into_iter().map(|i| i.into()).collect())
+    }
+
+    fn complete_receiving(&self, id: String) -> PyResult<Receipt> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let receipt = commerce.receiving().complete_receiving(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(receipt.into())
+    }
+}
+
+// ============================================================================
+// Fulfillment Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Wave {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    wave_number: String,
+    #[pyo3(get)]
+    warehouse_id: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    order_count: i32,
+    #[pyo3(get)]
+    pick_count: i32,
+}
+
+impl From<stateset_core::Wave> for Wave {
+    fn from(w: stateset_core::Wave) -> Self {
+        Self { id: w.id.to_string(), wave_number: w.wave_number, warehouse_id: w.warehouse_id.to_string(), status: format!("{:?}", w.status), order_count: w.order_count, pick_count: w.pick_count }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PickTask {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    order_id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    quantity_requested: f64,
+    #[pyo3(get)]
+    quantity_picked: f64,
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::PickTask> for PickTask {
+    fn from(t: stateset_core::PickTask) -> Self {
+        Self {
+            id: t.id.to_string(), order_id: t.order_id.to_string(), sku: t.sku,
+            quantity_requested: t.quantity_requested.to_string().parse().unwrap_or(0.0),
+            quantity_picked: t.quantity_picked.to_string().parse().unwrap_or(0.0),
+            status: format!("{:?}", t.status),
+        }
+    }
+}
+
+// ============================================================================
+// Fulfillment API
+// ============================================================================
+
+#[pyclass]
+pub struct FulfillmentApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl FulfillmentApi {
+    fn create_wave(&self, warehouse_id: String, order_ids: Vec<String>) -> PyResult<Wave> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let wh_id: i32 = warehouse_id.parse().map_err(|_| PyValueError::new_err("Invalid warehouse ID"))?;
+        let order_uuids: Vec<uuid::Uuid> = order_ids.iter()
+            .filter_map(|id| id.parse().ok())
+            .collect();
+        let wave = commerce.fulfillment().create_wave(stateset_core::CreateWave { warehouse_id: wh_id, order_ids: order_uuids, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(wave.into())
+    }
+
+    fn get_wave(&self, id: String) -> PyResult<Option<Wave>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let wave = commerce.fulfillment().get_wave(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(wave.map(|w| w.into()))
+    }
+
+    fn list_waves(&self) -> PyResult<Vec<Wave>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let waves = commerce.fulfillment().list_waves(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(waves.into_iter().map(|w| w.into()).collect())
+    }
+
+    fn release_wave(&self, id: String) -> PyResult<Wave> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let wave = commerce.fulfillment().release_wave(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(wave.into())
+    }
+
+    fn list_picks(&self) -> PyResult<Vec<PickTask>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let picks = commerce.fulfillment().list_picks(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(picks.into_iter().map(|p| p.into()).collect())
+    }
+
+    fn complete_pick(&self, id: String, quantity_picked: f64) -> PyResult<PickTask> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let task = commerce.fulfillment().complete_pick(stateset_core::CompletePick { pick_id: uuid, quantity_picked: Decimal::from_f64_retain(quantity_picked).unwrap_or_default(), quantity_short: None, short_reason: None, lot_id: None, serial_number: None, completed_by: None })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(task.into())
+    }
+}
+
+// ============================================================================
+// Accounts Payable Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Bill {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    bill_number: String,
+    #[pyo3(get)]
+    supplier_id: String,
+    #[pyo3(get)]
+    total_amount: f64,
+    #[pyo3(get)]
+    amount_paid: f64,
+    #[pyo3(get)]
+    amount_due: f64,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    due_date: String,
+}
+
+impl From<stateset_core::Bill> for Bill {
+    fn from(b: stateset_core::Bill) -> Self {
+        Self {
+            id: b.id.to_string(), bill_number: b.bill_number, supplier_id: b.supplier_id.to_string(),
+            total_amount: b.total_amount.to_string().parse().unwrap_or(0.0), amount_paid: b.amount_paid.to_string().parse().unwrap_or(0.0),
+            amount_due: b.amount_due.to_string().parse().unwrap_or(0.0),
+            status: format!("{:?}", b.status), due_date: b.due_date.to_rfc3339(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct ApAgingSummary {
+    #[pyo3(get)]
+    current: f64,
+    #[pyo3(get)]
+    days_1_30: f64,
+    #[pyo3(get)]
+    days_31_60: f64,
+    #[pyo3(get)]
+    days_61_90: f64,
+    #[pyo3(get)]
+    days_over_90: f64,
+    #[pyo3(get)]
+    total: f64,
+}
+
+impl From<stateset_core::ApAgingSummary> for ApAgingSummary {
+    fn from(s: stateset_core::ApAgingSummary) -> Self {
+        Self {
+            current: s.current.to_string().parse().unwrap_or(0.0),
+            days_1_30: s.days_1_30.to_string().parse().unwrap_or(0.0),
+            days_31_60: s.days_31_60.to_string().parse().unwrap_or(0.0),
+            days_61_90: s.days_61_90.to_string().parse().unwrap_or(0.0),
+            days_over_90: s.days_over_90.to_string().parse().unwrap_or(0.0),
+            total: s.total.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+// ============================================================================
+// Accounts Payable API
+// ============================================================================
+
+#[pyclass]
+pub struct AccountsPayableApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl AccountsPayableApi {
+    fn create_bill(&self, supplier_id: String, due_date: String) -> PyResult<Bill> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = supplier_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let due = chrono::DateTime::parse_from_rfc3339(&due_date).map_err(|_| PyValueError::new_err("Invalid due_date format"))?.with_timezone(&chrono::Utc);
+        let bill = commerce.accounts_payable().create_bill(stateset_core::CreateBill { supplier_id: uuid, due_date: due, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bill.into())
+    }
+
+    fn get_bill(&self, id: String) -> PyResult<Option<Bill>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let bill = commerce.accounts_payable().get_bill(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bill.map(|b| b.into()))
+    }
+
+    fn list_bills(&self) -> PyResult<Vec<Bill>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bills = commerce.accounts_payable().list_bills(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bills.into_iter().map(|b| b.into()).collect())
+    }
+
+    fn approve_bill(&self, id: String) -> PyResult<Bill> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let bill = commerce.accounts_payable().approve_bill(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bill.into())
+    }
+
+    #[pyo3(signature = (id, amount, payment_method=None))]
+    fn pay_bill(&self, id: String, amount: f64, payment_method: Option<String>) -> PyResult<Bill> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let pm = payment_method.map(|s| match s.to_lowercase().as_str() {
+            "check" => stateset_core::PaymentMethodAP::Check,
+            "ach" => stateset_core::PaymentMethodAP::Ach,
+            "wire" => stateset_core::PaymentMethodAP::Wire,
+            "credit_card" => stateset_core::PaymentMethodAP::CreditCard,
+            "cash" => stateset_core::PaymentMethodAP::Cash,
+            _ => stateset_core::PaymentMethodAP::Other,
+        }).unwrap_or(stateset_core::PaymentMethodAP::Check);
+        let bill = commerce.accounts_payable().pay_bill(uuid, stateset_core::PayBill { amount: Decimal::from_f64_retain(amount).unwrap_or_default(), payment_method: pm, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bill.into())
+    }
+
+    fn get_aging_summary(&self) -> PyResult<ApAgingSummary> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let summary = commerce.accounts_payable().get_aging_summary().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(summary.into())
+    }
+
+    fn get_overdue_bills(&self) -> PyResult<Vec<Bill>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bills = commerce.accounts_payable().get_overdue_bills().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(bills.into_iter().map(|b| b.into()).collect())
+    }
+}
+
+// ============================================================================
+// Accounts Receivable Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct ArAgingSummary {
+    #[pyo3(get)]
+    current: f64,
+    #[pyo3(get)]
+    days_1_30: f64,
+    #[pyo3(get)]
+    days_31_60: f64,
+    #[pyo3(get)]
+    days_61_90: f64,
+    #[pyo3(get)]
+    days_over_90: f64,
+    #[pyo3(get)]
+    total: f64,
+}
+
+impl From<stateset_core::ArAgingSummary> for ArAgingSummary {
+    fn from(s: stateset_core::ArAgingSummary) -> Self {
+        Self {
+            current: s.current.to_string().parse().unwrap_or(0.0),
+            days_1_30: s.days_1_30.to_string().parse().unwrap_or(0.0),
+            days_31_60: s.days_31_60.to_string().parse().unwrap_or(0.0),
+            days_61_90: s.days_61_90.to_string().parse().unwrap_or(0.0),
+            days_over_90: s.days_over_90.to_string().parse().unwrap_or(0.0),
+            total: s.total.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct CreditMemo {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    credit_memo_number: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    amount: f64,
+    #[pyo3(get)]
+    reason: String,
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::CreditMemo> for CreditMemo {
+    fn from(m: stateset_core::CreditMemo) -> Self {
+        Self {
+            id: m.id.to_string(), credit_memo_number: m.credit_memo_number, customer_id: m.customer_id.to_string(),
+            amount: m.amount.to_string().parse().unwrap_or(0.0), reason: format!("{:?}", m.reason), status: format!("{:?}", m.status),
+        }
+    }
+}
+
+// ============================================================================
+// Accounts Receivable API
+// ============================================================================
+
+#[pyclass]
+pub struct AccountsReceivableApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl AccountsReceivableApi {
+    fn get_aging_summary(&self) -> PyResult<ArAgingSummary> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let summary = commerce.accounts_receivable().get_aging_summary().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(summary.into())
+    }
+
+    fn create_credit_memo(&self, customer_id: String, amount: f64, reason: String) -> PyResult<CreditMemo> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let r = match reason.to_lowercase().as_str() {
+            "returned_goods" | "return" => stateset_core::CreditMemoReason::ReturnedGoods,
+            "pricing_error" | "price" => stateset_core::CreditMemoReason::PricingError,
+            "overpayment" => stateset_core::CreditMemoReason::Overpayment,
+            "damaged" => stateset_core::CreditMemoReason::Damaged,
+            "service_credit" | "service" => stateset_core::CreditMemoReason::ServiceCredit,
+            "goodwill" | "adjustment" => stateset_core::CreditMemoReason::GoodwillAdjustment,
+            _ => stateset_core::CreditMemoReason::Other,
+        };
+        let memo = commerce.accounts_receivable().create_credit_memo(stateset_core::CreateCreditMemo { customer_id: uuid, amount: Decimal::from_f64_retain(amount).unwrap_or_default(), reason: r, original_invoice_id: None, notes: None })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(memo.into())
+    }
+
+    #[pyo3(signature = (days=None))]
+    fn get_dso(&self, days: Option<i32>) -> PyResult<f64> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let dso = commerce.accounts_receivable().get_dso(days.unwrap_or(30)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(dso.to_string().parse().unwrap_or(0.0))
+    }
+}
+
+// ============================================================================
+// Cost Accounting Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct ItemCost {
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    standard_cost: f64,
+    #[pyo3(get)]
+    average_cost: f64,
+    #[pyo3(get)]
+    last_cost: f64,
+    #[pyo3(get)]
+    material_cost: f64,
+    #[pyo3(get)]
+    labor_cost: f64,
+    #[pyo3(get)]
+    overhead_cost: f64,
+}
+
+impl From<stateset_core::ItemCost> for ItemCost {
+    fn from(c: stateset_core::ItemCost) -> Self {
+        Self {
+            sku: c.sku,
+            standard_cost: c.standard_cost.to_string().parse().unwrap_or(0.0),
+            average_cost: c.average_cost.to_string().parse().unwrap_or(0.0),
+            last_cost: c.last_cost.to_string().parse().unwrap_or(0.0),
+            material_cost: c.material_cost.to_string().parse().unwrap_or(0.0),
+            labor_cost: c.labor_cost.to_string().parse().unwrap_or(0.0),
+            overhead_cost: c.overhead_cost.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct InventoryValuation {
+    #[pyo3(get)]
+    total_value: f64,
+    #[pyo3(get)]
+    total_quantity: f64,
+    #[pyo3(get)]
+    average_unit_cost: f64,
+}
+
+impl From<stateset_core::InventoryValuation> for InventoryValuation {
+    fn from(v: stateset_core::InventoryValuation) -> Self {
+        Self {
+            total_value: v.total_value.to_string().parse().unwrap_or(0.0),
+            total_quantity: v.total_quantity.to_string().parse().unwrap_or(0.0),
+            average_unit_cost: v.average_unit_cost.to_string().parse().unwrap_or(0.0),
+        }
+    }
+}
+
+// ============================================================================
+// Cost Accounting API
+// ============================================================================
+
+#[pyclass]
+pub struct CostAccountingApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl CostAccountingApi {
+    fn get_item_cost(&self, sku: String) -> PyResult<Option<ItemCost>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let cost = commerce.cost_accounting().get_item_cost(&sku).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(cost.map(|c| c.into()))
+    }
+
+    #[pyo3(signature = (sku, standard_cost=None, material_cost=None, labor_cost=None, overhead_cost=None))]
+    fn set_item_cost(&self, sku: String, standard_cost: Option<f64>, material_cost: Option<f64>, labor_cost: Option<f64>, overhead_cost: Option<f64>) -> PyResult<ItemCost> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let cost = commerce.cost_accounting().set_item_cost(stateset_core::SetItemCost {
+            sku, standard_cost: standard_cost.and_then(Decimal::from_f64_retain), material_cost: material_cost.and_then(Decimal::from_f64_retain),
+            labor_cost: labor_cost.and_then(Decimal::from_f64_retain), overhead_cost: overhead_cost.and_then(Decimal::from_f64_retain), ..Default::default()
+        }).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(cost.into())
+    }
+
+    fn update_average_cost(&self, sku: String, quantity: f64, unit_cost: f64) -> PyResult<ItemCost> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let cost = commerce.cost_accounting().update_average_cost(&sku, Decimal::from_f64_retain(quantity).unwrap_or_default(), Decimal::from_f64_retain(unit_cost).unwrap_or_default())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(cost.into())
+    }
+
+    #[pyo3(signature = (cost_method=None))]
+    fn get_inventory_valuation(&self, cost_method: Option<String>) -> PyResult<InventoryValuation> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let method = cost_method.and_then(|m| match m.to_lowercase().as_str() {
+            "standard" => Some(stateset_core::CostMethod::Standard),
+            "average" => Some(stateset_core::CostMethod::Average),
+            "fifo" => Some(stateset_core::CostMethod::Fifo),
+            "lifo" => Some(stateset_core::CostMethod::Lifo),
+            _ => None,
+        }).unwrap_or(stateset_core::CostMethod::Average);
+        let valuation = commerce.cost_accounting().get_inventory_valuation(method).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(valuation.into())
+    }
+
+    fn get_total_inventory_value(&self) -> PyResult<f64> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let value = commerce.cost_accounting().get_total_inventory_value().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(value.to_string().parse().unwrap_or(0.0))
+    }
+}
+
+// ============================================================================
+// Credit Management Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct CreditAccount {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    credit_limit: f64,
+    #[pyo3(get)]
+    current_balance: f64,
+    #[pyo3(get)]
+    available_credit: f64,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    payment_terms: Option<String>,
+}
+
+impl From<stateset_core::CreditAccount> for CreditAccount {
+    fn from(a: stateset_core::CreditAccount) -> Self {
+        Self {
+            id: a.id.to_string(), customer_id: a.customer_id.to_string(),
+            credit_limit: a.credit_limit.to_string().parse().unwrap_or(0.0),
+            current_balance: a.current_balance.to_string().parse().unwrap_or(0.0),
+            available_credit: a.available_credit.to_string().parse().unwrap_or(0.0),
+            status: format!("{:?}", a.status), payment_terms: a.payment_terms,
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct CreditCheckResult {
+    #[pyo3(get)]
+    approved: bool,
+    #[pyo3(get)]
+    reason: Option<String>,
+    #[pyo3(get)]
+    available_credit: f64,
+    #[pyo3(get)]
+    requires_approval: bool,
+}
+
+impl From<stateset_core::CreditCheckResult> for CreditCheckResult {
+    fn from(r: stateset_core::CreditCheckResult) -> Self {
+        Self {
+            approved: r.approved, reason: r.reason.map(|r| format!("{:?}", r)),
+            available_credit: r.available_credit.to_string().parse().unwrap_or(0.0), requires_approval: r.requires_approval,
+        }
+    }
+}
+
+// ============================================================================
+// Credit Management API
+// ============================================================================
+
+#[pyclass]
+pub struct CreditApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl CreditApi {
+    #[pyo3(signature = (customer_id, credit_limit, payment_terms=None))]
+    fn create_credit_account(&self, customer_id: String, credit_limit: f64, payment_terms: Option<String>) -> PyResult<CreditAccount> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let account = commerce.credit().create_credit_account(stateset_core::CreateCreditAccount { customer_id: uuid, credit_limit: Decimal::from_f64_retain(credit_limit).unwrap_or_default(), payment_terms, ..Default::default() })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.into())
+    }
+
+    fn get_credit_account_by_customer(&self, customer_id: String) -> PyResult<Option<CreditAccount>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let account = commerce.credit().get_credit_account_by_customer(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.map(|a| a.into()))
+    }
+
+    fn check_credit(&self, customer_id: String, order_amount: f64) -> PyResult<CreditCheckResult> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let result = commerce.credit().check_credit(uuid, Decimal::from_f64_retain(order_amount).unwrap_or_default())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(result.into())
+    }
+
+    fn adjust_credit_limit(&self, customer_id: String, new_limit: f64, reason: String) -> PyResult<CreditAccount> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let account = commerce.credit().adjust_credit_limit(uuid, Decimal::from_f64_retain(new_limit).unwrap_or_default(), &reason)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.into())
+    }
+
+    fn get_over_limit_customers(&self) -> PyResult<Vec<CreditAccount>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let accounts = commerce.credit().get_over_limit_customers().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(accounts.into_iter().map(|a| a.into()).collect())
+    }
+}
+
+// ============================================================================
+// Backorder Management Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct Backorder {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    backorder_number: String,
+    #[pyo3(get)]
+    order_id: String,
+    #[pyo3(get)]
+    customer_id: String,
+    #[pyo3(get)]
+    sku: String,
+    #[pyo3(get)]
+    quantity_ordered: f64,
+    #[pyo3(get)]
+    quantity_fulfilled: f64,
+    #[pyo3(get)]
+    quantity_remaining: f64,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    priority: String,
+}
+
+impl From<stateset_core::Backorder> for Backorder {
+    fn from(b: stateset_core::Backorder) -> Self {
+        Self {
+            id: b.id.to_string(), backorder_number: b.backorder_number, order_id: b.order_id.to_string(), customer_id: b.customer_id.to_string(), sku: b.sku,
+            quantity_ordered: b.quantity_ordered.to_string().parse().unwrap_or(0.0), quantity_fulfilled: b.quantity_fulfilled.to_string().parse().unwrap_or(0.0),
+            quantity_remaining: b.quantity_remaining.to_string().parse().unwrap_or(0.0), status: format!("{:?}", b.status), priority: format!("{:?}", b.priority),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct BackorderSummary {
+    #[pyo3(get)]
+    total_backorders: i32,
+    #[pyo3(get)]
+    total_quantity: f64,
+    #[pyo3(get)]
+    critical_count: i32,
+    #[pyo3(get)]
+    overdue_count: i32,
+}
+
+impl From<stateset_core::BackorderSummary> for BackorderSummary {
+    fn from(s: stateset_core::BackorderSummary) -> Self {
+        Self { total_backorders: s.total_backorders, total_quantity: s.total_quantity.to_string().parse().unwrap_or(0.0), critical_count: s.critical_count, overdue_count: s.overdue_count }
+    }
+}
+
+// ============================================================================
+// Backorder Management API
+// ============================================================================
+
+#[pyclass]
+pub struct BackorderApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl BackorderApi {
+    #[pyo3(signature = (order_id, customer_id, sku, quantity, priority=None))]
+    fn create_backorder(&self, order_id: String, customer_id: String, sku: String, quantity: f64, priority: Option<String>) -> PyResult<Backorder> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let ord_uuid = order_id.parse().map_err(|_| PyValueError::new_err("Invalid order UUID"))?;
+        let cust_uuid = customer_id.parse().map_err(|_| PyValueError::new_err("Invalid customer UUID"))?;
+        let prio = priority.and_then(|p| match p.to_lowercase().as_str() {
+            "low" => Some(stateset_core::BackorderPriority::Low),
+            "normal" => Some(stateset_core::BackorderPriority::Normal),
+            "high" => Some(stateset_core::BackorderPriority::High),
+            "critical" => Some(stateset_core::BackorderPriority::Critical),
+            _ => None,
+        });
+        let backorder = commerce.backorder().create_backorder(stateset_core::CreateBackorder { order_id: ord_uuid, customer_id: cust_uuid, sku, quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(), priority: prio, order_line_id: None, expected_date: None, promised_date: None, source_location_id: None, notes: None })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorder.into())
+    }
+
+    fn get_backorder(&self, id: String) -> PyResult<Option<Backorder>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let backorder = commerce.backorder().get_backorder(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorder.map(|b| b.into()))
+    }
+
+    fn list_backorders(&self) -> PyResult<Vec<Backorder>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let backorders = commerce.backorder().list_backorders(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorders.into_iter().map(|b| b.into()).collect())
+    }
+
+    fn fulfill_backorder(&self, id: String, quantity: f64) -> PyResult<Backorder> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let backorder = commerce.backorder().fulfill_backorder(stateset_core::FulfillBackorder { backorder_id: uuid, quantity: Decimal::from_f64_retain(quantity).unwrap_or_default(), source_type: stateset_core::FulfillmentSourceType::Inventory, source_id: None, notes: None, fulfilled_by: None })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorder.into())
+    }
+
+    fn cancel_backorder(&self, id: String) -> PyResult<Backorder> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let backorder = commerce.backorder().cancel_backorder(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorder.into())
+    }
+
+    fn get_summary(&self) -> PyResult<BackorderSummary> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let summary = commerce.backorder().get_summary().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(summary.into())
+    }
+
+    fn get_overdue_backorders(&self) -> PyResult<Vec<Backorder>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let backorders = commerce.backorder().get_overdue_backorders().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(backorders.into_iter().map(|b| b.into()).collect())
+    }
+}
+
+// ============================================================================
+// General Ledger Types
+// ============================================================================
+
+#[pyclass]
+#[derive(Clone)]
+pub struct GlAccount {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    account_number: String,
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    account_type: String,
+    #[pyo3(get)]
+    current_balance: f64,
+    #[pyo3(get)]
+    status: String,
+}
+
+impl From<stateset_core::GlAccount> for GlAccount {
+    fn from(a: stateset_core::GlAccount) -> Self {
+        Self { id: a.id.to_string(), account_number: a.account_number, name: a.name, account_type: format!("{:?}", a.account_type), current_balance: a.current_balance.to_string().parse().unwrap_or(0.0), status: format!("{:?}", a.status) }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct JournalEntry {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    entry_number: String,
+    #[pyo3(get)]
+    description: String,
+    #[pyo3(get)]
+    status: String,
+    #[pyo3(get)]
+    entry_date: String,
+}
+
+impl From<stateset_core::JournalEntry> for JournalEntry {
+    fn from(e: stateset_core::JournalEntry) -> Self {
+        Self { id: e.id.to_string(), entry_number: e.entry_number, description: e.description, status: format!("{:?}", e.status), entry_date: e.entry_date.to_string() }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct TrialBalance {
+    #[pyo3(get)]
+    total_debits: f64,
+    #[pyo3(get)]
+    total_credits: f64,
+    #[pyo3(get)]
+    is_balanced: bool,
+}
+
+impl From<stateset_core::TrialBalance> for TrialBalance {
+    fn from(t: stateset_core::TrialBalance) -> Self {
+        Self { total_debits: t.total_debits.to_string().parse().unwrap_or(0.0), total_credits: t.total_credits.to_string().parse().unwrap_or(0.0), is_balanced: t.is_balanced }
+    }
+}
+
+// ============================================================================
+// General Ledger API
+// ============================================================================
+
+#[pyclass]
+pub struct GeneralLedgerApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl GeneralLedgerApi {
+    #[pyo3(signature = (account_number, name, account_type, description=None))]
+    fn create_account(&self, account_number: String, name: String, account_type: String, description: Option<String>) -> PyResult<GlAccount> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let acct_type = match account_type.to_lowercase().as_str() {
+            "asset" => stateset_core::AccountType::Asset,
+            "liability" => stateset_core::AccountType::Liability,
+            "equity" => stateset_core::AccountType::Equity,
+            "revenue" => stateset_core::AccountType::Revenue,
+            "expense" => stateset_core::AccountType::Expense,
+            _ => stateset_core::AccountType::Asset,
+        };
+        let account = commerce.general_ledger().create_account(stateset_core::CreateGlAccount { account_number, name, account_type: acct_type, description, account_sub_type: None, parent_account_id: None, is_header: None, is_posting: None, currency: None })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.into())
+    }
+
+    fn get_account(&self, id: String) -> PyResult<Option<GlAccount>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let account = commerce.general_ledger().get_account(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.map(|a| a.into()))
+    }
+
+    fn get_account_by_number(&self, account_number: String) -> PyResult<Option<GlAccount>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let account = commerce.general_ledger().get_account_by_number(&account_number).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(account.map(|a| a.into()))
+    }
+
+    fn list_accounts(&self) -> PyResult<Vec<GlAccount>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let accounts = commerce.general_ledger().list_accounts(Default::default()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(accounts.into_iter().map(|a| a.into()).collect())
+    }
+
+    fn get_journal_entry(&self, id: String) -> PyResult<Option<JournalEntry>> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let entry = commerce.general_ledger().get_journal_entry(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(entry.map(|e| e.into()))
+    }
+
+    fn post_journal_entry(&self, id: String, posted_by: String) -> PyResult<JournalEntry> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+        let entry = commerce.general_ledger().post_journal_entry(uuid, &posted_by).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(entry.into())
+    }
+
+    #[pyo3(signature = (as_of_date=None))]
+    fn get_trial_balance(&self, as_of_date: Option<String>) -> PyResult<TrialBalance> {
+        let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let date = as_of_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()).unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let balance = commerce.general_ledger().get_trial_balance(date).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(balance.into())
+    }
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
@@ -7775,6 +9316,66 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UsStateTaxInfo>()?;
     m.add_class::<EuVatInfo>()?;
     m.add_class::<CanadianTaxInfo>()?;
+
+    // Quality Control
+    m.add_class::<QualityApi>()?;
+    m.add_class::<Inspection>()?;
+    m.add_class::<NonConformance>()?;
+    m.add_class::<QualityHold>()?;
+
+    // Lots/Batch Tracking
+    m.add_class::<LotsApi>()?;
+    m.add_class::<Lot>()?;
+
+    // Serial Numbers
+    m.add_class::<SerialsApi>()?;
+    m.add_class::<SerialNumber>()?;
+
+    // Warehouse
+    m.add_class::<WarehouseApi>()?;
+    m.add_class::<Warehouse>()?;
+    m.add_class::<WarehouseLocation>()?;
+
+    // Receiving
+    m.add_class::<ReceivingApi>()?;
+    m.add_class::<Receipt>()?;
+    m.add_class::<ReceiptLine>()?;
+
+    // Fulfillment
+    m.add_class::<FulfillmentApi>()?;
+    m.add_class::<Wave>()?;
+    m.add_class::<PickTask>()?;
+
+    // Accounts Payable
+    m.add_class::<AccountsPayableApi>()?;
+    m.add_class::<Bill>()?;
+    m.add_class::<ApAgingSummary>()?;
+
+    // Accounts Receivable
+    m.add_class::<AccountsReceivableApi>()?;
+    m.add_class::<ArAgingSummary>()?;
+    m.add_class::<CreditMemo>()?;
+
+    // Cost Accounting
+    m.add_class::<CostAccountingApi>()?;
+    m.add_class::<ItemCost>()?;
+    m.add_class::<InventoryValuation>()?;
+
+    // Credit Management
+    m.add_class::<CreditApi>()?;
+    m.add_class::<CreditAccount>()?;
+    m.add_class::<CreditCheckResult>()?;
+
+    // Backorder Management
+    m.add_class::<BackorderApi>()?;
+    m.add_class::<Backorder>()?;
+    m.add_class::<BackorderSummary>()?;
+
+    // General Ledger
+    m.add_class::<GeneralLedgerApi>()?;
+    m.add_class::<GlAccount>()?;
+    m.add_class::<JournalEntry>()?;
+    m.add_class::<TrialBalance>()?;
 
     Ok(())
 }

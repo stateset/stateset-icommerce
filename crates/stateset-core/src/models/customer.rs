@@ -97,7 +97,7 @@ impl std::fmt::Display for AddressType {
 }
 
 /// Input for creating a customer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateCustomer {
     pub email: String,
     pub first_name: String,
@@ -106,20 +106,6 @@ pub struct CreateCustomer {
     pub accepts_marketing: Option<bool>,
     pub tags: Option<Vec<String>>,
     pub metadata: Option<serde_json::Value>,
-}
-
-impl Default for CreateCustomer {
-    fn default() -> Self {
-        Self {
-            email: String::new(),
-            first_name: String::new(),
-            last_name: String::new(),
-            phone: None,
-            accepts_marketing: None,
-            tags: None,
-            metadata: None,
-        }
-    }
 }
 
 /// Input for updating a customer

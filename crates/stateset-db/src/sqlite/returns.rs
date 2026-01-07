@@ -46,6 +46,7 @@ impl SqliteReturnRepository {
         })
     }
 
+    #[allow(dead_code)]
     fn load_return_items(&self, return_id: Uuid) -> Result<Vec<ReturnItem>> {
         let conn = self.conn()?;
         let mut stmt = conn
@@ -91,6 +92,23 @@ impl SqliteReturnRepository {
 
 impl ReturnRepository for SqliteReturnRepository {
     fn create(&self, input: CreateReturn) -> Result<Return> {
+        // Validate return has at least one item
+        if input.items.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Return must have at least one item".into()
+            ));
+        }
+
+        // Validate item quantities
+        for item in &input.items {
+            if item.quantity <= 0 {
+                return Err(CommerceError::ValidationError(format!(
+                    "Return item quantity must be positive, got {}",
+                    item.quantity
+                )));
+            }
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();

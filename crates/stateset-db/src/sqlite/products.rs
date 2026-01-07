@@ -5,7 +5,7 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant,
+    validate_batch_size, validate_sku, BatchResult, CommerceError, CreateProduct, CreateProductVariant,
     Product, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
     Result, UpdateProduct,
 };
@@ -329,6 +329,9 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
+        // Validate SKU format
+        validate_sku(&variant.sku)?;
+
         let conn = self.conn()?;
         let id = Uuid::new_v4();
         let now = Utc::now();

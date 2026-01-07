@@ -30,6 +30,8 @@ impl SqlitePromotionRepository {
     // ========================================================================
 
     pub fn create(&self, input: CreatePromotion) -> Result<Promotion> {
+        let conditions = input.conditions.clone();
+
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -104,12 +106,27 @@ impl SqlitePromotionRepository {
             ],
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
 
-        // Create conditions
-        if let Some(conditions) = input.conditions {
+        // Create conditions inline using the same connection
+        if let Some(conditions) = conditions {
             for cond in conditions {
-                self.create_condition(id, cond)?;
+                let cond_id = Uuid::new_v4();
+                conn.execute(
+                    "INSERT INTO promotion_conditions (id, promotion_id, condition_type, operator, value, is_required)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![
+                        cond_id.to_string(),
+                        id.to_string(),
+                        format!("{:?}", cond.condition_type).to_lowercase(),
+                        format!("{:?}", cond.operator).to_lowercase(),
+                        cond.value,
+                        cond.is_required as i32,
+                    ],
+                ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert condition error: {}", e)))?;
             }
         }
+
+        // Drop the connection before calling get
+        drop(conn);
 
         self.get(id)?
             .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created promotion".into()))
@@ -265,7 +282,7 @@ impl SqlitePromotionRepository {
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
 
         self.get(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
@@ -297,6 +314,7 @@ impl SqlitePromotionRepository {
     // Conditions
     // ========================================================================
 
+    #[allow(dead_code)]
     fn create_condition(&self, promotion_id: Uuid, input: CreatePromotionCondition) -> Result<PromotionCondition> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))

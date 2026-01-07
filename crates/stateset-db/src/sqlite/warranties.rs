@@ -528,7 +528,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     input.sku.clone(),
                     input.serial_number.clone(),
                     WarrantyStatus::Active.to_string(),
-                    input.warranty_type.clone().unwrap_or_default().to_string(),
+                    input.warranty_type.unwrap_or_default().to_string(),
                     input.provider.clone(),
                     input.coverage_description.clone(),
                     purchase_date.to_rfc3339(),

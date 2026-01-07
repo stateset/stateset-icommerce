@@ -248,7 +248,7 @@ impl SqliteSubscriptionRepository {
         } // Connection dropped here
 
         self.get_plan(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
@@ -342,7 +342,7 @@ impl SqliteSubscriptionRepository {
     pub fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
         // Get the plan first (uses its own connection)
         let plan = self.get_plan(input.plan_id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if plan.status != PlanStatus::Active {
             return Err(stateset_core::CommerceError::ValidationError("Plan is not active".into()));
@@ -638,7 +638,7 @@ impl SqliteSubscriptionRepository {
         } // Connection dropped here
 
         self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -647,7 +647,7 @@ impl SqliteSubscriptionRepository {
 
     pub fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
         let sub = self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_pause() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -687,12 +687,12 @@ impl SqliteSubscriptionRepository {
         self.record_event(id, SubscriptionEventType::Paused, &description, None, None)?;
 
         self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
         let sub = self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_resume() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -740,12 +740,12 @@ impl SqliteSubscriptionRepository {
         self.record_event(id, SubscriptionEventType::Resumed, "Subscription resumed", None, None)?;
 
         self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
         let sub = self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_cancel() {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -792,12 +792,12 @@ impl SqliteSubscriptionRepository {
         self.record_event(id, SubscriptionEventType::Cancelled, &reason, data, None)?;
 
         self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
         let sub = self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if sub.status != SubscriptionStatus::Active {
             return Err(stateset_core::CommerceError::ValidationError(
@@ -843,7 +843,7 @@ impl SqliteSubscriptionRepository {
         self.record_event(id, SubscriptionEventType::Skipped, &reason, None, None)?;
 
         self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -923,7 +923,7 @@ impl SqliteSubscriptionRepository {
     pub fn create_billing_cycle(&self, subscription_id: Uuid, cycle_number: i32, period_start: DateTime<Utc>, period_end: DateTime<Utc>) -> Result<BillingCycle> {
         // Get subscription first (uses its own connection)
         let sub = self.get_subscription(subscription_id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)?;
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
         let subtotal = sub.calculate_total();
@@ -1061,7 +1061,7 @@ impl SqliteSubscriptionRepository {
         } // Connection dropped here
 
         self.get_billing_cycle(id)?
-            .ok_or_else(|| stateset_core::CommerceError::NotFound)
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================

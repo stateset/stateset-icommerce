@@ -73,10 +73,7 @@ impl EventReceiver {
 
     /// Try to receive an event without waiting
     pub fn try_recv(&mut self) -> Option<CommerceEvent> {
-        match self.inner.try_recv() {
-            Ok(event) => Some(event),
-            Err(_) => None,
-        }
+        self.inner.try_recv().ok()
     }
 }
 

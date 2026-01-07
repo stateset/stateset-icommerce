@@ -5,6 +5,7 @@
 
 use crate::errors::{BatchResult, Result};
 use crate::models::*;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Order repository trait
@@ -1196,4 +1197,1254 @@ pub trait Transactional {
 
     /// Rollback the current transaction
     fn rollback(&self) -> Result<()>;
+}
+
+// ============================================================================
+// Quality Control Repository
+// ============================================================================
+
+/// Quality Control repository trait
+pub trait QualityRepository {
+    // Inspection operations
+    /// Create a new inspection
+    fn create_inspection(&self, input: CreateInspection) -> Result<Inspection>;
+
+    /// Get inspection by ID
+    fn get_inspection(&self, id: Uuid) -> Result<Option<Inspection>>;
+
+    /// Get inspection by number
+    fn get_inspection_by_number(&self, number: &str) -> Result<Option<Inspection>>;
+
+    /// Update an inspection
+    fn update_inspection(&self, id: Uuid, input: UpdateInspection) -> Result<Inspection>;
+
+    /// List inspections with filter
+    fn list_inspections(&self, filter: InspectionFilter) -> Result<Vec<Inspection>>;
+
+    /// Delete an inspection
+    fn delete_inspection(&self, id: Uuid) -> Result<()>;
+
+    /// Start an inspection
+    fn start_inspection(&self, id: Uuid) -> Result<Inspection>;
+
+    /// Complete an inspection
+    fn complete_inspection(&self, id: Uuid) -> Result<Inspection>;
+
+    /// Record inspection result for an item
+    fn record_inspection_result(&self, input: RecordInspectionResult) -> Result<InspectionItem>;
+
+    /// Get inspection items
+    fn get_inspection_items(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>>;
+
+    /// Count inspections
+    fn count_inspections(&self, filter: InspectionFilter) -> Result<u64>;
+
+    // NCR operations
+    /// Create a non-conformance report
+    fn create_ncr(&self, input: CreateNonConformance) -> Result<NonConformance>;
+
+    /// Get NCR by ID
+    fn get_ncr(&self, id: Uuid) -> Result<Option<NonConformance>>;
+
+    /// Get NCR by number
+    fn get_ncr_by_number(&self, number: &str) -> Result<Option<NonConformance>>;
+
+    /// Update an NCR
+    fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance>;
+
+    /// List NCRs with filter
+    fn list_ncrs(&self, filter: NonConformanceFilter) -> Result<Vec<NonConformance>>;
+
+    /// Close an NCR
+    fn close_ncr(&self, id: Uuid) -> Result<NonConformance>;
+
+    /// Cancel an NCR
+    fn cancel_ncr(&self, id: Uuid) -> Result<NonConformance>;
+
+    /// Count NCRs
+    fn count_ncrs(&self, filter: NonConformanceFilter) -> Result<u64>;
+
+    // Quality hold operations
+    /// Create a quality hold
+    fn create_hold(&self, input: CreateQualityHold) -> Result<QualityHold>;
+
+    /// Get hold by ID
+    fn get_hold(&self, id: Uuid) -> Result<Option<QualityHold>>;
+
+    /// List holds with filter
+    fn list_holds(&self, filter: QualityHoldFilter) -> Result<Vec<QualityHold>>;
+
+    /// Release a hold
+    fn release_hold(&self, id: Uuid, input: ReleaseQualityHold) -> Result<QualityHold>;
+
+    /// Get active holds for SKU
+    fn get_active_holds_for_sku(&self, sku: &str) -> Result<Vec<QualityHold>>;
+
+    /// Get active holds for lot
+    fn get_active_holds_for_lot(&self, lot_number: &str) -> Result<Vec<QualityHold>>;
+
+    /// Count active holds
+    fn count_active_holds(&self) -> Result<u64>;
+
+    // Defect code operations
+    /// Create a defect code
+    fn create_defect_code(&self, input: CreateDefectCode) -> Result<DefectCode>;
+
+    /// Get defect code by code
+    fn get_defect_code(&self, code: &str) -> Result<Option<DefectCode>>;
+
+    /// List defect codes
+    fn list_defect_codes(&self, category: Option<&str>) -> Result<Vec<DefectCode>>;
+
+    /// Deactivate a defect code
+    fn deactivate_defect_code(&self, id: Uuid) -> Result<()>;
+}
+
+// ============================================================================
+// Lot Repository
+// ============================================================================
+
+/// Lot/Batch tracking repository trait
+pub trait LotRepository {
+    /// Create a new lot
+    fn create(&self, input: CreateLot) -> Result<Lot>;
+
+    /// Get lot by ID
+    fn get(&self, id: Uuid) -> Result<Option<Lot>>;
+
+    /// Get lot by lot number
+    fn get_by_number(&self, lot_number: &str) -> Result<Option<Lot>>;
+
+    /// Update a lot
+    fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot>;
+
+    /// List lots with filter
+    fn list(&self, filter: LotFilter) -> Result<Vec<Lot>>;
+
+    /// Delete a lot (only if no transactions)
+    fn delete(&self, id: Uuid) -> Result<()>;
+
+    /// Adjust lot quantity
+    fn adjust(&self, input: AdjustLot) -> Result<LotTransaction>;
+
+    /// Consume from a lot
+    fn consume(&self, input: ConsumeLot) -> Result<LotTransaction>;
+
+    /// Reserve quantity from a lot
+    fn reserve(&self, input: ReserveLot) -> Result<Uuid>;
+
+    /// Release a reservation
+    fn release_reservation(&self, reservation_id: Uuid) -> Result<()>;
+
+    /// Confirm a reservation (convert to consumption)
+    fn confirm_reservation(&self, reservation_id: Uuid) -> Result<LotTransaction>;
+
+    /// Transfer lot between locations
+    fn transfer(&self, input: TransferLot) -> Result<LotTransaction>;
+
+    /// Split a lot into two
+    fn split(&self, input: SplitLot) -> Result<Lot>;
+
+    /// Merge multiple lots into one
+    fn merge(&self, input: MergeLots) -> Result<Lot>;
+
+    /// Quarantine a lot
+    fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot>;
+
+    /// Release from quarantine
+    fn release_quarantine(&self, id: Uuid) -> Result<Lot>;
+
+    /// Get lot transactions
+    fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>>;
+
+    /// Get lot quantity at location
+    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<rust_decimal::Decimal>;
+
+    /// Get all locations for a lot
+    fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>>;
+
+    // Certificate operations
+    /// Add certificate to lot
+    fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate>;
+
+    /// Get certificates for lot
+    fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>>;
+
+    /// Delete certificate
+    fn delete_certificate(&self, certificate_id: Uuid) -> Result<()>;
+
+    // Queries
+    /// Get expiring lots
+    fn get_expiring_lots(&self, days: i32) -> Result<Vec<Lot>>;
+
+    /// Get expired lots
+    fn get_expired_lots(&self) -> Result<Vec<Lot>>;
+
+    /// Get lots with available quantity for SKU
+    fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>>;
+
+    /// Trace lot (upstream and downstream)
+    fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult>;
+
+    /// Count lots
+    fn count(&self, filter: LotFilter) -> Result<u64>;
+
+    // Batch operations
+    /// Create multiple lots
+    fn create_batch(&self, inputs: Vec<CreateLot>) -> Result<BatchResult<Lot>>;
+
+    /// Get multiple lots by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>>;
+}
+
+// ============================================================================
+// Serial Number Repository
+// ============================================================================
+
+/// Serial number management repository trait
+pub trait SerialRepository {
+    /// Create a serial number
+    fn create(&self, input: CreateSerialNumber) -> Result<SerialNumber>;
+
+    /// Create multiple serial numbers in bulk
+    fn create_bulk(&self, input: CreateSerialNumbersBulk) -> Result<Vec<SerialNumber>>;
+
+    /// Get serial by ID
+    fn get(&self, id: Uuid) -> Result<Option<SerialNumber>>;
+
+    /// Get serial by serial number string
+    fn get_by_serial(&self, serial: &str) -> Result<Option<SerialNumber>>;
+
+    /// Update a serial number
+    fn update(&self, id: Uuid, input: UpdateSerialNumber) -> Result<SerialNumber>;
+
+    /// List serials with filter
+    fn list(&self, filter: SerialFilter) -> Result<Vec<SerialNumber>>;
+
+    /// Delete a serial (only if never used)
+    fn delete(&self, id: Uuid) -> Result<()>;
+
+    /// Change serial status with history tracking
+    fn change_status(&self, input: ChangeSerialStatus) -> Result<SerialNumber>;
+
+    /// Reserve a serial
+    fn reserve(&self, input: ReserveSerialNumber) -> Result<SerialReservation>;
+
+    /// Release reservation
+    fn release_reservation(&self, reservation_id: Uuid) -> Result<()>;
+
+    /// Confirm reservation
+    fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()>;
+
+    /// Move serial to new location
+    fn move_serial(&self, input: MoveSerial) -> Result<SerialNumber>;
+
+    /// Transfer ownership
+    fn transfer_ownership(&self, input: TransferSerialOwnership) -> Result<SerialNumber>;
+
+    /// Mark as sold
+    fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber>;
+
+    /// Mark as shipped
+    fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> Result<SerialNumber>;
+
+    /// Mark as returned
+    fn mark_returned(&self, id: Uuid, return_id: Uuid) -> Result<SerialNumber>;
+
+    /// Activate serial (e.g., for warranty)
+    fn activate(&self, id: Uuid) -> Result<SerialNumber>;
+
+    /// Quarantine serial
+    fn quarantine(&self, id: Uuid, reason: &str) -> Result<SerialNumber>;
+
+    /// Release from quarantine
+    fn release_quarantine(&self, id: Uuid) -> Result<SerialNumber>;
+
+    /// Scrap serial
+    fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber>;
+
+    // History operations
+    /// Get serial history
+    fn get_history(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>>;
+
+    /// Get full serial lookup with related data
+    fn lookup(&self, serial: &str) -> Result<Option<SerialLookupResult>>;
+
+    /// Validate serial number
+    fn validate(&self, serial: &str) -> Result<SerialValidation>;
+
+    // Queries
+    /// Get available serials for SKU
+    fn get_available_for_sku(&self, sku: &str, limit: u32) -> Result<Vec<SerialNumber>>;
+
+    /// Get serials for lot
+    fn get_for_lot(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>>;
+
+    /// Get serials for customer
+    fn get_for_customer(&self, customer_id: Uuid) -> Result<Vec<SerialNumber>>;
+
+    /// Count serials
+    fn count(&self, filter: SerialFilter) -> Result<u64>;
+
+    // Batch operations
+    /// Create multiple serials
+    fn create_batch(&self, inputs: Vec<CreateSerialNumber>) -> Result<BatchResult<SerialNumber>>;
+
+    /// Get multiple serials by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<SerialNumber>>;
+
+    /// Get multiple serials by serial string
+    fn get_batch_by_serial(&self, serials: Vec<String>) -> Result<Vec<SerialNumber>>;
+}
+
+// ============================================================================
+// Warehouse Repository
+// ============================================================================
+
+/// Warehouse management repository trait
+pub trait WarehouseRepository {
+    // Warehouse operations
+    /// Create a new warehouse
+    fn create_warehouse(&self, input: CreateWarehouse) -> Result<Warehouse>;
+
+    /// Get warehouse by ID
+    fn get_warehouse(&self, id: i32) -> Result<Option<Warehouse>>;
+
+    /// Get warehouse by code
+    fn get_warehouse_by_code(&self, code: &str) -> Result<Option<Warehouse>>;
+
+    /// Update a warehouse
+    fn update_warehouse(&self, id: i32, input: UpdateWarehouse) -> Result<Warehouse>;
+
+    /// List warehouses with filter
+    fn list_warehouses(&self, filter: WarehouseFilter) -> Result<Vec<Warehouse>>;
+
+    /// Delete a warehouse (only if empty)
+    fn delete_warehouse(&self, id: i32) -> Result<()>;
+
+    /// Count warehouses
+    fn count_warehouses(&self, filter: WarehouseFilter) -> Result<u64>;
+
+    // Zone operations
+    /// Create a zone
+    fn create_zone(&self, input: CreateZone) -> Result<Zone>;
+
+    /// Get zone by ID
+    fn get_zone(&self, id: i32) -> Result<Option<Zone>>;
+
+    /// Get zones for warehouse
+    fn get_zones(&self, warehouse_id: i32) -> Result<Vec<Zone>>;
+
+    /// Update a zone
+    fn update_zone(&self, id: i32, input: UpdateZone) -> Result<Zone>;
+
+    /// Delete a zone
+    fn delete_zone(&self, id: i32) -> Result<()>;
+
+    // Location operations
+    /// Create a location
+    fn create_location(&self, input: CreateLocation) -> Result<Location>;
+
+    /// Get location by ID
+    fn get_location(&self, id: i32) -> Result<Option<Location>>;
+
+    /// Get location by code
+    fn get_location_by_code(&self, warehouse_id: i32, code: &str) -> Result<Option<Location>>;
+
+    /// Update a location
+    fn update_location(&self, id: i32, input: UpdateLocation) -> Result<Location>;
+
+    /// List locations with filter
+    fn list_locations(&self, filter: LocationFilter) -> Result<Vec<Location>>;
+
+    /// Delete a location (only if empty)
+    fn delete_location(&self, id: i32) -> Result<()>;
+
+    /// Count locations
+    fn count_locations(&self, filter: LocationFilter) -> Result<u64>;
+
+    /// Get locations for warehouse
+    fn get_locations_for_warehouse(&self, warehouse_id: i32) -> Result<Vec<Location>>;
+
+    /// Get pickable locations for SKU
+    fn get_pickable_locations(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>>;
+
+    /// Get receivable locations
+    fn get_receivable_locations(&self, warehouse_id: i32) -> Result<Vec<Location>>;
+
+    // Location inventory operations
+    /// Get inventory at location
+    fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>>;
+
+    /// Get inventory for SKU across locations
+    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>>;
+
+    /// Adjust inventory at location
+    fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory>;
+
+    /// Move inventory between locations
+    fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement>;
+
+    /// Get location inventory by filter
+    fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>>;
+
+    // Movement operations
+    /// Get inventory movements
+    fn get_movements(&self, filter: MovementFilter) -> Result<Vec<LocationMovement>>;
+
+    /// Count movements
+    fn count_movements(&self, filter: MovementFilter) -> Result<u64>;
+
+    // Batch operations
+    /// Create multiple locations
+    fn create_locations_batch(&self, inputs: Vec<CreateLocation>) -> Result<BatchResult<Location>>;
+
+    /// Get multiple locations by ID
+    fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>>;
+}
+
+// ============================================================================
+// Receiving Repository
+// ============================================================================
+
+/// Receiving/Goods receipt repository trait
+pub trait ReceivingRepository {
+    // Receipt operations
+    /// Create a new receipt
+    fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt>;
+
+    /// Get receipt by ID
+    fn get_receipt(&self, id: Uuid) -> Result<Option<Receipt>>;
+
+    /// Get receipt by receipt number
+    fn get_receipt_by_number(&self, number: &str) -> Result<Option<Receipt>>;
+
+    /// Update a receipt
+    fn update_receipt(&self, id: Uuid, input: UpdateReceipt) -> Result<Receipt>;
+
+    /// List receipts with filter
+    fn list_receipts(&self, filter: ReceiptFilter) -> Result<Vec<Receipt>>;
+
+    /// Delete a receipt (only if not started)
+    fn delete_receipt(&self, id: Uuid) -> Result<()>;
+
+    /// Start receiving (transition to in_progress)
+    fn start_receiving(&self, id: Uuid) -> Result<Receipt>;
+
+    /// Receive items on a receipt
+    fn receive_items(&self, input: ReceiveItems) -> Result<Receipt>;
+
+    /// Complete receiving (all items received)
+    fn complete_receiving(&self, id: Uuid) -> Result<Receipt>;
+
+    /// Cancel a receipt
+    fn cancel_receipt(&self, id: Uuid) -> Result<Receipt>;
+
+    /// Get receipt items
+    fn get_receipt_items(&self, receipt_id: Uuid) -> Result<Vec<ReceiptItem>>;
+
+    /// Count receipts
+    fn count_receipts(&self, filter: ReceiptFilter) -> Result<u64>;
+
+    // Put-away operations
+    /// Create a put-away task
+    fn create_put_away(&self, input: CreatePutAway) -> Result<PutAway>;
+
+    /// Get put-away by ID
+    fn get_put_away(&self, id: Uuid) -> Result<Option<PutAway>>;
+
+    /// List put-aways with filter
+    fn list_put_aways(&self, filter: PutAwayFilter) -> Result<Vec<PutAway>>;
+
+    /// Assign put-away to user
+    fn assign_put_away(&self, id: Uuid, assigned_to: &str) -> Result<PutAway>;
+
+    /// Start put-away
+    fn start_put_away(&self, id: Uuid) -> Result<PutAway>;
+
+    /// Complete put-away
+    fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway>;
+
+    /// Cancel put-away
+    fn cancel_put_away(&self, id: Uuid) -> Result<PutAway>;
+
+    /// Get pending put-aways for receipt
+    fn get_pending_put_aways(&self, receipt_id: Uuid) -> Result<Vec<PutAway>>;
+
+    /// Count put-aways
+    fn count_put_aways(&self, filter: PutAwayFilter) -> Result<u64>;
+
+    // Integration with PO
+    /// Create receipt from purchase order
+    fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt>;
+
+    // Batch operations
+    /// Create multiple receipts
+    fn create_receipts_batch(&self, inputs: Vec<CreateReceipt>) -> Result<BatchResult<Receipt>>;
+
+    /// Get multiple receipts by ID
+    fn get_receipts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Receipt>>;
+}
+
+// ============================================================================
+// Fulfillment Repository
+// ============================================================================
+
+/// Fulfillment (pick/pack/ship) repository trait
+pub trait FulfillmentRepository {
+    // Wave operations
+    /// Create a wave from orders
+    fn create_wave(&self, input: CreateWave) -> Result<Wave>;
+
+    /// Get wave by ID
+    fn get_wave(&self, id: Uuid) -> Result<Option<Wave>>;
+
+    /// Get wave by number
+    fn get_wave_by_number(&self, number: &str) -> Result<Option<Wave>>;
+
+    /// List waves with filter
+    fn list_waves(&self, filter: WaveFilter) -> Result<Vec<Wave>>;
+
+    /// Release wave for picking
+    fn release_wave(&self, id: Uuid) -> Result<Wave>;
+
+    /// Complete a wave
+    fn complete_wave(&self, id: Uuid) -> Result<Wave>;
+
+    /// Cancel a wave
+    fn cancel_wave(&self, id: Uuid) -> Result<Wave>;
+
+    /// Get orders in a wave
+    fn get_wave_orders(&self, wave_id: Uuid) -> Result<Vec<Uuid>>;
+
+    /// Count waves
+    fn count_waves(&self, filter: WaveFilter) -> Result<u64>;
+
+    // Pick operations
+    /// Create a pick task
+    fn create_pick(&self, input: CreatePickTask) -> Result<PickTask>;
+
+    /// Get pick task by ID
+    fn get_pick(&self, id: Uuid) -> Result<Option<PickTask>>;
+
+    /// List pick tasks with filter
+    fn list_picks(&self, filter: PickTaskFilter) -> Result<Vec<PickTask>>;
+
+    /// Assign pick to user
+    fn assign_pick(&self, id: Uuid, assigned_to: &str) -> Result<PickTask>;
+
+    /// Start a pick
+    fn start_pick(&self, id: Uuid) -> Result<PickTask>;
+
+    /// Complete a pick
+    fn complete_pick(&self, input: CompletePick) -> Result<PickTask>;
+
+    /// Report short pick
+    fn report_short(&self, id: Uuid, short_qty: rust_decimal::Decimal, reason: &str) -> Result<PickTask>;
+
+    /// Cancel a pick
+    fn cancel_pick(&self, id: Uuid) -> Result<PickTask>;
+
+    /// Get picks for order
+    fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>>;
+
+    /// Get picks for wave
+    fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>>;
+
+    /// Count picks
+    fn count_picks(&self, filter: PickTaskFilter) -> Result<u64>;
+
+    // Pack operations
+    /// Create a pack task
+    fn create_pack(&self, input: CreatePackTask) -> Result<PackTask>;
+
+    /// Get pack task by ID
+    fn get_pack(&self, id: Uuid) -> Result<Option<PackTask>>;
+
+    /// List pack tasks with filter
+    fn list_packs(&self, filter: PackTaskFilter) -> Result<Vec<PackTask>>;
+
+    /// Assign pack to user
+    fn assign_pack(&self, id: Uuid, assigned_to: &str) -> Result<PackTask>;
+
+    /// Start packing
+    fn start_pack(&self, id: Uuid) -> Result<PackTask>;
+
+    /// Complete packing
+    fn complete_pack(&self, id: Uuid) -> Result<PackTask>;
+
+    /// Add carton to pack task
+    fn add_carton(&self, input: AddCarton) -> Result<Carton>;
+
+    /// Add item to carton
+    fn add_carton_item(&self, input: AddCartonItem) -> Result<CartonItem>;
+
+    /// Get cartons for pack task
+    fn get_cartons(&self, pack_task_id: Uuid) -> Result<Vec<Carton>>;
+
+    /// Get items in carton
+    fn get_carton_items(&self, carton_id: Uuid) -> Result<Vec<CartonItem>>;
+
+    /// Mark carton label printed
+    fn mark_label_printed(&self, carton_id: Uuid) -> Result<Carton>;
+
+    /// Cancel pack task
+    fn cancel_pack(&self, id: Uuid) -> Result<PackTask>;
+
+    /// Count packs
+    fn count_packs(&self, filter: PackTaskFilter) -> Result<u64>;
+
+    // Ship operations
+    /// Create a ship task
+    fn create_ship(&self, input: CreateShipTask) -> Result<ShipTask>;
+
+    /// Get ship task by ID
+    fn get_ship(&self, id: Uuid) -> Result<Option<ShipTask>>;
+
+    /// List ship tasks with filter
+    fn list_ships(&self, filter: ShipTaskFilter) -> Result<Vec<ShipTask>>;
+
+    /// Assign ship to user
+    fn assign_ship(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask>;
+
+    /// Print shipping label
+    fn print_label(&self, id: Uuid, label_url: &str) -> Result<ShipTask>;
+
+    /// Complete shipping
+    fn complete_ship(&self, input: CompleteShip) -> Result<ShipTask>;
+
+    /// Cancel ship task
+    fn cancel_ship(&self, id: Uuid) -> Result<ShipTask>;
+
+    /// Count ships
+    fn count_ships(&self, filter: ShipTaskFilter) -> Result<u64>;
+
+    // Workflow helpers
+    /// Create picks for an order
+    fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>>;
+
+    /// Check if order is ready to pack
+    fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool>;
+
+    /// Check if order is ready to ship
+    fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool>;
+
+    // Batch operations
+    /// Create multiple waves
+    fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>>;
+
+    /// Get multiple picks by ID
+    fn get_picks_batch(&self, ids: Vec<Uuid>) -> Result<Vec<PickTask>>;
+}
+
+// ============================================================================
+// Accounts Payable Repository
+// ============================================================================
+
+/// Accounts Payable repository trait
+pub trait AccountsPayableRepository {
+    // Bill operations
+    /// Create a new bill
+    fn create_bill(&self, input: CreateBill) -> Result<Bill>;
+
+    /// Get bill by ID
+    fn get_bill(&self, id: Uuid) -> Result<Option<Bill>>;
+
+    /// Get bill by number
+    fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>>;
+
+    /// Update a bill
+    fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill>;
+
+    /// List bills with filter
+    fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>>;
+
+    /// Delete a bill (only if draft)
+    fn delete_bill(&self, id: Uuid) -> Result<()>;
+
+    /// Approve a bill
+    fn approve_bill(&self, id: Uuid) -> Result<Bill>;
+
+    /// Cancel a bill
+    fn cancel_bill(&self, id: Uuid) -> Result<Bill>;
+
+    /// Mark bill as disputed
+    fn dispute_bill(&self, id: Uuid) -> Result<Bill>;
+
+    /// Get bill items
+    fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>>;
+
+    /// Add item to bill
+    fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem>;
+
+    /// Remove item from bill
+    fn remove_bill_item(&self, item_id: Uuid) -> Result<()>;
+
+    /// Count bills
+    fn count_bills(&self, filter: BillFilter) -> Result<u64>;
+
+    /// Get overdue bills
+    fn get_overdue_bills(&self) -> Result<Vec<Bill>>;
+
+    /// Get bills due soon (within days)
+    fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>>;
+
+    // Payment operations
+    /// Create a payment
+    fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment>;
+
+    /// Get payment by ID
+    fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>>;
+
+    /// Get payment by number
+    fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>>;
+
+    /// List payments with filter
+    fn list_payments(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>>;
+
+    /// Void a payment
+    fn void_payment(&self, id: Uuid) -> Result<BillPayment>;
+
+    /// Mark payment as cleared
+    fn clear_payment(&self, id: Uuid) -> Result<BillPayment>;
+
+    /// Get payment allocations
+    fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>>;
+
+    /// Get payments for bill
+    fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>>;
+
+    /// Count payments
+    fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64>;
+
+    // Payment run operations
+    /// Create a payment run
+    fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun>;
+
+    /// Get payment run by ID
+    fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>>;
+
+    /// List payment runs with filter
+    fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>>;
+
+    /// Approve payment run
+    fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun>;
+
+    /// Process payment run
+    fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun>;
+
+    /// Cancel payment run
+    fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun>;
+
+    /// Get bills in payment run
+    fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>>;
+
+    // Analytics
+    /// Get AP aging summary
+    fn get_aging_summary(&self) -> Result<ApAgingSummary>;
+
+    /// Get AP summary by supplier
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary>;
+
+    /// Get total AP outstanding
+    fn get_total_outstanding(&self) -> Result<rust_decimal::Decimal>;
+
+    // Batch operations
+    /// Create multiple bills
+    fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>>;
+
+    /// Get multiple bills by ID
+    fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>>;
+}
+
+/// Cost Accounting repository trait
+pub trait CostAccountingRepository {
+    // Item cost operations
+    /// Get item cost by SKU
+    fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>>;
+
+    /// Set/update item cost
+    fn set_item_cost(&self, input: SetItemCost) -> Result<ItemCost>;
+
+    /// List item costs
+    fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>>;
+
+    /// Update average cost (called when receiving inventory)
+    fn update_average_cost(&self, sku: &str, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal) -> Result<ItemCost>;
+
+    /// Update last cost
+    fn update_last_cost(&self, sku: &str, unit_cost: rust_decimal::Decimal) -> Result<ItemCost>;
+
+    // Cost layer operations (for FIFO/LIFO)
+    /// Create a cost layer
+    fn create_cost_layer(&self, input: CreateCostLayer) -> Result<CostLayer>;
+
+    /// Get cost layer by ID
+    fn get_cost_layer(&self, id: Uuid) -> Result<Option<CostLayer>>;
+
+    /// List cost layers
+    fn list_cost_layers(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>>;
+
+    /// Issue from cost layers (FIFO)
+    fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>>;
+
+    /// Issue from cost layers (LIFO)
+    fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>>;
+
+    /// Get remaining quantity in layers for SKU
+    fn get_layers_remaining(&self, sku: &str) -> Result<rust_decimal::Decimal>;
+
+    // Cost transaction operations
+    /// Record a cost transaction
+    fn record_cost_transaction(&self, sku: &str, transaction_type: CostTransactionType, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal, layer_id: Option<Uuid>, reference_type: Option<&str>, reference_id: Option<Uuid>, notes: Option<&str>) -> Result<CostTransaction>;
+
+    /// List cost transactions
+    fn list_cost_transactions(&self, filter: CostTransactionFilter) -> Result<Vec<CostTransaction>>;
+
+    // Cost variance operations
+    /// Record a cost variance
+    fn record_variance(&self, input: RecordCostVariance) -> Result<CostVariance>;
+
+    /// List cost variances
+    fn list_variances(&self, filter: CostVarianceFilter) -> Result<Vec<CostVariance>>;
+
+    /// Get variance summary for period
+    fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<rust_decimal::Decimal>;
+
+    // Cost adjustment operations
+    /// Create a cost adjustment
+    fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment>;
+
+    /// Get adjustment by ID
+    fn get_adjustment(&self, id: Uuid) -> Result<Option<CostAdjustment>>;
+
+    /// List adjustments
+    fn list_adjustments(&self, filter: CostAdjustmentFilter) -> Result<Vec<CostAdjustment>>;
+
+    /// Approve adjustment
+    fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment>;
+
+    /// Apply adjustment (update item cost)
+    fn apply_adjustment(&self, id: Uuid) -> Result<CostAdjustment>;
+
+    /// Reject adjustment
+    fn reject_adjustment(&self, id: Uuid) -> Result<CostAdjustment>;
+
+    // Rollup operations
+    /// Calculate cost rollup for manufactured item
+    fn calculate_rollup(&self, sku: &str, bom_id: Option<Uuid>) -> Result<CostRollup>;
+
+    /// Get latest rollup for SKU
+    fn get_rollup(&self, sku: &str) -> Result<Option<CostRollup>>;
+
+    // Valuation operations
+    /// Get inventory valuation
+    fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation>;
+
+    /// Get SKU cost summary
+    fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>>;
+
+    /// Get total inventory value
+    fn get_total_inventory_value(&self) -> Result<rust_decimal::Decimal>;
+}
+
+/// Credit Management repository trait
+pub trait CreditRepository {
+    // Credit account operations
+    /// Create a credit account for a customer
+    fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount>;
+
+    /// Get credit account by ID
+    fn get_credit_account(&self, id: Uuid) -> Result<Option<CreditAccount>>;
+
+    /// Get credit account by customer ID
+    fn get_credit_account_by_customer(&self, customer_id: Uuid) -> Result<Option<CreditAccount>>;
+
+    /// Update credit account
+    fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount>;
+
+    /// List credit accounts
+    fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>>;
+
+    /// Adjust credit limit
+    fn adjust_credit_limit(&self, customer_id: Uuid, new_limit: rust_decimal::Decimal, reason: &str) -> Result<CreditAccount>;
+
+    /// Suspend credit account
+    fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount>;
+
+    /// Reactivate credit account
+    fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount>;
+
+    // Credit check operations
+    /// Check credit for an order
+    fn check_credit(&self, customer_id: Uuid, order_amount: rust_decimal::Decimal) -> Result<CreditCheckResult>;
+
+    /// Reserve credit for an order
+    fn reserve_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount>;
+
+    /// Release credit reservation
+    fn release_credit_reservation(&self, customer_id: Uuid, order_id: Uuid) -> Result<CreditAccount>;
+
+    /// Charge credit (convert reservation to balance)
+    fn charge_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount>;
+
+    // Credit hold operations
+    /// Place a credit hold
+    fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold>;
+
+    /// Get credit hold by ID
+    fn get_hold(&self, id: Uuid) -> Result<Option<CreditHold>>;
+
+    /// List credit holds
+    fn list_holds(&self, filter: CreditHoldFilter) -> Result<Vec<CreditHold>>;
+
+    /// Release a credit hold
+    fn release_hold(&self, input: ReleaseCreditHold) -> Result<CreditHold>;
+
+    /// Get active holds for customer
+    fn get_active_holds(&self, customer_id: Uuid) -> Result<Vec<CreditHold>>;
+
+    /// Get active holds for order
+    fn get_holds_for_order(&self, order_id: Uuid) -> Result<Vec<CreditHold>>;
+
+    // Credit application operations
+    /// Submit a credit application
+    fn submit_application(&self, input: SubmitCreditApplication) -> Result<CreditApplication>;
+
+    /// Get credit application by ID
+    fn get_application(&self, id: Uuid) -> Result<Option<CreditApplication>>;
+
+    /// List credit applications
+    fn list_applications(&self, filter: CreditApplicationFilter) -> Result<Vec<CreditApplication>>;
+
+    /// Review credit application
+    fn review_application(&self, input: ReviewCreditApplication) -> Result<CreditApplication>;
+
+    /// Withdraw credit application
+    fn withdraw_application(&self, id: Uuid) -> Result<CreditApplication>;
+
+    // Transaction operations
+    /// Record a credit transaction
+    fn record_transaction(&self, input: RecordCreditTransaction) -> Result<CreditTransaction>;
+
+    /// List credit transactions
+    fn list_transactions(&self, filter: CreditTransactionFilter) -> Result<Vec<CreditTransaction>>;
+
+    /// Apply payment to balance
+    fn apply_payment(&self, customer_id: Uuid, amount: rust_decimal::Decimal, reference_id: Option<Uuid>) -> Result<CreditAccount>;
+
+    // Analytics
+    /// Get customer credit summary
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>>;
+
+    /// Get credit aging buckets
+    fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>>;
+
+    /// Get customers over credit limit
+    fn get_over_limit_customers(&self) -> Result<Vec<CreditAccount>>;
+}
+
+/// Backorder repository trait
+pub trait BackorderRepository {
+    // Backorder operations
+    /// Create a backorder
+    fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder>;
+
+    /// Get backorder by ID
+    fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>>;
+
+    /// Get backorder by number
+    fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>>;
+
+    /// Update backorder
+    fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder>;
+
+    /// List backorders
+    fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>>;
+
+    /// Cancel backorder
+    fn cancel_backorder(&self, id: Uuid) -> Result<Backorder>;
+
+    /// Get backorders for order
+    fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>>;
+
+    /// Get backorders for customer
+    fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>>;
+
+    /// Get backorders for SKU
+    fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>>;
+
+    // Fulfillment operations
+    /// Fulfill backorder (partial or full)
+    fn fulfill_backorder(&self, input: FulfillBackorder) -> Result<Backorder>;
+
+    /// Get fulfillment history for backorder
+    fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>>;
+
+    // Allocation operations
+    /// Allocate inventory to backorder
+    fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation>;
+
+    /// Get allocations for backorder
+    fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>>;
+
+    /// Release allocation
+    fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation>;
+
+    /// Confirm allocation
+    fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation>;
+
+    /// Expire old allocations
+    fn expire_allocations(&self) -> Result<u32>;
+
+    // Auto-allocation
+    /// Auto-allocate available inventory to pending backorders
+    fn auto_allocate_inventory(&self, sku: &str) -> Result<Vec<BackorderAllocation>>;
+
+    // Analytics
+    /// Get backorder summary
+    fn get_summary(&self) -> Result<BackorderSummary>;
+
+    /// Get SKU backorder summary
+    fn get_sku_summary(&self, sku: &str) -> Result<Option<SkuBackorderSummary>>;
+
+    /// Get overdue backorders
+    fn get_overdue_backorders(&self) -> Result<Vec<Backorder>>;
+
+    /// Count pending backorders
+    fn count_pending(&self) -> Result<u64>;
+}
+
+// ============================================================================
+// Accounts Receivable Repository
+// ============================================================================
+
+/// Accounts Receivable repository trait
+pub trait AccountsReceivableRepository {
+    // Aging reports
+    /// Get AR aging summary across all customers
+    fn get_aging_summary(&self) -> Result<ArAgingSummary>;
+
+    /// Get aging by customer
+    fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging>;
+
+    /// Get all customers with aging (AR aging report)
+    fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>>;
+
+    // Collection management
+    /// Log collection activity
+    fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity>;
+
+    /// Get collection activities
+    fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>>;
+
+    /// Update invoice collection status
+    fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()>;
+
+    /// Get invoices due for dunning (based on aging)
+    fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>>;
+
+    /// Send dunning letter (records activity, updates status)
+    fn send_dunning_letter(&self, invoice_id: Uuid, letter_type: DunningLetterType, sent_by: Option<&str>) -> Result<CollectionActivity>;
+
+    // Write-offs
+    /// Create a write-off
+    fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff>;
+
+    /// Get write-off by ID
+    fn get_write_off(&self, id: Uuid) -> Result<Option<WriteOff>>;
+
+    /// List write-offs
+    fn list_write_offs(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>>;
+
+    /// Reverse a write-off
+    fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff>;
+
+    // Credit memos
+    /// Create a credit memo
+    fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo>;
+
+    /// Get credit memo by ID
+    fn get_credit_memo(&self, id: Uuid) -> Result<Option<CreditMemo>>;
+
+    /// Get credit memo by number
+    fn get_credit_memo_by_number(&self, number: &str) -> Result<Option<CreditMemo>>;
+
+    /// List credit memos
+    fn list_credit_memos(&self, filter: CreditMemoFilter) -> Result<Vec<CreditMemo>>;
+
+    /// Apply credit memo to invoice
+    fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo>;
+
+    /// Void credit memo
+    fn void_credit_memo(&self, id: Uuid) -> Result<CreditMemo>;
+
+    /// Get unapplied credit memos for customer
+    fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>>;
+
+    // Payment application
+    /// Apply payment to invoices
+    fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>>;
+
+    /// Get payment applications
+    fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>>;
+
+    /// Unapply payment from invoice
+    fn unapply_payment(&self, application_id: Uuid) -> Result<()>;
+
+    // Customer summaries and statements
+    /// Get customer AR summary
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary>;
+
+    /// Generate customer statement
+    fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement>;
+
+    // Analytics
+    /// Get total AR outstanding
+    fn get_total_outstanding(&self) -> Result<rust_decimal::Decimal>;
+
+    /// Get Days Sales Outstanding (DSO)
+    fn get_dso(&self, days: i32) -> Result<rust_decimal::Decimal>;
+
+    /// Get average days to pay by customer
+    fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>>;
+
+    // Batch operations
+    fn get_customers_batch(&self, ids: Vec<Uuid>) -> Result<Vec<CustomerArSummary>>;
+}
+
+// ============================================================================
+// General Ledger Repository
+// ============================================================================
+
+use chrono::NaiveDate;
+
+/// General Ledger repository trait
+pub trait GeneralLedgerRepository {
+    // Chart of Accounts
+    /// Create a GL account
+    fn create_account(&self, input: CreateGlAccount) -> Result<GlAccount>;
+
+    /// Get account by ID
+    fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>>;
+
+    /// Get account by account number
+    fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>>;
+
+    /// Update account
+    fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount>;
+
+    /// List accounts (Chart of Accounts)
+    fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>>;
+
+    /// Get account hierarchy (parent-child)
+    fn get_account_hierarchy(&self) -> Result<Vec<GlAccount>>;
+
+    /// Delete account (only if no transactions)
+    fn delete_account(&self, id: Uuid) -> Result<()>;
+
+    /// Initialize default Chart of Accounts
+    fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>>;
+
+    // GL Periods
+    /// Create a GL period
+    fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod>;
+
+    /// Get period by ID
+    fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>>;
+
+    /// Get current open period
+    fn get_current_period(&self) -> Result<Option<GlPeriod>>;
+
+    /// Get period for a date
+    fn get_period_for_date(&self, date: NaiveDate) -> Result<Option<GlPeriod>>;
+
+    /// List periods
+    fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>>;
+
+    /// Open a period
+    fn open_period(&self, id: Uuid) -> Result<GlPeriod>;
+
+    /// Close a period
+    fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod>;
+
+    /// Lock a period (prevents any changes)
+    fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod>;
+
+    /// Reopen a closed period (not locked)
+    fn reopen_period(&self, id: Uuid) -> Result<GlPeriod>;
+
+    // Journal Entries
+    /// Create a journal entry
+    fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry>;
+
+    /// Get journal entry by ID
+    fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>>;
+
+    /// Get journal entry by number
+    fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>>;
+
+    /// List journal entries
+    fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>>;
+
+    /// Post a journal entry (update account balances)
+    fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry>;
+
+    /// Void a journal entry
+    fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry>;
+
+    /// Reverse a journal entry (creates reversing entry)
+    fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry>;
+
+    /// Get journal entry lines
+    fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>>;
+
+    // Auto-posting
+    /// Get active auto-posting config
+    fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>>;
+
+    /// Create/update auto-posting config
+    fn set_auto_posting_config(&self, input: CreateAutoPostingConfig) -> Result<AutoPostingConfig>;
+
+    /// Auto-post invoice creation (DR AR / CR Revenue)
+    fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry>;
+
+    /// Auto-post payment received (DR Cash / CR AR)
+    fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry>;
+
+    /// Auto-post bill creation (DR Expense / CR AP)
+    fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry>;
+
+    /// Auto-post bill payment (DR AP / CR Cash)
+    fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry>;
+
+    /// Auto-post inventory cost transaction (DR/CR Inventory/COGS)
+    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry>;
+
+    /// Auto-post write-off (DR Bad Debt / CR AR)
+    fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry>;
+
+    // Financial Reports
+    /// Generate trial balance
+    fn get_trial_balance(&self, as_of_date: NaiveDate) -> Result<TrialBalance>;
+
+    /// Generate balance sheet
+    fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet>;
+
+    /// Generate income statement
+    fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement>;
+
+    /// Get account balance
+    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<rust_decimal::Decimal>;
+
+    /// Get account transaction history
+    fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>>;
+
+    // Period close process
+    /// Run period close (creates closing entries)
+    fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry>;
+
+    // Batch operations
+    fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>>;
+    fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>>;
 }

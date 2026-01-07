@@ -6,10 +6,10 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
-    CartPaymentStatus, CartRepository, CartStatus, CheckoutResult, CommerceError, CreateCart,
-    FulfillmentType, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart,
-    UpdateCartItem,
+    validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
+    CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
+    CheckoutResult, CommerceError, CreateCart, FulfillmentType, Result, SetCartPayment,
+    SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
 };
 use uuid::Uuid;
 
@@ -217,6 +217,11 @@ impl SqliteCartRepository {
 
 impl CartRepository for SqliteCartRepository {
     fn create(&self, input: CreateCart) -> Result<Cart> {
+        // Validate currency if provided
+        if let Some(ref currency) = input.currency {
+            validate_currency_code(currency)?;
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
@@ -433,7 +438,7 @@ impl CartRepository for SqliteCartRepository {
                 .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn list(&self, filter: CartFilter) -> Result<Vec<Cart>> {
@@ -518,6 +523,20 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
+        // Validate item quantity (must be positive)
+        if item.quantity <= 0 {
+            return Err(CommerceError::ValidationError(format!(
+                "Item quantity must be positive, got {} for '{}'",
+                item.quantity, item.name
+            )));
+        }
+
+        // Validate item price
+        validate_price(item.unit_price)?;
+        if let Some(original_price) = item.original_price {
+            validate_price(original_price)?;
+        }
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let result = self.add_item_internal(&tx, cart_id, item)?;
@@ -696,7 +715,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
@@ -711,7 +730,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
@@ -798,7 +817,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
@@ -814,7 +833,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn remove_discount(&self, id: Uuid) -> Result<Cart> {
@@ -833,7 +852,7 @@ impl CartRepository for SqliteCartRepository {
 
     fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
         let cart = self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)?;
+            .ok_or(CommerceError::NotFound)?;
 
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -850,7 +869,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
@@ -863,12 +882,12 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
         let cart = self.get(id)?
-            .ok_or_else(|| CommerceError::NotFound)?;
+            .ok_or(CommerceError::NotFound)?;
 
         let conn = self.conn()?;
         let now = Utc::now();
@@ -912,7 +931,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn abandon(&self, id: Uuid) -> Result<Cart> {
@@ -925,7 +944,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn expire(&self, id: Uuid) -> Result<Cart> {
@@ -938,7 +957,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
@@ -957,7 +976,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn release_inventory(&self, id: Uuid) -> Result<Cart> {
@@ -970,7 +989,7 @@ impl CartRepository for SqliteCartRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn recalculate(&self, id: Uuid) -> Result<Cart> {
@@ -979,7 +998,7 @@ impl CartRepository for SqliteCartRepository {
             self.update_cart_totals(&conn, id)?;
         }
 
-        self.get(id)?.ok_or_else(|| CommerceError::NotFound)
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {

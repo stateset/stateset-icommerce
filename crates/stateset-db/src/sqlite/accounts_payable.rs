@@ -1,0 +1,824 @@
+//! SQLite implementation for Accounts Payable
+
+use crate::sqlite::{map_db_error, parse_decimal};
+use chrono::Utc;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rust_decimal::Decimal;
+use rusqlite::params;
+use std::str::FromStr;
+use uuid::Uuid;
+
+use stateset_core::{
+    AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem, BillPayment,
+    BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem, CreateBillPayment,
+    CreatePaymentRun, PaymentAllocation, PaymentMethodAP, PaymentRun, PaymentRunFilter,
+    PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
+    generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
+};
+
+pub struct SqliteAccountsPayableRepository {
+    pool: Pool<SqliteConnectionManager>,
+}
+
+impl SqliteAccountsPayableRepository {
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        Self { pool }
+    }
+
+    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
+    }
+
+    fn row_to_bill(row: &rusqlite::Row) -> rusqlite::Result<Bill> {
+        let id_str: String = row.get("id")?;
+        let supplier_id_str: String = row.get("supplier_id")?;
+        let po_id_str: Option<String> = row.get("purchase_order_id")?;
+        let status_str: String = row.get("status")?;
+
+        Ok(Bill {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            bill_number: row.get("bill_number")?,
+            supplier_id: Uuid::parse_str(&supplier_id_str).unwrap_or_default(),
+            supplier_name: row.get("supplier_name")?,
+            purchase_order_id: po_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            status: BillStatus::from_str(&status_str).unwrap_or_default(),
+            bill_date: row.get::<_, String>("bill_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            due_date: row.get::<_, String>("due_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            payment_terms: row.get("payment_terms")?,
+            subtotal: parse_decimal(&row.get::<_, String>("subtotal")?),
+            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
+            shipping_amount: parse_decimal(&row.get::<_, String>("shipping_amount")?),
+            discount_amount: parse_decimal(&row.get::<_, String>("discount_amount")?),
+            total_amount: parse_decimal(&row.get::<_, String>("total_amount")?),
+            amount_paid: parse_decimal(&row.get::<_, String>("amount_paid")?),
+            amount_due: parse_decimal(&row.get::<_, String>("amount_due")?),
+            currency: row.get("currency")?,
+            reference_number: row.get("reference_number")?,
+            memo: row.get("memo")?,
+            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    fn row_to_bill_item(row: &rusqlite::Row) -> rusqlite::Result<BillItem> {
+        let id_str: String = row.get("id")?;
+        let bill_id_str: String = row.get("bill_id")?;
+        let po_line_str: Option<String> = row.get("po_line_id")?;
+        let tax_rate_str: Option<String> = row.get("tax_rate")?;
+
+        Ok(BillItem {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            bill_id: Uuid::parse_str(&bill_id_str).unwrap_or_default(),
+            line_number: row.get("line_number")?,
+            description: row.get("description")?,
+            account_code: row.get("account_code")?,
+            quantity: parse_decimal(&row.get::<_, String>("quantity")?),
+            unit_price: parse_decimal(&row.get::<_, String>("unit_price")?),
+            amount: parse_decimal(&row.get::<_, String>("amount")?),
+            tax_rate: tax_rate_str.map(|s| parse_decimal(&s)),
+            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
+            po_line_id: po_line_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    fn row_to_payment(row: &rusqlite::Row) -> rusqlite::Result<BillPayment> {
+        let id_str: String = row.get("id")?;
+        let supplier_id_str: String = row.get("supplier_id")?;
+        let method_str: String = row.get("payment_method")?;
+        let status_str: String = row.get("status")?;
+
+        Ok(BillPayment {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            payment_number: row.get("payment_number")?,
+            supplier_id: Uuid::parse_str(&supplier_id_str).unwrap_or_default(),
+            payment_date: row.get::<_, String>("payment_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
+            amount: parse_decimal(&row.get::<_, String>("amount")?),
+            currency: row.get("currency")?,
+            reference_number: row.get("reference_number")?,
+            bank_account: row.get("bank_account")?,
+            check_number: row.get("check_number")?,
+            memo: row.get("memo")?,
+            status: PaymentStatusAP::from_str(&status_str).unwrap_or_default(),
+            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    fn row_to_payment_run(row: &rusqlite::Row) -> rusqlite::Result<PaymentRun> {
+        let id_str: String = row.get("id")?;
+        let status_str: String = row.get("status")?;
+        let method_str: String = row.get("payment_method")?;
+        let approved_str: Option<String> = row.get("approved_at")?;
+        let processed_str: Option<String> = row.get("processed_at")?;
+
+        Ok(PaymentRun {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            run_number: row.get("run_number")?,
+            status: PaymentRunStatus::from_str(&status_str).unwrap_or_default(),
+            payment_date: row.get::<_, String>("payment_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
+            total_amount: parse_decimal(&row.get::<_, String>("total_amount")?),
+            payment_count: row.get("payment_count")?,
+            notes: row.get("notes")?,
+            created_by: row.get("created_by")?,
+            approved_by: row.get("approved_by")?,
+            approved_at: approved_str.and_then(|s| s.parse().ok()),
+            processed_at: processed_str.and_then(|s| s.parse().ok()),
+            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+        })
+    }
+
+    fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
+        let conn = self.conn()?;
+
+        // Get item totals as f64 (REAL in SQLite)
+        let (subtotal_f, tax_f): (f64, f64) = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0), COALESCE(SUM(CAST(tax_amount AS REAL)), 0)
+             FROM ap_bill_items WHERE bill_id = ?1",
+            params![bill_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(map_db_error)?;
+
+        let subtotal_dec = Decimal::from_f64_retain(subtotal_f).unwrap_or_default();
+        let tax_dec = Decimal::from_f64_retain(tax_f).unwrap_or_default();
+        let total = subtotal_dec + tax_dec;
+
+        // Get amount paid as f64
+        let amount_paid_f: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM ap_payment_allocations WHERE bill_id = ?1",
+            params![bill_id.to_string()],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let paid = Decimal::from_f64_retain(amount_paid_f).unwrap_or_default();
+        let due = total - paid;
+
+        conn.execute(
+            "UPDATE ap_bills SET subtotal = ?1, tax_amount = ?2, total_amount = ?3, amount_paid = ?4, amount_due = ?5 WHERE id = ?6",
+            params![subtotal_dec.to_string(), tax_dec.to_string(), total.to_string(), paid.to_string(), due.to_string(), bill_id.to_string()],
+        ).map_err(map_db_error)?;
+
+        Ok(())
+    }
+}
+
+impl AccountsPayableRepository for SqliteAccountsPayableRepository {
+    fn create_bill(&self, input: CreateBill) -> Result<Bill> {
+        let conn = self.conn()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        let bill_number = input.bill_number.unwrap_or_else(generate_bill_number);
+
+        conn.execute(
+            "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
+             payment_terms, currency, reference_number, memo, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+            params![
+                id.to_string(),
+                bill_number,
+                input.supplier_id.to_string(),
+                input.purchase_order_id.map(|id| id.to_string()),
+                BillStatus::Draft.to_string(),
+                input.bill_date.unwrap_or(now).to_rfc3339(),
+                input.due_date.to_rfc3339(),
+                input.payment_terms,
+                input.currency.unwrap_or_else(|| "USD".to_string()),
+                input.reference_number,
+                input.memo,
+                now.to_rfc3339(),
+            ],
+        ).map_err(map_db_error)?;
+
+        for item in input.items.iter() {
+            self.add_bill_item(id, CreateBillItem {
+                description: item.description.clone(),
+                account_code: item.account_code.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                tax_rate: item.tax_rate,
+                po_line_id: item.po_line_id,
+            })?;
+        }
+
+        self.recalculate_bill(id)?;
+        self.get_bill(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to create bill".into()))
+    }
+
+    fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_bills WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Some(Self::row_to_bill(row).map_err(map_db_error)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_bills WHERE bill_number = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![number]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Some(Self::row_to_bill(row).map_err(map_db_error)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
+        let conn = self.conn()?;
+        let existing = self.get_bill(id)?.ok_or(CommerceError::NotFound)?;
+
+        conn.execute(
+            "UPDATE ap_bills SET due_date = ?1, payment_terms = ?2, reference_number = ?3, memo = ?4 WHERE id = ?5",
+            params![
+                input.due_date.unwrap_or(existing.due_date).to_rfc3339(),
+                input.payment_terms.or(existing.payment_terms),
+                input.reference_number.or(existing.reference_number),
+                input.memo.or(existing.memo),
+                id.to_string(),
+            ],
+        ).map_err(map_db_error)?;
+
+        self.get_bill(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to update bill".into()))
+    }
+
+    fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT * FROM ap_bills WHERE 1=1".to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(supplier_id) = filter.supplier_id {
+            sql.push_str(" AND supplier_id = ?");
+            params_vec.push(Box::new(supplier_id.to_string()));
+        }
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(Box::new(status.to_string()));
+        }
+        if filter.overdue_only == Some(true) {
+            sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'cancelled')");
+        }
+
+        sql.push_str(" ORDER BY due_date");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {}", limit));
+        }
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
+
+        let mut bills = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            bills.push(Self::row_to_bill(row).map_err(map_db_error)?);
+        }
+        Ok(bills)
+    }
+
+    fn delete_bill(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn()?;
+        let bill = self.get_bill(id)?.ok_or(CommerceError::NotFound)?;
+
+        if bill.status != BillStatus::Draft {
+            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
+        }
+
+        conn.execute("DELETE FROM ap_bills WHERE id = ?1", params![id.to_string()]).map_err(map_db_error)?;
+        Ok(())
+    }
+
+    fn approve_bill(&self, id: Uuid) -> Result<Bill> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE ap_bills SET status = ?1 WHERE id = ?2 AND status IN ('draft', 'pending')",
+            params![BillStatus::Approved.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_bill(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to approve bill".into()))
+    }
+
+    fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
+            params![BillStatus::Cancelled.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_bill(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to cancel bill".into()))
+    }
+
+    fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
+            params![BillStatus::Disputed.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_bill(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to dispute bill".into()))
+    }
+
+    fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_bill_items WHERE bill_id = ?1 ORDER BY line_number").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![bill_id.to_string()]).map_err(map_db_error)?;
+
+        let mut items = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            items.push(Self::row_to_bill_item(row).map_err(map_db_error)?);
+        }
+        Ok(items)
+    }
+
+    fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4();
+
+        let line_number: i32 = conn.query_row(
+            "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
+            params![bill_id.to_string()],
+            |row| row.get(0),
+        ).unwrap_or(1);
+
+        let amount = item.quantity * item.unit_price;
+        let tax_amount = item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
+
+        conn.execute(
+            "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                id.to_string(),
+                bill_id.to_string(),
+                line_number,
+                item.description,
+                item.account_code,
+                item.quantity.to_string(),
+                item.unit_price.to_string(),
+                amount.to_string(),
+                item.tax_rate.map(|r| r.to_string()),
+                tax_amount.to_string(),
+                item.po_line_id.map(|id| id.to_string()),
+                now,
+            ],
+        ).map_err(map_db_error)?;
+
+        self.recalculate_bill(bill_id)?;
+
+        let mut stmt = conn.prepare("SELECT * FROM ap_bill_items WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Self::row_to_bill_item(row).map_err(map_db_error)?)
+        } else {
+            Err(CommerceError::DatabaseError("Failed to create bill item".into()))
+        }
+    }
+
+    fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
+        let conn = self.conn()?;
+
+        let bill_id: String = conn.query_row(
+            "SELECT bill_id FROM ap_bill_items WHERE id = ?1",
+            params![item_id.to_string()],
+            |row| row.get(0),
+        ).map_err(map_db_error)?;
+
+        conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()]).map_err(map_db_error)?;
+
+        self.recalculate_bill(Uuid::parse_str(&bill_id).unwrap_or_default())?;
+        Ok(())
+    }
+
+    fn count_bills(&self, filter: BillFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT COUNT(*) FROM ap_bills WHERE 1=1".to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(Box::new(status.to_string()));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(count as u64)
+    }
+
+    fn get_overdue_bills(&self) -> Result<Vec<Bill>> {
+        self.list_bills(BillFilter { overdue_only: Some(true), ..Default::default() })
+    }
+
+    fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT * FROM ap_bills WHERE due_date <= datetime('now', '+' || ?1 || ' days') AND status NOT IN ('paid', 'cancelled') ORDER BY due_date"
+        ).map_err(map_db_error)?;
+
+        let mut rows = stmt.query(params![days]).map_err(map_db_error)?;
+        let mut bills = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            bills.push(Self::row_to_bill(row).map_err(map_db_error)?);
+        }
+        Ok(bills)
+    }
+
+    fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment> {
+        let conn = self.conn()?;
+        let now = Utc::now();
+        let id = Uuid::new_v4();
+        let payment_number = generate_ap_payment_number();
+
+        conn.execute(
+            "INSERT INTO ap_payments (id, payment_number, supplier_id, payment_date, payment_method, amount, currency, reference_number, bank_account, check_number, memo, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+            params![
+                id.to_string(),
+                payment_number,
+                input.supplier_id.to_string(),
+                input.payment_date.unwrap_or(now).to_rfc3339(),
+                input.payment_method.to_string(),
+                input.amount.to_string(),
+                input.currency.unwrap_or_else(|| "USD".to_string()),
+                input.reference_number,
+                input.bank_account,
+                input.check_number,
+                input.memo,
+                PaymentStatusAP::Pending.to_string(),
+                now.to_rfc3339(),
+            ],
+        ).map_err(map_db_error)?;
+
+        // Create allocations
+        for alloc in input.allocations {
+            let alloc_id = Uuid::new_v4();
+            conn.execute(
+                "INSERT INTO ap_payment_allocations (id, payment_id, bill_id, amount, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![alloc_id.to_string(), id.to_string(), alloc.bill_id.to_string(), alloc.amount.to_string(), now.to_rfc3339()],
+            ).map_err(map_db_error)?;
+
+            // Update bill amount_paid and status
+            self.recalculate_bill(alloc.bill_id)?;
+
+            let bill = self.get_bill(alloc.bill_id)?.ok_or(CommerceError::NotFound)?;
+            let new_status = if bill.amount_due <= Decimal::ZERO {
+                BillStatus::Paid
+            } else if bill.amount_paid > Decimal::ZERO {
+                BillStatus::PartiallyPaid
+            } else {
+                bill.status
+            };
+
+            conn.execute(
+                "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
+                params![new_status.to_string(), alloc.bill_id.to_string()],
+            ).map_err(map_db_error)?;
+        }
+
+        self.get_payment(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to create payment".into()))
+    }
+
+    fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_payments WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Some(Self::row_to_payment(row).map_err(map_db_error)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_payments WHERE payment_number = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![number]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Some(Self::row_to_payment(row).map_err(map_db_error)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn list_payments(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT * FROM ap_payments WHERE 1=1".to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(supplier_id) = filter.supplier_id {
+            sql.push_str(" AND supplier_id = ?");
+            params_vec.push(Box::new(supplier_id.to_string()));
+        }
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(Box::new(status.to_string()));
+        }
+
+        sql.push_str(" ORDER BY payment_date DESC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {}", limit));
+        }
+
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
+
+        let mut payments = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            payments.push(Self::row_to_payment(row).map_err(map_db_error)?);
+        }
+        Ok(payments)
+    }
+
+    fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
+        let conn = self.conn()?;
+
+        // Get allocations and reverse them
+        let allocations = self.get_payment_allocations(id)?;
+        for alloc in allocations {
+            self.recalculate_bill(alloc.bill_id)?;
+        }
+
+        conn.execute(
+            "UPDATE ap_payments SET status = ?1 WHERE id = ?2",
+            params![PaymentStatusAP::Voided.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        // Delete allocations
+        conn.execute("DELETE FROM ap_payment_allocations WHERE payment_id = ?1", params![id.to_string()]).map_err(map_db_error)?;
+
+        self.get_payment(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to void payment".into()))
+    }
+
+    fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE ap_payments SET status = ?1 WHERE id = ?2",
+            params![PaymentStatusAP::Cleared.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_payment(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to clear payment".into()))
+    }
+
+    fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_payment_allocations WHERE payment_id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![payment_id.to_string()]).map_err(map_db_error)?;
+
+        let mut allocations = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let id_str: String = row.get("id").map_err(map_db_error)?;
+            let payment_id_str: String = row.get("payment_id").map_err(map_db_error)?;
+            let bill_id_str: String = row.get("bill_id").map_err(map_db_error)?;
+            let amount_str: String = row.get("amount").map_err(map_db_error)?;
+
+            allocations.push(PaymentAllocation {
+                id: Uuid::parse_str(&id_str).unwrap_or_default(),
+                payment_id: Uuid::parse_str(&payment_id_str).unwrap_or_default(),
+                bill_id: Uuid::parse_str(&bill_id_str).unwrap_or_default(),
+                amount: parse_decimal(&amount_str),
+                created_at: row.get::<_, String>("created_at").map_err(map_db_error)?.parse().unwrap_or_else(|_| Utc::now()),
+            });
+        }
+        Ok(allocations)
+    }
+
+    fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT p.* FROM ap_payments p
+             JOIN ap_payment_allocations a ON p.id = a.payment_id
+             WHERE a.bill_id = ?1"
+        ).map_err(map_db_error)?;
+
+        let mut rows = stmt.query(params![bill_id.to_string()]).map_err(map_db_error)?;
+        let mut payments = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            payments.push(Self::row_to_payment(row).map_err(map_db_error)?);
+        }
+        Ok(payments)
+    }
+
+    fn count_payments(&self, _filter: BillPaymentFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM ap_payments", [], |row| row.get(0)).map_err(map_db_error)?;
+        Ok(count as u64)
+    }
+
+    fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4();
+        let run_number = generate_payment_run_number();
+
+        // Calculate total
+        let mut total = Decimal::ZERO;
+        for bill_id in &input.bill_ids {
+            if let Some(bill) = self.get_bill(*bill_id)? {
+                total += bill.amount_due;
+            }
+        }
+
+        conn.execute(
+            "INSERT INTO ap_payment_runs (id, run_number, status, payment_date, payment_method, total_amount, payment_count, notes, created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            params![
+                id.to_string(),
+                run_number,
+                PaymentRunStatus::Draft.to_string(),
+                input.payment_date.to_rfc3339(),
+                input.payment_method.to_string(),
+                total.to_string(),
+                input.bill_ids.len() as i32,
+                input.notes,
+                input.created_by,
+                now,
+            ],
+        ).map_err(map_db_error)?;
+
+        // Add bills to run
+        for bill_id in input.bill_ids {
+            conn.execute(
+                "INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES (?1, ?2)",
+                params![id.to_string(), bill_id.to_string()],
+            ).map_err(map_db_error)?;
+        }
+
+        self.get_payment_run(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to create payment run".into()))
+    }
+
+    fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_payment_runs WHERE id = ?1").map_err(map_db_error)?;
+        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+
+        if let Some(row) = rows.next().map_err(map_db_error)? {
+            Ok(Some(Self::row_to_payment_run(row).map_err(map_db_error)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn list_payment_runs(&self, _filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT * FROM ap_payment_runs ORDER BY created_at DESC").map_err(map_db_error)?;
+        let mut rows = stmt.query([]).map_err(map_db_error)?;
+
+        let mut runs = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            runs.push(Self::row_to_payment_run(row).map_err(map_db_error)?);
+        }
+        Ok(runs)
+    }
+
+    fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "UPDATE ap_payment_runs SET status = ?1, approved_by = ?2, approved_at = ?3 WHERE id = ?4",
+            params![PaymentRunStatus::Approved.to_string(), approved_by, now, id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_payment_run(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to approve run".into()))
+    }
+
+    fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+        let conn = self.conn()?;
+        let now = Utc::now().to_rfc3339();
+
+        conn.execute(
+            "UPDATE ap_payment_runs SET status = ?1, processed_at = ?2 WHERE id = ?3",
+            params![PaymentRunStatus::Completed.to_string(), now, id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_payment_run(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to process run".into()))
+    }
+
+    fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+        let conn = self.conn()?;
+
+        conn.execute(
+            "UPDATE ap_payment_runs SET status = ?1 WHERE id = ?2",
+            params![PaymentRunStatus::Cancelled.to_string(), id.to_string()],
+        ).map_err(map_db_error)?;
+
+        self.get_payment_run(id)?.ok_or_else(|| CommerceError::DatabaseError("Failed to cancel run".into()))
+    }
+
+    fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = ?1"
+        ).map_err(map_db_error)?;
+
+        let mut rows = stmt.query(params![run_id.to_string()]).map_err(map_db_error)?;
+        let mut bills = Vec::new();
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            bills.push(Self::row_to_bill(row).map_err(map_db_error)?);
+        }
+        Ok(bills)
+    }
+
+    fn get_aging_summary(&self) -> Result<ApAgingSummary> {
+        let conn = self.conn()?;
+
+        let current: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date >= datetime('now') AND status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).unwrap_or(0.0);
+
+        let days_1_30: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now') AND due_date >= datetime('now', '-30 days') AND status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).unwrap_or(0.0);
+
+        let days_31_60: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-30 days') AND due_date >= datetime('now', '-60 days') AND status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).unwrap_or(0.0);
+
+        let days_61_90: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-60 days') AND due_date >= datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).unwrap_or(0.0);
+
+        let days_over_90: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).unwrap_or(0.0);
+
+        Ok(ApAgingSummary {
+            current: Decimal::from_f64_retain(current).unwrap_or_default(),
+            days_1_30: Decimal::from_f64_retain(days_1_30).unwrap_or_default(),
+            days_31_60: Decimal::from_f64_retain(days_31_60).unwrap_or_default(),
+            days_61_90: Decimal::from_f64_retain(days_61_90).unwrap_or_default(),
+            days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
+            total: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
+        })
+    }
+
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+        let conn = self.conn()?;
+
+        let (outstanding, overdue, count): (f64, f64, i32) = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0),
+                    COALESCE(SUM(CASE WHEN due_date < datetime('now') THEN CAST(amount_due AS REAL) ELSE 0 END), 0),
+                    COUNT(*)
+             FROM ap_bills WHERE supplier_id = ?1 AND status NOT IN ('paid', 'cancelled')",
+            params![supplier_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).map_err(map_db_error)?;
+
+        Ok(SupplierApSummary {
+            supplier_id,
+            supplier_name: None,
+            total_outstanding: Decimal::from_f64_retain(outstanding).unwrap_or_default(),
+            total_overdue: Decimal::from_f64_retain(overdue).unwrap_or_default(),
+            bill_count: count,
+        })
+    }
+
+    fn get_total_outstanding(&self) -> Result<Decimal> {
+        let conn = self.conn()?;
+        let total: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE status NOT IN ('paid', 'cancelled')",
+            [], |row| row.get(0)
+        ).map_err(map_db_error)?;
+
+        Ok(Decimal::from_f64_retain(total).unwrap_or_default())
+    }
+
+    fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {
+        let mut result = BatchResult::new();
+        for (index, input) in inputs.into_iter().enumerate() {
+            match self.create_bill(input) {
+                Ok(bill) => result.record_success(bill),
+                Err(e) => result.record_failure(index, None, &e),
+            }
+        }
+        Ok(result)
+    }
+
+    fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
+        let mut bills = Vec::new();
+        for id in ids {
+            if let Some(bill) = self.get_bill(id)? {
+                bills.push(bill);
+            }
+        }
+        Ok(bills)
+    }
+}

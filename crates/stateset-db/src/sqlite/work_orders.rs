@@ -242,7 +242,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         let id = Uuid::new_v4();
         let work_order_number = WorkOrder::generate_work_order_number();
         let now = Utc::now();
-        let priority = input.priority.clone().unwrap_or(WorkOrderPriority::Normal);
+        let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
 
         // Insert work order in a scoped block to release connection before adding tasks
         {
@@ -961,7 +961,7 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             let id = Uuid::new_v4();
             let work_order_number = WorkOrder::generate_work_order_number();
             let now = Utc::now();
-            let priority = input.priority.clone().unwrap_or(WorkOrderPriority::Normal);
+            let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
 
             tx.execute(
                 "INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id,

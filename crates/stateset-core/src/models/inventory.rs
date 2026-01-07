@@ -147,6 +147,7 @@ pub struct ReserveInventory {
 
 /// Input for creating inventory item
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CreateInventoryItem {
     pub sku: String,
     pub name: String,
@@ -158,20 +159,6 @@ pub struct CreateInventoryItem {
     pub safety_stock: Option<Decimal>,
 }
 
-impl Default for CreateInventoryItem {
-    fn default() -> Self {
-        Self {
-            sku: String::new(),
-            name: String::new(),
-            description: None,
-            unit_of_measure: None,
-            initial_quantity: None,
-            location_id: None,
-            reorder_point: None,
-            safety_stock: None,
-        }
-    }
-}
 
 /// Stock level summary
 #[derive(Debug, Clone, Serialize, Deserialize)]

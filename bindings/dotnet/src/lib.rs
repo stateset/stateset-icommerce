@@ -11,8 +11,15 @@ use stateset_embedded::{
     CreateCustomer, CreateProduct, CreateProductVariant, CreateInventoryItem, CreateOrder,
     CreateCart, AddCartItem, CustomerFilter, OrderFilter, ProductFilter,
     AnalyticsQuery, TimePeriod, CreateReturn, CreatePayment, PaymentMethodType,
+    // New modules
+    CreateWarehouse, CreateLocation, CreateInspection, CreateLot, CreateSerialNumber,
+    CreateBill, CreateBillItem, CreateCreditAccount, CreateBackorder, CreateGlAccount,
+    SetItemCost,
 };
-use stateset_core::{ReturnReason, OrderStatus};
+use stateset_core::{
+    ReturnReason, OrderStatus,
+    WarehouseType, LocationType, InspectionType, BackorderPriority, AccountType,
+};
 
 // =============================================================================
 // Handle Management
@@ -581,7 +588,7 @@ pub extern "C" fn stateset_cart_add_item(
     let result = use_handle(handle, |commerce| {
         commerce.carts().add_item(cart_uuid, AddCartItem {
             variant_id: Some(variant_uuid),
-            quantity: quantity as i32,
+            quantity,
             ..Default::default()
         }).map_err(|e| e.to_string())
     });
@@ -811,6 +818,529 @@ pub extern "C" fn stateset_analytics_top_customers(
 
     match result {
         Ok(customers) => to_json_cstr(&customers),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Warehouse Module
+// =============================================================================
+
+/// Create a warehouse
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_warehouse_create(
+    handle: *mut CommerceHandle,
+    code: *const c_char,
+    name: *const c_char,
+) -> *mut c_char {
+    let code_str = match cstr_to_string(code) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let name_str = match cstr_to_string(name) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.warehouse().create_warehouse(CreateWarehouse {
+            code: code_str,
+            name: name_str,
+            warehouse_type: WarehouseType::Distribution,
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(wh) => to_json_cstr(&wh),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List warehouses
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_warehouse_list(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Create a warehouse location
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_warehouse_create_location(
+    handle: *mut CommerceHandle,
+    warehouse_id: *const c_char,
+    zone: *const c_char,
+    aisle: *const c_char,
+    rack: *const c_char,
+    bin: *const c_char,
+) -> *mut c_char {
+    let wh_id = match cstr_to_string(warehouse_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.warehouse().create_location(CreateLocation {
+            warehouse_id: wh_id,
+            location_type: LocationType::Pick,
+            zone: cstr_to_string(zone),
+            aisle: cstr_to_string(aisle),
+            rack: cstr_to_string(rack),
+            bin: cstr_to_string(bin),
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(loc) => to_json_cstr(&loc),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Quality Module
+// =============================================================================
+
+/// Create a quality inspection
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_quality_create_inspection(
+    handle: *mut CommerceHandle,
+    reference_type: *const c_char,
+    reference_id: *const c_char,
+    sku: *const c_char,
+) -> *mut c_char {
+    let ref_type = cstr_to_string(reference_type).unwrap_or_else(|| "purchase_order".to_string());
+    let ref_id = match cstr_to_string(reference_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.quality().create_inspection(CreateInspection {
+            inspection_type: InspectionType::Incoming,
+            reference_type: ref_type,
+            reference_id: ref_id,
+            inspector_id: None,
+            scheduled_at: None,
+            notes: None,
+            items: vec![stateset_embedded::CreateInspectionItem {
+                sku: sku_str,
+                lot_number: None,
+                serial_number: None,
+                quantity_to_inspect: rust_decimal::Decimal::ONE,
+            }],
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(insp) => to_json_cstr(&insp),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Lots Module
+// =============================================================================
+
+/// Create a lot
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_lots_create(
+    handle: *mut CommerceHandle,
+    lot_number: *const c_char,
+    sku: *const c_char,
+    quantity: c_double,
+) -> *mut c_char {
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.lots().create(CreateLot {
+            lot_number: cstr_to_string(lot_number),
+            sku: sku_str,
+            quantity: Decimal::try_from(quantity).unwrap_or_default(),
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(lot) => to_json_cstr(&lot),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List lots
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_lots_list(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.lots().list(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Serials Module
+// =============================================================================
+
+/// Create a serial number
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_serials_create(
+    handle: *mut CommerceHandle,
+    serial: *const c_char,
+    sku: *const c_char,
+) -> *mut c_char {
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.serials().create(CreateSerialNumber {
+            serial: cstr_to_string(serial),
+            sku: sku_str,
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(sn) => to_json_cstr(&sn),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List serial numbers
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_serials_list(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.serials().list(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Accounts Payable Module
+// =============================================================================
+
+/// Create a bill
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_ap_create_bill(
+    handle: *mut CommerceHandle,
+    supplier_id: *const c_char,
+    description: *const c_char,
+    amount: c_double,
+) -> *mut c_char {
+    let sup_id = match cstr_to_string(supplier_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.accounts_payable().create_bill(CreateBill {
+            supplier_id: sup_id,
+            items: vec![CreateBillItem {
+                description: cstr_to_string(description).unwrap_or_default(),
+                quantity: Decimal::ONE,
+                unit_price: Decimal::try_from(amount).unwrap_or_default(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(bill) => to_json_cstr(&bill),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List bills
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_ap_list_bills(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Accounts Receivable Module
+// =============================================================================
+
+/// Get AR aging summary
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_ar_aging_summary(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(summary) => to_json_cstr(&summary),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Get customer AR aging
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_ar_customer_aging(
+    handle: *mut CommerceHandle,
+    customer_id: *const c_char,
+) -> *mut c_char {
+    let cust_id = match cstr_to_string(customer_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.accounts_receivable().get_customer_aging(cust_id).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(aging) => to_json_cstr(&aging),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Cost Accounting Module
+// =============================================================================
+
+/// Set item cost
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_cost_set_item_cost(
+    handle: *mut CommerceHandle,
+    sku: *const c_char,
+    standard_cost: c_double,
+) -> *mut c_char {
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.cost_accounting().set_item_cost(SetItemCost {
+            sku: sku_str,
+            standard_cost: Some(Decimal::try_from(standard_cost).unwrap_or_default()),
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(cost) => to_json_cstr(&cost),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Get item cost
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_cost_get_item_cost(
+    handle: *mut CommerceHandle,
+    sku: *const c_char,
+) -> *mut c_char {
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.cost_accounting().get_item_cost(&sku_str).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Some(cost)) => to_json_cstr(&cost),
+        _ => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Credit Module
+// =============================================================================
+
+/// Create a credit account
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_credit_create_account(
+    handle: *mut CommerceHandle,
+    customer_id: *const c_char,
+    credit_limit: c_double,
+) -> *mut c_char {
+    let cust_id = match cstr_to_string(customer_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.credit().create_credit_account(CreateCreditAccount {
+            customer_id: cust_id,
+            credit_limit: Decimal::try_from(credit_limit).unwrap_or_default(),
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(acct) => to_json_cstr(&acct),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Backorder Module
+// =============================================================================
+
+/// Create a backorder
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_backorder_create(
+    handle: *mut CommerceHandle,
+    order_id: *const c_char,
+    customer_id: *const c_char,
+    sku: *const c_char,
+    quantity: c_double,
+) -> *mut c_char {
+    let ord_id = match cstr_to_string(order_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+    let cust_id = match cstr_to_string(customer_id).and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return ptr::null_mut(),
+    };
+    let sku_str = match cstr_to_string(sku) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.backorder().create_backorder(CreateBackorder {
+            order_id: ord_id,
+            customer_id: cust_id,
+            sku: sku_str,
+            quantity: Decimal::try_from(quantity).unwrap_or_default(),
+            priority: Some(BackorderPriority::Normal),
+            order_line_id: None,
+            expected_date: None,
+            promised_date: None,
+            source_location_id: None,
+            notes: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(bo) => to_json_cstr(&bo),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List backorders
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_backorder_list(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// General Ledger Module
+// =============================================================================
+
+/// Create a GL account
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_gl_create_account(
+    handle: *mut CommerceHandle,
+    account_number: *const c_char,
+    name: *const c_char,
+    account_type: *const c_char,
+) -> *mut c_char {
+    let num = match cstr_to_string(account_number) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let name_str = match cstr_to_string(name) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let acct_type = match cstr_to_string(account_type).as_deref() {
+        Some("asset") => AccountType::Asset,
+        Some("liability") => AccountType::Liability,
+        Some("equity") => AccountType::Equity,
+        Some("revenue") => AccountType::Revenue,
+        Some("expense") => AccountType::Expense,
+        _ => AccountType::Asset,
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.general_ledger().create_account(CreateGlAccount {
+            account_number: num,
+            name: name_str,
+            account_type: acct_type,
+            description: None,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: None,
+            is_posting: Some(true),
+            currency: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(acct) => to_json_cstr(&acct),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// List GL accounts
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_gl_list_accounts(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.general_ledger().list_accounts(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(list) => to_json_cstr(&list),
         Err(_) => ptr::null_mut(),
     }
 }

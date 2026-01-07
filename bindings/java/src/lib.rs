@@ -385,7 +385,7 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeCreate<'local>(
             name: name_str,
             variants: Some(vec![CreateProductVariant {
                 sku: sku_str,
-                price: price,
+                price,
                 is_default: Some(true),
                 ..Default::default()
             }]),
@@ -737,10 +737,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeCreate<'local>(
     let customer_uuid = if customer_id_str.is_empty() {
         None
     } else {
-        match uuid::Uuid::parse_str(&customer_id_str) {
-            Ok(u) => Some(u),
-            Err(_) => None,
-        }
+        uuid::Uuid::parse_str(&customer_id_str).ok()
     };
 
     let result = use_handle(ptr, |commerce| {
@@ -820,7 +817,7 @@ pub extern "system" fn Java_com_stateset_embedded_Carts_nativeAddItem<'local>(
         commerce.carts().add_item(uuid, AddCartItem {
             sku: sku_str,
             name: name_str,
-            quantity: quantity,
+            quantity,
             unit_price: price,
             ..Default::default()
         }).map_err(|e| e.to_string())?;
@@ -1068,5 +1065,945 @@ pub extern "system" fn Java_com_stateset_embedded_Analytics_nativeSalesSummary<'
             throw_exception(&mut env, &e);
             JObject::null()
         }
+    }
+}
+
+// =============================================================================
+// Quality Control API
+// =============================================================================
+
+fn to_json_string<'a>(env: &mut JNIEnv<'a>, data: &impl serde::Serialize) -> JObject<'a> {
+    match serde_json::to_string(data) {
+        Ok(json) => env.new_string(&json).map(|s| s.into()).unwrap_or(JObject::null()),
+        Err(_) => JObject::null(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateInspection<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    inspection_type: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let type_str = get_string(&mut env, &inspection_type);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let itype = match type_str.to_lowercase().as_str() {
+        "incoming" => stateset_core::InspectionType::Incoming,
+        "in_process" => stateset_core::InspectionType::InProcess,
+        "final" => stateset_core::InspectionType::Final,
+        "random" => stateset_core::InspectionType::Random,
+        _ => stateset_core::InspectionType::Incoming,
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.quality().create_inspection(stateset_core::CreateInspection {
+            inspection_type: itype,
+            reference_type: sku_str.clone(),
+            reference_id: uuid::Uuid::new_v4(),
+            items: vec![stateset_core::CreateInspectionItem {
+                sku: sku_str,
+                quantity_to_inspect: qty,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(inspection) => to_json_string(&mut env, &inspection),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Quality_nativeListInspections<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.quality().list_inspections(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(inspections) => to_json_string(&mut env, &inspections),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateNcr<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    description: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let desc_str = get_string(&mut env, &description);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.quality().create_ncr(stateset_core::CreateNcr {
+            sku: sku_str, description: desc_str, quantity_affected: qty, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(ncr) => to_json_string(&mut env, &ncr),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Quality_nativeCreateHold<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    reason: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let reason_str = get_string(&mut env, &reason);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.quality().create_hold(stateset_core::CreateQualityHold {
+            sku: sku_str, reason: reason_str, quantity: qty, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(hold) => to_json_string(&mut env, &hold),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Lots/Batch Tracking API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Lots_nativeCreate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    lot_number: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let lot_str = get_string(&mut env, &lot_number);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.lots().create(stateset_core::CreateLot {
+            sku: sku_str, lot_number: Some(lot_str), quantity: qty, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(lot) => to_json_string(&mut env, &lot),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Lots_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.lots().list(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(lots) => to_json_string(&mut env, &lots),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetBySku<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let result = use_handle(ptr, |commerce| {
+        commerce.lots().get_available_lots_for_sku(&sku_str).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(lots) => to_json_string(&mut env, &lots),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Lots_nativeGetExpiring<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    days: jint,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.lots().get_expiring_lots(days).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(lots) => to_json_string(&mut env, &lots),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Serial Numbers API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Serials_nativeCreate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    serial_number: JString<'local>,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let serial_str = get_string(&mut env, &serial_number);
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.serials().create(stateset_core::CreateSerialNumber {
+            sku: sku_str, serial: Some(serial_str), ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(serial) => to_json_string(&mut env, &serial),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Serials_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.serials().list(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(serials) => to_json_string(&mut env, &serials),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Serials_nativeGetByNumber<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    serial_number: JString<'local>,
+) -> JObject<'local> {
+    let serial_str = get_string(&mut env, &serial_number);
+    let result = use_handle(ptr, |commerce| {
+        commerce.serials().get_by_serial(&serial_str).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(Some(serial)) => to_json_string(&mut env, &serial),
+        Ok(None) => JObject::null(),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Warehouse API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    code: JString<'local>,
+    name: JString<'local>,
+) -> JObject<'local> {
+    let code_str = get_string(&mut env, &code);
+    let name_str = get_string(&mut env, &name);
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.warehouse().create_warehouse(stateset_core::CreateWarehouse {
+            code: code_str, name: name_str, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(warehouse) => to_json_string(&mut env, &warehouse),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(warehouses) => to_json_string(&mut env, &warehouses),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Warehouse_nativeCreateLocation<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    warehouse_id: jint,
+    code: JString<'local>,
+) -> JObject<'local> {
+    let code_str = get_string(&mut env, &code);
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.warehouse().create_location(stateset_core::CreateLocation {
+            warehouse_id, code: Some(code_str), ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(location) => to_json_string(&mut env, &location),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Receiving API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeCreateReceipt<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.receiving().create_receipt(stateset_core::CreateReceipt::default())
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(receipt) => to_json_string(&mut env, &receipt),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeListReceipts<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.receiving().list_receipts(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(receipts) => to_json_string(&mut env, &receipts),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeAddLine<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    receipt_id: JString<'local>,
+    sku: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let receipt_id_str = get_string(&mut env, &receipt_id);
+    let sku_str = get_string(&mut env, &sku);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&receipt_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    // Note: To receive items, use receive_items with ReceiveItems input
+    // For simplicity, this creates a ReceiveItemLine placeholder
+    let result = use_handle(ptr, |commerce| {
+        commerce.receiving().receive_items(stateset_core::ReceiveItems {
+            receipt_id: uuid,
+            items: vec![stateset_core::ReceiveItemLine {
+                receipt_item_id: uuid::Uuid::new_v4(),
+                quantity_received: qty,
+                quantity_rejected: Some(Decimal::ZERO),
+                rejection_reason: None,
+                lot_number: None,
+                serial_numbers: None,
+                expiration_date: None,
+                notes: Some(sku_str),
+            }],
+            receiving_location_id: None,
+            received_by: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(line) => to_json_string(&mut env, &line),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Receiving_nativeComplete<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    receipt_id: JString<'local>,
+) -> JObject<'local> {
+    let receipt_id_str = get_string(&mut env, &receipt_id);
+    let uuid = match uuid::Uuid::parse_str(&receipt_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.receiving().complete_receiving(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(receipt) => to_json_string(&mut env, &receipt),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Fulfillment API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreateWave<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    warehouse_id: jint,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.fulfillment().create_wave(stateset_core::CreateWave {
+            warehouse_id, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(wave) => to_json_string(&mut env, &wave),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeListWaves<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.fulfillment().list_waves(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(waves) => to_json_string(&mut env, &waves),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Fulfillment_nativeCreatePickTask<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    order_id: JString<'local>,
+    warehouse_id: jint,
+) -> JObject<'local> {
+    let order_id_str = get_string(&mut env, &order_id);
+
+    let uuid = match uuid::Uuid::parse_str(&order_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    // Create all pick tasks for the order at once
+    let result = use_handle(ptr, |commerce| {
+        commerce.fulfillment().create_picks_for_order(uuid, warehouse_id).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(tasks) => to_json_string(&mut env, &tasks),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Accounts Payable API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeCreateBill<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    supplier_id: JString<'local>,
+    amount: jdouble,
+) -> JObject<'local> {
+    let supplier_id_str = get_string(&mut env, &supplier_id);
+    let amt = Decimal::try_from(amount).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&supplier_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_payable().create_bill(stateset_core::CreateBill {
+            supplier_id: uuid,
+            due_date: chrono::Utc::now() + chrono::Duration::days(30),
+            items: vec![stateset_core::CreateBillItem {
+                description: "Bill amount".to_string(),
+                quantity: Decimal::from(1),
+                unit_price: amt,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(bill) => to_json_string(&mut env, &bill),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeListBills<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(bills) => to_json_string(&mut env, &bills),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsPayable_nativeGetAgingSummary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_payable().get_aging_summary().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(summary) => to_json_string(&mut env, &summary),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Accounts Receivable API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetAgingSummary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(summary) => to_json_string(&mut env, &summary),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetDso<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    days: jint,
+) -> jdouble {
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(dso) => dso.try_into().unwrap_or(0.0),
+        Err(e) => { throw_exception(&mut env, &e); 0.0 }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeCreateCreditMemo<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    customer_id: JString<'local>,
+    amount: jdouble,
+    reason: JString<'local>,
+) -> JObject<'local> {
+    let customer_id_str = get_string(&mut env, &customer_id);
+    let reason_str = get_string(&mut env, &reason);
+    let amt = Decimal::try_from(amount).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&customer_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    // Convert reason string to CreditMemoReason enum
+    let memo_reason = match reason_str.to_lowercase().as_str() {
+        "returned_goods" | "return" => stateset_core::CreditMemoReason::ReturnedGoods,
+        "pricing_error" | "pricing" => stateset_core::CreditMemoReason::PricingError,
+        "overpayment" => stateset_core::CreditMemoReason::Overpayment,
+        "damaged" => stateset_core::CreditMemoReason::Damaged,
+        "service_credit" | "service" => stateset_core::CreditMemoReason::ServiceCredit,
+        "goodwill" | "goodwill_adjustment" => stateset_core::CreditMemoReason::GoodwillAdjustment,
+        _ => stateset_core::CreditMemoReason::Other,
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.accounts_receivable().create_credit_memo(stateset_core::CreateCreditMemo {
+            customer_id: uuid,
+            original_invoice_id: None,
+            reason: memo_reason,
+            amount: amt,
+            notes: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(memo) => to_json_string(&mut env, &memo),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Cost Accounting API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetItemCost<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let result = use_handle(ptr, |commerce| {
+        commerce.cost_accounting().get_item_cost(&sku_str).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(Some(cost)) => to_json_string(&mut env, &cost),
+        Ok(None) => JObject::null(),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeSetItemCost<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    sku: JString<'local>,
+    standard_cost: jdouble,
+) -> JObject<'local> {
+    let sku_str = get_string(&mut env, &sku);
+    let cost = Decimal::try_from(standard_cost).ok();
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.cost_accounting().set_item_cost(stateset_core::SetItemCost {
+            sku: sku_str, standard_cost: cost, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(item_cost) => to_json_string(&mut env, &item_cost),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetTotalInventoryValue<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> jdouble {
+    let result = use_handle(ptr, |commerce| {
+        commerce.cost_accounting().get_total_inventory_value().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(value) => value.try_into().unwrap_or(0.0),
+        Err(e) => { throw_exception(&mut env, &e); 0.0 }
+    }
+}
+
+// =============================================================================
+// Credit Management API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCreateAccount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    customer_id: JString<'local>,
+    credit_limit: jdouble,
+) -> JObject<'local> {
+    let customer_id_str = get_string(&mut env, &customer_id);
+    let limit = Decimal::try_from(credit_limit).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&customer_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.credit().create_credit_account(stateset_core::CreateCreditAccount {
+            customer_id: uuid, credit_limit: limit, ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(account) => to_json_string(&mut env, &account),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Credit_nativeCheckCredit<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    customer_id: JString<'local>,
+    order_amount: jdouble,
+) -> JObject<'local> {
+    let customer_id_str = get_string(&mut env, &customer_id);
+    let amount = Decimal::try_from(order_amount).unwrap_or_default();
+
+    let uuid = match uuid::Uuid::parse_str(&customer_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid UUID"); return JObject::null(); }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.credit().check_credit(uuid, amount).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(check_result) => to_json_string(&mut env, &check_result),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Credit_nativeGetOverLimitCustomers<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.credit().get_over_limit_customers().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(customers) => to_json_string(&mut env, &customers),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// Backorder Management API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeCreate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    order_id: JString<'local>,
+    customer_id: JString<'local>,
+    sku: JString<'local>,
+    quantity: jdouble,
+) -> JObject<'local> {
+    let order_id_str = get_string(&mut env, &order_id);
+    let customer_id_str = get_string(&mut env, &customer_id);
+    let sku_str = get_string(&mut env, &sku);
+    let qty = Decimal::try_from(quantity).unwrap_or_default();
+
+    let order_uuid = match uuid::Uuid::parse_str(&order_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid order UUID"); return JObject::null(); }
+    };
+    let customer_uuid = match uuid::Uuid::parse_str(&customer_id_str) {
+        Ok(u) => u,
+        Err(_) => { throw_exception(&mut env, "Invalid customer UUID"); return JObject::null(); }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.backorder().create_backorder(stateset_core::CreateBackorder {
+            order_id: order_uuid,
+            order_line_id: None,
+            customer_id: customer_uuid,
+            sku: sku_str,
+            quantity: qty,
+            priority: None,
+            expected_date: None,
+            promised_date: None,
+            source_location_id: None,
+            notes: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(backorder) => to_json_string(&mut env, &backorder),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(backorders) => to_json_string(&mut env, &backorders),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetSummary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.backorder().get_summary().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(summary) => to_json_string(&mut env, &summary),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeGetOverdue<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.backorder().get_overdue_backorders().map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(backorders) => to_json_string(&mut env, &backorders),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+// =============================================================================
+// General Ledger API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeCreateAccount<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    account_number: JString<'local>,
+    name: JString<'local>,
+    account_type: JString<'local>,
+) -> JObject<'local> {
+    let number_str = get_string(&mut env, &account_number);
+    let name_str = get_string(&mut env, &name);
+    let type_str = get_string(&mut env, &account_type);
+
+    let acct_type = match type_str.to_lowercase().as_str() {
+        "asset" => stateset_core::AccountType::Asset,
+        "liability" => stateset_core::AccountType::Liability,
+        "equity" => stateset_core::AccountType::Equity,
+        "revenue" => stateset_core::AccountType::Revenue,
+        "expense" => stateset_core::AccountType::Expense,
+        _ => stateset_core::AccountType::Asset,
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.general_ledger().create_account(stateset_core::CreateGlAccount {
+            account_number: number_str,
+            name: name_str,
+            description: None,
+            account_type: acct_type,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: None,
+            is_posting: None,
+            currency: None,
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(account) => to_json_string(&mut env, &account),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeListAccounts<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.general_ledger().list_accounts(Default::default()).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(accounts) => to_json_string(&mut env, &accounts),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_GeneralLedger_nativeGetTrialBalance<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    // Use today's date as the as_of_date for the trial balance
+    let today = chrono::Utc::now().date_naive();
+    let result = use_handle(ptr, |commerce| {
+        commerce.general_ledger().get_trial_balance(today).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(balance) => to_json_string(&mut env, &balance),
+        Err(e) => { throw_exception(&mut env, &e); JObject::null() }
     }
 }

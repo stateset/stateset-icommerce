@@ -684,7 +684,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     input.customer_id.to_string(),
                     input.order_id.map(|id| id.to_string()),
                     InvoiceStatus::Draft.to_string(),
-                    input.invoice_type.clone().unwrap_or_default().to_string(),
+                    input.invoice_type.unwrap_or_default().to_string(),
                     invoice_date.to_rfc3339(),
                     due_date.to_rfc3339(),
                     input.payment_terms.clone(),

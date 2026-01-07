@@ -544,9 +544,29 @@ impl ForecastingEngine {
             .sum::<Decimal>()
             / Decimal::from((values.len() - 1) as u32);
 
-        // Approximation: use variance directly as std_dev indicator
-        // For proper sqrt, enable rust_decimal/maths feature
-        variance
+        // Babylonian method approximation for sqrt
+        Self::sqrt_approx(variance)
+    }
+
+    /// Approximate square root using Babylonian/Newton's method
+    fn sqrt_approx(n: Decimal) -> Decimal {
+        if n <= dec!(0) {
+            return dec!(0);
+        }
+        // Initial guess
+        let mut x = n / dec!(2);
+        if x == dec!(0) {
+            x = dec!(1);
+        }
+        // Iterate for convergence
+        for _ in 0..20 {
+            let next = (x + n / x) / dec!(2);
+            if (next - x).abs() < dec!(0.0001) {
+                return next.round_dp(4);
+            }
+            x = next;
+        }
+        x.round_dp(4)
     }
 
     /// Linear regression for trend
@@ -658,8 +678,9 @@ mod tests {
             TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), value: d(101) },
         ];
 
-        let anomalies = ForecastingEngine::detect_anomalies_zscore(&data, d(2));
-        assert!(!anomalies.is_empty());
+        // z-score for 500 is about 1.79 given the data spread, so use threshold 1.5
+        let anomalies = ForecastingEngine::detect_anomalies_zscore(&data, dec!(1.5));
+        assert!(!anomalies.is_empty(), "Expected to detect 500 as an anomaly");
         assert_eq!(anomalies[0].anomaly_type, AnomalyType::Spike);
     }
 }

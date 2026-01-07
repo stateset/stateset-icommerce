@@ -65,5 +65,18 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("010_promotions", include_str!("../migrations/010_promotions.sql")),
         ("011_subscriptions", include_str!("../migrations/011_subscriptions.sql")),
         ("012_versioning", include_str!("../migrations/012_versioning.sql")),
+        ("013_quality", include_str!("../migrations/013_quality.sql")),
+        ("014_lots", include_str!("../migrations/014_lots.sql")),
+        ("015_serials", include_str!("../migrations/015_serials.sql")),
+        ("016_warehouse", include_str!("../migrations/016_warehouse.sql")),
+        ("017_receiving", include_str!("../migrations/017_receiving.sql")),
+        ("018_fulfillment", include_str!("../migrations/018_fulfillment.sql")),
+        ("019_accounts_payable", include_str!("../migrations/019_accounts_payable.sql")),
+        ("020_cost_accounting", include_str!("../migrations/020_cost_accounting.sql")),
+        ("021_credit", include_str!("../migrations/021_credit.sql")),
+        ("022_backorder", include_str!("../migrations/022_backorder.sql")),
+        ("023_accounts_receivable", include_str!("../migrations/023_accounts_receivable.sql")),
+        ("024_general_ledger", include_str!("../migrations/024_general_ledger.sql")),
+        ("025_performance_indexes", include_str!("../migrations/025_performance_indexes.sql")),
     ]
 }

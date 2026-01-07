@@ -85,3 +85,4 @@ PAPER.md
 
 # Admin dashboard (not for public release)
 admin/
+.claude/*.local*

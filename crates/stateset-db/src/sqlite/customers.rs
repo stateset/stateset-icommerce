@@ -5,7 +5,7 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
-    validate_batch_size, AddressType, BatchResult, CommerceError, CreateCustomer,
+    validate_batch_size, validate_email, AddressType, BatchResult, CommerceError, CreateCustomer,
     CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter, CustomerRepository,
     CustomerStatus, Result, UpdateCustomer,
 };
@@ -89,6 +89,9 @@ impl SqliteCustomerRepository {
 
 impl CustomerRepository for SqliteCustomerRepository {
     fn create(&self, input: CreateCustomer) -> Result<Customer> {
+        // Validate email format
+        validate_email(&input.email)?;
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let tags = input.tags.clone().unwrap_or_default();
@@ -210,6 +213,7 @@ impl CustomerRepository for SqliteCustomerRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
         if let Some(email) = &input.email {
+            validate_email(email)?;
             updates.push("email = ?");
             params.push(Box::new(email.clone()));
         }

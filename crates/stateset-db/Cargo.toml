@@ -24,6 +24,9 @@ r2d2_sqlite = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
+[dev-dependencies]
+rust_decimal_macros = "1"
+
 [features]
 default = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite"]

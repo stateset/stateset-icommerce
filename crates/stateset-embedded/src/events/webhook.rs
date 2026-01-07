@@ -174,8 +174,8 @@ impl WebhookManager {
     pub fn update(&self, webhook: Webhook) -> bool {
         let id = webhook.id;
         let mut webhooks = self.webhooks.write().unwrap();
-        if webhooks.contains_key(&id) {
-            webhooks.insert(id, webhook);
+        if let std::collections::hash_map::Entry::Occupied(mut e) = webhooks.entry(id) {
+            e.insert(webhook);
             true
         } else {
             false
