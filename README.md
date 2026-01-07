@@ -18,7 +18,7 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **Database Tables** | 53 |
 | **API Methods** | 700+ |
 | **MCP Tools** | 87 |
-| **CLI Programs** | 15 |
+| **CLI Programs** | 25 |
 | **AI Agents** | 8 |
 | **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
 | **Current Version** | 0.1.7 |
@@ -91,10 +91,10 @@ stateset-icommerce/
 │   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # 15 CLI programs (including stateset-sync)
+    ├── bin/                 # 25 CLI programs (including stateset-sync)
     ├── src/                 # MCP server (87 tools)
     ├── src/sync/            # VES sync engine, keys, groups
-    └── .claude/             # 8 AI agents, 7 skills
+    └── .claude/             # 8 AI agents, 6 skills
 ```
 
 ```
@@ -112,7 +112,7 @@ stateset-icommerce/
 │  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  87 MCP     │  │  8 Agents   │  │  7 Skills   │             │
+│  │  87 MCP     │  │  8 Agents   │  │  6 Skills   │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
@@ -1002,14 +1002,14 @@ stateset --apply "add 50 units to SKU-001"
 stateset-icommerce/
 ├── Cargo.toml                 # Workspace manifest
 ├── crates/
-│   ├── stateset-core/         # Domain models (18 domain modules)
+│   ├── stateset-core/         # Domain models (32 domain modules)
 │   │   └── src/models/        # 254 types
 │   ├── stateset-db/           # Database layer
 │   │   ├── src/sqlite/        # 18 SQLite modules
 │   │   ├── src/postgres/      # 8 PostgreSQL modules
-│   │   └── migrations/        # 11 SQL migrations
+│   │   └── migrations/        # 25 SQL migrations
 │   └── stateset-embedded/     # High-level API
-│       └── src/               # 20+ API modules
+│       └── src/               # 33 API modules
 ├── bindings/
 │   ├── node/                  # NAPI bindings (@stateset/embedded)
 │   ├── python/                # PyO3 bindings (stateset-embedded)
@@ -1022,7 +1022,7 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 15 CLI programs (incl. stateset-sync)
+│   ├── bin/                   # 25 CLI programs (incl. stateset-sync)
 │   ├── src/mcp-server.js      # 87 MCP tools
 │   ├── src/sync/              # VES sync engine
 │   │   ├── engine.js          # Sync orchestration
@@ -1033,7 +1033,7 @@ stateset-icommerce/
 │   │   ├── rotation-policy.js # Key rotation policies
 │   │   ├── crypto.js          # VES cryptographic operations
 │   │   └── conflict.js        # Conflict resolution
-│   └── .claude/               # 8 agents, 7 skills
+│   └── .claude/               # 8 agents, 6 skills
 └── examples/
 ```
 
