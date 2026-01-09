@@ -41,6 +41,20 @@ macro_rules! parse_uuid {
     };
 }
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 // ============================================================================
 // Commerce
 // ============================================================================
@@ -474,7 +488,7 @@ impl From<stateset_core::Order> for Order {
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: o.total_amount.to_f64().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(o.total_amount),
             currency: o.currency,
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -487,8 +501,8 @@ impl From<stateset_core::Order> for Order {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_f64().unwrap_or(0.0),
-                    total: i.total.to_f64().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
             version: o.version,
@@ -778,7 +792,7 @@ impl From<stateset_core::Product> for Product {
                     id: v.id.to_string(),
                     sku: v.sku,
                     name: v.name,
-                    price: v.price.to_f64().unwrap_or(0.0),
+                    price: to_f64_or_nan(v.price),
                     compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
                     inventory_quantity: v.inventory_quantity,
                     weight: v.weight.and_then(|w| w.to_f64()),
@@ -884,7 +898,7 @@ impl Products {
             id: v.id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: v.price.to_f64().unwrap_or(0.0),
+            price: to_f64_or_nan(v.price),
             compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
             inventory_quantity: v.inventory_quantity,
             weight: v.weight.and_then(|w| w.to_f64()),
@@ -1151,7 +1165,7 @@ impl From<stateset_core::Return> for Return {
             customer_id: r.customer_id.to_string(),
             status: format!("{}", r.status),
             reason: r.reason,
-            refund_amount: r.refund_amount.to_f64().unwrap_or(0.0),
+            refund_amount: to_f64_or_nan(r.refund_amount),
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
         }
@@ -1901,7 +1915,7 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
             po_number: p.po_number,
             supplier_id: p.supplier_id.to_string(),
             status: format!("{}", p.status),
-            total_amount: p.total_amount.to_f64().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(p.total_amount),
             currency: p.currency,
             expected_delivery: p.expected_delivery.map(|d| d.to_string()),
             created_at: p.created_at.to_rfc3339(),
@@ -2164,11 +2178,11 @@ impl From<stateset_core::Invoice> for Invoice {
             customer_id: i.customer_id.to_string(),
             order_id: i.order_id.map(|o| o.to_string()),
             status: format!("{}", i.status),
-            subtotal: i.subtotal.to_f64().unwrap_or(0.0),
-            tax_amount: i.tax_amount.to_f64().unwrap_or(0.0),
-            total_amount: i.total_amount.to_f64().unwrap_or(0.0),
-            amount_paid: i.amount_paid.to_f64().unwrap_or(0.0),
-            amount_due: i.amount_due.to_f64().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(i.subtotal),
+            tax_amount: to_f64_or_nan(i.tax_amount),
+            total_amount: to_f64_or_nan(i.total_amount),
+            amount_paid: to_f64_or_nan(i.amount_paid),
+            amount_due: to_f64_or_nan(i.amount_due),
             currency: i.currency,
             due_date: i.due_date.map(|d| d.to_string()),
             created_at: i.created_at.to_rfc3339(),
@@ -2316,7 +2330,7 @@ impl Invoices {
                 format!("Failed to get balance: {}", e),
             )
         })?;
-        Ok(balance.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(balance))
     }
 
     fn count(&self) -> Result<i64, Error> {
@@ -2435,7 +2449,7 @@ impl From<stateset_core::BomComponent> for BomComponent {
             bom_id: c.bom_id.to_string(),
             sku: c.sku,
             name: c.name,
-            quantity: c.quantity.to_f64().unwrap_or(0.0),
+            quantity: to_f64_or_nan(c.quantity),
             unit: c.unit,
         }
     }
@@ -2655,8 +2669,8 @@ impl From<stateset_core::WorkOrder> for WorkOrder {
             bom_id: w.bom_id.map(|b| b.to_string()),
             product_id: w.product_id.map(|p| p.to_string()),
             status: format!("{}", w.status),
-            quantity_ordered: w.quantity_ordered.to_f64().unwrap_or(0.0),
-            quantity_completed: w.quantity_completed.to_f64().unwrap_or(0.0),
+            quantity_ordered: to_f64_or_nan(w.quantity_ordered),
+            quantity_completed: to_f64_or_nan(w.quantity_completed),
             priority: format!("{}", w.priority),
             started_at: w.started_at.map(|d| d.to_rfc3339()),
             completed_at: w.completed_at.map(|d| d.to_rfc3339()),
@@ -2906,12 +2920,12 @@ impl From<stateset_core::Cart> for Cart {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_f64().unwrap_or(0.0),
-                    total: i.total.to_f64().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
-            subtotal: c.subtotal.to_f64().unwrap_or(0.0),
-            total: c.total.to_f64().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(c.subtotal),
+            total: to_f64_or_nan(c.total),
             currency: c.currency,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
@@ -3072,9 +3086,9 @@ impl Analytics {
             })?;
 
         Ok(SalesSummary {
-            total_revenue: summary.total_revenue.to_f64().unwrap_or(0.0),
+            total_revenue: to_f64_or_nan(summary.total_revenue),
             total_orders: summary.total_orders,
-            average_order_value: summary.average_order_value.to_f64().unwrap_or(0.0),
+            average_order_value: to_f64_or_nan(summary.average_order_value),
             total_items_sold: summary.total_items_sold,
         })
     }
@@ -3122,7 +3136,7 @@ impl From<stateset_core::ExchangeRate> for ExchangeRate {
             id: r.id.to_string(),
             from_currency: format!("{}", r.from_currency),
             to_currency: format!("{}", r.to_currency),
-            rate: r.rate.to_f64().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             effective_date: r.effective_date.to_string(),
             created_at: r.created_at.to_rfc3339(),
         }
@@ -3200,7 +3214,7 @@ impl CurrencyOps {
                     format!("Failed to convert: {}", e),
                 )
             })?;
-        Ok(result.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(result))
     }
 
     fn base_currency(&self) -> Result<String, Error> {
@@ -3297,7 +3311,7 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             code: p.code,
             name: p.name,
             description: p.description,
-            price: p.price.to_f64().unwrap_or(0.0),
+            price: to_f64_or_nan(p.price),
             currency: p.currency,
             billing_interval: format!("{}", p.billing_interval),
             trial_days: p.trial_days,
@@ -3649,7 +3663,7 @@ impl From<stateset_core::Promotion> for Promotion {
             name: p.name,
             description: p.description,
             discount_type: format!("{}", p.discount_type),
-            discount_value: p.discount_value.to_f64().unwrap_or(0.0),
+            discount_value: to_f64_or_nan(p.discount_value),
             min_purchase: p.min_purchase.and_then(|m| m.to_f64()),
             max_uses: p.max_uses,
             times_used: p.times_used,
@@ -3879,7 +3893,7 @@ impl From<stateset_core::TaxRate> for TaxRate {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             name: r.name,
-            rate: r.rate.to_f64().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             category: format!("{}", r.category),
             created_at: r.created_at.to_rfc3339(),
         }
@@ -3923,7 +3937,7 @@ impl Tax {
                     format!("Failed to calculate: {}", e),
                 )
             })?;
-        Ok(result.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(result))
     }
 
     fn get_effective_rate(
@@ -3949,7 +3963,7 @@ impl Tax {
                     format!("Failed to get rate: {}", e),
                 )
             })?;
-        Ok(rate.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(rate))
     }
 
     fn list_jurisdictions(&self) -> Result<Vec<TaxJurisdiction>, Error> {

@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Commerce, Customers, Orders, Products, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax } = nativeBinding
+const { Commerce, Customers, Orders, Products, Inventory, Returns, Payments, Shipments, Warranties, PurchaseOrders, Invoices, Bom, WorkOrders, Carts, Analytics, CurrencyOperations, Subscriptions, Promotions, Tax, Quality, Lots, Serials, Warehouse, Receiving, Fulfillment, AccountsPayable, AccountsReceivable, CostAccounting, Credit, Backorders, GeneralLedger } = nativeBinding
 
 module.exports.Commerce = Commerce
 module.exports.Customers = Customers
@@ -331,3 +331,15 @@ module.exports.CurrencyOperations = CurrencyOperations
 module.exports.Subscriptions = Subscriptions
 module.exports.Promotions = Promotions
 module.exports.Tax = Tax
+module.exports.Quality = Quality
+module.exports.Lots = Lots
+module.exports.Serials = Serials
+module.exports.Warehouse = Warehouse
+module.exports.Receiving = Receiving
+module.exports.Fulfillment = Fulfillment
+module.exports.AccountsPayable = AccountsPayable
+module.exports.AccountsReceivable = AccountsReceivable
+module.exports.CostAccounting = CostAccounting
+module.exports.Credit = Credit
+module.exports.Backorders = Backorders
+module.exports.GeneralLedger = GeneralLedger

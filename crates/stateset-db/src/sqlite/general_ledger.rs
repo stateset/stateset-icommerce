@@ -1,11 +1,11 @@
 //! SQLite implementation of General Ledger repository
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::map_db_error;
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
-use rusqlite::params;
+use rusqlite::{params, types::Type};
 use stateset_core::{
     AccountStatus, AccountSubType, AccountType, AutoPostingConfig,
     BalanceSide, BalanceSheet, BalanceSheetLine, BatchResult, CreateAutoPostingConfig,
@@ -22,6 +22,38 @@ pub struct SqliteGeneralLedgerRepository {
     pool: Pool<SqliteConnectionManager>,
 }
 
+fn parse_required<T>(value: String, column: usize) -> rusqlite::Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value.parse::<T>().map_err(|err: T::Err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                err.to_string(),
+            )),
+        )
+    })
+}
+
+fn parse_optional<T>(value: Option<String>, column: usize) -> rusqlite::Result<Option<T>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match value {
+        Some(value) => parse_required(value, column).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn parse_decimal_required(value: String, column: usize) -> rusqlite::Result<Decimal> {
+    parse_required(value, column)
+}
+
 impl SqliteGeneralLedgerRepository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -29,101 +61,101 @@ impl SqliteGeneralLedgerRepository {
 
     fn map_account_row(row: &rusqlite::Row) -> rusqlite::Result<GlAccount> {
         Ok(GlAccount {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_required(row.get::<_, String>(0)?, 0)?,
             account_number: row.get(1)?,
             name: row.get(2)?,
             description: row.get(3)?,
-            account_type: row.get::<_, String>(4)?.parse().unwrap_or(AccountType::Asset),
-            account_sub_type: row.get::<_, Option<String>>(5)?.and_then(|s| s.parse().ok()),
-            parent_account_id: row.get::<_, Option<String>>(6)?.and_then(|s| s.parse().ok()),
+            account_type: parse_required(row.get::<_, String>(4)?, 4)?,
+            account_sub_type: parse_optional(row.get::<_, Option<String>>(5)?, 5)?,
+            parent_account_id: parse_optional(row.get::<_, Option<String>>(6)?, 6)?,
             is_header: row.get::<_, i32>(7)? != 0,
             is_posting: row.get::<_, i32>(8)? != 0,
-            normal_balance: row.get::<_, String>(9)?.parse().unwrap_or(BalanceSide::Debit),
+            normal_balance: parse_required(row.get::<_, String>(9)?, 9)?,
             currency: row.get(10)?,
-            status: row.get::<_, String>(11)?.parse().unwrap_or(AccountStatus::Active),
-            current_balance: parse_decimal(&row.get::<_, String>(12)?),
-            created_at: row.get::<_, String>(13)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(14)?.parse().unwrap_or_else(|_| Utc::now()),
+            status: parse_required(row.get::<_, String>(11)?, 11)?,
+            current_balance: parse_decimal_required(row.get::<_, String>(12)?, 12)?,
+            created_at: parse_required(row.get::<_, String>(13)?, 13)?,
+            updated_at: parse_required(row.get::<_, String>(14)?, 14)?,
         })
     }
 
     fn map_period_row(row: &rusqlite::Row) -> rusqlite::Result<GlPeriod> {
         Ok(GlPeriod {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_required(row.get::<_, String>(0)?, 0)?,
             period_name: row.get(1)?,
             fiscal_year: row.get(2)?,
             period_number: row.get(3)?,
-            start_date: row.get::<_, String>(4)?.parse().unwrap_or_else(|_| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
-            end_date: row.get::<_, String>(5)?.parse().unwrap_or_else(|_| NaiveDate::from_ymd_opt(2024, 1, 31).unwrap()),
-            status: row.get::<_, String>(6)?.parse().unwrap_or(PeriodStatus::Future),
-            closed_at: row.get::<_, Option<String>>(7)?.and_then(|s| s.parse().ok()),
+            start_date: parse_required(row.get::<_, String>(4)?, 4)?,
+            end_date: parse_required(row.get::<_, String>(5)?, 5)?,
+            status: parse_required(row.get::<_, String>(6)?, 6)?,
+            closed_at: parse_optional(row.get::<_, Option<String>>(7)?, 7)?,
             closed_by: row.get(8)?,
-            locked_at: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
+            locked_at: parse_optional(row.get::<_, Option<String>>(9)?, 9)?,
             locked_by: row.get(10)?,
-            created_at: row.get::<_, String>(11)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_required(row.get::<_, String>(11)?, 11)?,
+            updated_at: parse_required(row.get::<_, String>(12)?, 12)?,
         })
     }
 
     fn map_journal_entry_row(row: &rusqlite::Row) -> rusqlite::Result<JournalEntry> {
         Ok(JournalEntry {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_required(row.get::<_, String>(0)?, 0)?,
             entry_number: row.get(1)?,
-            entry_date: row.get::<_, String>(2)?.parse().unwrap_or_else(|_| NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
-            period_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            entry_type: row.get::<_, String>(4)?.parse().unwrap_or(JournalEntryType::Standard),
-            source: row.get::<_, String>(5)?.parse().unwrap_or(JournalEntrySource::Manual),
+            entry_date: parse_required(row.get::<_, String>(2)?, 2)?,
+            period_id: parse_required(row.get::<_, String>(3)?, 3)?,
+            entry_type: parse_required(row.get::<_, String>(4)?, 4)?,
+            source: parse_required(row.get::<_, String>(5)?, 5)?,
             source_document_type: row.get(6)?,
-            source_document_id: row.get::<_, Option<String>>(7)?.and_then(|s| s.parse().ok()),
+            source_document_id: parse_optional(row.get::<_, Option<String>>(7)?, 7)?,
             description: row.get(8)?,
-            total_debits: parse_decimal(&row.get::<_, String>(9)?),
-            total_credits: parse_decimal(&row.get::<_, String>(10)?),
+            total_debits: parse_decimal_required(row.get::<_, String>(9)?, 9)?,
+            total_credits: parse_decimal_required(row.get::<_, String>(10)?, 10)?,
             is_balanced: row.get::<_, i32>(11)? != 0,
-            status: row.get::<_, String>(12)?.parse().unwrap_or(JournalEntryStatus::Draft),
-            posted_at: row.get::<_, Option<String>>(13)?.and_then(|s| s.parse().ok()),
+            status: parse_required(row.get::<_, String>(12)?, 12)?,
+            posted_at: parse_optional(row.get::<_, Option<String>>(13)?, 13)?,
             posted_by: row.get(14)?,
-            reversed_entry_id: row.get::<_, Option<String>>(15)?.and_then(|s| s.parse().ok()),
-            reversing_entry_id: row.get::<_, Option<String>>(16)?.and_then(|s| s.parse().ok()),
+            reversed_entry_id: parse_optional(row.get::<_, Option<String>>(15)?, 15)?,
+            reversing_entry_id: parse_optional(row.get::<_, Option<String>>(16)?, 16)?,
             lines: Vec::new(),
-            created_at: row.get::<_, String>(17)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(18)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_required(row.get::<_, String>(17)?, 17)?,
+            updated_at: parse_required(row.get::<_, String>(18)?, 18)?,
         })
     }
 
     fn map_journal_entry_line_row(row: &rusqlite::Row) -> rusqlite::Result<JournalEntryLine> {
         Ok(JournalEntryLine {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            journal_entry_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
+            id: parse_required(row.get::<_, String>(0)?, 0)?,
+            journal_entry_id: parse_required(row.get::<_, String>(1)?, 1)?,
             line_number: row.get(2)?,
-            account_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
+            account_id: parse_required(row.get::<_, String>(3)?, 3)?,
             account_number: row.get(4)?,
             account_name: row.get(5)?,
             description: row.get(6)?,
-            debit_amount: parse_decimal(&row.get::<_, String>(7)?),
-            credit_amount: parse_decimal(&row.get::<_, String>(8)?),
+            debit_amount: parse_decimal_required(row.get::<_, String>(7)?, 7)?,
+            credit_amount: parse_decimal_required(row.get::<_, String>(8)?, 8)?,
             currency: row.get(9)?,
             reference_type: row.get(10)?,
-            reference_id: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            reference_id: parse_optional(row.get::<_, Option<String>>(11)?, 11)?,
+            created_at: parse_required(row.get::<_, String>(12)?, 12)?,
         })
     }
 
     fn map_auto_posting_config_row(row: &rusqlite::Row) -> rusqlite::Result<AutoPostingConfig> {
         Ok(AutoPostingConfig {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_required(row.get::<_, String>(0)?, 0)?,
             config_name: row.get(1)?,
-            cash_account_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            accounts_receivable_account_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            inventory_account_id: row.get::<_, String>(4)?.parse().unwrap_or_default(),
-            accounts_payable_account_id: row.get::<_, String>(5)?.parse().unwrap_or_default(),
-            unearned_revenue_account_id: row.get::<_, Option<String>>(6)?.and_then(|s| s.parse().ok()),
-            sales_revenue_account_id: row.get::<_, String>(7)?.parse().unwrap_or_default(),
-            shipping_revenue_account_id: row.get::<_, Option<String>>(8)?.and_then(|s| s.parse().ok()),
-            cogs_account_id: row.get::<_, String>(9)?.parse().unwrap_or_default(),
-            bad_debt_expense_account_id: row.get::<_, Option<String>>(10)?.and_then(|s| s.parse().ok()),
+            cash_account_id: parse_required(row.get::<_, String>(2)?, 2)?,
+            accounts_receivable_account_id: parse_required(row.get::<_, String>(3)?, 3)?,
+            inventory_account_id: parse_required(row.get::<_, String>(4)?, 4)?,
+            accounts_payable_account_id: parse_required(row.get::<_, String>(5)?, 5)?,
+            unearned_revenue_account_id: parse_optional(row.get::<_, Option<String>>(6)?, 6)?,
+            sales_revenue_account_id: parse_required(row.get::<_, String>(7)?, 7)?,
+            shipping_revenue_account_id: parse_optional(row.get::<_, Option<String>>(8)?, 8)?,
+            cogs_account_id: parse_required(row.get::<_, String>(9)?, 9)?,
+            bad_debt_expense_account_id: parse_optional(row.get::<_, Option<String>>(10)?, 10)?,
             is_active: row.get::<_, i32>(11)? != 0,
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(13)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_required(row.get::<_, String>(12)?, 12)?,
+            updated_at: parse_required(row.get::<_, String>(13)?, 13)?,
         })
     }
 
@@ -914,8 +946,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let amount = parse_decimal(&total);
-        let entry_date: NaiveDate = invoice_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(invoice_date, 1).map_err(map_db_error)?;
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -953,8 +985,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let amount = parse_decimal(&amount_str);
-        let entry_date: NaiveDate = payment_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -992,8 +1024,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let amount = parse_decimal(&total);
-        let entry_date: NaiveDate = bill_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(bill_date, 1).map_err(map_db_error)?;
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1031,8 +1063,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let amount = parse_decimal(&amount_str);
-        let entry_date: NaiveDate = payment_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1070,8 +1102,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(map_db_error)?;
 
-        let cost = parse_decimal(&cost_str);
-        let entry_date: NaiveDate = transaction_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let cost = parse_decimal_required(cost_str, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(transaction_date, 1).map_err(map_db_error)?;
 
         let (debit_account, credit_account) = if transaction_type == "sale" {
             (config.cogs_account_id, config.inventory_account_id)
@@ -1120,8 +1152,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let amount = parse_decimal(&amount_str);
-        let entry_date: NaiveDate = write_off_date.parse().unwrap_or_else(|_| Utc::now().date_naive());
+        let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
+        let entry_date: NaiveDate = parse_required(write_off_date, 1).map_err(map_db_error)?;
 
         self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date,
@@ -1160,8 +1192,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         ).map_err(map_db_error)?;
 
         let rows = stmt.query_map([], |row| {
-            let balance = parse_decimal(&row.get::<_, String>(5)?);
-            let normal_balance: BalanceSide = row.get::<_, String>(4)?.parse().unwrap_or(BalanceSide::Debit);
+            let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+            let normal_balance: BalanceSide = parse_required(row.get::<_, String>(4)?, 4)?;
 
             let (debit_balance, credit_balance) = match normal_balance {
                 BalanceSide::Debit => (balance, Decimal::ZERO),
@@ -1169,10 +1201,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             };
 
             Ok(TrialBalanceLine {
-                account_id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                account_id: parse_required(row.get::<_, String>(0)?, 0)?,
                 account_number: row.get(1)?,
                 account_name: row.get(2)?,
-                account_type: row.get::<_, String>(3)?.parse().unwrap_or(AccountType::Asset),
+                account_type: parse_required(row.get::<_, String>(3)?, 3)?,
                 debit_balance,
                 credit_balance,
             })
@@ -1218,8 +1250,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         ).map_err(map_db_error)?;
 
         let rows = stmt.query_map([], |row| {
-            let balance = parse_decimal(&row.get::<_, String>(5)?);
-            let normal_balance: BalanceSide = row.get::<_, String>(6)?.parse().unwrap_or(BalanceSide::Debit);
+            let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+            let normal_balance: BalanceSide = parse_required(row.get::<_, String>(6)?, 6)?;
 
             let display_balance = match normal_balance {
                 BalanceSide::Debit => balance,
@@ -1227,39 +1259,39 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             };
 
             Ok((
-                row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                parse_required(row.get::<_, String>(0)?, 0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
+                parse_required(row.get::<_, String>(3)?, 3)?,
+                parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
                 display_balance,
             ))
         }).map_err(map_db_error)?;
 
         for row in rows {
-            let (id, number, name, account_type, sub_type, balance): (Uuid, String, String, String, Option<String>, Decimal)
+            let (id, number, name, account_type, sub_type, balance): (Uuid, String, String, AccountType, Option<AccountSubType>, Decimal)
                 = row.map_err(map_db_error)?;
 
             let line = BalanceSheetLine {
                 account_id: id,
                 account_number: number,
                 account_name: name,
-                account_sub_type: sub_type.and_then(|s| s.parse().ok()),
+                account_sub_type: sub_type,
                 balance,
                 indent_level: 0,
                 is_total: false,
             };
 
-            match account_type.as_str() {
-                "asset" => {
+            match account_type {
+                AccountType::Asset => {
                     total_assets += balance;
                     assets.push(line);
                 },
-                "liability" => {
+                AccountType::Liability => {
                     total_liabilities += balance;
                     liabilities.push(line);
                 },
-                "equity" => {
+                AccountType::Equity => {
                     total_equity += balance;
                     equity.push(line);
                 },
@@ -1303,29 +1335,29 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         ).map_err(map_db_error)?;
 
         let rows = stmt.query_map(params![start_date.to_string(), end_date.to_string()], |row| {
-            let total_debits = parse_decimal(&row.get::<_, String>(5)?);
-            let total_credits = parse_decimal(&row.get::<_, String>(6)?);
-            let account_type: String = row.get(3)?;
+            let total_debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+            let total_credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
+            let account_type: AccountType = parse_required(row.get::<_, String>(3)?, 3)?;
 
             // Revenue has credit normal balance, expense has debit
-            let amount = if account_type == "revenue" {
-                total_credits - total_debits
-            } else {
-                total_debits - total_credits
+            let amount = match account_type {
+                AccountType::Revenue => total_credits - total_debits,
+                AccountType::Expense => total_debits - total_credits,
+                _ => Decimal::ZERO,
             };
 
             Ok((
-                row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                parse_required(row.get::<_, String>(0)?, 0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 account_type,
-                row.get::<_, Option<String>>(4)?,
+                parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
                 amount,
             ))
         }).map_err(map_db_error)?;
 
         for row in rows {
-            let (id, number, name, account_type, sub_type, amount): (Uuid, String, String, String, Option<String>, Decimal)
+            let (id, number, name, account_type, sub_type, amount): (Uuid, String, String, AccountType, Option<AccountSubType>, Decimal)
                 = row.map_err(map_db_error)?;
 
             if amount == Decimal::ZERO {
@@ -1336,18 +1368,18 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 account_id: id,
                 account_number: number,
                 account_name: name,
-                account_sub_type: sub_type.and_then(|s| s.parse().ok()),
+                account_sub_type: sub_type,
                 amount,
                 indent_level: 0,
                 is_total: false,
             };
 
-            match account_type.as_str() {
-                "revenue" => {
+            match account_type {
+                AccountType::Revenue => {
                     total_revenue += amount;
                     revenue_lines.push(line);
                 },
-                "expense" => {
+                AccountType::Expense => {
                     total_expenses += amount;
                     expense_lines.push(line);
                 },

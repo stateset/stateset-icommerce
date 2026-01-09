@@ -35,6 +35,20 @@ macro_rules! parse_uuid {
     };
 }
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 // ============================================================================
 // Commerce
 // ============================================================================
@@ -501,7 +515,7 @@ impl From<stateset_core::Order> for Order {
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: o.total_amount.to_f64().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(o.total_amount),
             currency: o.currency,
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -514,8 +528,8 @@ impl From<stateset_core::Order> for Order {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_f64().unwrap_or(0.0),
-                    total: i.total.to_f64().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
             version: o.version,
@@ -834,7 +848,7 @@ impl From<stateset_core::Product> for Product {
                     id: v.id.to_string(),
                     sku: v.sku,
                     name: v.name,
-                    price: v.price.to_f64().unwrap_or(0.0),
+                    price: to_f64_or_nan(v.price),
                     compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
                     inventory_quantity: v.inventory_quantity,
                     weight: v.weight.and_then(|w| w.to_f64()),
@@ -928,7 +942,7 @@ impl Products {
             id: v.id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: v.price.to_f64().unwrap_or(0.0),
+            price: to_f64_or_nan(v.price),
             compare_at_price: v.compare_at_price.and_then(|p| p.to_f64()),
             inventory_quantity: v.inventory_quantity,
             weight: v.weight.and_then(|w| w.to_f64()),
@@ -1207,7 +1221,7 @@ impl From<stateset_core::Return> for Return {
             customer_id: r.customer_id.to_string(),
             status: format!("{}", r.status),
             reason: r.reason,
-            refund_amount: r.refund_amount.to_f64().unwrap_or(0.0),
+            refund_amount: to_f64_or_nan(r.refund_amount),
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
         }
@@ -1447,12 +1461,12 @@ impl From<stateset_core::Cart> for Cart {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_f64().unwrap_or(0.0),
-                    total: i.total.to_f64().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
-            subtotal: c.subtotal.to_f64().unwrap_or(0.0),
-            total: c.total.to_f64().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(c.subtotal),
+            total: to_f64_or_nan(c.total),
             currency: c.currency,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
@@ -1602,9 +1616,9 @@ impl Analytics {
             .map_err(|e| PhpException::default(format!("Failed to get sales summary: {}", e)))?;
 
         Ok(SalesSummary {
-            total_revenue: summary.total_revenue.to_f64().unwrap_or(0.0),
+            total_revenue: to_f64_or_nan(summary.total_revenue),
             total_orders: summary.total_orders,
-            average_order_value: summary.average_order_value.to_f64().unwrap_or(0.0),
+            average_order_value: to_f64_or_nan(summary.average_order_value),
             total_items_sold: summary.total_items_sold,
         })
     }
@@ -2246,7 +2260,7 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
             po_number: p.po_number,
             supplier_id: p.supplier_id.to_string(),
             status: format!("{}", p.status),
-            total_amount: p.total_amount.to_f64().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(p.total_amount),
             currency: p.currency,
             expected_date: p.expected_date.map(|d| d.to_rfc3339()),
             created_at: p.created_at.to_rfc3339(),
@@ -2515,9 +2529,9 @@ impl From<stateset_core::Invoice> for Invoice {
             customer_id: i.customer_id.to_string(),
             order_id: i.order_id.map(|id| id.to_string()),
             status: format!("{}", i.status),
-            subtotal: i.subtotal.to_f64().unwrap_or(0.0),
-            tax: i.tax.to_f64().unwrap_or(0.0),
-            total: i.total.to_f64().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(i.subtotal),
+            tax: to_f64_or_nan(i.tax),
+            total: to_f64_or_nan(i.total),
             currency: i.currency,
             due_date: i.due_date.map(|d| d.to_rfc3339()),
             paid_at: i.paid_at.map(|d| d.to_rfc3339()),
@@ -2650,7 +2664,7 @@ impl Invoices {
             .customer_balance(uuid)
             .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
 
-        Ok(balance.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(balance))
     }
 
     pub fn count(&self) -> PhpResult<i64> {
@@ -2714,7 +2728,7 @@ impl From<stateset_core::BomComponent> for BomComponent {
             bom_id: c.bom_id.to_string(),
             component_sku: c.component_sku,
             quantity: c.quantity,
-            unit_cost: c.unit_cost.to_f64().unwrap_or(0.0),
+            unit_cost: to_f64_or_nan(c.unit_cost),
         }
     }
 }
@@ -2790,7 +2804,7 @@ impl From<stateset_core::BillOfMaterials> for BillOfMaterials {
             name: b.name,
             version: b.version,
             status: format!("{}", b.status),
-            total_cost: b.total_cost.to_f64().unwrap_or(0.0),
+            total_cost: to_f64_or_nan(b.total_cost),
             created_at: b.created_at.to_rfc3339(),
             updated_at: b.updated_at.to_rfc3339(),
         }
@@ -3196,7 +3210,7 @@ impl From<stateset_core::ExchangeRate> for ExchangeRate {
         Self {
             from_currency: r.from_currency,
             to_currency: r.to_currency,
-            rate: r.rate.to_f64().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             updated_at: r.updated_at.to_rfc3339(),
         }
     }
@@ -3253,7 +3267,7 @@ impl CurrencyOps {
             .convert(decimal_amount, &from, &to)
             .map_err(|e| PhpException::default(format!("Failed to convert: {}", e)))?;
 
-        Ok(converted.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(converted))
     }
 
     pub fn base_currency(&self) -> PhpResult<String> {
@@ -3369,7 +3383,7 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             id: p.id.to_string(),
             name: p.name,
             description: p.description,
-            price: p.price.to_f64().unwrap_or(0.0),
+            price: to_f64_or_nan(p.price),
             currency: p.currency,
             interval: format!("{}", p.interval),
             interval_count: p.interval_count,
@@ -3725,7 +3739,7 @@ impl From<stateset_core::Promotion> for Promotion {
             name: p.name,
             description: p.description,
             discount_type: format!("{}", p.discount_type),
-            discount_value: p.discount_value.to_f64().unwrap_or(0.0),
+            discount_value: to_f64_or_nan(p.discount_value),
             min_purchase: p.min_purchase.and_then(|m| m.to_f64()),
             max_uses: p.max_uses,
             uses_count: p.uses_count,
@@ -3985,7 +3999,7 @@ impl From<stateset_core::TaxRate> for TaxRate {
             id: r.id.to_string(),
             jurisdiction_id: r.jurisdiction_id.to_string(),
             name: r.name,
-            rate: r.rate.to_f64().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             tax_type: format!("{}", r.tax_type),
             status: format!("{}", r.status),
         }
@@ -4010,7 +4024,7 @@ impl Tax {
             .calculate(decimal_amount, uuid)
             .map_err(|e| PhpException::default(format!("Failed to calculate tax: {}", e)))?;
 
-        Ok(tax.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(tax))
     }
 
     pub fn get_effective_rate(&self, jurisdiction_id: String) -> PhpResult<f64> {
@@ -4022,7 +4036,7 @@ impl Tax {
             .get_effective_rate(uuid)
             .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
 
-        Ok(rate.to_f64().unwrap_or(0.0))
+        Ok(to_f64_or_nan(rate))
     }
 
     pub fn list_jurisdictions(&self) -> PhpResult<Vec<TaxJurisdiction>> {

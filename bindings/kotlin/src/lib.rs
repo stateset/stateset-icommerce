@@ -64,6 +64,20 @@ fn throw_exception(env: &mut JNIEnv, msg: &str) {
     let _ = env.throw_new("com/stateset/embedded/StateSetException", msg);
 }
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 fn to_json_string<'a>(env: &mut JNIEnv<'a>, value: &impl serde::Serialize) -> JObject<'a> {
     match serde_json::to_string(value) {
         Ok(json) => env.new_string(&json).map(|s| s.into()).unwrap_or(JObject::null()),
@@ -1184,7 +1198,7 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeArGetDs
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(dso) => dso.to_string().parse().unwrap_or(0.0),
+        Ok(dso) => to_f64_or_nan(dso),
         Err(_) => 0.0,
     }
 }

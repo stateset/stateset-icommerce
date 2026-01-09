@@ -8,6 +8,20 @@ use stateset_embedded::Commerce as RustCommerce;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 /// JavaScript-friendly Commerce instance
 #[napi]
 pub struct Commerce {
@@ -447,7 +461,7 @@ impl From<stateset_core::Order> for OrderOutput {
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: o.total_amount.to_string().parse().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(o.total_amount),
             currency: o.currency,
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -460,8 +474,8 @@ impl From<stateset_core::Order> for OrderOutput {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_string().parse().unwrap_or(0.0),
-                    total: i.total.to_string().parse().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
             version: o.version,
@@ -683,8 +697,8 @@ impl From<stateset_core::ProductVariant> for ProductVariantOutput {
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: v.price.to_string().parse().unwrap_or(0.0),
-            compare_at_price: v.compare_at_price.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            price: to_f64_or_nan(v.price),
+            compare_at_price: v.compare_at_price.map(|d| to_f64_or_nan(d)),
             is_default: v.is_default,
         }
     }
@@ -830,9 +844,9 @@ impl From<stateset_core::StockLevel> for StockLevelOutput {
         Self {
             sku: s.sku,
             name: s.name,
-            total_on_hand: s.total_on_hand.to_string().parse().unwrap_or(0.0),
-            total_allocated: s.total_allocated.to_string().parse().unwrap_or(0.0),
-            total_available: s.total_available.to_string().parse().unwrap_or(0.0),
+            total_on_hand: to_f64_or_nan(s.total_on_hand),
+            total_allocated: to_f64_or_nan(s.total_allocated),
+            total_available: to_f64_or_nan(s.total_available),
         }
     }
 }
@@ -851,7 +865,7 @@ impl From<stateset_core::InventoryReservation> for ReservationOutput {
         Self {
             id: r.id.to_string(),
             item_id: r.item_id,
-            quantity: r.quantity.to_string().parse().unwrap_or(0.0),
+            quantity: to_f64_or_nan(r.quantity),
             status: format!("{}", r.status),
         }
     }
@@ -1167,7 +1181,7 @@ impl From<stateset_core::Payment> for PaymentOutput {
             order_id: p.order_id.map(|id| id.to_string()),
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
-            amount: p.amount.to_string().parse().unwrap_or(0.0),
+            amount: to_f64_or_nan(p.amount),
             currency: p.currency,
             status: format!("{}", p.status),
             version: p.version,
@@ -1203,7 +1217,7 @@ impl From<stateset_core::Refund> for RefundOutput {
             id: r.id.to_string(),
             refund_number: r.refund_number,
             payment_id: r.payment_id.to_string(),
-            amount: r.amount.to_string().parse().unwrap_or(0.0),
+            amount: to_f64_or_nan(r.amount),
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
@@ -1889,8 +1903,8 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
-            subtotal: po.subtotal.to_string().parse().unwrap_or(0.0),
-            total: po.total.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(po.subtotal),
+            total: to_f64_or_nan(po.total),
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
         }
@@ -2129,10 +2143,10 @@ impl From<stateset_core::Invoice> for InvoiceOutput {
             customer_id: inv.customer_id.to_string(),
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
-            subtotal: inv.subtotal.to_string().parse().unwrap_or(0.0),
-            tax_amount: inv.tax_amount.to_string().parse().unwrap_or(0.0),
-            total: inv.total.to_string().parse().unwrap_or(0.0),
-            amount_paid: inv.amount_paid.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(inv.subtotal),
+            tax_amount: to_f64_or_nan(inv.tax_amount),
+            total: to_f64_or_nan(inv.total),
+            amount_paid: to_f64_or_nan(inv.amount_paid),
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
             updated_at: inv.updated_at.to_rfc3339(),
@@ -2365,7 +2379,7 @@ impl From<stateset_core::BomComponent> for BomComponentOutput {
             bom_id: c.bom_id.to_string(),
             component_sku: c.component_sku,
             name: c.name,
-            quantity: c.quantity.to_string().parse().unwrap_or(0.0),
+            quantity: to_f64_or_nan(c.quantity),
             unit_of_measure: c.unit_of_measure,
         }
     }
@@ -2529,8 +2543,8 @@ impl From<stateset_core::WorkOrder> for WorkOrderOutput {
             bom_id: wo.bom_id.map(|id| id.to_string()),
             status: format!("{}", wo.status),
             priority: format!("{}", wo.priority),
-            quantity_to_build: wo.quantity_to_build.to_string().parse().unwrap_or(0.0),
-            quantity_completed: wo.quantity_completed.to_string().parse().unwrap_or(0.0),
+            quantity_to_build: to_f64_or_nan(wo.quantity_to_build),
+            quantity_completed: to_f64_or_nan(wo.quantity_completed),
             version: wo.version,
             created_at: wo.created_at.to_rfc3339(),
             updated_at: wo.updated_at.to_rfc3339(),
@@ -2783,11 +2797,11 @@ impl From<stateset_core::CartItem> for CartItemOutput {
             description: item.description,
             image_url: item.image_url,
             quantity: item.quantity,
-            unit_price: item.unit_price.to_string().parse().unwrap_or(0.0),
-            original_price: item.original_price.map(|p| p.to_string().parse().unwrap_or(0.0)),
-            discount_amount: item.discount_amount.to_string().parse().unwrap_or(0.0),
-            tax_amount: item.tax_amount.to_string().parse().unwrap_or(0.0),
-            total: item.total.to_string().parse().unwrap_or(0.0),
+            unit_price: to_f64_or_nan(item.unit_price),
+            original_price: item.original_price.map(|p| to_f64_or_nan(p)),
+            discount_amount: to_f64_or_nan(item.discount_amount),
+            tax_amount: to_f64_or_nan(item.tax_amount),
+            total: to_f64_or_nan(item.total),
             requires_shipping: item.requires_shipping,
             created_at: item.created_at.to_rfc3339(),
             updated_at: item.updated_at.to_rfc3339(),
@@ -2872,11 +2886,11 @@ impl From<stateset_core::Cart> for CartOutput {
             customer_id: cart.customer_id.map(|id| id.to_string()),
             status: format!("{}", cart.status),
             currency: cart.currency,
-            subtotal: cart.subtotal.to_string().parse().unwrap_or(0.0),
-            tax_amount: cart.tax_amount.to_string().parse().unwrap_or(0.0),
-            shipping_amount: cart.shipping_amount.to_string().parse().unwrap_or(0.0),
-            discount_amount: cart.discount_amount.to_string().parse().unwrap_or(0.0),
-            grand_total: cart.grand_total.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(cart.subtotal),
+            tax_amount: to_f64_or_nan(cart.tax_amount),
+            shipping_amount: to_f64_or_nan(cart.shipping_amount),
+            discount_amount: to_f64_or_nan(cart.discount_amount),
+            grand_total: to_f64_or_nan(cart.grand_total),
             customer_email: cart.customer_email,
             customer_phone: cart.customer_phone,
             customer_name: cart.customer_name,
@@ -2917,7 +2931,7 @@ impl From<stateset_core::CheckoutResult> for CheckoutResultOutput {
             order_id: result.order_id.to_string(),
             order_number: result.order_number,
             payment_id: result.payment_id.map(|id| id.to_string()),
-            total_charged: result.total_charged.to_string().parse().unwrap_or(0.0),
+            total_charged: to_f64_or_nan(result.total_charged),
             currency: result.currency,
         }
     }
@@ -2942,7 +2956,7 @@ impl From<stateset_core::ShippingRate> for ShippingRateOutput {
             carrier: rate.carrier,
             service: rate.service,
             description: rate.description,
-            price: rate.price.to_string().parse().unwrap_or(0.0),
+            price: to_f64_or_nan(rate.price),
             currency: rate.currency,
             estimated_days: rate.estimated_days,
         }
@@ -3763,9 +3777,9 @@ impl Analytics {
             .map_err(|e| Error::from_reason(format!("Failed to get sales summary: {}", e)))?;
 
         Ok(SalesSummaryOutput {
-            total_revenue: summary.total_revenue.to_string().parse().unwrap_or(0.0),
+            total_revenue: to_f64_or_nan(summary.total_revenue),
             order_count: summary.order_count as u32,
-            average_order_value: summary.average_order_value.to_string().parse().unwrap_or(0.0),
+            average_order_value: to_f64_or_nan(summary.average_order_value),
             items_sold: summary.items_sold as u32,
             unique_customers: summary.unique_customers as u32,
         })
@@ -3793,7 +3807,7 @@ impl Analytics {
 
         Ok(revenue.into_iter().map(|r| RevenueByPeriodOutput {
             period: r.period,
-            revenue: r.revenue.to_string().parse().unwrap_or(0.0),
+            revenue: to_f64_or_nan(r.revenue),
             order_count: r.order_count as u32,
             period_start: r.period_start.to_rfc3339(),
         }).collect())
@@ -3824,7 +3838,7 @@ impl Analytics {
             sku: p.sku,
             name: p.name,
             units_sold: p.units_sold as u32,
-            revenue: p.revenue.to_string().parse().unwrap_or(0.0),
+            revenue: to_f64_or_nan(p.revenue),
             order_count: p.order_count as u32,
         }).collect())
     }
@@ -3856,11 +3870,11 @@ impl Analytics {
                 sku: p.sku,
                 name: p.name,
                 units_sold: p.units_sold as u32,
-                revenue: p.revenue.to_string().parse().unwrap_or(0.0),
+                revenue: to_f64_or_nan(p.revenue),
                 previous_units_sold: p.previous_units_sold as u32,
-                previous_revenue: p.previous_revenue.to_string().parse().unwrap_or(0.0),
-                units_growth_percent: p.units_growth_percent.to_string().parse().unwrap_or(0.0),
-                revenue_growth_percent: p.revenue_growth_percent.to_string().parse().unwrap_or(0.0),
+                previous_revenue: to_f64_or_nan(p.previous_revenue),
+                units_growth_percent: to_f64_or_nan(p.units_growth_percent),
+                revenue_growth_percent: to_f64_or_nan(p.revenue_growth_percent),
             })
             .collect())
     }
@@ -3886,8 +3900,8 @@ impl Analytics {
             total_customers: metrics.total_customers as u32,
             new_customers: metrics.new_customers as u32,
             returning_customers: metrics.returning_customers as u32,
-            average_lifetime_value: metrics.average_lifetime_value.to_string().parse().unwrap_or(0.0),
-            average_orders_per_customer: metrics.average_orders_per_customer.to_string().parse().unwrap_or(0.0),
+            average_lifetime_value: to_f64_or_nan(metrics.average_lifetime_value),
+            average_orders_per_customer: to_f64_or_nan(metrics.average_orders_per_customer),
         })
     }
 
@@ -3916,8 +3930,8 @@ impl Analytics {
             name: c.name,
             email: c.email,
             order_count: c.order_count as u32,
-            total_spent: c.total_spent.to_string().parse().unwrap_or(0.0),
-            average_order_value: c.average_order_value.to_string().parse().unwrap_or(0.0),
+            total_spent: to_f64_or_nan(c.total_spent),
+            average_order_value: to_f64_or_nan(c.average_order_value),
         }).collect())
     }
 
@@ -3936,7 +3950,7 @@ impl Analytics {
             in_stock_skus: health.in_stock_skus as u32,
             low_stock_skus: health.low_stock_skus as u32,
             out_of_stock_skus: health.out_of_stock_skus as u32,
-            total_value: health.total_value.to_string().parse().unwrap_or(0.0),
+            total_value: to_f64_or_nan(health.total_value),
         })
     }
 
@@ -3955,12 +3969,12 @@ impl Analytics {
         Ok(items.into_iter().map(|i| LowStockItemOutput {
             sku: i.sku,
             name: i.name,
-            on_hand: i.on_hand.to_string().parse().unwrap_or(0.0),
-            allocated: i.allocated.to_string().parse().unwrap_or(0.0),
-            available: i.available.to_string().parse().unwrap_or(0.0),
-            reorder_point: i.reorder_point.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            average_daily_sales: i.average_daily_sales.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            days_of_stock: i.days_of_stock.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            on_hand: to_f64_or_nan(i.on_hand),
+            allocated: to_f64_or_nan(i.allocated),
+            available: to_f64_or_nan(i.available),
+            reorder_point: i.reorder_point.map(|d| to_f64_or_nan(d)),
+            average_daily_sales: i.average_daily_sales.map(|d| to_f64_or_nan(d)),
+            days_of_stock: i.days_of_stock.map(|d| to_f64_or_nan(d)),
         }).collect())
     }
 
@@ -4008,12 +4022,12 @@ impl Analytics {
         Ok(forecasts.into_iter().map(|f| DemandForecastOutput {
             sku: f.sku,
             name: f.name,
-            average_daily_demand: f.average_daily_demand.to_string().parse().unwrap_or(0.0),
-            forecasted_demand: f.forecasted_demand.to_string().parse().unwrap_or(0.0),
-            confidence: f.confidence.to_string().parse().unwrap_or(0.0),
-            current_stock: f.current_stock.to_string().parse().unwrap_or(0.0),
+            average_daily_demand: to_f64_or_nan(f.average_daily_demand),
+            forecasted_demand: to_f64_or_nan(f.forecasted_demand),
+            confidence: to_f64_or_nan(f.confidence),
+            current_stock: to_f64_or_nan(f.current_stock),
             days_until_stockout: f.days_until_stockout,
-            recommended_reorder_qty: f.recommended_reorder_qty.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            recommended_reorder_qty: f.recommended_reorder_qty.map(|d| to_f64_or_nan(d)),
             trend: format!("{:?}", f.trend),
         }).collect())
     }
@@ -4032,10 +4046,10 @@ impl Analytics {
 
         Ok(forecasts.into_iter().map(|f| RevenueForecastOutput {
             period: f.period,
-            forecasted_revenue: f.forecasted_revenue.to_string().parse().unwrap_or(0.0),
-            lower_bound: f.lower_bound.to_string().parse().unwrap_or(0.0),
-            upper_bound: f.upper_bound.to_string().parse().unwrap_or(0.0),
-            confidence_level: f.confidence_level.to_string().parse().unwrap_or(0.0),
+            forecasted_revenue: to_f64_or_nan(f.forecasted_revenue),
+            lower_bound: to_f64_or_nan(f.lower_bound),
+            upper_bound: to_f64_or_nan(f.upper_bound),
+            confidence_level: to_f64_or_nan(f.confidence_level),
             based_on_periods: f.based_on_periods,
         }).collect())
     }
@@ -4088,16 +4102,16 @@ impl Analytics {
         Ok(FulfillmentMetricsOutput {
             avg_time_to_ship_hours: metrics
                 .avg_time_to_ship_hours
-                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+                .map(|d| to_f64_or_nan(d)),
             avg_time_to_deliver_hours: metrics
                 .avg_time_to_deliver_hours
-                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+                .map(|d| to_f64_or_nan(d)),
             on_time_shipping_percent: metrics
                 .on_time_shipping_percent
-                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+                .map(|d| to_f64_or_nan(d)),
             on_time_delivery_percent: metrics
                 .on_time_delivery_percent
-                .map(|d| d.to_string().parse().unwrap_or(0.0)),
+                .map(|d| to_f64_or_nan(d)),
             shipped_today: metrics.shipped_today as u32,
             awaiting_shipment: metrics.awaiting_shipment as u32,
         })
@@ -4122,8 +4136,8 @@ impl Analytics {
 
         Ok(ReturnMetricsOutput {
             total_returns: metrics.total_returns as u32,
-            return_rate_percent: metrics.return_rate_percent.to_string().parse().unwrap_or(0.0),
-            total_refunded: metrics.total_refunded.to_string().parse().unwrap_or(0.0),
+            return_rate_percent: to_f64_or_nan(metrics.return_rate_percent),
+            total_refunded: to_f64_or_nan(metrics.total_refunded),
         })
     }
 }
@@ -4243,7 +4257,7 @@ fn exchange_rate_to_output(rate: stateset_embedded::ExchangeRate) -> ExchangeRat
         id: rate.id.to_string(),
         base_currency: rate.base_currency.code().to_string(),
         quote_currency: rate.quote_currency.code().to_string(),
-        rate: rate.rate.to_string().parse().unwrap_or(0.0),
+        rate: to_f64_or_nan(rate.rate),
         source: rate.source,
         rate_at: rate.rate_at.to_rfc3339(),
         created_at: rate.created_at.to_rfc3339(),
@@ -4385,12 +4399,12 @@ impl CurrencyOperations {
             .map_err(|e| Error::from_reason(format!("Failed to convert currency: {}", e)))?;
 
         Ok(ConversionResultOutput {
-            original_amount: result.original_amount.to_string().parse().unwrap_or(0.0),
+            original_amount: to_f64_or_nan(result.original_amount),
             original_currency: result.original_currency.code().to_string(),
-            converted_amount: result.converted_amount.to_string().parse().unwrap_or(0.0),
+            converted_amount: to_f64_or_nan(result.converted_amount),
             target_currency: result.target_currency.code().to_string(),
-            rate: result.rate.to_string().parse().unwrap_or(0.0),
-            inverse_rate: result.inverse_rate.to_string().parse().unwrap_or(0.0),
+            rate: to_f64_or_nan(result.rate),
+            inverse_rate: to_f64_or_nan(result.inverse_rate),
             rate_at: result.rate_at.to_rfc3339(),
         })
     }
@@ -4615,15 +4629,15 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlanOutput {
             status: format!("{:?}", p.status).to_lowercase(),
             billing_interval: format!("{}", p.billing_interval),
             custom_interval_days: p.custom_interval_days,
-            price: p.price.to_string().parse().unwrap_or(0.0),
-            setup_fee: p.setup_fee.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            price: to_f64_or_nan(p.price),
+            setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)),
             currency: p.currency,
             trial_days: p.trial_days,
             trial_requires_payment_method: p.trial_requires_payment_method,
             min_cycles: p.min_cycles,
             max_cycles: p.max_cycles,
-            discount_percent: p.discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            discount_amount: p.discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            discount_percent: p.discount_percent.map(|d| to_f64_or_nan(d)),
+            discount_amount: p.discount_amount.map(|d| to_f64_or_nan(d)),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -4711,7 +4725,7 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             status: format!("{}", s.status),
             billing_interval: format!("{}", s.billing_interval),
             custom_interval_days: s.custom_interval_days,
-            price: s.price.to_string().parse().unwrap_or(0.0),
+            price: to_f64_or_nan(s.price),
             currency: s.currency,
             payment_method_id: s.payment_method_id,
             started_at: s.started_at.to_rfc3339(),
@@ -4725,8 +4739,8 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
             billing_cycle_count: s.billing_cycle_count,
             failed_payment_attempts: s.failed_payment_attempts,
-            discount_percent: s.discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            discount_amount: s.discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            discount_percent: s.discount_percent.map(|d| to_f64_or_nan(d)),
+            discount_amount: s.discount_amount.map(|d| to_f64_or_nan(d)),
             coupon_code: s.coupon_code,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -4801,10 +4815,10 @@ impl From<stateset_core::BillingCycle> for BillingCycleOutput {
             status: format!("{:?}", b.status).to_lowercase(),
             period_start: b.period_start.to_rfc3339(),
             period_end: b.period_end.to_rfc3339(),
-            subtotal: b.subtotal.to_string().parse().unwrap_or(0.0),
-            discount: b.discount.to_string().parse().unwrap_or(0.0),
-            tax: b.tax.to_string().parse().unwrap_or(0.0),
-            total: b.total.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(b.subtotal),
+            discount: to_f64_or_nan(b.discount),
+            tax: to_f64_or_nan(b.tax),
+            total: to_f64_or_nan(b.total),
             currency: b.currency,
             payment_id: b.payment_id,
             billed_at: b.billed_at.map(|d| d.to_rfc3339()),
@@ -5489,12 +5503,12 @@ impl From<stateset_core::Promotion> for PromotionOutput {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            fixed_amount_off: p.fixed_amount_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            max_discount_amount: p.max_discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            percentage_off: p.percentage_off.map(|d| to_f64_or_nan(d)),
+            fixed_amount_off: p.fixed_amount_off.map(|d| to_f64_or_nan(d)),
+            max_discount_amount: p.max_discount_amount.map(|d| to_f64_or_nan(d)),
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
-            get_discount_percent: p.get_discount_percent.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            get_discount_percent: p.get_discount_percent.map(|d| to_f64_or_nan(d)),
             starts_at: p.starts_at.to_rfc3339(),
             ends_at: p.ends_at.map(|d| d.to_rfc3339()),
             total_usage_limit: p.total_usage_limit,
@@ -5628,18 +5642,18 @@ pub struct AppliedPromotionOutput {
 impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
     fn from(r: stateset_core::ApplyPromotionsResult) -> Self {
         Self {
-            original_subtotal: r.original_subtotal.to_string().parse().unwrap_or(0.0),
-            total_discount: r.total_discount.to_string().parse().unwrap_or(0.0),
-            discounted_subtotal: r.discounted_subtotal.to_string().parse().unwrap_or(0.0),
-            original_shipping: r.original_shipping.to_string().parse().unwrap_or(0.0),
-            shipping_discount: r.shipping_discount.to_string().parse().unwrap_or(0.0),
-            final_shipping: r.final_shipping.to_string().parse().unwrap_or(0.0),
-            grand_total: r.grand_total.to_string().parse().unwrap_or(0.0),
+            original_subtotal: to_f64_or_nan(r.original_subtotal),
+            total_discount: to_f64_or_nan(r.total_discount),
+            discounted_subtotal: to_f64_or_nan(r.discounted_subtotal),
+            original_shipping: to_f64_or_nan(r.original_shipping),
+            shipping_discount: to_f64_or_nan(r.shipping_discount),
+            final_shipping: to_f64_or_nan(r.final_shipping),
+            grand_total: to_f64_or_nan(r.grand_total),
             applied_promotions: r.applied_promotions.into_iter().map(|a| AppliedPromotionOutput {
                 promotion_id: a.promotion_id.to_string(),
                 promotion_name: a.promotion_name,
                 coupon_code: a.coupon_code,
-                discount_amount: a.discount_amount.to_string().parse().unwrap_or(0.0),
+                discount_amount: to_f64_or_nan(a.discount_amount),
                 discount_type: format!("{:?}", a.discount_type).to_lowercase(),
             }).collect(),
         }
@@ -5669,7 +5683,7 @@ impl From<stateset_core::PromotionUsage> for PromotionUsageOutput {
             customer_id: u.customer_id.map(|id| id.to_string()),
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
-            discount_amount: u.discount_amount.to_string().parse().unwrap_or(0.0),
+            discount_amount: to_f64_or_nan(u.discount_amount),
             currency: u.currency,
             used_at: u.used_at.to_rfc3339(),
         }
@@ -6280,14 +6294,14 @@ impl From<stateset_core::TaxRate> for TaxRateOutput {
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
-            rate: r.rate.to_string().parse().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
             priority: r.priority,
-            threshold_min: r.threshold_min.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            threshold_max: r.threshold_max.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            fixed_amount: r.fixed_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            threshold_min: r.threshold_min.map(|d| to_f64_or_nan(d)),
+            threshold_max: r.threshold_max.map(|d| to_f64_or_nan(d)),
+            fixed_amount: r.fixed_amount.map(|d| to_f64_or_nan(d)),
             effective_from: r.effective_from.to_string(),
             effective_to: r.effective_to.map(|d| d.to_string()),
             active: r.active,
@@ -6359,9 +6373,9 @@ impl From<stateset_core::TaxBreakdown> for TaxBreakdownOutput {
             jurisdiction_name: b.jurisdiction_name,
             tax_type: b.tax_type.as_str().to_string(),
             rate_name: b.rate_name,
-            rate: b.rate.to_string().parse().unwrap_or(0.0),
-            taxable_amount: b.taxable_amount.to_string().parse().unwrap_or(0.0),
-            tax_amount: b.tax_amount.to_string().parse().unwrap_or(0.0),
+            rate: to_f64_or_nan(b.rate),
+            taxable_amount: to_f64_or_nan(b.taxable_amount),
+            tax_amount: to_f64_or_nan(b.tax_amount),
             is_compound: b.is_compound,
         }
     }
@@ -6381,8 +6395,8 @@ impl From<stateset_core::TaxDetail> for TaxDetailOutput {
         Self {
             tax_type: d.tax_type.as_str().to_string(),
             jurisdiction_name: d.jurisdiction_name,
-            rate: d.rate.to_string().parse().unwrap_or(0.0),
-            amount: d.amount.to_string().parse().unwrap_or(0.0),
+            rate: to_f64_or_nan(d.rate),
+            amount: to_f64_or_nan(d.amount),
         }
     }
 }
@@ -6403,9 +6417,9 @@ impl From<stateset_core::LineItemTax> for LineItemTaxOutput {
     fn from(t: stateset_core::LineItemTax) -> Self {
         Self {
             line_item_id: t.line_item_id,
-            taxable_amount: t.taxable_amount.to_string().parse().unwrap_or(0.0),
-            tax_amount: t.tax_amount.to_string().parse().unwrap_or(0.0),
-            effective_rate: t.effective_rate.to_string().parse().unwrap_or(0.0),
+            taxable_amount: to_f64_or_nan(t.taxable_amount),
+            tax_amount: to_f64_or_nan(t.tax_amount),
+            effective_rate: to_f64_or_nan(t.effective_rate),
             is_exempt: t.is_exempt,
             exemption_reason: t.exemption_reason,
             tax_details: t.tax_details.into_iter().map(|d| d.into()).collect(),
@@ -6429,8 +6443,8 @@ impl From<stateset_core::ExemptionDetails> for ExemptionDetailsOutput {
             exemption_id: e.exemption_id.to_string(),
             exemption_type: format!("{:?}", e.exemption_type).to_lowercase(),
             certificate_number: e.certificate_number,
-            amount_exempt: e.amount_exempt.to_string().parse().unwrap_or(0.0),
-            tax_saved: e.tax_saved.to_string().parse().unwrap_or(0.0),
+            amount_exempt: to_f64_or_nan(e.amount_exempt),
+            tax_saved: to_f64_or_nan(e.tax_saved),
         }
     }
 }
@@ -6453,8 +6467,8 @@ impl From<stateset_core::JurisdictionSummary> for JurisdictionSummaryOutput {
             name: s.name,
             code: s.code,
             level: format!("{:?}", s.level).to_lowercase(),
-            total_rate: s.total_rate.to_string().parse().unwrap_or(0.0),
-            total_tax: s.total_tax.to_string().parse().unwrap_or(0.0),
+            total_rate: to_f64_or_nan(s.total_rate),
+            total_tax: to_f64_or_nan(s.total_tax),
         }
     }
 }
@@ -6480,10 +6494,10 @@ impl From<stateset_core::TaxCalculationResult> for TaxCalculationOutput {
     fn from(r: stateset_core::TaxCalculationResult) -> Self {
         Self {
             id: r.id.to_string(),
-            total_tax: r.total_tax.to_string().parse().unwrap_or(0.0),
-            subtotal: r.subtotal.to_string().parse().unwrap_or(0.0),
-            total: r.total.to_string().parse().unwrap_or(0.0),
-            shipping_tax: r.shipping_tax.to_string().parse().unwrap_or(0.0),
+            total_tax: to_f64_or_nan(r.total_tax),
+            subtotal: to_f64_or_nan(r.subtotal),
+            total: to_f64_or_nan(r.total),
+            shipping_tax: to_f64_or_nan(r.shipping_tax),
             tax_breakdown: r.tax_breakdown.into_iter().map(|b| b.into()).collect(),
             line_item_taxes: r.line_item_taxes.into_iter().map(|t| t.into()).collect(),
             exemptions_applied: r.exemptions_applied,
@@ -6554,7 +6568,7 @@ impl From<stateset_core::UsStateTaxInfo> for UsStateTaxInfoOutput {
         Self {
             state_code: i.state_code,
             state_name: i.state_name,
-            state_rate: i.state_rate.to_string().parse().unwrap_or(0.0),
+            state_rate: to_f64_or_nan(i.state_rate),
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
@@ -6581,10 +6595,10 @@ impl From<stateset_core::EuVatInfo> for EuVatInfoOutput {
         Self {
             country_code: i.country_code,
             country_name: i.country_name,
-            standard_rate: i.standard_rate.to_string().parse().unwrap_or(0.0),
-            reduced_rate: i.reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            super_reduced_rate: i.super_reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            parking_rate: i.parking_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            standard_rate: to_f64_or_nan(i.standard_rate),
+            reduced_rate: i.reduced_rate.map(|d| to_f64_or_nan(d)),
+            super_reduced_rate: i.super_reduced_rate.map(|d| to_f64_or_nan(d)),
+            parking_rate: i.parking_rate.map(|d| to_f64_or_nan(d)),
         }
     }
 }
@@ -6606,11 +6620,11 @@ impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfoOutput {
         Self {
             province_code: i.province_code,
             province_name: i.province_name,
-            gst_rate: i.gst_rate.to_string().parse().unwrap_or(0.0),
-            pst_rate: i.pst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            hst_rate: i.hst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            qst_rate: i.qst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            total_rate: i.total_rate.to_string().parse().unwrap_or(0.0),
+            gst_rate: to_f64_or_nan(i.gst_rate),
+            pst_rate: i.pst_rate.map(|d| to_f64_or_nan(d)),
+            hst_rate: i.hst_rate.map(|d| to_f64_or_nan(d)),
+            qst_rate: i.qst_rate.map(|d| to_f64_or_nan(d)),
+            total_rate: to_f64_or_nan(i.total_rate),
         }
     }
 }
@@ -6786,7 +6800,7 @@ impl Tax {
             &address,
         ).map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
 
-        Ok(tax.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(tax))
     }
 
     /// Get the effective tax rate for an address and category
@@ -6812,7 +6826,7 @@ impl Tax {
             category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
         ).map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
 
-        Ok(rate.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(rate))
     }
 
     // ========================================================================
@@ -7226,7 +7240,7 @@ impl From<stateset_core::NonConformance> for NcrOutput {
             source: format!("{:?}", n.source),
             severity: format!("{:?}", n.severity),
             sku: n.sku,
-            quantity_affected: n.quantity_affected.to_string().parse().unwrap_or(0.0),
+            quantity_affected: to_f64_or_nan(n.quantity_affected),
             status: format!("{:?}", n.status),
             description: n.description,
             created_at: n.created_at.to_rfc3339(),
@@ -7265,7 +7279,7 @@ impl From<stateset_core::QualityHold> for QualityHoldOutput {
             id: h.id.to_string(),
             sku: h.sku,
             lot_number: h.lot_number,
-            quantity_held: h.quantity_held.to_string().parse().unwrap_or(0.0),
+            quantity_held: to_f64_or_nan(h.quantity_held),
             reason: h.reason,
             hold_type: format!("{:?}", h.hold_type),
             status: if h.released_at.is_some() { "released".to_string() } else { "held".to_string() },
@@ -7540,9 +7554,9 @@ impl From<stateset_core::Lot> for LotOutput {
             id: l.id.to_string(),
             lot_number: l.lot_number,
             sku: l.sku,
-            quantity_produced: l.quantity_produced.to_string().parse().unwrap_or(0.0),
-            quantity_available: qty_available.to_string().parse().unwrap_or(0.0),
-            quantity_reserved: l.quantity_reserved.to_string().parse().unwrap_or(0.0),
+            quantity_produced: to_f64_or_nan(l.quantity_produced),
+            quantity_available: to_f64_or_nan(qty_available),
+            quantity_reserved: to_f64_or_nan(l.quantity_reserved),
             status: format!("{:?}", l.status),
             production_date: Some(l.production_date.to_rfc3339()),
             expiration_date: l.expiration_date.map(|d| d.to_rfc3339()),
@@ -8029,7 +8043,7 @@ impl Warehouse {
         let commerce = self.commerce.lock().await;
         let total = commerce.warehouse().get_total_available(warehouse_id, &sku)
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(total.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(total))
     }
 
     /// Count warehouses
@@ -8257,8 +8271,8 @@ impl From<stateset_core::PickTask> for PickTaskOutput {
             wave_id: p.wave_id.map(|id| id.to_string()),
             order_id: p.order_id.to_string(),
             sku: p.sku,
-            quantity_requested: p.quantity_requested.to_string().parse().unwrap_or(0.0),
-            quantity_picked: p.quantity_picked.to_string().parse().unwrap_or(0.0),
+            quantity_requested: to_f64_or_nan(p.quantity_requested),
+            quantity_picked: to_f64_or_nan(p.quantity_picked),
             status: format!("{:?}", p.status),
             source_location_id: p.source_location_id,
         }
@@ -8452,9 +8466,9 @@ impl From<stateset_core::Bill> for BillOutput {
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             status: format!("{:?}", b.status),
-            total_amount: b.total_amount.to_string().parse().unwrap_or(0.0),
-            amount_paid: b.amount_paid.to_string().parse().unwrap_or(0.0),
-            amount_due: b.amount_due.to_string().parse().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(b.total_amount),
+            amount_paid: to_f64_or_nan(b.amount_paid),
+            amount_due: to_f64_or_nan(b.amount_due),
             due_date: b.due_date.to_rfc3339(),
             created_at: b.created_at.to_rfc3339(),
         }
@@ -8475,12 +8489,12 @@ pub struct ApAgingSummaryOutput {
 impl From<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
     fn from(a: stateset_core::ApAgingSummary) -> Self {
         Self {
-            current: a.current.to_string().parse().unwrap_or(0.0),
-            days_1_30: a.days_1_30.to_string().parse().unwrap_or(0.0),
-            days_31_60: a.days_31_60.to_string().parse().unwrap_or(0.0),
-            days_61_90: a.days_61_90.to_string().parse().unwrap_or(0.0),
-            days_over_90: a.days_over_90.to_string().parse().unwrap_or(0.0),
-            total: a.total.to_string().parse().unwrap_or(0.0),
+            current: to_f64_or_nan(a.current),
+            days_1_30: to_f64_or_nan(a.days_1_30),
+            days_31_60: to_f64_or_nan(a.days_31_60),
+            days_61_90: to_f64_or_nan(a.days_61_90),
+            days_over_90: to_f64_or_nan(a.days_over_90),
+            total: to_f64_or_nan(a.total),
         }
     }
 }
@@ -8597,7 +8611,7 @@ impl AccountsPayable {
         let commerce = self.commerce.lock().await;
         let total = commerce.accounts_payable().get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(total.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(total))
     }
 
     /// Count bills
@@ -8628,12 +8642,12 @@ pub struct ArAgingSummaryOutput {
 impl From<stateset_core::ArAgingSummary> for ArAgingSummaryOutput {
     fn from(a: stateset_core::ArAgingSummary) -> Self {
         Self {
-            current: a.current.to_string().parse().unwrap_or(0.0),
-            days_1_30: a.days_1_30.to_string().parse().unwrap_or(0.0),
-            days_31_60: a.days_31_60.to_string().parse().unwrap_or(0.0),
-            days_61_90: a.days_61_90.to_string().parse().unwrap_or(0.0),
-            days_over_90: a.days_over_90.to_string().parse().unwrap_or(0.0),
-            total: a.total.to_string().parse().unwrap_or(0.0),
+            current: to_f64_or_nan(a.current),
+            days_1_30: to_f64_or_nan(a.days_1_30),
+            days_31_60: to_f64_or_nan(a.days_31_60),
+            days_61_90: to_f64_or_nan(a.days_61_90),
+            days_over_90: to_f64_or_nan(a.days_over_90),
+            total: to_f64_or_nan(a.total),
         }
     }
 }
@@ -8666,7 +8680,7 @@ impl From<stateset_core::CreditMemo> for CreditMemoOutput {
             id: c.id.to_string(),
             credit_memo_number: c.credit_memo_number,
             customer_id: c.customer_id.to_string(),
-            amount: c.amount.to_string().parse().unwrap_or(0.0),
+            amount: to_f64_or_nan(c.amount),
             status: format!("{:?}", c.status),
             reason: format!("{:?}", c.reason),
             created_at: c.created_at.to_rfc3339(),
@@ -8708,7 +8722,7 @@ impl AccountsReceivable {
         let commerce = self.commerce.lock().await;
         let total = commerce.accounts_receivable().get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
-        Ok(total.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(total))
     }
 
     /// Get Days Sales Outstanding (DSO)
@@ -8717,7 +8731,7 @@ impl AccountsReceivable {
         let commerce = self.commerce.lock().await;
         let dso = commerce.accounts_receivable().get_dso(days)
             .map_err(|e| Error::from_reason(format!("Failed to get DSO: {}", e)))?;
-        Ok(dso.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(dso))
     }
 
     /// Create a credit memo
@@ -8811,12 +8825,12 @@ impl From<stateset_core::ItemCost> for ItemCostOutput {
             id: c.id.to_string(),
             sku: c.sku,
             cost_method: format!("{:?}", c.cost_method),
-            standard_cost: c.standard_cost.to_string().parse().unwrap_or(0.0),
-            average_cost: c.average_cost.to_string().parse().unwrap_or(0.0),
-            last_cost: c.last_cost.to_string().parse().unwrap_or(0.0),
-            material_cost: c.material_cost.to_string().parse().unwrap_or(0.0),
-            labor_cost: c.labor_cost.to_string().parse().unwrap_or(0.0),
-            overhead_cost: c.overhead_cost.to_string().parse().unwrap_or(0.0),
+            standard_cost: to_f64_or_nan(c.standard_cost),
+            average_cost: to_f64_or_nan(c.average_cost),
+            last_cost: to_f64_or_nan(c.last_cost),
+            material_cost: to_f64_or_nan(c.material_cost),
+            labor_cost: to_f64_or_nan(c.labor_cost),
+            overhead_cost: to_f64_or_nan(c.overhead_cost),
         }
     }
 }
@@ -8890,7 +8904,7 @@ impl CostAccounting {
         let commerce = self.commerce.lock().await;
         let total = commerce.cost_accounting().get_total_inventory_value()
             .map_err(|e| Error::from_reason(format!("Failed to get value: {}", e)))?;
-        Ok(total.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(total))
     }
 }
 
@@ -8924,9 +8938,9 @@ impl From<stateset_core::CreditAccount> for CreditAccountOutput {
         Self {
             id: c.id.to_string(),
             customer_id: c.customer_id.to_string(),
-            credit_limit: c.credit_limit.to_string().parse().unwrap_or(0.0),
-            credit_used: c.current_balance.to_string().parse().unwrap_or(0.0),
-            credit_available: c.available_credit.to_string().parse().unwrap_or(0.0),
+            credit_limit: to_f64_or_nan(c.credit_limit),
+            credit_used: to_f64_or_nan(c.current_balance),
+            credit_available: to_f64_or_nan(c.available_credit),
             status: format!("{:?}", c.status),
             payment_terms: c.payment_terms,
         }
@@ -8947,7 +8961,7 @@ impl From<stateset_core::CreditCheckResult> for CreditCheckOutput {
         Self {
             approved: c.approved,
             reason: c.reason,
-            available_credit: c.available_credit.to_string().parse().unwrap_or(0.0),
+            available_credit: to_f64_or_nan(c.available_credit),
             requires_approval: c.requires_approval,
         }
     }
@@ -9094,9 +9108,9 @@ impl From<stateset_core::Backorder> for BackorderOutput {
             order_id: b.order_id.to_string(),
             customer_id: b.customer_id.to_string(),
             sku: b.sku,
-            quantity_ordered: b.quantity_ordered.to_string().parse().unwrap_or(0.0),
-            quantity_fulfilled: b.quantity_fulfilled.to_string().parse().unwrap_or(0.0),
-            quantity_remaining: b.quantity_remaining.to_string().parse().unwrap_or(0.0),
+            quantity_ordered: to_f64_or_nan(b.quantity_ordered),
+            quantity_fulfilled: to_f64_or_nan(b.quantity_fulfilled),
+            quantity_remaining: to_f64_or_nan(b.quantity_remaining),
             status: format!("{:?}", b.status),
             priority: format!("{:?}", b.priority),
             created_at: b.created_at.to_rfc3339(),
@@ -9119,7 +9133,7 @@ impl From<stateset_core::BackorderSummary> for BackorderSummaryOutput {
             total_backorders: s.total_backorders,
             critical_count: s.critical_count,
             overdue_count: s.overdue_count,
-            total_value: s.total_quantity.to_string().parse().unwrap_or(0.0), // Using total_quantity as value proxy
+            total_value: to_f64_or_nan(s.total_quantity), // Using total_quantity as value proxy
         }
     }
 }
@@ -9282,7 +9296,7 @@ impl From<stateset_core::GlAccount> for GlAccountOutput {
             account_number: a.account_number,
             name: a.name,
             account_type: format!("{:?}", a.account_type),
-            balance: a.current_balance.to_string().parse().unwrap_or(0.0),
+            balance: to_f64_or_nan(a.current_balance),
             status: format!("{:?}", a.status),
             description: a.description,
         }
@@ -9326,8 +9340,8 @@ impl From<stateset_core::TrialBalance> for TrialBalanceOutput {
     fn from(t: stateset_core::TrialBalance) -> Self {
         Self {
             as_of_date: t.as_of_date.to_string(),
-            total_debits: t.total_debits.to_string().parse().unwrap_or(0.0),
-            total_credits: t.total_credits.to_string().parse().unwrap_or(0.0),
+            total_debits: to_f64_or_nan(t.total_debits),
+            total_credits: to_f64_or_nan(t.total_credits),
             is_balanced: t.is_balanced,
         }
     }
@@ -9346,9 +9360,9 @@ impl From<stateset_core::BalanceSheet> for BalanceSheetOutput {
     fn from(b: stateset_core::BalanceSheet) -> Self {
         Self {
             as_of_date: b.as_of_date.to_string(),
-            total_assets: b.total_assets.to_string().parse().unwrap_or(0.0),
-            total_liabilities: b.total_liabilities.to_string().parse().unwrap_or(0.0),
-            total_equity: b.total_equity.to_string().parse().unwrap_or(0.0),
+            total_assets: to_f64_or_nan(b.total_assets),
+            total_liabilities: to_f64_or_nan(b.total_liabilities),
+            total_equity: to_f64_or_nan(b.total_equity),
         }
     }
 }
@@ -9368,9 +9382,9 @@ impl From<stateset_core::IncomeStatement> for IncomeStatementOutput {
         Self {
             period_start: i.period_start.to_string(),
             period_end: i.period_end.to_string(),
-            total_revenue: i.total_revenue.to_string().parse().unwrap_or(0.0),
-            total_expenses: i.total_expenses.to_string().parse().unwrap_or(0.0),
-            net_income: i.net_income.to_string().parse().unwrap_or(0.0),
+            total_revenue: to_f64_or_nan(i.total_revenue),
+            total_expenses: to_f64_or_nan(i.total_expenses),
+            net_income: to_f64_or_nan(i.net_income),
         }
     }
 }
@@ -9530,7 +9544,6 @@ impl GeneralLedger {
         let date = as_of_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
         let balance = commerce.general_ledger().get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
-        Ok(balance.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(balance))
     }
 }
-

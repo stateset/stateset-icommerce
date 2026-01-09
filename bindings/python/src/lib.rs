@@ -20,6 +20,20 @@ use rust_decimal::Decimal;
 use ::stateset_embedded::Commerce as RustCommerce;
 use std::sync::{Arc, Mutex};
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 // ============================================================================
 // Commerce
 // ============================================================================
@@ -559,7 +573,7 @@ impl From<stateset_core::Order> for Order {
             order_number: o.order_number,
             customer_id: o.customer_id.to_string(),
             status: format!("{}", o.status),
-            total_amount: o.total_amount.to_string().parse().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(o.total_amount),
             currency: o.currency,
             payment_status: format!("{}", o.payment_status),
             fulfillment_status: format!("{}", o.fulfillment_status),
@@ -572,8 +586,8 @@ impl From<stateset_core::Order> for Order {
                     sku: i.sku,
                     name: i.name,
                     quantity: i.quantity,
-                    unit_price: i.unit_price.to_string().parse().unwrap_or(0.0),
-                    total: i.total.to_string().parse().unwrap_or(0.0),
+                    unit_price: to_f64_or_nan(i.unit_price),
+                    total: to_f64_or_nan(i.total),
                 })
                 .collect(),
             version: o.version,
@@ -906,8 +920,8 @@ impl From<stateset_core::ProductVariant> for ProductVariant {
             product_id: v.product_id.to_string(),
             sku: v.sku,
             name: v.name,
-            price: v.price.to_string().parse().unwrap_or(0.0),
-            compare_at_price: v.compare_at_price.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            price: to_f64_or_nan(v.price),
+            compare_at_price: v.compare_at_price.map(|d| to_f64_or_nan(d)),
             is_default: v.is_default,
         }
     }
@@ -1144,9 +1158,9 @@ impl From<stateset_core::StockLevel> for StockLevel {
         Self {
             sku: s.sku,
             name: s.name,
-            total_on_hand: s.total_on_hand.to_string().parse().unwrap_or(0.0),
-            total_allocated: s.total_allocated.to_string().parse().unwrap_or(0.0),
-            total_available: s.total_available.to_string().parse().unwrap_or(0.0),
+            total_on_hand: to_f64_or_nan(s.total_on_hand),
+            total_allocated: to_f64_or_nan(s.total_allocated),
+            total_available: to_f64_or_nan(s.total_available),
         }
     }
 }
@@ -1177,7 +1191,7 @@ impl From<stateset_core::InventoryReservation> for Reservation {
         Self {
             id: r.id.to_string(),
             item_id: r.item_id,
-            quantity: r.quantity.to_string().parse().unwrap_or(0.0),
+            quantity: to_f64_or_nan(r.quantity),
             status: format!("{}", r.status),
         }
     }
@@ -1634,7 +1648,7 @@ impl From<stateset_core::Payment> for Payment {
             order_id: p.order_id.map(|id| id.to_string()),
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
-            amount: p.amount.to_string().parse().unwrap_or(0.0),
+            amount: to_f64_or_nan(p.amount),
             currency: p.currency,
             status: format!("{}", p.status),
             payment_method: format!("{}", p.payment_method),
@@ -1675,7 +1689,7 @@ impl From<stateset_core::Refund> for Refund {
         Self {
             id: r.id.to_string(),
             payment_id: r.payment_id.to_string(),
-            amount: r.amount.to_string().parse().unwrap_or(0.0),
+            amount: to_f64_or_nan(r.amount),
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
@@ -2424,7 +2438,7 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
             po_number: po.po_number,
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
-            total_amount: po.total.to_string().parse().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(po.total),
             created_at: po.created_at.to_rfc3339(),
             updated_at: po.updated_at.to_rfc3339(),
         }
@@ -2670,10 +2684,10 @@ impl From<stateset_core::Invoice> for Invoice {
             customer_id: inv.customer_id.to_string(),
             order_id: inv.order_id.map(|id| id.to_string()),
             status: format!("{}", inv.status),
-            subtotal: inv.subtotal.to_string().parse().unwrap_or(0.0),
-            tax_amount: inv.tax_amount.to_string().parse().unwrap_or(0.0),
-            total: inv.total.to_string().parse().unwrap_or(0.0),
-            amount_paid: inv.amount_paid.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(inv.subtotal),
+            tax_amount: to_f64_or_nan(inv.tax_amount),
+            total: to_f64_or_nan(inv.total),
+            amount_paid: to_f64_or_nan(inv.amount_paid),
             due_date: inv.due_date.to_rfc3339(),
             created_at: inv.created_at.to_rfc3339(),
         }
@@ -2918,7 +2932,7 @@ impl From<stateset_core::BomComponent> for BomComponent {
             bom_id: c.bom_id.to_string(),
             component_sku: c.component_sku,
             name: c.name,
-            quantity: c.quantity.to_string().parse().unwrap_or(0.0),
+            quantity: to_f64_or_nan(c.quantity),
             unit_of_measure: c.unit_of_measure,
         }
     }
@@ -3121,8 +3135,8 @@ impl From<stateset_core::WorkOrder> for WorkOrder {
             bom_id: wo.bom_id.map(|id| id.to_string()),
             status: format!("{}", wo.status),
             priority: format!("{}", wo.priority),
-            quantity_to_build: wo.quantity_to_build.to_string().parse().unwrap_or(0.0),
-            quantity_completed: wo.quantity_completed.to_string().parse().unwrap_or(0.0),
+            quantity_to_build: to_f64_or_nan(wo.quantity_to_build),
+            quantity_completed: to_f64_or_nan(wo.quantity_completed),
             version: wo.version,
             created_at: wo.created_at.to_rfc3339(),
             updated_at: wo.updated_at.to_rfc3339(),
@@ -3445,11 +3459,11 @@ impl From<stateset_core::CartItem> for CartItem {
             description: i.description,
             image_url: i.image_url,
             quantity: i.quantity,
-            unit_price: i.unit_price.to_string().parse().unwrap_or(0.0),
-            original_price: i.original_price.map(|p| p.to_string().parse().unwrap_or(0.0)),
-            discount_amount: i.discount_amount.to_string().parse().unwrap_or(0.0),
-            tax_amount: i.tax_amount.to_string().parse().unwrap_or(0.0),
-            total: i.total.to_string().parse().unwrap_or(0.0),
+            unit_price: to_f64_or_nan(i.unit_price),
+            original_price: i.original_price.map(|p| to_f64_or_nan(p)),
+            discount_amount: to_f64_or_nan(i.discount_amount),
+            tax_amount: to_f64_or_nan(i.tax_amount),
+            total: to_f64_or_nan(i.total),
             created_at: i.created_at.to_rfc3339(),
             updated_at: i.updated_at.to_rfc3339(),
         }
@@ -3495,7 +3509,7 @@ impl From<stateset_core::ShippingRate> for ShippingRate {
             carrier: r.carrier,
             service: r.service,
             description: r.description,
-            price: r.price.to_string().parse().unwrap_or(0.0),
+            price: to_f64_or_nan(r.price),
             currency: r.currency,
             estimated_days: r.estimated_days,
             estimated_delivery: r.estimated_delivery.map(|d| d.to_rfc3339()),
@@ -3538,7 +3552,7 @@ impl From<stateset_core::CheckoutResult> for CheckoutResult {
             order_number: r.order_number,
             cart_id: r.cart_id.to_string(),
             payment_id: r.payment_id.map(|id| id.to_string()),
-            total_charged: r.total_charged.to_string().parse().unwrap_or(0.0),
+            total_charged: to_f64_or_nan(r.total_charged),
             currency: r.currency,
         }
     }
@@ -3635,11 +3649,11 @@ impl From<stateset_core::Cart> for Cart {
             customer_id: c.customer_id.map(|id| id.to_string()),
             status: format!("{}", c.status),
             currency: c.currency,
-            subtotal: c.subtotal.to_string().parse().unwrap_or(0.0),
-            tax_amount: c.tax_amount.to_string().parse().unwrap_or(0.0),
-            shipping_amount: c.shipping_amount.to_string().parse().unwrap_or(0.0),
-            discount_amount: c.discount_amount.to_string().parse().unwrap_or(0.0),
-            grand_total: c.grand_total.to_string().parse().unwrap_or(0.0),
+            subtotal: to_f64_or_nan(c.subtotal),
+            tax_amount: to_f64_or_nan(c.tax_amount),
+            shipping_amount: to_f64_or_nan(c.shipping_amount),
+            discount_amount: to_f64_or_nan(c.discount_amount),
+            grand_total: to_f64_or_nan(c.grand_total),
             customer_email: c.customer_email,
             customer_name: c.customer_name,
             payment_method: c.payment_method,
@@ -4534,7 +4548,7 @@ impl Carts {
 // ============================================================================
 
 fn dec_to_f64(d: &Decimal) -> f64 {
-    d.to_string().parse().unwrap_or(0.0)
+    to_f64_or_nan(*d)
 }
 
 fn parse_time_period(period: &str) -> stateset_core::TimePeriod {
@@ -5759,9 +5773,9 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
             description: p.description,
             billing_interval: format!("{:?}", p.billing_interval).to_lowercase(),
             billing_interval_count: 1, // Default to 1 since core doesn't have this field
-            price: p.price.try_into().unwrap_or(0.0),
+            price: to_f64_or_nan(p.price),
             currency: p.currency,
-            setup_fee: p.setup_fee.map(|d| d.try_into().unwrap_or(0.0)).unwrap_or(0.0),
+            setup_fee: p.setup_fee.map(|d| to_f64_or_nan(d)).unwrap_or(0.0),
             trial_days: p.trial_days,
             status: format!("{:?}", p.status).to_lowercase(),
             created_at: p.created_at.to_rfc3339(),
@@ -5817,7 +5831,7 @@ impl From<stateset_core::Subscription> for Subscription {
             trial_ends_at: s.trial_ends_at.map(|d| d.to_rfc3339()),
             cancelled_at: s.cancelled_at.map(|d| d.to_rfc3339()),
             ends_at: s.ends_at.map(|d| d.to_rfc3339()),
-            price: s.price.try_into().unwrap_or(0.0),
+            price: to_f64_or_nan(s.price),
             currency: s.currency,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -5864,7 +5878,7 @@ impl From<stateset_core::BillingCycle> for BillingCycle {
             status: format!("{:?}", c.status).to_lowercase(),
             period_start: c.period_start.to_rfc3339(),
             period_end: c.period_end.to_rfc3339(),
-            total: c.total.try_into().unwrap_or(0.0),
+            total: to_f64_or_nan(c.total),
             currency: c.currency,
             payment_id: c.payment_id,
             invoice_id: c.invoice_id.map(|id| id.to_string()),
@@ -6390,9 +6404,9 @@ impl From<stateset_core::Promotion> for Promotion {
             target: format!("{:?}", p.target).to_lowercase(),
             stacking: format!("{:?}", p.stacking).to_lowercase(),
             status: format!("{:?}", p.status).to_lowercase(),
-            percentage_off: p.percentage_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            fixed_amount_off: p.fixed_amount_off.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            max_discount_amount: p.max_discount_amount.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            percentage_off: p.percentage_off.map(|d| to_f64_or_nan(d)),
+            fixed_amount_off: p.fixed_amount_off.map(|d| to_f64_or_nan(d)),
+            max_discount_amount: p.max_discount_amount.map(|d| to_f64_or_nan(d)),
             buy_quantity: p.buy_quantity,
             get_quantity: p.get_quantity,
             starts_at: p.starts_at.to_rfc3339(),
@@ -6479,13 +6493,13 @@ pub struct ApplyPromotionsResult {
 impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsResult {
     fn from(r: stateset_core::ApplyPromotionsResult) -> Self {
         Self {
-            original_subtotal: r.original_subtotal.to_string().parse().unwrap_or(0.0),
-            total_discount: r.total_discount.to_string().parse().unwrap_or(0.0),
-            discounted_subtotal: r.discounted_subtotal.to_string().parse().unwrap_or(0.0),
-            original_shipping: r.original_shipping.to_string().parse().unwrap_or(0.0),
-            shipping_discount: r.shipping_discount.to_string().parse().unwrap_or(0.0),
-            final_shipping: r.final_shipping.to_string().parse().unwrap_or(0.0),
-            grand_total: r.grand_total.to_string().parse().unwrap_or(0.0),
+            original_subtotal: to_f64_or_nan(r.original_subtotal),
+            total_discount: to_f64_or_nan(r.total_discount),
+            discounted_subtotal: to_f64_or_nan(r.discounted_subtotal),
+            original_shipping: to_f64_or_nan(r.original_shipping),
+            shipping_discount: to_f64_or_nan(r.shipping_discount),
+            final_shipping: to_f64_or_nan(r.final_shipping),
+            grand_total: to_f64_or_nan(r.grand_total),
             applied_promotions: r.applied_promotions.into_iter().map(|a| a.into()).collect(),
         }
     }
@@ -6513,7 +6527,7 @@ impl From<stateset_core::AppliedPromotion> for AppliedPromotion {
             promotion_id: a.promotion_id.to_string(),
             promotion_name: a.promotion_name,
             coupon_code: a.coupon_code,
-            discount_amount: a.discount_amount.to_string().parse().unwrap_or(0.0),
+            discount_amount: to_f64_or_nan(a.discount_amount),
             discount_type: format!("{:?}", a.discount_type).to_lowercase(),
         }
     }
@@ -6552,7 +6566,7 @@ impl From<stateset_core::PromotionUsage> for PromotionUsage {
             customer_id: u.customer_id.map(|id| id.to_string()),
             order_id: u.order_id.map(|id| id.to_string()),
             cart_id: u.cart_id.map(|id| id.to_string()),
-            discount_amount: u.discount_amount.to_string().parse().unwrap_or(0.0),
+            discount_amount: to_f64_or_nan(u.discount_amount),
             currency: u.currency,
             used_at: u.used_at.to_rfc3339(),
         }
@@ -7073,7 +7087,7 @@ impl From<stateset_core::TaxRate> for TaxRate {
             jurisdiction_id: r.jurisdiction_id.to_string(),
             tax_type: r.tax_type.as_str().to_string(),
             product_category: r.product_category.as_str().to_string(),
-            rate: r.rate.to_string().parse().unwrap_or(0.0),
+            rate: to_f64_or_nan(r.rate),
             name: r.name,
             description: r.description,
             is_compound: r.is_compound,
@@ -7223,10 +7237,10 @@ impl From<stateset_core::TaxCalculationResult> for TaxCalculationResult {
     fn from(r: stateset_core::TaxCalculationResult) -> Self {
         Self {
             id: r.id.to_string(),
-            total_tax: r.total_tax.to_string().parse().unwrap_or(0.0),
-            subtotal: r.subtotal.to_string().parse().unwrap_or(0.0),
-            total: r.total.to_string().parse().unwrap_or(0.0),
-            shipping_tax: r.shipping_tax.to_string().parse().unwrap_or(0.0),
+            total_tax: to_f64_or_nan(r.total_tax),
+            subtotal: to_f64_or_nan(r.subtotal),
+            total: to_f64_or_nan(r.total),
+            shipping_tax: to_f64_or_nan(r.shipping_tax),
             exemptions_applied: r.exemptions_applied,
             calculated_at: r.calculated_at.to_rfc3339(),
             is_estimate: r.is_estimate,
@@ -7263,7 +7277,7 @@ impl From<stateset_core::UsStateTaxInfo> for UsStateTaxInfo {
         Self {
             state_code: i.state_code,
             state_name: i.state_name,
-            state_rate: i.state_rate.to_string().parse().unwrap_or(0.0),
+            state_rate: to_f64_or_nan(i.state_rate),
             has_local_taxes: i.has_local_taxes,
             origin_based: i.origin_based,
             tax_shipping: i.tax_shipping,
@@ -7297,10 +7311,10 @@ impl From<stateset_core::EuVatInfo> for EuVatInfo {
         Self {
             country_code: i.country_code,
             country_name: i.country_name,
-            standard_rate: i.standard_rate.to_string().parse().unwrap_or(0.0),
-            reduced_rate: i.reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            super_reduced_rate: i.super_reduced_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            parking_rate: i.parking_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            standard_rate: to_f64_or_nan(i.standard_rate),
+            reduced_rate: i.reduced_rate.map(|d| to_f64_or_nan(d)),
+            super_reduced_rate: i.super_reduced_rate.map(|d| to_f64_or_nan(d)),
+            parking_rate: i.parking_rate.map(|d| to_f64_or_nan(d)),
         }
     }
 }
@@ -7330,11 +7344,11 @@ impl From<stateset_core::CanadianTaxInfo> for CanadianTaxInfo {
         Self {
             province_code: i.province_code,
             province_name: i.province_name,
-            gst_rate: i.gst_rate.to_string().parse().unwrap_or(0.0),
-            pst_rate: i.pst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            hst_rate: i.hst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            qst_rate: i.qst_rate.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            total_rate: i.total_rate.to_string().parse().unwrap_or(0.0),
+            gst_rate: to_f64_or_nan(i.gst_rate),
+            pst_rate: i.pst_rate.map(|d| to_f64_or_nan(d)),
+            hst_rate: i.hst_rate.map(|d| to_f64_or_nan(d)),
+            qst_rate: i.qst_rate.map(|d| to_f64_or_nan(d)),
+            total_rate: to_f64_or_nan(i.total_rate),
         }
     }
 }
@@ -7825,7 +7839,7 @@ impl From<stateset_core::NonConformance> for NonConformance {
             status: format!("{:?}", n.status),
             source: format!("{:?}", n.source),
             severity: format!("{:?}", n.severity),
-            quantity_affected: n.quantity_affected.to_string().parse().unwrap_or(0.0),
+            quantity_affected: to_f64_or_nan(n.quantity_affected),
         }
     }
 }
@@ -7853,7 +7867,7 @@ impl From<stateset_core::QualityHold> for QualityHold {
             id: h.id.to_string(),
             sku: h.sku,
             reason: h.reason,
-            quantity_held: h.quantity_held.to_string().parse().unwrap_or(0.0),
+            quantity_held: to_f64_or_nan(h.quantity_held),
             hold_type: format!("{:?}", h.hold_type),
             placed_by: h.placed_by,
         }
@@ -7990,7 +8004,7 @@ impl From<stateset_core::Lot> for Lot {
             id: l.id.to_string(),
             lot_number: l.lot_number,
             sku: l.sku,
-            quantity_remaining: l.quantity_remaining.to_string().parse().unwrap_or(0.0),
+            quantity_remaining: to_f64_or_nan(l.quantity_remaining),
             status: format!("{:?}", l.status),
             expiration_date: l.expiration_date.map(|d| d.to_rfc3339()),
             created_at: l.created_at.to_rfc3339(),
@@ -8301,9 +8315,9 @@ impl From<stateset_core::ReceiptItem> for ReceiptLine {
     fn from(l: stateset_core::ReceiptItem) -> Self {
         Self {
             id: l.id.to_string(), receipt_id: l.receipt_id.to_string(), sku: l.sku,
-            expected_quantity: l.expected_quantity.to_string().parse().unwrap_or(0.0),
-            received_quantity: l.received_quantity.to_string().parse().unwrap_or(0.0),
-            unit_cost: l.unit_cost.map(|c| c.to_string().parse().unwrap_or(0.0)),
+            expected_quantity: to_f64_or_nan(l.expected_quantity),
+            received_quantity: to_f64_or_nan(l.received_quantity),
+            unit_cost: l.unit_cost.map(|c| to_f64_or_nan(c)),
             status: format!("{:?}", l.status),
         }
     }
@@ -8406,8 +8420,8 @@ impl From<stateset_core::PickTask> for PickTask {
     fn from(t: stateset_core::PickTask) -> Self {
         Self {
             id: t.id.to_string(), order_id: t.order_id.to_string(), sku: t.sku,
-            quantity_requested: t.quantity_requested.to_string().parse().unwrap_or(0.0),
-            quantity_picked: t.quantity_picked.to_string().parse().unwrap_or(0.0),
+            quantity_requested: to_f64_or_nan(t.quantity_requested),
+            quantity_picked: to_f64_or_nan(t.quantity_picked),
             status: format!("{:?}", t.status),
         }
     }
@@ -8499,8 +8513,8 @@ impl From<stateset_core::Bill> for Bill {
     fn from(b: stateset_core::Bill) -> Self {
         Self {
             id: b.id.to_string(), bill_number: b.bill_number, supplier_id: b.supplier_id.to_string(),
-            total_amount: b.total_amount.to_string().parse().unwrap_or(0.0), amount_paid: b.amount_paid.to_string().parse().unwrap_or(0.0),
-            amount_due: b.amount_due.to_string().parse().unwrap_or(0.0),
+            total_amount: to_f64_or_nan(b.total_amount), amount_paid: to_f64_or_nan(b.amount_paid),
+            amount_due: to_f64_or_nan(b.amount_due),
             status: format!("{:?}", b.status), due_date: b.due_date.to_rfc3339(),
         }
     }
@@ -8526,12 +8540,12 @@ pub struct ApAgingSummary {
 impl From<stateset_core::ApAgingSummary> for ApAgingSummary {
     fn from(s: stateset_core::ApAgingSummary) -> Self {
         Self {
-            current: s.current.to_string().parse().unwrap_or(0.0),
-            days_1_30: s.days_1_30.to_string().parse().unwrap_or(0.0),
-            days_31_60: s.days_31_60.to_string().parse().unwrap_or(0.0),
-            days_61_90: s.days_61_90.to_string().parse().unwrap_or(0.0),
-            days_over_90: s.days_over_90.to_string().parse().unwrap_or(0.0),
-            total: s.total.to_string().parse().unwrap_or(0.0),
+            current: to_f64_or_nan(s.current),
+            days_1_30: to_f64_or_nan(s.days_1_30),
+            days_31_60: to_f64_or_nan(s.days_31_60),
+            days_61_90: to_f64_or_nan(s.days_61_90),
+            days_over_90: to_f64_or_nan(s.days_over_90),
+            total: to_f64_or_nan(s.total),
         }
     }
 }
@@ -8630,12 +8644,12 @@ pub struct ArAgingSummary {
 impl From<stateset_core::ArAgingSummary> for ArAgingSummary {
     fn from(s: stateset_core::ArAgingSummary) -> Self {
         Self {
-            current: s.current.to_string().parse().unwrap_or(0.0),
-            days_1_30: s.days_1_30.to_string().parse().unwrap_or(0.0),
-            days_31_60: s.days_31_60.to_string().parse().unwrap_or(0.0),
-            days_61_90: s.days_61_90.to_string().parse().unwrap_or(0.0),
-            days_over_90: s.days_over_90.to_string().parse().unwrap_or(0.0),
-            total: s.total.to_string().parse().unwrap_or(0.0),
+            current: to_f64_or_nan(s.current),
+            days_1_30: to_f64_or_nan(s.days_1_30),
+            days_31_60: to_f64_or_nan(s.days_31_60),
+            days_61_90: to_f64_or_nan(s.days_61_90),
+            days_over_90: to_f64_or_nan(s.days_over_90),
+            total: to_f64_or_nan(s.total),
         }
     }
 }
@@ -8661,7 +8675,7 @@ impl From<stateset_core::CreditMemo> for CreditMemo {
     fn from(m: stateset_core::CreditMemo) -> Self {
         Self {
             id: m.id.to_string(), credit_memo_number: m.credit_memo_number, customer_id: m.customer_id.to_string(),
-            amount: m.amount.to_string().parse().unwrap_or(0.0), reason: format!("{:?}", m.reason), status: format!("{:?}", m.status),
+            amount: to_f64_or_nan(m.amount), reason: format!("{:?}", m.reason), status: format!("{:?}", m.status),
         }
     }
 }
@@ -8704,7 +8718,7 @@ impl AccountsReceivableApi {
     fn get_dso(&self, days: Option<i32>) -> PyResult<f64> {
         let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let dso = commerce.accounts_receivable().get_dso(days.unwrap_or(30)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(dso.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(dso))
     }
 }
 
@@ -8735,12 +8749,12 @@ impl From<stateset_core::ItemCost> for ItemCost {
     fn from(c: stateset_core::ItemCost) -> Self {
         Self {
             sku: c.sku,
-            standard_cost: c.standard_cost.to_string().parse().unwrap_or(0.0),
-            average_cost: c.average_cost.to_string().parse().unwrap_or(0.0),
-            last_cost: c.last_cost.to_string().parse().unwrap_or(0.0),
-            material_cost: c.material_cost.to_string().parse().unwrap_or(0.0),
-            labor_cost: c.labor_cost.to_string().parse().unwrap_or(0.0),
-            overhead_cost: c.overhead_cost.to_string().parse().unwrap_or(0.0),
+            standard_cost: to_f64_or_nan(c.standard_cost),
+            average_cost: to_f64_or_nan(c.average_cost),
+            last_cost: to_f64_or_nan(c.last_cost),
+            material_cost: to_f64_or_nan(c.material_cost),
+            labor_cost: to_f64_or_nan(c.labor_cost),
+            overhead_cost: to_f64_or_nan(c.overhead_cost),
         }
     }
 }
@@ -8759,9 +8773,9 @@ pub struct InventoryValuation {
 impl From<stateset_core::InventoryValuation> for InventoryValuation {
     fn from(v: stateset_core::InventoryValuation) -> Self {
         Self {
-            total_value: v.total_value.to_string().parse().unwrap_or(0.0),
-            total_quantity: v.total_quantity.to_string().parse().unwrap_or(0.0),
-            average_unit_cost: v.average_unit_cost.to_string().parse().unwrap_or(0.0),
+            total_value: to_f64_or_nan(v.total_value),
+            total_quantity: to_f64_or_nan(v.total_quantity),
+            average_unit_cost: to_f64_or_nan(v.average_unit_cost),
         }
     }
 }
@@ -8817,7 +8831,7 @@ impl CostAccountingApi {
     fn get_total_inventory_value(&self) -> PyResult<f64> {
         let commerce = self.commerce.lock().map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let value = commerce.cost_accounting().get_total_inventory_value().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(value.to_string().parse().unwrap_or(0.0))
+        Ok(to_f64_or_nan(value))
     }
 }
 
@@ -8848,9 +8862,9 @@ impl From<stateset_core::CreditAccount> for CreditAccount {
     fn from(a: stateset_core::CreditAccount) -> Self {
         Self {
             id: a.id.to_string(), customer_id: a.customer_id.to_string(),
-            credit_limit: a.credit_limit.to_string().parse().unwrap_or(0.0),
-            current_balance: a.current_balance.to_string().parse().unwrap_or(0.0),
-            available_credit: a.available_credit.to_string().parse().unwrap_or(0.0),
+            credit_limit: to_f64_or_nan(a.credit_limit),
+            current_balance: to_f64_or_nan(a.current_balance),
+            available_credit: to_f64_or_nan(a.available_credit),
             status: format!("{:?}", a.status), payment_terms: a.payment_terms,
         }
     }
@@ -8873,7 +8887,7 @@ impl From<stateset_core::CreditCheckResult> for CreditCheckResult {
     fn from(r: stateset_core::CreditCheckResult) -> Self {
         Self {
             approved: r.approved, reason: r.reason.map(|r| format!("{:?}", r)),
-            available_credit: r.available_credit.to_string().parse().unwrap_or(0.0), requires_approval: r.requires_approval,
+            available_credit: to_f64_or_nan(r.available_credit), requires_approval: r.requires_approval,
         }
     }
 }
@@ -8961,8 +8975,8 @@ impl From<stateset_core::Backorder> for Backorder {
     fn from(b: stateset_core::Backorder) -> Self {
         Self {
             id: b.id.to_string(), backorder_number: b.backorder_number, order_id: b.order_id.to_string(), customer_id: b.customer_id.to_string(), sku: b.sku,
-            quantity_ordered: b.quantity_ordered.to_string().parse().unwrap_or(0.0), quantity_fulfilled: b.quantity_fulfilled.to_string().parse().unwrap_or(0.0),
-            quantity_remaining: b.quantity_remaining.to_string().parse().unwrap_or(0.0), status: format!("{:?}", b.status), priority: format!("{:?}", b.priority),
+            quantity_ordered: to_f64_or_nan(b.quantity_ordered), quantity_fulfilled: to_f64_or_nan(b.quantity_fulfilled),
+            quantity_remaining: to_f64_or_nan(b.quantity_remaining), status: format!("{:?}", b.status), priority: format!("{:?}", b.priority),
         }
     }
 }
@@ -8982,7 +8996,7 @@ pub struct BackorderSummary {
 
 impl From<stateset_core::BackorderSummary> for BackorderSummary {
     fn from(s: stateset_core::BackorderSummary) -> Self {
-        Self { total_backorders: s.total_backorders, total_quantity: s.total_quantity.to_string().parse().unwrap_or(0.0), critical_count: s.critical_count, overdue_count: s.overdue_count }
+        Self { total_backorders: s.total_backorders, total_quantity: to_f64_or_nan(s.total_quantity), critical_count: s.critical_count, overdue_count: s.overdue_count }
     }
 }
 
@@ -9078,7 +9092,7 @@ pub struct GlAccount {
 
 impl From<stateset_core::GlAccount> for GlAccount {
     fn from(a: stateset_core::GlAccount) -> Self {
-        Self { id: a.id.to_string(), account_number: a.account_number, name: a.name, account_type: format!("{:?}", a.account_type), current_balance: a.current_balance.to_string().parse().unwrap_or(0.0), status: format!("{:?}", a.status) }
+        Self { id: a.id.to_string(), account_number: a.account_number, name: a.name, account_type: format!("{:?}", a.account_type), current_balance: to_f64_or_nan(a.current_balance), status: format!("{:?}", a.status) }
     }
 }
 
@@ -9116,7 +9130,7 @@ pub struct TrialBalance {
 
 impl From<stateset_core::TrialBalance> for TrialBalance {
     fn from(t: stateset_core::TrialBalance) -> Self {
-        Self { total_debits: t.total_debits.to_string().parse().unwrap_or(0.0), total_credits: t.total_credits.to_string().parse().unwrap_or(0.0), is_balanced: t.is_balanced }
+        Self { total_debits: to_f64_or_nan(t.total_debits), total_credits: to_f64_or_nan(t.total_credits), is_balanced: t.is_balanced }
     }
 }
 

@@ -59,19 +59,75 @@ fn throw_exception(env: &mut JNIEnv, msg: &str) {
     let _ = env.throw_new("com/stateset/embedded/StateSetException", msg);
 }
 
+fn jni_or_throw<'a, T>(
+    env: &mut JNIEnv<'a>,
+    result: jni::errors::Result<T>,
+    context: &str,
+) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(err) => {
+            throw_exception(env, &format!("{}: {}", context, err));
+            None
+        }
+    }
+}
+
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 fn create_customer_object<'a>(
     env: &mut JNIEnv<'a>,
     customer: &stateset_core::Customer,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/Customer").unwrap();
-    let id = env.new_string(customer.id.to_string()).unwrap();
-    let email = env.new_string(&customer.email).unwrap();
-    let first_name = env.new_string(&customer.first_name).unwrap();
-    let last_name = env.new_string(&customer.last_name).unwrap();
-    let phone = env.new_string(customer.phone.as_deref().unwrap_or("")).unwrap();
-    let created_at = env.new_string(customer.created_at.to_rfc3339()).unwrap();
+    let class_result = env.find_class("com/stateset/embedded/Customer");
+    let class = match jni_or_throw(env, class_result, "Customer class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(customer.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create customer id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let email_result = env.new_string(&customer.email);
+    let email = match jni_or_throw(env, email_result, "Failed to create customer email") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let first_name_result = env.new_string(&customer.first_name);
+    let first_name = match jni_or_throw(env, first_name_result, "Failed to create customer first name") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let last_name_result = env.new_string(&customer.last_name);
+    let last_name = match jni_or_throw(env, last_name_result, "Failed to create customer last name") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let phone_result = env.new_string(customer.phone.as_deref().unwrap_or(""));
+    let phone = match jni_or_throw(env, phone_result, "Failed to create customer phone") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let created_at_result = env.new_string(customer.created_at.to_rfc3339());
+    let created_at = match jni_or_throw(env, created_at_result, "Failed to create customer created_at") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
         &[
@@ -82,22 +138,42 @@ fn create_customer_object<'a>(
             JValue::Object(&phone),
             JValue::Object(&created_at),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create customer object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_product_object<'a>(
     env: &mut JNIEnv<'a>,
     product: &stateset_core::Product,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/Product").unwrap();
-    let id = env.new_string(product.id.to_string()).unwrap();
+    let class_result = env.find_class("com/stateset/embedded/Product");
+    let class = match jni_or_throw(env, class_result, "Product class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(product.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create product id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     // Product doesn't have SKU directly - use slug as identifier
-    let sku = env.new_string(&product.slug).unwrap();
-    let name = env.new_string(&product.name).unwrap();
+    let sku_result = env.new_string(&product.slug);
+    let sku = match jni_or_throw(env, sku_result, "Failed to create product sku") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let name_result = env.new_string(&product.name);
+    let name = match jni_or_throw(env, name_result, "Failed to create product name") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     // Product doesn't have base_price - that's on variants. Use 0.0 as placeholder.
     let base_price: f64 = 0.0;
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;D)V",
         &[
@@ -106,23 +182,55 @@ fn create_product_object<'a>(
             JValue::Object(&name),
             JValue::Double(base_price),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create product object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_order_object<'a>(
     env: &mut JNIEnv<'a>,
     order: &stateset_core::Order,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/Order").unwrap();
-    let id = env.new_string(order.id.to_string()).unwrap();
-    let order_number = env.new_string(&order.order_number).unwrap();
-    let customer_id = env.new_string(order.customer_id.to_string()).unwrap();
-    let status = env.new_string(format!("{:?}", order.status)).unwrap();
-    let total: f64 = order.total_amount.try_into().unwrap_or(0.0);
-    let currency = env.new_string(&order.currency).unwrap();
-    let created_at = env.new_string(order.created_at.to_rfc3339()).unwrap();
+    let class_result = env.find_class("com/stateset/embedded/Order");
+    let class = match jni_or_throw(env, class_result, "Order class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(order.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create order id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let order_number_result = env.new_string(&order.order_number);
+    let order_number = match jni_or_throw(env, order_number_result, "Failed to create order number") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let customer_id_result = env.new_string(order.customer_id.to_string());
+    let customer_id = match jni_or_throw(env, customer_id_result, "Failed to create order customer id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let status_result = env.new_string(format!("{:?}", order.status));
+    let status = match jni_or_throw(env, status_result, "Failed to create order status") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let total: f64 = to_f64_or_nan(order.total_amount);
+    let currency_result = env.new_string(&order.currency);
+    let currency = match jni_or_throw(env, currency_result, "Failed to create order currency") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let created_at_result = env.new_string(order.created_at.to_rfc3339());
+    let created_at = match jni_or_throw(env, created_at_result, "Failed to create order created_at") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;Ljava/lang/String;)V",
         &[
@@ -134,23 +242,43 @@ fn create_order_object<'a>(
             JValue::Object(&currency),
             JValue::Object(&created_at),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create order object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_inventory_item_object<'a>(
     env: &mut JNIEnv<'a>,
     item: &stateset_core::InventoryItem,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/InventoryItem").unwrap();
-    let id = env.new_string(item.id.to_string()).unwrap();
-    let sku = env.new_string(&item.sku).unwrap();
-    let name = env.new_string(&item.name).unwrap();
+    let class_result = env.find_class("com/stateset/embedded/InventoryItem");
+    let class = match jni_or_throw(env, class_result, "InventoryItem class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(item.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create inventory item id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let sku_result = env.new_string(&item.sku);
+    let sku = match jni_or_throw(env, sku_result, "Failed to create inventory item sku") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let name_result = env.new_string(&item.name);
+    let name = match jni_or_throw(env, name_result, "Failed to create inventory item name") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
     // InventoryItem doesn't have quantities directly - those are in InventoryBalance/StockLevel
     // Use 0.0 as placeholder
     let available: f64 = 0.0;
     let reserved: f64 = 0.0;
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DD)V",
         &[
@@ -160,23 +288,45 @@ fn create_inventory_item_object<'a>(
             JValue::Double(available),
             JValue::Double(reserved),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create inventory item object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_cart_object<'a>(
     env: &mut JNIEnv<'a>,
     cart: &stateset_core::Cart,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/Cart").unwrap();
-    let id = env.new_string(cart.id.to_string()).unwrap();
-    let customer_id = env.new_string(
-        cart.customer_id.map(|id| id.to_string()).unwrap_or_default()
-    ).unwrap();
-    let status = env.new_string(format!("{:?}", cart.status)).unwrap();
-    let total: f64 = cart.grand_total.try_into().unwrap_or(0.0);
-    let currency = env.new_string(&cart.currency).unwrap();
+    let class_result = env.find_class("com/stateset/embedded/Cart");
+    let class = match jni_or_throw(env, class_result, "Cart class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(cart.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create cart id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let customer_id_result = env.new_string(cart.customer_id.map(|id| id.to_string()).unwrap_or_default());
+    let customer_id = match jni_or_throw(env, customer_id_result, "Failed to create cart customer id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let status_result = env.new_string(format!("{:?}", cart.status));
+    let status = match jni_or_throw(env, status_result, "Failed to create cart status") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let total: f64 = to_f64_or_nan(cart.grand_total);
+    let currency_result = env.new_string(&cart.currency);
+    let currency = match jni_or_throw(env, currency_result, "Failed to create cart currency") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;)V",
         &[
@@ -186,19 +336,27 @@ fn create_cart_object<'a>(
             JValue::Double(total),
             JValue::Object(&currency),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create cart object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_sales_summary_object<'a>(
     env: &mut JNIEnv<'a>,
     summary: &stateset_core::SalesSummary,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/SalesSummary").unwrap();
-    let total_revenue: f64 = summary.total_revenue.try_into().unwrap_or(0.0);
+    let class_result = env.find_class("com/stateset/embedded/SalesSummary");
+    let class = match jni_or_throw(env, class_result, "SalesSummary class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let total_revenue: f64 = to_f64_or_nan(summary.total_revenue);
     let total_orders = summary.order_count as jint;
-    let aov: f64 = summary.average_order_value.try_into().unwrap_or(0.0);
+    let aov: f64 = to_f64_or_nan(summary.average_order_value);
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(DID)V",
         &[
@@ -206,23 +364,45 @@ fn create_sales_summary_object<'a>(
             JValue::Int(total_orders),
             JValue::Double(aov),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create sales summary object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 fn create_return_object<'a>(
     env: &mut JNIEnv<'a>,
     ret: &stateset_core::Return,
 ) -> JObject<'a> {
-    let class = env.find_class("com/stateset/embedded/ReturnRequest").unwrap();
-    let id = env.new_string(ret.id.to_string()).unwrap();
-    let order_id = env.new_string(ret.order_id.to_string()).unwrap();
-    let reason = env.new_string(format!("{:?}", ret.reason)).unwrap();
-    let status = env.new_string(format!("{:?}", ret.status)).unwrap();
-    let refund_amount: f64 = ret.refund_amount
-        .and_then(|d| d.try_into().ok())
-        .unwrap_or(0.0);
+    let class_result = env.find_class("com/stateset/embedded/ReturnRequest");
+    let class = match jni_or_throw(env, class_result, "ReturnRequest class not found") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let id_result = env.new_string(ret.id.to_string());
+    let id = match jni_or_throw(env, id_result, "Failed to create return id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let order_id_result = env.new_string(ret.order_id.to_string());
+    let order_id = match jni_or_throw(env, order_id_result, "Failed to create return order id") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let reason_result = env.new_string(format!("{:?}", ret.reason));
+    let reason = match jni_or_throw(env, reason_result, "Failed to create return reason") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let status_result = env.new_string(format!("{:?}", ret.status));
+    let status = match jni_or_throw(env, status_result, "Failed to create return status") {
+        Some(value) => value,
+        None => return JObject::null(),
+    };
+    let refund_amount: f64 = ret.refund_amount.map(to_f64_or_nan).unwrap_or(0.0);
 
-    env.new_object(
+    let obj_result = env.new_object(
         class,
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;D)V",
         &[
@@ -232,7 +412,11 @@ fn create_return_object<'a>(
             JValue::Object(&status),
             JValue::Double(refund_amount),
         ],
-    ).unwrap()
+    );
+    match jni_or_throw(env, obj_result, "Failed to create return object") {
+        Some(obj) => obj,
+        None => JObject::null(),
+    }
 }
 
 // =============================================================================
@@ -345,12 +529,23 @@ pub extern "system" fn Java_com_stateset_embedded_Customers_nativeList<'local>(
 
     match result {
         Ok(customers) => {
-            let list_class = env.find_class("java/util/ArrayList").unwrap();
-            let list = env.new_object(list_class, "()V", &[]).unwrap();
+            let find_class_result = env.find_class("java/util/ArrayList");
+            let list_class = match jni_or_throw(&mut env, find_class_result, "ArrayList class not found") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
+            let new_object_result = env.new_object(list_class, "()V", &[]);
+            let list = match jni_or_throw(&mut env, new_object_result, "Failed to create ArrayList") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
 
             for customer in &customers {
                 let obj = create_customer_object(&mut env, customer);
-                env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]).unwrap();
+                let add_result = env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
+                if jni_or_throw(&mut env, add_result, "Failed to add customer to list").is_none() {
+                    return JObject::null();
+                }
             }
 
             list
@@ -442,12 +637,23 @@ pub extern "system" fn Java_com_stateset_embedded_Products_nativeList<'local>(
 
     match result {
         Ok(products) => {
-            let list_class = env.find_class("java/util/ArrayList").unwrap();
-            let list = env.new_object(list_class, "()V", &[]).unwrap();
+            let find_class_result = env.find_class("java/util/ArrayList");
+            let list_class = match jni_or_throw(&mut env, find_class_result, "ArrayList class not found") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
+            let new_object_result = env.new_object(list_class, "()V", &[]);
+            let list = match jni_or_throw(&mut env, new_object_result, "Failed to create ArrayList") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
 
             for product in &products {
                 let obj = create_product_object(&mut env, product);
-                env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]).unwrap();
+                let add_result = env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
+                if jni_or_throw(&mut env, add_result, "Failed to add product to list").is_none() {
+                    return JObject::null();
+                }
             }
 
             list
@@ -665,12 +871,23 @@ pub extern "system" fn Java_com_stateset_embedded_Orders_nativeList<'local>(
 
     match result {
         Ok(orders) => {
-            let list_class = env.find_class("java/util/ArrayList").unwrap();
-            let list = env.new_object(list_class, "()V", &[]).unwrap();
+            let find_class_result = env.find_class("java/util/ArrayList");
+            let list_class = match jni_or_throw(&mut env, find_class_result, "ArrayList class not found") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
+            let new_object_result = env.new_object(list_class, "()V", &[]);
+            let list = match jni_or_throw(&mut env, new_object_result, "Failed to create ArrayList") {
+                Some(value) => value,
+                None => return JObject::null(),
+            };
 
             for order in &orders {
                 let obj = create_order_object(&mut env, order);
-                env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]).unwrap();
+                let add_result = env.call_method(&list, "add", "(Ljava/lang/Object;)Z", &[JValue::Object(&obj)]);
+                if jni_or_throw(&mut env, add_result, "Failed to add order to list").is_none() {
+                    return JObject::null();
+                }
             }
 
             list
@@ -1653,7 +1870,7 @@ pub extern "system" fn Java_com_stateset_embedded_AccountsReceivable_nativeGetDs
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(dso) => dso.try_into().unwrap_or(0.0),
+        Ok(dso) => to_f64_or_nan(dso),
         Err(e) => { throw_exception(&mut env, &e); 0.0 }
     }
 }
@@ -1758,7 +1975,7 @@ pub extern "system" fn Java_com_stateset_embedded_CostAccounting_nativeGetTotalI
         commerce.cost_accounting().get_total_inventory_value().map_err(|e| e.to_string())
     });
     match result {
-        Ok(value) => value.try_into().unwrap_or(0.0),
+        Ok(value) => to_f64_or_nan(value),
         Err(e) => { throw_exception(&mut env, &e); 0.0 }
     }
 }

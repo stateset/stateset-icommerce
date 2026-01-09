@@ -75,6 +75,20 @@ fn to_json_cstr<T: serde::Serialize>(value: &T) -> *mut c_char {
     }
 }
 
+fn to_f64_or_nan<T>(value: T) -> f64
+where
+    T: TryInto<f64>,
+    <T as TryInto<f64>>::Error: std::fmt::Display,
+{
+    match value.try_into() {
+        Ok(converted) => converted,
+        Err(err) => {
+            eprintln!("stateset-embedded: failed to convert to f64: {}", err);
+            f64::NAN
+        }
+    }
+}
+
 // =============================================================================
 // Memory Management
 // =============================================================================
@@ -1052,7 +1066,7 @@ pub extern "C" fn stateset_ar_get_dso(handle: *mut CommerceHandle, days: c_int) 
         commerce.accounts_receivable().get_dso(days).map_err(|e| e.to_string())
     });
     match result {
-        Ok(dso) => dso.to_string().parse().unwrap_or(0.0),
+        Ok(dso) => to_f64_or_nan(dso),
         Err(_) => 0.0,
     }
 }

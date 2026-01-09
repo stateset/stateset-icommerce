@@ -1289,6 +1289,338 @@ export interface CanadianTaxInfoOutput {
   qstRate?: number
   totalRate: number
 }
+export interface CreateInspectionInput {
+  inspectionType: string
+  referenceType: string
+  referenceId: string
+  warehouseId?: number
+  assignedTo?: string
+  notes?: string
+}
+export interface InspectionOutput {
+  id: string
+  inspectionNumber: string
+  inspectionType: string
+  referenceType: string
+  referenceId: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+export interface CreateNcrInput {
+  source: string
+  severity: string
+  sku: string
+  quantityAffected: number
+  description: string
+  lotNumber?: string
+  locationId?: number
+}
+export interface NcrOutput {
+  id: string
+  ncrNumber: string
+  source: string
+  severity: string
+  sku: string
+  quantityAffected: number
+  status: string
+  description: string
+  createdAt: string
+}
+export interface CreateQualityHoldInput {
+  sku: string
+  lotNumber?: string
+  quantityHeld: number
+  reason: string
+  holdType: string
+  placedBy?: string
+  locationId?: number
+}
+export interface QualityHoldOutput {
+  id: string
+  sku: string
+  lotNumber?: string
+  quantityHeld: number
+  reason: string
+  holdType: string
+  status: string
+  placedAt: string
+}
+export interface CreateLotInput {
+  lotNumber?: string
+  sku: string
+  quantityProduced: number
+  productionDate?: string
+  expirationDate?: string
+  supplierLotNumber?: string
+}
+export interface LotOutput {
+  id: string
+  lotNumber: string
+  sku: string
+  quantityProduced: number
+  quantityAvailable: number
+  quantityReserved: number
+  status: string
+  productionDate?: string
+  expirationDate?: string
+  createdAt: string
+}
+export interface CreateSerialInput {
+  serial?: string
+  sku: string
+  lotNumber?: string
+  manufacturedAt?: string
+}
+export interface SerialOutput {
+  id: string
+  serial: string
+  sku: string
+  lotId?: string
+  status: string
+  ownerId?: string
+  locationId?: number
+  createdAt: string
+}
+export interface CreateWarehouseInput {
+  code: string
+  name: string
+  warehouseType?: string
+  timezone?: string
+}
+export interface WarehouseOutput {
+  id: number
+  code: string
+  name: string
+  warehouseType: string
+  isActive: boolean
+  timezone?: string
+  createdAt: string
+}
+export interface CreateLocationInput {
+  warehouseId: number
+  locationType: string
+  zone?: string
+  aisle?: string
+  rack?: string
+  bin?: string
+  isPickable?: boolean
+  isReceivable?: boolean
+}
+export interface LocationOutput {
+  id: number
+  warehouseId: number
+  code: string
+  locationType: string
+  zone?: string
+  aisle?: string
+  rack?: string
+  bin?: string
+  isActive: boolean
+  isPickable: boolean
+  isReceivable: boolean
+}
+export interface CreateReceiptInput {
+  receiptType: string
+  warehouseId: number
+  purchaseOrderId?: string
+  carrier?: string
+  trackingNumber?: string
+}
+export interface ReceiptOutput {
+  id: string
+  receiptNumber: string
+  receiptType: string
+  warehouseId: number
+  status: string
+  carrier?: string
+  trackingNumber?: string
+  createdAt: string
+}
+export interface CreateWaveInput {
+  warehouseId: number
+  orderIds: Array<string>
+  priority?: number
+  notes?: string
+}
+export interface WaveOutput {
+  id: string
+  waveNumber: string
+  warehouseId: number
+  orderCount: number
+  status: string
+  createdAt: string
+}
+export interface PickTaskOutput {
+  id: string
+  waveId?: string
+  orderId: string
+  sku: string
+  quantityRequested: number
+  quantityPicked: number
+  status: string
+  sourceLocationId: number
+}
+export interface CreateBillInput {
+  supplierId: string
+  dueDate: string
+  paymentTerms?: string
+  referenceNumber?: string
+  notes?: string
+}
+export interface BillOutput {
+  id: string
+  billNumber: string
+  supplierId: string
+  status: string
+  totalAmount: number
+  amountPaid: number
+  amountDue: number
+  dueDate: string
+  createdAt: string
+}
+export interface ApAgingSummaryOutput {
+  current: number
+  days130: number
+  days3160: number
+  days6190: number
+  daysOver90: number
+  total: number
+}
+export interface ArAgingSummaryOutput {
+  current: number
+  days130: number
+  days3160: number
+  days6190: number
+  daysOver90: number
+  total: number
+}
+export interface CreateCreditMemoInput {
+  customerId: string
+  originalInvoiceId?: string
+  reason: string
+  amount: number
+  notes?: string
+}
+export interface CreditMemoOutput {
+  id: string
+  creditMemoNumber: string
+  customerId: string
+  amount: number
+  status: string
+  reason: string
+  createdAt: string
+}
+export interface SetItemCostInput {
+  sku: string
+  costMethod?: string
+  standardCost?: number
+  materialCost?: number
+  laborCost?: number
+  overheadCost?: number
+}
+export interface ItemCostOutput {
+  id: string
+  sku: string
+  costMethod: string
+  standardCost: number
+  averageCost: number
+  lastCost: number
+  materialCost: number
+  laborCost: number
+  overheadCost: number
+}
+export interface CreateCreditAccountInput {
+  customerId: string
+  creditLimit: number
+  paymentTerms?: string
+  notes?: string
+}
+export interface CreditAccountOutput {
+  id: string
+  customerId: string
+  creditLimit: number
+  creditUsed: number
+  creditAvailable: number
+  status: string
+  paymentTerms?: string
+}
+export interface CreditCheckOutput {
+  approved: boolean
+  reason?: string
+  availableCredit: number
+  requiresApproval: boolean
+}
+export interface CreateBackorderInput {
+  orderId: string
+  customerId: string
+  sku: string
+  quantity: number
+  priority?: string
+  notes?: string
+}
+export interface BackorderOutput {
+  id: string
+  backorderNumber: string
+  orderId: string
+  customerId: string
+  sku: string
+  quantityOrdered: number
+  quantityFulfilled: number
+  quantityRemaining: number
+  status: string
+  priority: string
+  createdAt: string
+}
+export interface BackorderSummaryOutput {
+  totalBackorders: number
+  criticalCount: number
+  overdueCount: number
+  totalValue: number
+}
+export interface CreateGlAccountInput {
+  accountNumber: string
+  name: string
+  accountType: string
+  description?: string
+  currency?: string
+}
+export interface GlAccountOutput {
+  id: string
+  accountNumber: string
+  name: string
+  accountType: string
+  balance: number
+  status: string
+  description?: string
+}
+export interface JournalEntryOutput {
+  id: string
+  entryNumber: string
+  entryDate: string
+  description: string
+  status: string
+  createdAt: string
+}
+export interface TrialBalanceOutput {
+  asOfDate: string
+  totalDebits: number
+  totalCredits: number
+  isBalanced: boolean
+}
+export interface BalanceSheetOutput {
+  asOfDate: string
+  totalAssets: number
+  totalLiabilities: number
+  totalEquity: number
+}
+export interface IncomeStatementOutput {
+  periodStart: string
+  periodEnd: string
+  totalRevenue: number
+  totalExpenses: number
+  netIncome: number
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -1332,6 +1664,30 @@ export declare class Commerce {
   get promotions(): Promotions
   /** Get the tax API */
   get tax(): Tax
+  /** Get the quality control API */
+  get quality(): Quality
+  /** Get the lot/batch tracking API */
+  get lots(): Lots
+  /** Get the serial number API */
+  get serials(): Serials
+  /** Get the warehouse API */
+  get warehouse(): Warehouse
+  /** Get the receiving API */
+  get receiving(): Receiving
+  /** Get the fulfillment API */
+  get fulfillment(): Fulfillment
+  /** Get the accounts payable API */
+  get accountsPayable(): AccountsPayable
+  /** Get the accounts receivable API */
+  get accountsReceivable(): AccountsReceivable
+  /** Get the cost accounting API */
+  get costAccounting(): CostAccounting
+  /** Get the credit management API */
+  get credit(): Credit
+  /** Get the backorder management API */
+  get backorder(): Backorders
+  /** Get the general ledger API */
+  get generalLedger(): GeneralLedger
 }
 export declare class Customers {
   create(input: CreateCustomerInput): Promise<CustomerOutput>
@@ -1694,4 +2050,278 @@ export declare class Tax {
   static getCanadianTaxInfo(provinceCode: string): CanadianTaxInfoOutput | null
   /** Check if a country is in the EU */
   static isEuCountry(countryCode: string): boolean
+}
+export declare class Quality {
+  /** Create a new inspection */
+  createInspection(input: CreateInspectionInput): Promise<InspectionOutput>
+  /** Get an inspection by ID */
+  getInspection(id: string): Promise<InspectionOutput | null>
+  /** List all inspections */
+  listInspections(): Promise<Array<InspectionOutput>>
+  /** Start an inspection */
+  startInspection(id: string): Promise<InspectionOutput>
+  /** Complete an inspection */
+  completeInspection(id: string): Promise<InspectionOutput>
+  /** Create a non-conformance report */
+  createNcr(input: CreateNcrInput): Promise<NcrOutput>
+  /** Get an NCR by ID */
+  getNcr(id: string): Promise<NcrOutput | null>
+  /** List all NCRs */
+  listNcrs(): Promise<Array<NcrOutput>>
+  /** Close an NCR */
+  closeNcr(id: string): Promise<NcrOutput>
+  /** Create a quality hold */
+  createHold(input: CreateQualityHoldInput): Promise<QualityHoldOutput>
+  /** Get a quality hold by ID */
+  getHold(id: string): Promise<QualityHoldOutput | null>
+  /** List all quality holds */
+  listHolds(): Promise<Array<QualityHoldOutput>>
+  /** Release a quality hold */
+  releaseHold(id: string, releasedBy: string, notes?: string | undefined | null): Promise<QualityHoldOutput>
+  /** Get all active holds */
+  getActiveHolds(): Promise<Array<QualityHoldOutput>>
+  /** Count active holds */
+  countActiveHolds(): Promise<number>
+}
+export declare class Lots {
+  /** Create a new lot */
+  create(input: CreateLotInput): Promise<LotOutput>
+  /** Get a lot by ID */
+  get(id: string): Promise<LotOutput | null>
+  /** Get a lot by lot number */
+  getByNumber(lotNumber: string): Promise<LotOutput | null>
+  /** List all lots */
+  list(): Promise<Array<LotOutput>>
+  /** Get active lots for a SKU */
+  getActiveLots(sku: string): Promise<Array<LotOutput>>
+  /** Get available lots for a SKU (FIFO order) */
+  getAvailableLotsForSku(sku: string): Promise<Array<LotOutput>>
+  /** Quarantine a lot */
+  quarantine(id: string, reason: string): Promise<LotOutput>
+  /** Release a lot from quarantine */
+  releaseQuarantine(id: string): Promise<LotOutput>
+  /** Get expiring lots within days */
+  getExpiringLots(days: number): Promise<Array<LotOutput>>
+  /** Get expired lots */
+  getExpiredLots(): Promise<Array<LotOutput>>
+  /** Get quarantined lots */
+  getQuarantined(): Promise<Array<LotOutput>>
+  /** Count lots */
+  count(): Promise<number>
+}
+export declare class Serials {
+  /** Create a serial number */
+  create(input: CreateSerialInput): Promise<SerialOutput>
+  /** Get a serial by ID */
+  get(id: string): Promise<SerialOutput | null>
+  /** Get a serial by serial number string */
+  getBySerial(serial: string): Promise<SerialOutput | null>
+  /** List all serials */
+  list(): Promise<Array<SerialOutput>>
+  /** Get available serials for a SKU */
+  getAvailable(sku: string, limit: number): Promise<Array<SerialOutput>>
+  /** Mark a serial as sold */
+  markSold(id: string, customerId: string, orderId?: string | undefined | null): Promise<SerialOutput>
+  /** Quarantine a serial */
+  quarantine(id: string, reason: string): Promise<SerialOutput>
+  /** Check if a serial is available */
+  isAvailable(serial: string): Promise<boolean>
+  /** Count serials */
+  count(): Promise<number>
+}
+export declare class Warehouse {
+  /** Create a new warehouse */
+  createWarehouse(input: CreateWarehouseInput): Promise<WarehouseOutput>
+  /** Get a warehouse by ID */
+  getWarehouse(id: number): Promise<WarehouseOutput | null>
+  /** Get a warehouse by code */
+  getWarehouseByCode(code: string): Promise<WarehouseOutput | null>
+  /** List all warehouses */
+  listWarehouses(): Promise<Array<WarehouseOutput>>
+  /** Create a new location */
+  createLocation(input: CreateLocationInput): Promise<LocationOutput>
+  /** Get a location by ID */
+  getLocation(id: number): Promise<LocationOutput | null>
+  /** List locations in a warehouse */
+  listLocations(warehouseId?: number | undefined | null): Promise<Array<LocationOutput>>
+  /** Get pickable locations for a SKU */
+  getPickableLocations(warehouseId: number, sku: string): Promise<Array<LocationOutput>>
+  /** Get total available quantity for a SKU in a warehouse */
+  getTotalAvailable(warehouseId: number, sku: string): Promise<number>
+  /** Count warehouses */
+  countWarehouses(): Promise<number>
+}
+export declare class Receiving {
+  /** Create a new receipt */
+  createReceipt(input: CreateReceiptInput): Promise<ReceiptOutput>
+  /** Get a receipt by ID */
+  getReceipt(id: string): Promise<ReceiptOutput | null>
+  /** Get a receipt by receipt number */
+  getReceiptByNumber(number: string): Promise<ReceiptOutput | null>
+  /** List all receipts */
+  listReceipts(): Promise<Array<ReceiptOutput>>
+  /** Start receiving */
+  startReceiving(id: string): Promise<ReceiptOutput>
+  /** Complete receiving */
+  completeReceiving(id: string): Promise<ReceiptOutput>
+  /** Cancel a receipt */
+  cancelReceipt(id: string): Promise<ReceiptOutput>
+  /** Create a receipt from a purchase order */
+  createReceiptFromPo(poId: string, warehouseId: number): Promise<ReceiptOutput>
+  /** Count receipts */
+  countReceipts(): Promise<number>
+}
+export declare class Fulfillment {
+  /** Create a wave */
+  createWave(input: CreateWaveInput): Promise<WaveOutput>
+  /** Get a wave by ID */
+  getWave(id: string): Promise<WaveOutput | null>
+  /** List all waves */
+  listWaves(): Promise<Array<WaveOutput>>
+  /** Release a wave for picking */
+  releaseWave(id: string): Promise<WaveOutput>
+  /** Complete a wave */
+  completeWave(id: string): Promise<WaveOutput>
+  /** Cancel a wave */
+  cancelWave(id: string): Promise<WaveOutput>
+  /** Get a pick task by ID */
+  getPick(id: string): Promise<PickTaskOutput | null>
+  /** List pick tasks */
+  listPicks(): Promise<Array<PickTaskOutput>>
+  /** Assign a pick task */
+  assignPick(id: string, assignedTo: string): Promise<PickTaskOutput>
+  /** Start a pick task */
+  startPick(id: string): Promise<PickTaskOutput>
+  /** Cancel a pick task */
+  cancelPick(id: string): Promise<PickTaskOutput>
+  /** Check if an order is ready to pack */
+  isOrderReadyToPack(orderId: string): Promise<boolean>
+  /** Check if an order is ready to ship */
+  isOrderReadyToShip(orderId: string): Promise<boolean>
+  /** Count waves */
+  countWaves(): Promise<number>
+}
+export declare class AccountsPayable {
+  /** Create a bill */
+  createBill(input: CreateBillInput): Promise<BillOutput>
+  /** Get a bill by ID */
+  getBill(id: string): Promise<BillOutput | null>
+  /** Get a bill by bill number */
+  getBillByNumber(number: string): Promise<BillOutput | null>
+  /** List all bills */
+  listBills(): Promise<Array<BillOutput>>
+  /** Approve a bill */
+  approveBill(id: string): Promise<BillOutput>
+  /** Cancel a bill */
+  cancelBill(id: string): Promise<BillOutput>
+  /** Get overdue bills */
+  getOverdueBills(): Promise<Array<BillOutput>>
+  /** Get bills due soon */
+  getBillsDueSoon(days: number): Promise<Array<BillOutput>>
+  /** Get aging summary */
+  getAgingSummary(): Promise<ApAgingSummaryOutput>
+  /** Get total outstanding */
+  getTotalOutstanding(): Promise<number>
+  /** Count bills */
+  countBills(): Promise<number>
+}
+export declare class AccountsReceivable {
+  /** Get AR aging summary */
+  getAgingSummary(): Promise<ArAgingSummaryOutput>
+  /** Get total outstanding */
+  getTotalOutstanding(): Promise<number>
+  /** Get Days Sales Outstanding (DSO) */
+  getDso(days: number): Promise<number>
+  /** Create a credit memo */
+  createCreditMemo(input: CreateCreditMemoInput): Promise<CreditMemoOutput>
+  /** Get a credit memo by ID */
+  getCreditMemo(id: string): Promise<CreditMemoOutput | null>
+  /** List credit memos */
+  listCreditMemos(): Promise<Array<CreditMemoOutput>>
+  /** Void a credit memo */
+  voidCreditMemo(id: string): Promise<CreditMemoOutput>
+  /** Get unapplied credits for a customer */
+  getUnappliedCredits(customerId: string): Promise<Array<CreditMemoOutput>>
+}
+export declare class CostAccounting {
+  /** Get item cost */
+  getItemCost(sku: string): Promise<ItemCostOutput | null>
+  /** Set item cost */
+  setItemCost(input: SetItemCostInput): Promise<ItemCostOutput>
+  /** List all item costs */
+  listItemCosts(): Promise<Array<ItemCostOutput>>
+  /** Update average cost */
+  updateAverageCost(sku: string, quantity: number, unitCost: number): Promise<ItemCostOutput>
+  /** Get total inventory value */
+  getTotalInventoryValue(): Promise<number>
+}
+export declare class Credit {
+  /** Create a credit account */
+  createCreditAccount(input: CreateCreditAccountInput): Promise<CreditAccountOutput>
+  /** Get a credit account by ID */
+  getCreditAccount(id: string): Promise<CreditAccountOutput | null>
+  /** Get credit account by customer */
+  getCreditAccountByCustomer(customerId: string): Promise<CreditAccountOutput | null>
+  /** List credit accounts */
+  listCreditAccounts(): Promise<Array<CreditAccountOutput>>
+  /** Check credit */
+  checkCredit(customerId: string, orderAmount: number): Promise<CreditCheckOutput>
+  /** Adjust credit limit */
+  adjustCreditLimit(customerId: string, newLimit: number, reason: string): Promise<CreditAccountOutput>
+  /** Suspend credit account */
+  suspendCreditAccount(customerId: string, reason: string): Promise<CreditAccountOutput>
+  /** Reactivate credit account */
+  reactivateCreditAccount(customerId: string): Promise<CreditAccountOutput>
+  /** Get over-limit customers */
+  getOverLimitCustomers(): Promise<Array<CreditAccountOutput>>
+}
+export declare class Backorders {
+  /** Create a backorder */
+  createBackorder(input: CreateBackorderInput): Promise<BackorderOutput>
+  /** Get a backorder by ID */
+  getBackorder(id: string): Promise<BackorderOutput | null>
+  /** Get a backorder by number */
+  getBackorderByNumber(number: string): Promise<BackorderOutput | null>
+  /** List all backorders */
+  listBackorders(): Promise<Array<BackorderOutput>>
+  /** Cancel a backorder */
+  cancelBackorder(id: string): Promise<BackorderOutput>
+  /** Get backorders for an order */
+  getBackordersForOrder(orderId: string): Promise<Array<BackorderOutput>>
+  /** Get backorders for a SKU */
+  getBackordersForSku(sku: string): Promise<Array<BackorderOutput>>
+  /** Get overdue backorders */
+  getOverdueBackorders(): Promise<Array<BackorderOutput>>
+  /** Get backorder summary */
+  getSummary(): Promise<BackorderSummaryOutput>
+  /** Count pending backorders */
+  countPending(): Promise<number>
+}
+export declare class GeneralLedger {
+  /** Create a GL account */
+  createAccount(input: CreateGlAccountInput): Promise<GlAccountOutput>
+  /** Get a GL account by ID */
+  getAccount(id: string): Promise<GlAccountOutput | null>
+  /** Get a GL account by account number */
+  getAccountByNumber(accountNumber: string): Promise<GlAccountOutput | null>
+  /** List GL accounts */
+  listAccounts(): Promise<Array<GlAccountOutput>>
+  /** Initialize standard chart of accounts */
+  initializeChartOfAccounts(): Promise<Array<GlAccountOutput>>
+  /** Get a journal entry by ID */
+  getJournalEntry(id: string): Promise<JournalEntryOutput | null>
+  /** List journal entries */
+  listJournalEntries(): Promise<Array<JournalEntryOutput>>
+  /** Post a journal entry */
+  postJournalEntry(id: string, postedBy: string): Promise<JournalEntryOutput>
+  /** Void a journal entry */
+  voidJournalEntry(id: string): Promise<JournalEntryOutput>
+  /** Get trial balance */
+  getTrialBalance(asOfDate: string): Promise<TrialBalanceOutput>
+  /** Get balance sheet */
+  getBalanceSheet(asOfDate: string): Promise<BalanceSheetOutput>
+  /** Get income statement */
+  getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatementOutput>
+  /** Get account balance */
+  getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>
 }
