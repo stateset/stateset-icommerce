@@ -28,7 +28,8 @@
     "stateset-warranties": "./bin/stateset-warranties.js",
     "stateset-currency": "./bin/stateset-currency.js",
     "stateset-tax": "./bin/stateset-tax.js",
-    "stateset-tutorial": "./bin/stateset-tutorial.js"
+    "stateset-tutorial": "./bin/stateset-tutorial.js",
+    "stateset-autonomous": "./bin/stateset-autonomous.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -85,6 +86,7 @@
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "ora": "^8.1.1",
+    "yaml": "^2.3.4",
     "zod": "^3.25.76"
   },
   "publishConfig": {

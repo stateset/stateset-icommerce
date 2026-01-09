@@ -60,3 +60,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 stateset-core = { path = "crates/stateset-core", version = "0.1.7" }
 stateset-db = { path = "crates/stateset-db", version = "0.1.7" }
 stateset-embedded = { path = "crates/stateset-embedded", version = "0.1.7" }
+
+# Note: Testing dependencies (criterion, proptest) are added to individual crates

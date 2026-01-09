@@ -17,3 +17,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+
+[[bench]]
+name = "core_benchmarks"
+harness = false
