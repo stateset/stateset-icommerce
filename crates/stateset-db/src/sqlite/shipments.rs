@@ -1,11 +1,13 @@
 //! SQLite Shipment repository implementation
 
-use super::{build_in_clause, map_db_error, params_refs, uuid_params};
-use chrono::{DateTime, Utc};
+use super::{
+    build_in_clause, map_db_error, params_refs, uuid_params,
+    parse_uuid_row, parse_datetime_row,
+    parse_uuid, parse_datetime, parse_datetime_opt, parse_decimal_opt,
+};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
-use std::str::FromStr;
 use stateset_core::{
     validate_batch_size, AddShipmentEvent, BatchResult, CommerceError, CreateShipment,
     CreateShipmentItem, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentItem,
@@ -64,16 +66,6 @@ impl SqliteShipmentRepository {
         }
     }
 
-    fn parse_datetime(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now())
-    }
-
-    fn parse_optional_datetime(s: Option<String>) -> Option<DateTime<Utc>> {
-        s.map(|s| Self::parse_datetime(&s))
-    }
-
     fn load_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
         let conn = self
             .pool
@@ -90,19 +82,21 @@ impl SqliteShipmentRepository {
         let rows = stmt
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentItem {
-                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                    shipment_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_item", "id")?,
+                    shipment_id: parse_uuid_row(&row.get::<_, String>(1)?, "shipment_item", "shipment_id")?,
                     order_item_id: row
                         .get::<_, Option<String>>(2)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                        .map(|s| parse_uuid_row(&s, "shipment_item", "order_item_id"))
+                        .transpose()?,
                     product_id: row
                         .get::<_, Option<String>>(3)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                        .map(|s| parse_uuid_row(&s, "shipment_item", "product_id"))
+                        .transpose()?,
                     sku: row.get(4)?,
                     name: row.get(5)?,
                     quantity: row.get(6)?,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(8)?),
+                    created_at: parse_datetime_row(&row.get::<_, String>(7)?, "shipment_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>(8)?, "shipment_item", "updated_at")?,
                 })
             })
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -131,13 +125,13 @@ impl SqliteShipmentRepository {
         let rows = stmt
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentEvent {
-                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                    shipment_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_event", "id")?,
+                    shipment_id: parse_uuid_row(&row.get::<_, String>(1)?, "shipment_event", "shipment_id")?,
                     event_type: row.get(2)?,
                     location: row.get(3)?,
                     description: row.get(4)?,
-                    event_time: Self::parse_datetime(&row.get::<_, String>(5)?),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
+                    event_time: parse_datetime_row(&row.get::<_, String>(5)?, "shipment_event", "event_time")?,
+                    created_at: parse_datetime_row(&row.get::<_, String>(6)?, "shipment_event", "created_at")?,
                 })
             })
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -369,14 +363,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 created_at,
                 updated_at,
             )) => {
-                let shipment_id = Uuid::parse_str(&id_str).unwrap_or_default();
+                let shipment_id = parse_uuid(&id_str, "shipment", "id")?;
                 let items = self.load_items(shipment_id)?;
                 let events = self.load_events(shipment_id)?;
 
                 Ok(Some(Shipment {
                     id: shipment_id,
                     shipment_number,
-                    order_id: Uuid::parse_str(&order_id).unwrap_or_default(),
+                    order_id: parse_uuid(&order_id, "shipment", "order_id")?,
                     status: Self::parse_status(&status),
                     carrier: Self::parse_carrier(&carrier),
                     shipping_method: Self::parse_method(&shipping_method),
@@ -386,20 +380,20 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     recipient_email,
                     recipient_phone,
                     shipping_address,
-                    weight_kg: weight_kg.and_then(|s| Decimal::from_str(&s).ok()),
+                    weight_kg: parse_decimal_opt(weight_kg, "shipment", "weight_kg")?,
                     dimensions,
-                    shipping_cost: shipping_cost.and_then(|s| Decimal::from_str(&s).ok()),
-                    insurance_amount: insurance_amount.and_then(|s| Decimal::from_str(&s).ok()),
+                    shipping_cost: parse_decimal_opt(shipping_cost, "shipment", "shipping_cost")?,
+                    insurance_amount: parse_decimal_opt(insurance_amount, "shipment", "insurance_amount")?,
                     signature_required: signature_required != 0,
-                    shipped_at: Self::parse_optional_datetime(shipped_at),
-                    estimated_delivery: Self::parse_optional_datetime(estimated_delivery),
-                    delivered_at: Self::parse_optional_datetime(delivered_at),
+                    shipped_at: parse_datetime_opt(shipped_at, "shipment", "shipped_at")?,
+                    estimated_delivery: parse_datetime_opt(estimated_delivery, "shipment", "estimated_delivery")?,
+                    delivered_at: parse_datetime_opt(delivered_at, "shipment", "delivered_at")?,
                     notes,
                     items,
                     events,
                     version: 1, // Default to 1 for backwards compatibility
-                    created_at: Self::parse_datetime(&created_at),
-                    updated_at: Self::parse_datetime(&updated_at),
+                    created_at: parse_datetime(&created_at, "shipment", "created_at")?,
+                    updated_at: parse_datetime(&updated_at, "shipment", "updated_at")?,
                 }))
             }
             None => Ok(None),
@@ -420,7 +414,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             );
 
             match result {
-                Ok(id_str) => Some(Uuid::parse_str(&id_str).unwrap_or_default()),
+                Ok(id_str) => Some(parse_uuid(&id_str, "shipment", "id")?),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(CommerceError::DatabaseError(e.to_string())),
             }
@@ -446,7 +440,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             );
 
             match result {
-                Ok(id_str) => Some(Uuid::parse_str(&id_str).unwrap_or_default()),
+                Ok(id_str) => Some(parse_uuid(&id_str, "shipment", "id")?),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(CommerceError::DatabaseError(e.to_string())),
             }
@@ -563,7 +557,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let mut id_list = Vec::new();
             for row in rows {
                 let id_str = row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                id_list.push(Uuid::parse_str(&id_str).unwrap_or_default());
+                id_list.push(parse_uuid(&id_str, "shipment", "id")?);
             }
             id_list
         };
@@ -1229,14 +1223,14 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 updated_at,
             ) = row.map_err(map_db_error)?;
 
-            let shipment_id = Uuid::parse_str(&id_str).unwrap_or_default();
+            let shipment_id = parse_uuid(&id_str, "shipment", "id")?;
             let items = self.load_items(shipment_id)?;
             let events = self.load_events(shipment_id)?;
 
             shipments.push(Shipment {
                 id: shipment_id,
                 shipment_number,
-                order_id: Uuid::parse_str(&order_id).unwrap_or_default(),
+                order_id: parse_uuid(&order_id, "shipment", "order_id")?,
                 status: Self::parse_status(&status),
                 carrier: Self::parse_carrier(&carrier),
                 shipping_method: Self::parse_method(&shipping_method),
@@ -1246,20 +1240,20 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 recipient_email,
                 recipient_phone,
                 shipping_address,
-                weight_kg: weight_kg.and_then(|s| Decimal::from_str(&s).ok()),
+                weight_kg: parse_decimal_opt(weight_kg, "shipment", "weight_kg")?,
                 dimensions,
-                shipping_cost: shipping_cost.and_then(|s| Decimal::from_str(&s).ok()),
-                insurance_amount: insurance_amount.and_then(|s| Decimal::from_str(&s).ok()),
+                shipping_cost: parse_decimal_opt(shipping_cost, "shipment", "shipping_cost")?,
+                insurance_amount: parse_decimal_opt(insurance_amount, "shipment", "insurance_amount")?,
                 signature_required: signature_required != 0,
-                shipped_at: Self::parse_optional_datetime(shipped_at),
-                estimated_delivery: Self::parse_optional_datetime(estimated_delivery),
-                delivered_at: Self::parse_optional_datetime(delivered_at),
+                shipped_at: parse_datetime_opt(shipped_at, "shipment", "shipped_at")?,
+                estimated_delivery: parse_datetime_opt(estimated_delivery, "shipment", "estimated_delivery")?,
+                delivered_at: parse_datetime_opt(delivered_at, "shipment", "delivered_at")?,
                 notes,
                 items,
                 events,
                 version: 1,
-                created_at: Self::parse_datetime(&created_at),
-                updated_at: Self::parse_datetime(&updated_at),
+                created_at: parse_datetime(&created_at, "shipment", "created_at")?,
+                updated_at: parse_datetime(&updated_at, "shipment", "updated_at")?,
             });
         }
 

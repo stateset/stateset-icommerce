@@ -1,6 +1,10 @@
 //! SQLite return repository implementation
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_uuid_row, uuid_params,
+};
+use super::parse_helpers::{parse_decimal, parse_uuid};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -29,20 +33,20 @@ impl SqliteReturnRepository {
 
     fn row_to_return(row: &rusqlite::Row) -> rusqlite::Result<Return> {
         Ok(Return {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            order_id: row.get::<_, String>("order_id")?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?,
+            order_id: parse_uuid_row(&row.get::<_, String>("order_id")?, "return", "order_id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "return", "customer_id")?,
             status: parse_return_status(&row.get::<_, String>("status")?),
             reason: parse_return_reason(&row.get::<_, String>("reason")?),
             reason_details: row.get("reason_details")?,
-            refund_amount: row.get::<_, Option<String>>("refund_amount")?.map(|s| parse_decimal(&s)),
+            refund_amount: parse_decimal_opt_row(row.get::<_, Option<String>>("refund_amount")?, "return", "refund_amount")?,
             refund_method: row.get("refund_method")?,
             tracking_number: row.get("tracking_number")?,
             items: vec![], // Loaded separately
             notes: row.get("notes")?,
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "return", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "return", "updated_at")?,
         })
     }
 
@@ -59,14 +63,14 @@ impl SqliteReturnRepository {
         let items = stmt
             .query_map([return_id.to_string()], |row| {
                 Ok(ReturnItem {
-                    id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                    return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                    order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                    return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                    order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     quantity: row.get("quantity")?,
                     condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                    refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                    refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                 })
             })
             .map_err(map_db_error)?
@@ -152,7 +156,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 )
                 .map_err(map_db_error)?;
 
-            let refund_amount = parse_decimal(&unit_price) * Decimal::from(item.quantity);
+            let refund_amount = parse_decimal(&unit_price, "order_item", "unit_price")? * Decimal::from(item.quantity);
 
             tx.execute(
                 "INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
@@ -206,16 +210,14 @@ impl ReturnRepository for SqliteReturnRepository {
             ret.items = stmt
                 .query_map([id.to_string()], |row| {
                     Ok(ReturnItem {
-                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                        order_item_id: row.get::<_, String>("order_item_id")?
-                            .parse()
-                            .unwrap_or_default(),
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                        return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                        order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
                         condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                        refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
                 .map_err(map_db_error)?
@@ -249,14 +251,14 @@ impl ReturnRepository for SqliteReturnRepository {
                 ret.items = stmt
                     .query_map([id.to_string()], |row| {
                         Ok(ReturnItem {
-                            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                            return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                            order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                            id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                            return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                            order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
                             condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                            refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                            refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                         })
                     })
                     .map_err(map_db_error)?
@@ -326,14 +328,14 @@ impl ReturnRepository for SqliteReturnRepository {
                 ret.items = stmt
                     .query_map([id.to_string()], |row| {
                         Ok(ReturnItem {
-                            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                            return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                            order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                            id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                            return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                            order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
                             condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                            refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                            refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                         })
                     })
                     .map_err(map_db_error)?
@@ -408,14 +410,14 @@ impl ReturnRepository for SqliteReturnRepository {
             ret.items = item_stmt
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
-                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                        order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                        return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                        order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
                         condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                        refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
                 .map_err(map_db_error)?
@@ -565,7 +567,7 @@ impl ReturnRepository for SqliteReturnRepository {
                     )
                     .map_err(map_db_error)?;
 
-                let refund_amount = parse_decimal(&unit_price) * Decimal::from(item.quantity);
+                let refund_amount = parse_decimal(&unit_price, "order_item", "unit_price")? * Decimal::from(item.quantity);
 
                 tx.execute(
                     "INSERT INTO return_items (id, return_id, order_item_id, sku, name, quantity, condition, refund_amount)
@@ -613,7 +615,7 @@ impl ReturnRepository for SqliteReturnRepository {
             results.push(Return {
                 id,
                 order_id: input.order_id,
-                customer_id: customer_id.parse().unwrap_or_default(),
+                customer_id: parse_uuid(&customer_id, "return", "customer_id")?,
                 status: ReturnStatus::Requested,
                 reason: input.reason,
                 reason_details: input.reason_details,
@@ -720,14 +722,14 @@ impl ReturnRepository for SqliteReturnRepository {
             ret.items = stmt
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
-                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                        order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                        return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                        order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
                         condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                        refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
                 .map_err(map_db_error)?
@@ -815,14 +817,14 @@ impl ReturnRepository for SqliteReturnRepository {
             ret.items = item_stmt
                 .query_map([ret.id.to_string()], |row| {
                     Ok(ReturnItem {
-                        id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                        return_id: row.get::<_, String>("return_id")?.parse().unwrap_or_default(),
-                        order_item_id: row.get::<_, String>("order_item_id")?.parse().unwrap_or_default(),
+                        id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                        return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                        order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
                         condition: parse_item_condition(&row.get::<_, String>("condition")?),
-                        refund_amount: parse_decimal(&row.get::<_, String>("refund_amount")?),
+                        refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
                 .map_err(map_db_error)?

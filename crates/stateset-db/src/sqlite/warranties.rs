@@ -1,6 +1,11 @@
 //! SQLite implementation of warranty repository
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, uuid_params,
+    parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_row, parse_datetime_opt_row,
+    parse_decimal_opt_row,
+};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
@@ -23,58 +28,58 @@ impl SqliteWarrantyRepository {
 
     fn row_to_warranty(row: &Row) -> rusqlite::Result<Warranty> {
         Ok(Warranty {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "warranty", "id")?,
             warranty_number: row.get("warranty_number")?,
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
-            order_id: row.get::<_, Option<String>>("order_id")?.and_then(|s| s.parse().ok()),
-            order_item_id: row.get::<_, Option<String>>("order_item_id")?.and_then(|s| s.parse().ok()),
-            product_id: row.get::<_, Option<String>>("product_id")?.and_then(|s| s.parse().ok()),
+            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "warranty", "customer_id")?,
+            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_id")?, "warranty", "order_id")?,
+            order_item_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_item_id")?, "warranty", "order_item_id")?,
+            product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "warranty", "product_id")?,
             sku: row.get("sku")?,
             serial_number: row.get("serial_number")?,
             status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
             warranty_type: row.get::<_, String>("warranty_type")?.parse().unwrap_or_default(),
             provider: row.get("provider")?,
             coverage_description: row.get("coverage_description")?,
-            purchase_date: row.get::<_, String>("purchase_date")?.parse().unwrap_or_default(),
-            start_date: row.get::<_, String>("start_date")?.parse().unwrap_or_default(),
-            end_date: row.get::<_, Option<String>>("end_date")?.and_then(|s| s.parse().ok()),
+            purchase_date: parse_datetime_row(&row.get::<_, String>("purchase_date")?, "warranty", "purchase_date")?,
+            start_date: parse_datetime_row(&row.get::<_, String>("start_date")?, "warranty", "start_date")?,
+            end_date: parse_datetime_opt_row(row.get::<_, Option<String>>("end_date")?, "warranty", "end_date")?,
             duration_months: row.get("duration_months")?,
-            max_coverage_amount: row.get::<_, Option<String>>("max_coverage_amount")?.map(|s| parse_decimal(&s)),
-            deductible: row.get::<_, Option<String>>("deductible")?.map(|s| parse_decimal(&s)),
+            max_coverage_amount: parse_decimal_opt_row(row.get::<_, Option<String>>("max_coverage_amount")?, "warranty", "max_coverage_amount")?,
+            deductible: parse_decimal_opt_row(row.get::<_, Option<String>>("deductible")?, "warranty", "deductible")?,
             max_claims: row.get("max_claims")?,
             claims_used: row.get("claims_used")?,
             terms: row.get("terms")?,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "warranty", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "warranty", "updated_at")?,
         })
     }
 
     fn row_to_claim(row: &Row) -> rusqlite::Result<WarrantyClaim> {
         Ok(WarrantyClaim {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "warranty_claim", "id")?,
             claim_number: row.get("claim_number")?,
-            warranty_id: row.get::<_, String>("warranty_id")?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
+            warranty_id: parse_uuid_row(&row.get::<_, String>("warranty_id")?, "warranty_claim", "warranty_id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "warranty_claim", "customer_id")?,
             status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
             resolution: row.get::<_, String>("resolution")?.parse().unwrap_or_default(),
             issue_description: row.get("issue_description")?,
             issue_category: row.get("issue_category")?,
-            issue_date: row.get::<_, Option<String>>("issue_date")?.and_then(|s| s.parse().ok()),
+            issue_date: parse_datetime_opt_row(row.get::<_, Option<String>>("issue_date")?, "warranty_claim", "issue_date")?,
             contact_phone: row.get("contact_phone")?,
             contact_email: row.get("contact_email")?,
             shipping_address: row.get("shipping_address")?,
-            repair_cost: row.get::<_, Option<String>>("repair_cost")?.map(|s| parse_decimal(&s)),
-            replacement_product_id: row.get::<_, Option<String>>("replacement_product_id")?.and_then(|s| s.parse().ok()),
-            refund_amount: row.get::<_, Option<String>>("refund_amount")?.map(|s| parse_decimal(&s)),
+            repair_cost: parse_decimal_opt_row(row.get::<_, Option<String>>("repair_cost")?, "warranty_claim", "repair_cost")?,
+            replacement_product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("replacement_product_id")?, "warranty_claim", "replacement_product_id")?,
+            refund_amount: parse_decimal_opt_row(row.get::<_, Option<String>>("refund_amount")?, "warranty_claim", "refund_amount")?,
             denial_reason: row.get("denial_reason")?,
             internal_notes: row.get("internal_notes")?,
             customer_notes: row.get("customer_notes")?,
-            submitted_at: row.get::<_, String>("submitted_at")?.parse().unwrap_or_default(),
-            approved_at: row.get::<_, Option<String>>("approved_at")?.and_then(|s| s.parse().ok()),
-            resolved_at: row.get::<_, Option<String>>("resolved_at")?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            submitted_at: parse_datetime_row(&row.get::<_, String>("submitted_at")?, "warranty_claim", "submitted_at")?,
+            approved_at: parse_datetime_opt_row(row.get::<_, Option<String>>("approved_at")?, "warranty_claim", "approved_at")?,
+            resolved_at: parse_datetime_opt_row(row.get::<_, Option<String>>("resolved_at")?, "warranty_claim", "resolved_at")?,
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "warranty_claim", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "warranty_claim", "updated_at")?,
         })
     }
 }

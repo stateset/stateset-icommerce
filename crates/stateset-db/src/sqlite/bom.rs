@@ -1,11 +1,13 @@
 //! SQLite BOM (Bill of Materials) repository implementation
 
+use super::parse_helpers::{
+    parse_datetime, parse_datetime_row, parse_decimal_row, parse_uuid, parse_uuid_opt_row,
+    parse_uuid_row,
+};
 use super::{build_in_clause, params_refs, uuid_params};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
-use std::str::FromStr;
 use stateset_core::{
     validate_batch_size, BatchResult, BillOfMaterials, BomComponent, BomFilter, BomRepository,
     BomStatus, CommerceError, CreateBom, CreateBomComponent, Result, UpdateBom,
@@ -36,12 +38,6 @@ impl SqliteBomRepository {
         }
     }
 
-    fn parse_datetime(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now())
-    }
-
     fn load_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -56,19 +52,33 @@ impl SqliteBomRepository {
         let rows = stmt
             .query_map([bom_id.to_string()], |row| {
                 Ok(BomComponent {
-                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                    bom_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
-                    component_product_id: row
-                        .get::<_, Option<String>>(2)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "bom_component", "id")?,
+                    bom_id: parse_uuid_row(&row.get::<_, String>(1)?, "bom_component", "bom_id")?,
+                    component_product_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(2)?,
+                        "bom_component",
+                        "component_product_id",
+                    )?,
                     component_sku: row.get(3)?,
                     name: row.get(4)?,
-                    quantity: Decimal::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>(5)?,
+                        "bom_component",
+                        "quantity",
+                    )?,
                     unit_of_measure: row.get(6)?,
                     position: row.get(7)?,
                     notes: row.get(8)?,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(9)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(10)?),
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(9)?,
+                        "bom_component",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(10)?,
+                        "bom_component",
+                        "updated_at",
+                    )?,
                 })
             })
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -171,22 +181,28 @@ impl BomRepository for SqliteBomRepository {
 
         match bom_data {
             Some((id_str, bom_number, product_id, name, description, revision, status, created_by, updated_by, created_at, updated_at)) => {
-                let bom_id = Uuid::parse_str(&id_str).unwrap_or_default();
+                let bom_id = parse_uuid(&id_str, "bom", "id")?;
                 let components = self.load_components(bom_id)?;
 
                 Ok(Some(BillOfMaterials {
                     id: bom_id,
                     bom_number,
-                    product_id: Uuid::parse_str(&product_id).unwrap_or_default(),
+                    product_id: parse_uuid(&product_id, "bom", "product_id")?,
                     name,
                     description,
                     revision,
                     status: Self::parse_bom_status(&status),
                     components,
-                    created_by: created_by.and_then(|s| Uuid::parse_str(&s).ok()),
-                    updated_by: updated_by.and_then(|s| Uuid::parse_str(&s).ok()),
-                    created_at: Self::parse_datetime(&created_at),
-                    updated_at: Self::parse_datetime(&updated_at),
+                    created_by: match created_by {
+                        Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "created_by")?),
+                        _ => None,
+                    },
+                    updated_by: match updated_by {
+                        Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "updated_by")?),
+                        _ => None,
+                    },
+                    created_at: parse_datetime(&created_at, "bom", "created_at")?,
+                    updated_at: parse_datetime(&updated_at, "bom", "updated_at")?,
                 }))
             }
             None => Ok(None),
@@ -205,7 +221,7 @@ impl BomRepository for SqliteBomRepository {
             );
 
             match result {
-                Ok(id_str) => Some(Uuid::parse_str(&id_str).unwrap_or_default()),
+                Ok(id_str) => Some(parse_uuid(&id_str, "bom", "id")?),
                 Err(rusqlite::Error::QueryReturnedNoRows) => None,
                 Err(e) => return Err(CommerceError::DatabaseError(e.to_string())),
             }
@@ -294,7 +310,7 @@ impl BomRepository for SqliteBomRepository {
             let mut id_list = Vec::new();
             for row in rows {
                 let id_str = row.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                id_list.push(Uuid::parse_str(&id_str).unwrap_or_default());
+                id_list.push(parse_uuid(&id_str, "bom", "id")?);
             }
             id_list
         }; // Connection released here
@@ -396,7 +412,7 @@ impl BomRepository for SqliteBomRepository {
 
         Ok(BomComponent {
             id: component_id,
-            bom_id: Uuid::parse_str(&row.0).unwrap_or_default(),
+            bom_id: parse_uuid(&row.0, "bom_component", "bom_id")?,
             component_product_id: component.component_product_id,
             component_sku: component.component_sku,
             name: component.name,
@@ -404,7 +420,7 @@ impl BomRepository for SqliteBomRepository {
             unit_of_measure: uom,
             position: component.position,
             notes: component.notes,
-            created_at: Self::parse_datetime(&row.1),
+            created_at: parse_datetime(&row.1, "bom_component", "created_at")?,
             updated_at: now,
         })
     }
@@ -665,16 +681,22 @@ impl BomRepository for SqliteBomRepository {
             results.push(BillOfMaterials {
                 id,
                 bom_number: bom_data.0,
-                product_id: Uuid::parse_str(&bom_data.1).unwrap_or_default(),
+                product_id: parse_uuid(&bom_data.1, "bom", "product_id")?,
                 name: new_name,
                 description: new_description,
                 revision: new_revision,
                 status: new_status,
                 components: vec![], // Components loaded separately after commit
-                created_by: bom_data.2.and_then(|s| Uuid::parse_str(&s).ok()),
-                updated_by: bom_data.3.and_then(|s| Uuid::parse_str(&s).ok()),
-                created_at: Self::parse_datetime(&bom_data.4),
-                updated_at: Self::parse_datetime(&bom_data.5),
+                created_by: match bom_data.2 {
+                    Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "created_by")?),
+                    _ => None,
+                },
+                updated_by: match bom_data.3 {
+                    Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "updated_by")?),
+                    _ => None,
+                },
+                created_at: parse_datetime(&bom_data.4, "bom", "created_at")?,
+                updated_at: parse_datetime(&bom_data.5, "bom", "updated_at")?,
             });
         }
 
@@ -803,22 +825,28 @@ impl BomRepository for SqliteBomRepository {
             updated_at,
         ) in bom_data_list
         {
-            let bom_id = Uuid::parse_str(&id_str).unwrap_or_default();
+            let bom_id = parse_uuid(&id_str, "bom", "id")?;
             let components = self.load_components(bom_id)?;
 
             boms.push(BillOfMaterials {
                 id: bom_id,
                 bom_number,
-                product_id: Uuid::parse_str(&product_id).unwrap_or_default(),
+                product_id: parse_uuid(&product_id, "bom", "product_id")?,
                 name,
                 description,
                 revision,
                 status: Self::parse_bom_status(&status),
                 components,
-                created_by: created_by.and_then(|s| Uuid::parse_str(&s).ok()),
-                updated_by: updated_by.and_then(|s| Uuid::parse_str(&s).ok()),
-                created_at: Self::parse_datetime(&created_at),
-                updated_at: Self::parse_datetime(&updated_at),
+                created_by: match created_by {
+                    Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "created_by")?),
+                    _ => None,
+                },
+                updated_by: match updated_by {
+                    Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "updated_by")?),
+                    _ => None,
+                },
+                created_at: parse_datetime(&created_at, "bom", "created_at")?,
+                updated_at: parse_datetime(&updated_at, "bom", "updated_at")?,
             });
         }
 

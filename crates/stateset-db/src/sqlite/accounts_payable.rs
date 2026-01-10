@@ -1,6 +1,9 @@
 //! SQLite implementation for Accounts Payable
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid,
+    parse_uuid_opt_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -31,104 +34,93 @@ impl SqliteAccountsPayableRepository {
     }
 
     fn row_to_bill(row: &rusqlite::Row) -> rusqlite::Result<Bill> {
-        let id_str: String = row.get("id")?;
-        let supplier_id_str: String = row.get("supplier_id")?;
-        let po_id_str: Option<String> = row.get("purchase_order_id")?;
         let status_str: String = row.get("status")?;
 
         Ok(Bill {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?,
             bill_number: row.get("bill_number")?,
-            supplier_id: Uuid::parse_str(&supplier_id_str).unwrap_or_default(),
+            supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "bill", "supplier_id")?,
             supplier_name: row.get("supplier_name")?,
-            purchase_order_id: po_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            purchase_order_id: parse_uuid_opt_row(row.get("purchase_order_id")?, "bill", "purchase_order_id")?,
             status: BillStatus::from_str(&status_str).unwrap_or_default(),
-            bill_date: row.get::<_, String>("bill_date")?.parse().unwrap_or_else(|_| Utc::now()),
-            due_date: row.get::<_, String>("due_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            bill_date: parse_datetime_row(&row.get::<_, String>("bill_date")?, "bill", "bill_date")?,
+            due_date: parse_datetime_row(&row.get::<_, String>("due_date")?, "bill", "due_date")?,
             payment_terms: row.get("payment_terms")?,
-            subtotal: parse_decimal(&row.get::<_, String>("subtotal")?),
-            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
-            shipping_amount: parse_decimal(&row.get::<_, String>("shipping_amount")?),
-            discount_amount: parse_decimal(&row.get::<_, String>("discount_amount")?),
-            total_amount: parse_decimal(&row.get::<_, String>("total_amount")?),
-            amount_paid: parse_decimal(&row.get::<_, String>("amount_paid")?),
-            amount_due: parse_decimal(&row.get::<_, String>("amount_due")?),
+            subtotal: parse_decimal_row(&row.get::<_, String>("subtotal")?, "bill", "subtotal")?,
+            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "bill", "tax_amount")?,
+            shipping_amount: parse_decimal_row(&row.get::<_, String>("shipping_amount")?, "bill", "shipping_amount")?,
+            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "bill", "discount_amount")?,
+            total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "bill", "total_amount")?,
+            amount_paid: parse_decimal_row(&row.get::<_, String>("amount_paid")?, "bill", "amount_paid")?,
+            amount_due: parse_decimal_row(&row.get::<_, String>("amount_due")?, "bill", "amount_due")?,
             currency: row.get("currency")?,
             reference_number: row.get("reference_number")?,
             memo: row.get("memo")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "bill", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "bill", "updated_at")?,
         })
     }
 
     fn row_to_bill_item(row: &rusqlite::Row) -> rusqlite::Result<BillItem> {
-        let id_str: String = row.get("id")?;
-        let bill_id_str: String = row.get("bill_id")?;
-        let po_line_str: Option<String> = row.get("po_line_id")?;
-        let tax_rate_str: Option<String> = row.get("tax_rate")?;
+        use crate::sqlite::parse_decimal_opt_row;
 
         Ok(BillItem {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            bill_id: Uuid::parse_str(&bill_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_item", "id")?,
+            bill_id: parse_uuid_row(&row.get::<_, String>("bill_id")?, "bill_item", "bill_id")?,
             line_number: row.get("line_number")?,
             description: row.get("description")?,
             account_code: row.get("account_code")?,
-            quantity: parse_decimal(&row.get::<_, String>("quantity")?),
-            unit_price: parse_decimal(&row.get::<_, String>("unit_price")?),
-            amount: parse_decimal(&row.get::<_, String>("amount")?),
-            tax_rate: tax_rate_str.map(|s| parse_decimal(&s)),
-            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
-            po_line_id: po_line_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "bill_item", "quantity")?,
+            unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "bill_item", "unit_price")?,
+            amount: parse_decimal_row(&row.get::<_, String>("amount")?, "bill_item", "amount")?,
+            tax_rate: parse_decimal_opt_row(row.get("tax_rate")?, "bill_item", "tax_rate")?,
+            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "bill_item", "tax_amount")?,
+            po_line_id: parse_uuid_opt_row(row.get("po_line_id")?, "bill_item", "po_line_id")?,
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "bill_item", "created_at")?,
         })
     }
 
     fn row_to_payment(row: &rusqlite::Row) -> rusqlite::Result<BillPayment> {
-        let id_str: String = row.get("id")?;
-        let supplier_id_str: String = row.get("supplier_id")?;
         let method_str: String = row.get("payment_method")?;
         let status_str: String = row.get("status")?;
 
         Ok(BillPayment {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_payment", "id")?,
             payment_number: row.get("payment_number")?,
-            supplier_id: Uuid::parse_str(&supplier_id_str).unwrap_or_default(),
-            payment_date: row.get::<_, String>("payment_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "bill_payment", "supplier_id")?,
+            payment_date: parse_datetime_row(&row.get::<_, String>("payment_date")?, "bill_payment", "payment_date")?,
             payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>("amount")?),
+            amount: parse_decimal_row(&row.get::<_, String>("amount")?, "bill_payment", "amount")?,
             currency: row.get("currency")?,
             reference_number: row.get("reference_number")?,
             bank_account: row.get("bank_account")?,
             check_number: row.get("check_number")?,
             memo: row.get("memo")?,
             status: PaymentStatusAP::from_str(&status_str).unwrap_or_default(),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "bill_payment", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "bill_payment", "updated_at")?,
         })
     }
 
     fn row_to_payment_run(row: &rusqlite::Row) -> rusqlite::Result<PaymentRun> {
-        let id_str: String = row.get("id")?;
         let status_str: String = row.get("status")?;
         let method_str: String = row.get("payment_method")?;
-        let approved_str: Option<String> = row.get("approved_at")?;
-        let processed_str: Option<String> = row.get("processed_at")?;
 
         Ok(PaymentRun {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_run", "id")?,
             run_number: row.get("run_number")?,
             status: PaymentRunStatus::from_str(&status_str).unwrap_or_default(),
-            payment_date: row.get::<_, String>("payment_date")?.parse().unwrap_or_else(|_| Utc::now()),
+            payment_date: parse_datetime_row(&row.get::<_, String>("payment_date")?, "payment_run", "payment_date")?,
             payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
-            total_amount: parse_decimal(&row.get::<_, String>("total_amount")?),
+            total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "payment_run", "total_amount")?,
             payment_count: row.get("payment_count")?,
             notes: row.get("notes")?,
             created_by: row.get("created_by")?,
             approved_by: row.get("approved_by")?,
-            approved_at: approved_str.and_then(|s| s.parse().ok()),
-            processed_at: processed_str.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            approved_at: parse_datetime_opt_row(row.get("approved_at")?, "payment_run", "approved_at")?,
+            processed_at: parse_datetime_opt_row(row.get("processed_at")?, "payment_run", "processed_at")?,
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "payment_run", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "payment_run", "updated_at")?,
         })
     }
 
@@ -394,7 +386,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
         conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()]).map_err(map_db_error)?;
 
-        self.recalculate_bill(Uuid::parse_str(&bill_id).unwrap_or_default())?;
+        self.recalculate_bill(parse_uuid(&bill_id, "bill_item", "bill_id")?)?;
         Ok(())
     }
 
@@ -573,6 +565,9 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+        use crate::sqlite::parse_datetime;
+        use crate::sqlite::parse_helpers::parse_decimal;
+
         let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT * FROM ap_payment_allocations WHERE payment_id = ?1").map_err(map_db_error)?;
         let mut rows = stmt.query(params![payment_id.to_string()]).map_err(map_db_error)?;
@@ -583,13 +578,14 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let payment_id_str: String = row.get("payment_id").map_err(map_db_error)?;
             let bill_id_str: String = row.get("bill_id").map_err(map_db_error)?;
             let amount_str: String = row.get("amount").map_err(map_db_error)?;
+            let created_at_str: String = row.get("created_at").map_err(map_db_error)?;
 
             allocations.push(PaymentAllocation {
-                id: Uuid::parse_str(&id_str).unwrap_or_default(),
-                payment_id: Uuid::parse_str(&payment_id_str).unwrap_or_default(),
-                bill_id: Uuid::parse_str(&bill_id_str).unwrap_or_default(),
-                amount: parse_decimal(&amount_str),
-                created_at: row.get::<_, String>("created_at").map_err(map_db_error)?.parse().unwrap_or_else(|_| Utc::now()),
+                id: parse_uuid(&id_str, "payment_allocation", "id")?,
+                payment_id: parse_uuid(&payment_id_str, "payment_allocation", "payment_id")?,
+                bill_id: parse_uuid(&bill_id_str, "payment_allocation", "bill_id")?,
+                amount: parse_decimal(&amount_str, "payment_allocation", "amount")?,
+                created_at: parse_datetime(&created_at_str, "payment_allocation", "created_at")?,
             });
         }
         Ok(allocations)

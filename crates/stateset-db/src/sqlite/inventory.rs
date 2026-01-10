@@ -1,15 +1,18 @@
 //! SQLite inventory repository implementation
 
-use super::{build_in_clause, i64_params, map_db_error, params_refs, parse_decimal, string_params};
+use super::{
+    build_in_clause, i64_params, map_db_error, params_refs, string_params,
+    parse_datetime_row, parse_datetime_opt_row, parse_decimal_row, parse_decimal_opt_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, validate_sku, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
-    InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
-    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
-    TransactionType,
+    validate_batch_size, validate_quantity, validate_sku, AdjustInventory, BatchResult, CommerceError,
+    CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository,
+    InventoryReservation, InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory,
+    Result, StockLevel, TransactionType,
 };
 use uuid::Uuid;
 
@@ -125,8 +128,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             },
         );
@@ -151,8 +154,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             },
         );
@@ -179,8 +182,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             },
         );
@@ -206,9 +209,9 @@ impl InventoryRepository for SqliteInventoryRepository {
                 Ok(LocationStock {
                     location_id: row.get("location_id")?,
                     location_name: row.get("location_name")?,
-                    on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                    allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                    available: parse_decimal(&row.get::<_, String>("quantity_available")?),
+                    on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                    allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                    available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
                 })
             })
             .map_err(map_db_error)?
@@ -239,14 +242,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                     id: row.get("id")?,
                     item_id: row.get("item_id")?,
                     location_id: row.get("location_id")?,
-                    quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                    quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                    quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                    reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                    safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                    quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                    quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                    quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                    reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                    safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                     version: row.get("version")?,
-                    last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                 })
             },
         );
@@ -285,8 +288,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             },
         ).map_err(|e| match e {
@@ -305,14 +308,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                     id: row.get("id")?,
                     item_id: row.get("item_id")?,
                     location_id: row.get("location_id")?,
-                    quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                    quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                    quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                    reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                    safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                    quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                    quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                    quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                    reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                    safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                     version: row.get("version")?,
-                    last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                 })
             },
         );
@@ -336,14 +339,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                             id: row.get("id")?,
                             item_id: row.get("item_id")?,
                             location_id: row.get("location_id")?,
-                            quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                            quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                            quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                            reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                            safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                            quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                            quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                            quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                            reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                            safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                             version: row.get("version")?,
-                            last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                            last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                         })
                     },
                 ).map_err(map_db_error)?
@@ -429,6 +432,10 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
+        // Validate quantity is positive to prevent negative reservations
+        // that could inflate available stock
+        validate_quantity(input.quantity)?;
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
@@ -445,8 +452,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             },
         ).map_err(|e| match e {
@@ -465,14 +472,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                     id: row.get("id")?,
                     item_id: row.get("item_id")?,
                     location_id: row.get("location_id")?,
-                    quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                    quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                    quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                    reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                    safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                    quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                    quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                    quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                    reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                    safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                     version: row.get("version")?,
-                    last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                 })
             },
         ).map_err(|e| match e {
@@ -568,7 +575,7 @@ impl InventoryRepository for SqliteInventoryRepository {
                 Ok((
                     row.get::<_, i64>("item_id")?,
                     row.get::<_, i32>("location_id")?,
-                    parse_decimal(&row.get::<_, String>("quantity")?),
+                    parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_reservation", "quantity")?,
                     row.get::<_, String>("status")?,
                 ))
             },
@@ -677,8 +684,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             })
             .map_err(map_db_error)?
@@ -762,12 +769,12 @@ impl InventoryRepository for SqliteInventoryRepository {
                     item_id: row.get("item_id")?,
                     location_id: row.get("location_id")?,
                     transaction_type: parse_transaction_type(&row.get::<_, String>("transaction_type")?),
-                    quantity: parse_decimal(&row.get::<_, String>("quantity")?),
+                    quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_transaction", "quantity")?,
                     reference_type: row.get("reference_type")?,
                     reference_id: row.get("reference_id")?,
                     reason: row.get("reason")?,
                     created_by: row.get("created_by")?,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_transaction", "created_at")?,
                 })
             })
             .map_err(map_db_error)?
@@ -923,8 +930,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                         description: row.get("description")?,
                         unit_of_measure: row.get("unit_of_measure")?,
                         is_active: row.get::<_, i32>("is_active")? != 0,
-                        created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                        updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                        created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                        updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                     })
                 },
             ).map_err(|e| match e {
@@ -943,14 +950,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                         id: row.get("id")?,
                         item_id: row.get("item_id")?,
                         location_id: row.get("location_id")?,
-                        quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                        quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                        quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                        reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                        safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                        quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                        quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                        quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                        reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                        safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                         version: row.get("version")?,
-                        last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                        updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                        last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                        updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                     })
                 },
             );
@@ -974,14 +981,14 @@ impl InventoryRepository for SqliteInventoryRepository {
                                 id: row.get("id")?,
                                 item_id: row.get("item_id")?,
                                 location_id: row.get("location_id")?,
-                                quantity_on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                                quantity_allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                                quantity_available: parse_decimal(&row.get::<_, String>("quantity_available")?),
-                                reorder_point: row.get::<_, Option<String>>("reorder_point")?.map(|s| parse_decimal(&s)),
-                                safety_stock: row.get::<_, Option<String>>("safety_stock")?.map(|s| parse_decimal(&s)),
+                                quantity_on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                                quantity_allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                                quantity_available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                                reorder_point: parse_decimal_opt_row(row.get::<_, Option<String>>("reorder_point")?, "inventory_balance", "reorder_point")?,
+                                safety_stock: parse_decimal_opt_row(row.get::<_, Option<String>>("safety_stock")?, "inventory_balance", "safety_stock")?,
                                 version: row.get("version")?,
-                                last_counted_at: row.get::<_, Option<String>>("last_counted_at")?.and_then(|s| s.parse().ok()),
-                                updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                                last_counted_at: parse_datetime_opt_row(row.get::<_, Option<String>>("last_counted_at")?, "inventory_balance", "last_counted_at")?,
+                                updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_balance", "updated_at")?,
                             })
                         },
                     ).map_err(map_db_error)?
@@ -1089,8 +1096,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             })
             .map_err(map_db_error)?
@@ -1123,8 +1130,8 @@ impl InventoryRepository for SqliteInventoryRepository {
                     description: row.get("description")?,
                     unit_of_measure: row.get("unit_of_measure")?,
                     is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
                 })
             })
             .map_err(map_db_error)?
@@ -1148,9 +1155,9 @@ impl InventoryRepository for SqliteInventoryRepository {
                     Ok(LocationStock {
                         location_id: row.get("location_id")?,
                         location_name: row.get("location_name")?,
-                        on_hand: parse_decimal(&row.get::<_, String>("quantity_on_hand")?),
-                        allocated: parse_decimal(&row.get::<_, String>("quantity_allocated")?),
-                        available: parse_decimal(&row.get::<_, String>("quantity_available")?),
+                        on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                        allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                        available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
                     })
                 })
                 .map_err(map_db_error)?

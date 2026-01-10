@@ -1,6 +1,9 @@
 //! SQLite product repository implementation
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, uuid_params,
+    parse_uuid_row, parse_datetime_row, parse_decimal_row, parse_decimal_opt_row, parse_json_row, parse_json_opt_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -32,16 +35,16 @@ impl SqliteProductRepository {
         let seo_json: Option<String> = row.get("seo")?;
 
         Ok(Product {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "product", "id")?,
             name: row.get("name")?,
             slug: row.get("slug")?,
             description: row.get("description")?,
             status: parse_product_status(&row.get::<_, String>("status")?),
             product_type: parse_product_type(&row.get::<_, String>("product_type")?),
-            attributes: serde_json::from_str(&attributes_json).unwrap_or_default(),
-            seo: seo_json.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            attributes: parse_json_row(&attributes_json, "product", "attributes")?,
+            seo: parse_json_opt_row(seo_json, "product", "seo")?,
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "product", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "product", "updated_at")?,
         })
     }
 
@@ -49,21 +52,21 @@ impl SqliteProductRepository {
         let options_json: String = row.get("options")?;
 
         Ok(ProductVariant {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            product_id: row.get::<_, String>("product_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "product_variant", "id")?,
+            product_id: parse_uuid_row(&row.get::<_, String>("product_id")?, "product_variant", "product_id")?,
             sku: row.get("sku")?,
             name: row.get("name")?,
-            price: parse_decimal(&row.get::<_, String>("price")?),
-            compare_at_price: row.get::<_, Option<String>>("compare_at_price")?.map(|s| parse_decimal(&s)),
-            cost: row.get::<_, Option<String>>("cost")?.map(|s| parse_decimal(&s)),
+            price: parse_decimal_row(&row.get::<_, String>("price")?, "product_variant", "price")?,
+            compare_at_price: parse_decimal_opt_row(row.get::<_, Option<String>>("compare_at_price")?, "product_variant", "compare_at_price")?,
+            cost: parse_decimal_opt_row(row.get::<_, Option<String>>("cost")?, "product_variant", "cost")?,
             barcode: row.get("barcode")?,
-            weight: row.get::<_, Option<String>>("weight")?.map(|s| parse_decimal(&s)),
+            weight: parse_decimal_opt_row(row.get::<_, Option<String>>("weight")?, "product_variant", "weight")?,
             weight_unit: row.get("weight_unit")?,
-            options: serde_json::from_str(&options_json).unwrap_or_default(),
+            options: parse_json_row(&options_json, "product_variant", "options")?,
             is_default: row.get::<_, i32>("is_default")? != 0,
             is_active: row.get::<_, i32>("is_active")? != 0,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "product_variant", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "product_variant", "updated_at")?,
         })
     }
 }

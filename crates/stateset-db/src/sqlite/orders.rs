@@ -1,6 +1,9 @@
 //! SQLite order repository implementation
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, uuid_params,
+    parse_uuid_row, parse_datetime_row, parse_decimal_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -42,15 +45,12 @@ impl SqliteOrderRepository {
         let billing_addr: Option<String> = row.get("billing_address")?;
 
         Ok(Order {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
             order_number: row.get("order_number")?,
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
+            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "order", "customer_id")?,
             status: parse_order_status(&row.get::<_, String>("status")?),
-            order_date: row
-                .get::<_, String>("order_date")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            total_amount: parse_decimal(&row.get::<_, String>("total_amount")?),
+            order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "order", "order_date")?,
+            total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "order", "total_amount")?,
             currency: row.get("currency")?,
             payment_status: parse_payment_status(&row.get::<_, String>("payment_status")?),
             fulfillment_status: parse_fulfillment_status(&row.get::<_, String>("fulfillment_status")?),
@@ -62,14 +62,8 @@ impl SqliteOrderRepository {
             billing_address: billing_addr.and_then(|s| serde_json::from_str(&s).ok()),
             items: vec![], // Loaded separately
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "order", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "order", "updated_at")?,
         })
     }
 
@@ -88,19 +82,19 @@ impl SqliteOrderRepository {
         let items = stmt
             .query_map([order_id.to_string()], |row| {
                 Ok(OrderItem {
-                    id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-                    order_id: row.get::<_, String>("order_id")?.parse().unwrap_or_default(),
-                    product_id: row.get::<_, String>("product_id")?.parse().unwrap_or_default(),
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "order_item", "id")?,
+                    order_id: parse_uuid_row(&row.get::<_, String>("order_id")?, "order_item", "order_id")?,
+                    product_id: parse_uuid_row(&row.get::<_, String>("product_id")?, "order_item", "product_id")?,
                     variant_id: row
                         .get::<_, Option<String>>("variant_id")?
                         .and_then(|s| s.parse().ok()),
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     quantity: row.get("quantity")?,
-                    unit_price: parse_decimal(&row.get::<_, String>("unit_price")?),
-                    discount: parse_decimal(&row.get::<_, String>("discount")?),
-                    tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
-                    total: parse_decimal(&row.get::<_, String>("total")?),
+                    unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "order_item", "unit_price")?,
+                    discount: parse_decimal_row(&row.get::<_, String>("discount")?, "order_item", "discount")?,
+                    tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "order_item", "tax_amount")?,
+                    total: parse_decimal_row(&row.get::<_, String>("total")?, "order_item", "total")?,
                 })
             })
             .map_err(map_db_error)?

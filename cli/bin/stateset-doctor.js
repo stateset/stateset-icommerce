@@ -10,6 +10,11 @@
  *   stateset-doctor --checks api,db  Run specific checks
  */
 
+// Suppress logging early if --json flag is present to prevent stdout pollution
+if (process.argv.includes('--json')) {
+  process.env.LOG_LEVEL = 'silent';
+}
+
 import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
 import { CLI_VERSION, DEFAULT_MODEL, FEATURES } from '../src/config.js';
@@ -68,26 +73,26 @@ async function checkApiKey() {
     };
   }
 
-  // Check API connectivity
-  try {
-    const connectivity = await checkApiAvailability(apiKey, { timeout: 5000 });
-    if (!connectivity.available) {
-      return {
-        status: 'warning',
-        message: `API key set but connectivity issue: ${connectivity.reason}`,
-        hint: connectivity.message,
-        stats: { keyConfigured: true, apiReachable: false }
-      };
-    }
-  } catch (error) {
-    // Ignore connectivity check errors, key is still valid
-  }
-
-  return {
+  // API key format is valid - report ok
+  // Connectivity is checked separately or only matters for actual operations
+  const result = {
     status: 'ok',
     message: `API key configured (${apiKey.slice(0, 10)}...${apiKey.slice(-4)})`,
-    stats: { keyConfigured: true, apiReachable: true }
+    stats: { keyConfigured: true }
   };
+
+  // Optionally check connectivity (but don't downgrade status for connectivity issues)
+  try {
+    const connectivity = await checkApiAvailability(apiKey, { timeout: 5000 });
+    result.stats.apiReachable = connectivity.available;
+    if (!connectivity.available) {
+      result.hint = `Connectivity issue: ${connectivity.reason}`;
+    }
+  } catch (error) {
+    result.stats.apiReachable = 'unknown';
+  }
+
+  return result;
 }
 
 async function checkSync() {

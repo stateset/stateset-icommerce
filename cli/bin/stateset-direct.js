@@ -14,6 +14,8 @@
 
 import { Commerce } from '@stateset/embedded';
 import { parseArgs } from 'node:util';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 
 // ============================================================================
 // Resource & Action Aliases
@@ -161,6 +163,14 @@ async function main() {
   // Expand aliases
   const resource = expandResource(rawResource);
   const action = expandAction(rawAction);
+
+  // Validate database path exists (for file-based databases)
+  if (dbPath !== ':memory:') {
+    const dir = path.dirname(path.resolve(dbPath));
+    if (!fs.existsSync(dir)) {
+      throw new Error(`Database directory does not exist: ${dir}`);
+    }
+  }
 
   // Initialize commerce
   const commerce = new Commerce(dbPath);

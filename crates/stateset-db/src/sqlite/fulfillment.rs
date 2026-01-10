@@ -1,13 +1,16 @@
 //! SQLite implementation for fulfillment (pick/pack/ship) management
 
-use crate::sqlite::{map_db_error, parse_decimal};
-use chrono::Utc;
+use crate::sqlite::{
+    map_db_error, parse_decimal, parse_uuid, parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_row, parse_datetime_opt_row,
+};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
 use std::str::FromStr;
 use uuid::Uuid;
+use chrono::Utc;
 
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CompletePick, CompleteShip,
@@ -40,7 +43,7 @@ impl SqliteFulfillmentRepository {
         let completed_str: Option<String> = row.get("completed_at")?;
 
         Ok(Wave {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            id: parse_uuid_row(&id_str, "wave", "id")?,
             wave_number: row.get("wave_number")?,
             warehouse_id: row.get("warehouse_id")?,
             status: WaveStatus::from_str(&status_str).unwrap_or_default(),
@@ -48,12 +51,12 @@ impl SqliteFulfillmentRepository {
             pick_count: row.get("pick_count")?,
             completed_pick_count: row.get("completed_pick_count")?,
             priority: row.get("priority")?,
-            started_at: started_str.and_then(|s| s.parse().ok()),
-            completed_at: completed_str.and_then(|s| s.parse().ok()),
+            started_at: parse_datetime_opt_row(started_str, "wave", "started_at")?,
+            completed_at: parse_datetime_opt_row(completed_str, "wave", "completed_at")?,
             notes: row.get("notes")?,
             created_by: row.get("created_by")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "wave", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "wave", "updated_at")?,
         })
     }
 
@@ -71,10 +74,10 @@ impl SqliteFulfillmentRepository {
         let completed_str: Option<String> = row.get("completed_at")?;
 
         Ok(PickTask {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            wave_id: wave_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            order_id: Uuid::parse_str(&order_id_str).unwrap_or_default(),
-            order_item_id: Uuid::parse_str(&order_item_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&id_str, "pick_task", "id")?,
+            wave_id: parse_uuid_opt_row(wave_id_str, "pick_task", "wave_id")?,
+            order_id: parse_uuid_row(&order_id_str, "pick_task", "order_id")?,
+            order_item_id: parse_uuid_row(&order_item_id_str, "pick_task", "order_item_id")?,
             warehouse_id: row.get("warehouse_id")?,
             status: PickStatus::from_str(&status_str).unwrap_or_default(),
             sku: row.get("sku")?,
@@ -84,16 +87,16 @@ impl SqliteFulfillmentRepository {
             quantity_requested: parse_decimal(&qty_req),
             quantity_picked: parse_decimal(&qty_pick),
             quantity_short: parse_decimal(&qty_short),
-            lot_id: lot_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            lot_id: parse_uuid_opt_row(lot_id_str, "pick_task", "lot_id")?,
             serial_number: row.get("serial_number")?,
             assigned_to: row.get("assigned_to")?,
             priority: row.get("priority")?,
             pick_sequence: row.get("pick_sequence")?,
-            started_at: started_str.and_then(|s| s.parse().ok()),
-            completed_at: completed_str.and_then(|s| s.parse().ok()),
+            started_at: parse_datetime_opt_row(started_str, "pick_task", "started_at")?,
+            completed_at: parse_datetime_opt_row(completed_str, "pick_task", "completed_at")?,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "pick_task", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "pick_task", "updated_at")?,
         })
     }
 
@@ -107,19 +110,19 @@ impl SqliteFulfillmentRepository {
         let completed_str: Option<String> = row.get("completed_at")?;
 
         Ok(PackTask {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            order_id: Uuid::parse_str(&order_id_str).unwrap_or_default(),
-            shipment_id: shipment_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            id: parse_uuid_row(&id_str, "pack_task", "id")?,
+            order_id: parse_uuid_row(&order_id_str, "pack_task", "order_id")?,
+            shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?,
             status: PackStatus::from_str(&status_str).unwrap_or_default(),
             carton_count: row.get("carton_count")?,
             total_weight_kg: weight_str.map(|s| parse_decimal(&s)),
             assigned_to: row.get("assigned_to")?,
             packing_station: row.get("packing_station")?,
-            started_at: started_str.and_then(|s| s.parse().ok()),
-            completed_at: completed_str.and_then(|s| s.parse().ok()),
+            started_at: parse_datetime_opt_row(started_str, "pack_task", "started_at")?,
+            completed_at: parse_datetime_opt_row(completed_str, "pack_task", "completed_at")?,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "pack_task", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "pack_task", "updated_at")?,
         })
     }
 
@@ -133,8 +136,8 @@ impl SqliteFulfillmentRepository {
         let height_str: Option<String> = row.get("height_cm")?;
 
         Ok(Carton {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            pack_task_id: Uuid::parse_str(&pack_task_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&id_str, "carton", "id")?,
+            pack_task_id: parse_uuid_row(&pack_task_id_str, "carton", "pack_task_id")?,
             carton_number: row.get("carton_number")?,
             package_type: PackageType::from_str(&pkg_type_str).unwrap_or_default(),
             weight_kg: weight_str.map(|s| parse_decimal(&s)),
@@ -143,7 +146,7 @@ impl SqliteFulfillmentRepository {
             height_cm: height_str.map(|s| parse_decimal(&s)),
             tracking_number: row.get("tracking_number")?,
             label_printed: row.get::<_, i32>("label_printed")? != 0,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "carton", "created_at")?,
         })
     }
 
@@ -154,11 +157,11 @@ impl SqliteFulfillmentRepository {
         let lot_id_str: Option<String> = row.get("lot_id")?;
 
         Ok(CartonItem {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            carton_id: Uuid::parse_str(&carton_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&id_str, "carton_item", "id")?,
+            carton_id: parse_uuid_row(&carton_id_str, "carton_item", "carton_id")?,
             sku: row.get("sku")?,
             quantity: parse_decimal(&qty_str),
-            lot_id: lot_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            lot_id: parse_uuid_opt_row(lot_id_str, "carton_item", "lot_id")?,
             serial_number: row.get("serial_number")?,
         })
     }
@@ -173,10 +176,10 @@ impl SqliteFulfillmentRepository {
         let shipped_str: Option<String> = row.get("shipped_at")?;
 
         Ok(ShipTask {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            order_id: Uuid::parse_str(&order_id_str).unwrap_or_default(),
-            shipment_id: Uuid::parse_str(&shipment_id_str).unwrap_or_default(),
-            pack_task_id: Uuid::parse_str(&pack_task_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&id_str, "ship_task", "id")?,
+            order_id: parse_uuid_row(&order_id_str, "ship_task", "order_id")?,
+            shipment_id: parse_uuid_row(&shipment_id_str, "ship_task", "shipment_id")?,
+            pack_task_id: parse_uuid_row(&pack_task_id_str, "ship_task", "pack_task_id")?,
             status: ShipStatus::from_str(&status_str).unwrap_or_default(),
             carrier: row.get("carrier")?,
             service_level: row.get("service_level")?,
@@ -184,10 +187,10 @@ impl SqliteFulfillmentRepository {
             label_url: row.get("label_url")?,
             shipping_cost: cost_str.map(|s| parse_decimal(&s)),
             assigned_to: row.get("assigned_to")?,
-            shipped_at: shipped_str.and_then(|s| s.parse().ok()),
+            shipped_at: parse_datetime_opt_row(shipped_str, "ship_task", "shipped_at")?,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "ship_task", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "ship_task", "updated_at")?,
         })
     }
 }
@@ -334,9 +337,8 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
         let mut orders = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let id_str: String = row.get(0).map_err(map_db_error)?;
-            if let Ok(id) = Uuid::parse_str(&id_str) {
-                orders.push(id);
-            }
+            let id = parse_uuid(&id_str, "wave_order", "order_id")?;
+            orders.push(id);
         }
         Ok(orders)
     }
@@ -981,7 +983,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             let pick = self.create_pick(CreatePickTask {
                 wave_id: None,
                 order_id,
-                order_item_id: Uuid::parse_str(&item_id_str).unwrap_or_default(),
+                order_item_id: parse_uuid(&item_id_str, "order_item", "id")?,
                 warehouse_id,
                 sku,
                 product_name: name,

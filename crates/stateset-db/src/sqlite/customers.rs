@@ -1,6 +1,9 @@
 //! SQLite customer repository implementation
 
-use super::{build_in_clause, map_db_error, params_refs, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_json_row,
+    parse_uuid_opt_row, parse_uuid_row, uuid_params,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -32,7 +35,7 @@ impl SqliteCustomerRepository {
         let metadata_json: Option<String> = row.get("metadata")?;
 
         Ok(Customer {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "customer", "id")?,
             email: row.get("email")?,
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
@@ -40,29 +43,41 @@ impl SqliteCustomerRepository {
             status: parse_customer_status(&row.get::<_, String>("status")?),
             accepts_marketing: row.get::<_, i32>("accepts_marketing")? != 0,
             email_verified: row.get::<_, i32>("email_verified")? != 0,
-            tags: serde_json::from_str(&tags_json).unwrap_or_default(),
-            metadata: metadata_json.and_then(|s| serde_json::from_str(&s).ok()),
-            default_shipping_address_id: row
-                .get::<_, Option<String>>("default_shipping_address_id")?
-                .and_then(|s| s.parse().ok()),
-            default_billing_address_id: row
-                .get::<_, Option<String>>("default_billing_address_id")?
-                .and_then(|s| s.parse().ok()),
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            tags: parse_json_row(&tags_json, "customer", "tags")?,
+            metadata: metadata_json
+                .map(|s| parse_json_row(&s, "customer", "metadata"))
+                .transpose()?,
+            default_shipping_address_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("default_shipping_address_id")?,
+                "customer",
+                "default_shipping_address_id",
+            )?,
+            default_billing_address_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("default_billing_address_id")?,
+                "customer",
+                "default_billing_address_id",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "customer",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "customer",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_address(row: &rusqlite::Row) -> rusqlite::Result<CustomerAddress> {
         Ok(CustomerAddress {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "customer_address", "id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>("customer_id")?,
+                "customer_address",
+                "customer_id",
+            )?,
             address_type: parse_address_type(&row.get::<_, String>("address_type")?),
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
@@ -75,14 +90,16 @@ impl SqliteCustomerRepository {
             country: row.get("country")?,
             phone: row.get("phone")?,
             is_default: row.get::<_, i32>("is_default")? != 0,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "customer_address",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "customer_address",
+                "updated_at",
+            )?,
         })
     }
 }

@@ -10,6 +10,7 @@ mod inventory;
 mod invoices;
 mod lots;
 mod orders;
+pub(crate) mod parse_helpers;
 mod payments;
 mod products;
 mod promotions;
@@ -315,7 +316,21 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
     }
 }
 
-/// Helper to parse decimal from string
+// Re-export parse helpers for use in submodules
+pub(crate) use parse_helpers::{
+    parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_row, parse_datetime_opt_row,
+    parse_decimal_row, parse_decimal_opt_row,
+    parse_json_row, parse_json_opt_row,
+    parse_date_row,
+    // Non-row variants for use outside rusqlite closures
+    parse_uuid, parse_uuid_opt, parse_datetime, parse_datetime_opt,
+    parse_decimal as parse_decimal_strict, parse_decimal_opt,
+};
+
+/// Legacy helper to parse decimal from string (for backward compatibility during migration)
+/// TODO: Migrate all usages to parse_decimal_row or parse_decimal_strict for proper error handling
+#[allow(dead_code)]
 pub(crate) fn parse_decimal(s: &str) -> rust_decimal::Decimal {
     s.parse().unwrap_or_default()
 }

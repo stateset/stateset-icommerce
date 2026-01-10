@@ -7,6 +7,7 @@
 
 // Log levels with numeric priorities
 export const LOG_LEVELS = {
+  silent: -1, // suppress all logging
   error: 0,
   warn: 1,
   info: 2,

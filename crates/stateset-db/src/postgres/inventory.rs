@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    validate_batch_size, AdjustInventory, BatchResult, CommerceError, CreateInventoryItem,
-    InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
-    InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory, Result, StockLevel,
-    TransactionType,
+    validate_batch_size, validate_quantity, AdjustInventory, BatchResult, CommerceError,
+    CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem, InventoryRepository,
+    InventoryReservation, InventoryTransaction, LocationStock, ReservationStatus, ReserveInventory,
+    Result, StockLevel, TransactionType,
 };
 use uuid::Uuid;
 
@@ -375,6 +375,10 @@ impl PgInventoryRepository {
 
     /// Reserve inventory (async)
     pub async fn reserve_async(&self, input: ReserveInventory) -> Result<InventoryReservation> {
+        // Validate quantity is positive to prevent negative reservations
+        // that could inflate available stock
+        validate_quantity(input.quantity)?;
+
         let now = Utc::now();
         let location_id = input.location_id.unwrap_or(1);
 

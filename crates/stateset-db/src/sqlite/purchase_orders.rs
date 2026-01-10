@@ -1,6 +1,13 @@
 //! SQLite implementation of purchase order repository
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, uuid_params,
+    parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
+    parse_decimal_row, parse_decimal_opt_row,
+    // Non-row variants for Result-returning functions
+    parse_uuid,
+};
+use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
@@ -30,7 +37,7 @@ impl SqlitePurchaseOrderRepository {
 
     fn row_to_supplier(row: &Row) -> rusqlite::Result<Supplier> {
         Ok(Supplier {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "supplier", "id")?,
             supplier_code: row.get("supplier_code")?,
             name: row.get("name")?,
             contact_name: row.get("contact_name")?,
@@ -46,23 +53,23 @@ impl SqlitePurchaseOrderRepository {
             payment_terms: row.get::<_, String>("payment_terms")?.parse().unwrap_or_default(),
             currency: row.get("currency")?,
             lead_time_days: row.get("lead_time_days")?,
-            minimum_order: row.get::<_, Option<String>>("minimum_order")?.map(|s| parse_decimal(&s)),
+            minimum_order: parse_decimal_opt_row(row.get::<_, Option<String>>("minimum_order")?, "supplier", "minimum_order")?,
             is_active: row.get::<_, i32>("is_active")? != 0,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "supplier", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "supplier", "updated_at")?,
         })
     }
 
     fn row_to_po(row: &Row) -> rusqlite::Result<PurchaseOrder> {
         Ok(PurchaseOrder {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "purchase_order", "id")?,
             po_number: row.get("po_number")?,
-            supplier_id: row.get::<_, String>("supplier_id")?.parse().unwrap_or_default(),
+            supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "purchase_order", "supplier_id")?,
             status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
-            order_date: row.get::<_, String>("order_date")?.parse().unwrap_or_default(),
-            expected_date: row.get::<_, Option<String>>("expected_date")?.and_then(|s| s.parse().ok()),
-            delivered_date: row.get::<_, Option<String>>("delivered_date")?.and_then(|s| s.parse().ok()),
+            order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "purchase_order", "order_date")?,
+            expected_date: parse_datetime_opt_row(row.get::<_, Option<String>>("expected_date")?, "purchase_order", "expected_date")?,
+            delivered_date: parse_datetime_opt_row(row.get::<_, Option<String>>("delivered_date")?, "purchase_order", "delivered_date")?,
             ship_to_address: row.get("ship_to_address")?,
             ship_to_city: row.get("ship_to_city")?,
             ship_to_state: row.get("ship_to_state")?,
@@ -70,43 +77,43 @@ impl SqlitePurchaseOrderRepository {
             ship_to_country: row.get("ship_to_country")?,
             payment_terms: row.get::<_, String>("payment_terms")?.parse().unwrap_or_default(),
             currency: row.get("currency")?,
-            subtotal: parse_decimal(&row.get::<_, String>("subtotal")?),
-            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
-            shipping_cost: parse_decimal(&row.get::<_, String>("shipping_cost")?),
-            discount_amount: parse_decimal(&row.get::<_, String>("discount_amount")?),
-            total: parse_decimal(&row.get::<_, String>("total")?),
-            amount_paid: parse_decimal(&row.get::<_, String>("amount_paid")?),
+            subtotal: parse_decimal_row(&row.get::<_, String>("subtotal")?, "purchase_order", "subtotal")?,
+            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "purchase_order", "tax_amount")?,
+            shipping_cost: parse_decimal_row(&row.get::<_, String>("shipping_cost")?, "purchase_order", "shipping_cost")?,
+            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "purchase_order", "discount_amount")?,
+            total: parse_decimal_row(&row.get::<_, String>("total")?, "purchase_order", "total")?,
+            amount_paid: parse_decimal_row(&row.get::<_, String>("amount_paid")?, "purchase_order", "amount_paid")?,
             supplier_reference: row.get("supplier_reference")?,
             notes: row.get("notes")?,
             supplier_notes: row.get("supplier_notes")?,
             approved_by: row.get("approved_by")?,
-            approved_at: row.get::<_, Option<String>>("approved_at")?.and_then(|s| s.parse().ok()),
+            approved_at: parse_datetime_opt_row(row.get::<_, Option<String>>("approved_at")?, "purchase_order", "approved_at")?,
             items: Vec::new(),
-            sent_at: row.get::<_, Option<String>>("sent_at")?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            sent_at: parse_datetime_opt_row(row.get::<_, Option<String>>("sent_at")?, "purchase_order", "sent_at")?,
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "purchase_order", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "purchase_order", "updated_at")?,
         })
     }
 
     fn row_to_po_item(row: &Row) -> rusqlite::Result<PurchaseOrderItem> {
         Ok(PurchaseOrderItem {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            purchase_order_id: row.get::<_, String>("purchase_order_id")?.parse().unwrap_or_default(),
-            product_id: row.get::<_, Option<String>>("product_id")?.and_then(|s| s.parse().ok()),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "purchase_order_item", "id")?,
+            purchase_order_id: parse_uuid_row(&row.get::<_, String>("purchase_order_id")?, "purchase_order_item", "purchase_order_id")?,
+            product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "purchase_order_item", "product_id")?,
             sku: row.get("sku")?,
             name: row.get("name")?,
             supplier_sku: row.get("supplier_sku")?,
-            quantity_ordered: parse_decimal(&row.get::<_, String>("quantity_ordered")?),
-            quantity_received: parse_decimal(&row.get::<_, String>("quantity_received")?),
+            quantity_ordered: parse_decimal_row(&row.get::<_, String>("quantity_ordered")?, "purchase_order_item", "quantity_ordered")?,
+            quantity_received: parse_decimal_row(&row.get::<_, String>("quantity_received")?, "purchase_order_item", "quantity_received")?,
             unit_of_measure: row.get("unit_of_measure")?,
-            unit_cost: parse_decimal(&row.get::<_, String>("unit_cost")?),
-            line_total: parse_decimal(&row.get::<_, String>("line_total")?),
-            tax_amount: parse_decimal(&row.get::<_, String>("tax_amount")?),
-            discount_amount: parse_decimal(&row.get::<_, String>("discount_amount")?),
-            expected_date: row.get::<_, Option<String>>("expected_date")?.and_then(|s| s.parse().ok()),
+            unit_cost: parse_decimal_row(&row.get::<_, String>("unit_cost")?, "purchase_order_item", "unit_cost")?,
+            line_total: parse_decimal_row(&row.get::<_, String>("line_total")?, "purchase_order_item", "line_total")?,
+            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "purchase_order_item", "tax_amount")?,
+            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "purchase_order_item", "discount_amount")?,
+            expected_date: parse_datetime_opt_row(row.get::<_, Option<String>>("expected_date")?, "purchase_order_item", "expected_date")?,
             notes: row.get("notes")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "purchase_order_item", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "purchase_order_item", "updated_at")?,
         })
     }
 
@@ -181,8 +188,10 @@ impl SqlitePurchaseOrderRepository {
             .map_err(map_db_error)?;
 
         let subtotal_dec = Decimal::from_f64_retain(subtotal).unwrap_or_default();
-        let total = subtotal_dec + parse_decimal(&tax_amount) + parse_decimal(&shipping_cost)
-            - parse_decimal(&discount_amount);
+        let total = subtotal_dec
+            + parse_decimal_with_context(&tax_amount, "purchase_order", "tax_amount")?
+            + parse_decimal_with_context(&shipping_cost, "purchase_order", "shipping_cost")?
+            - parse_decimal_with_context(&discount_amount, "purchase_order", "discount_amount")?;
 
         conn.execute(
             "UPDATE purchase_orders SET subtotal = ?, total = ?, updated_at = ? WHERE id = ?",
@@ -661,8 +670,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
 
             for row in rows {
                 let (ordered, received) = row.map_err(map_db_error)?;
-                let ordered_dec = parse_decimal(&ordered);
-                let received_dec = parse_decimal(&received);
+                let ordered_dec = parse_decimal_with_context(&ordered, "purchase_order_item", "quantity_ordered")?;
+                let received_dec = parse_decimal_with_context(&received, "purchase_order_item", "quantity_received")?;
 
                 has_items = true;
                 all_received &= received_dec >= ordered_dec;
@@ -783,7 +792,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             ],
         ).map_err(map_db_error)?;
 
-        Self::recalculate_totals_with_conn(&tx, po_id.parse().unwrap_or_default())?;
+        Self::recalculate_totals_with_conn(&tx, parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?)?;
 
         let item = tx
             .query_row(
@@ -816,7 +825,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         )
         .map_err(map_db_error)?;
 
-        Self::recalculate_totals_with_conn(&tx, po_id.parse().unwrap_or_default())?;
+        Self::recalculate_totals_with_conn(&tx, parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }

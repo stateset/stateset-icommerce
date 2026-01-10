@@ -488,11 +488,17 @@ pub struct CreatePaymentMethod {
 /// Generate a unique payment number
 pub fn generate_payment_number() -> String {
     let now = chrono::Utc::now();
-    format!("PAY-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let timestamp = now.timestamp();
+    // Use 4 hex chars from UUID for entropy (65536 combinations per second)
+    let random: u32 = (uuid::Uuid::new_v4().as_u128() % 0xFFFF) as u32;
+    format!("PAY-{}-{:04X}", timestamp, random)
 }
 
 /// Generate a unique refund number
 pub fn generate_refund_number() -> String {
     let now = chrono::Utc::now();
-    format!("REF-{}", now.format("%Y%m%d%H%M%S%3f"))
+    let timestamp = now.timestamp();
+    // Use 4 hex chars from UUID for entropy (65536 combinations per second)
+    let random: u32 = (uuid::Uuid::new_v4().as_u128() % 0xFFFF) as u32;
+    format!("REF-{}-{:04X}", timestamp, random)
 }

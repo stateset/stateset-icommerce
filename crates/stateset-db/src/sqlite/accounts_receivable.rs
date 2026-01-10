@@ -1,6 +1,12 @@
 //! SQLite implementation of Accounts Receivable repository
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_decimal_row, parse_decimal_opt_row, parse_datetime_row,
+    parse_datetime_opt_row, parse_uuid_row, parse_uuid_opt_row,
+};
+use crate::sqlite::parse_helpers::{
+    parse_datetime as parse_datetime_safe, parse_decimal as parse_decimal_safe,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -29,67 +35,67 @@ impl SqliteAccountsReceivableRepository {
 
     fn map_collection_activity_row(row: &rusqlite::Row) -> rusqlite::Result<CollectionActivity> {
         Ok(CollectionActivity {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            invoice_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "collection_activity", "id")?,
+            invoice_id: parse_uuid_row(&row.get::<_, String>(1)?, "collection_activity", "invoice_id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "collection_activity", "customer_id")?,
             activity_type: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            activity_date: row.get::<_, String>(4)?.parse().unwrap_or_else(|_| Utc::now()),
+            activity_date: parse_datetime_row(&row.get::<_, String>(4)?, "collection_activity", "activity_date")?,
             dunning_letter_type: row.get::<_, Option<String>>(5)?.and_then(|s| s.parse().ok()),
             notes: row.get(6)?,
             contact_method: row.get(7)?,
             contact_result: row.get(8)?,
-            promise_to_pay_date: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
-            promise_to_pay_amount: row.get::<_, Option<String>>(10)?.map(|s| parse_decimal(&s)),
+            promise_to_pay_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "collection_activity", "promise_to_pay_date")?,
+            promise_to_pay_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(10)?, "collection_activity", "promise_to_pay_amount")?,
             performed_by: row.get(11)?,
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "collection_activity", "created_at")?,
         })
     }
 
     fn map_write_off_row(row: &rusqlite::Row) -> rusqlite::Result<WriteOff> {
         Ok(WriteOff {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "write_off", "id")?,
             write_off_number: row.get(1)?,
-            invoice_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>(4)?),
+            invoice_id: parse_uuid_row(&row.get::<_, String>(2)?, "write_off", "invoice_id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>(3)?, "write_off", "customer_id")?,
+            amount: parse_decimal_row(&row.get::<_, String>(4)?, "write_off", "amount")?,
             reason: row.get::<_, String>(5)?.parse().unwrap_or_default(),
             notes: row.get(6)?,
-            write_off_date: row.get::<_, String>(7)?.parse().unwrap_or_else(|_| Utc::now()),
+            write_off_date: parse_datetime_row(&row.get::<_, String>(7)?, "write_off", "write_off_date")?,
             approved_by: row.get(8)?,
-            approved_at: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
-            reversed_at: row.get::<_, Option<String>>(10)?.and_then(|s| s.parse().ok()),
-            gl_journal_entry_id: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            approved_at: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "write_off", "approved_at")?,
+            reversed_at: parse_datetime_opt_row(row.get::<_, Option<String>>(10)?, "write_off", "reversed_at")?,
+            gl_journal_entry_id: parse_uuid_opt_row(row.get::<_, Option<String>>(11)?, "write_off", "gl_journal_entry_id")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "write_off", "created_at")?,
         })
     }
 
     fn map_credit_memo_row(row: &rusqlite::Row) -> rusqlite::Result<CreditMemo> {
         Ok(CreditMemo {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_memo", "id")?,
             credit_memo_number: row.get(1)?,
-            customer_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            original_invoice_id: row.get::<_, Option<String>>(3)?.and_then(|s| s.parse().ok()),
+            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "credit_memo", "customer_id")?,
+            original_invoice_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "credit_memo", "original_invoice_id")?,
             reason: row.get::<_, String>(4)?.parse().unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>(5)?),
-            applied_amount: parse_decimal(&row.get::<_, String>(6)?),
-            unapplied_amount: parse_decimal(&row.get::<_, String>(7)?),
+            amount: parse_decimal_row(&row.get::<_, String>(5)?, "credit_memo", "amount")?,
+            applied_amount: parse_decimal_row(&row.get::<_, String>(6)?, "credit_memo", "applied_amount")?,
+            unapplied_amount: parse_decimal_row(&row.get::<_, String>(7)?, "credit_memo", "unapplied_amount")?,
             status: row.get::<_, String>(8)?.parse().unwrap_or_default(),
             notes: row.get(9)?,
-            issue_date: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
-            gl_journal_entry_id: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(13)?.parse().unwrap_or_else(|_| Utc::now()),
+            issue_date: parse_datetime_row(&row.get::<_, String>(10)?, "credit_memo", "issue_date")?,
+            gl_journal_entry_id: parse_uuid_opt_row(row.get::<_, Option<String>>(11)?, "credit_memo", "gl_journal_entry_id")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "credit_memo", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(13)?, "credit_memo", "updated_at")?,
         })
     }
 
     fn map_payment_application_row(row: &rusqlite::Row) -> rusqlite::Result<ArPaymentApplication> {
         Ok(ArPaymentApplication {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            payment_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            invoice_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            applied_amount: parse_decimal(&row.get::<_, String>(3)?),
-            applied_date: row.get::<_, String>(4)?.parse().unwrap_or_else(|_| Utc::now()),
-            created_at: row.get::<_, String>(5)?.parse().unwrap_or_else(|_| Utc::now()),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "payment_application", "id")?,
+            payment_id: parse_uuid_row(&row.get::<_, String>(1)?, "payment_application", "payment_id")?,
+            invoice_id: parse_uuid_row(&row.get::<_, String>(2)?, "payment_application", "invoice_id")?,
+            applied_amount: parse_decimal_row(&row.get::<_, String>(3)?, "payment_application", "applied_amount")?,
+            applied_date: parse_datetime_row(&row.get::<_, String>(4)?, "payment_application", "applied_date")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(5)?, "payment_application", "created_at")?,
         })
     }
 
@@ -100,7 +106,7 @@ impl SqliteAccountsReceivableRepository {
             params![invoice_id.to_string()],
             |row| row.get(0),
         ).map_err(map_db_error)?;
-        Ok(customer_id.parse().unwrap_or_default())
+        parse_uuid_row(&customer_id, "invoice", "customer_id").map_err(map_db_error)
     }
 
     fn recalculate_invoice(&self, invoice_id: Uuid) -> Result<()> {
@@ -120,8 +126,8 @@ impl SqliteAccountsReceivableRepository {
             |row| row.get(0),
         ).map_err(map_db_error)?;
 
-        let paid_dec = parse_decimal(&paid);
-        let credits_dec = parse_decimal(&credits);
+        let paid_dec = parse_decimal_safe(&paid, "invoice", "paid_amount")?;
+        let credits_dec = parse_decimal_safe(&credits, "invoice", "credits_amount")?;
         let total_applied = paid_dec + credits_dec;
 
         // Get invoice total
@@ -131,7 +137,7 @@ impl SqliteAccountsReceivableRepository {
             |row| row.get(0),
         ).map_err(map_db_error)?;
 
-        let total_dec = parse_decimal(&total);
+        let total_dec = parse_decimal_safe(&total, "invoice", "total")?;
         let balance_due = total_dec - total_applied;
 
         // Determine status
@@ -181,11 +187,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             )),
         ).map_err(map_db_error)?;
 
-        let current_dec = parse_decimal(&current);
-        let days_1_30_dec = parse_decimal(&days_1_30);
-        let days_31_60_dec = parse_decimal(&days_31_60);
-        let days_61_90_dec = parse_decimal(&days_61_90);
-        let days_over_90_dec = parse_decimal(&days_over_90);
+        let current_dec = parse_decimal_safe(&current, "aging_summary", "current")?;
+        let days_1_30_dec = parse_decimal_safe(&days_1_30, "aging_summary", "days_1_30")?;
+        let days_31_60_dec = parse_decimal_safe(&days_31_60, "aging_summary", "days_31_60")?;
+        let days_61_90_dec = parse_decimal_safe(&days_61_90, "aging_summary", "days_61_90")?;
+        let days_over_90_dec = parse_decimal_safe(&days_over_90, "aging_summary", "days_over_90")?;
 
         Ok(ArAgingSummary {
             current: current_dec,
@@ -228,7 +234,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 let days_over_90: f64 = row.get(7)?;
 
                 Ok(CustomerArAging {
-                    customer_id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                    customer_id: parse_uuid_row(&row.get::<_, String>(0)?, "customer_aging", "customer_id")?,
                     customer_name: row.get(1)?,
                     customer_email: row.get(2)?,
                     current: Decimal::from_f64_retain(current).unwrap_or_default(),
@@ -238,7 +244,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
                     total_outstanding: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
                     invoice_count: row.get(8)?,
-                    oldest_invoice_date: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
+                    oldest_invoice_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "customer_aging", "oldest_invoice_date")?,
                     last_payment_date: None,
                 })
             },
@@ -296,7 +302,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             let days_over_90: f64 = row.get(7)?;
 
             Ok(CustomerArAging {
-                customer_id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                customer_id: parse_uuid_row(&row.get::<_, String>(0)?, "customer_aging", "customer_id")?,
                 customer_name: row.get(1)?,
                 customer_email: row.get(2)?,
                 current: Decimal::from_f64_retain(current).unwrap_or_default(),
@@ -306,7 +312,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
                 total_outstanding: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
                 invoice_count: row.get(8)?,
-                oldest_invoice_date: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
+                oldest_invoice_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "customer_aging", "oldest_invoice_date")?,
                 last_payment_date: None,
             })
         }).map_err(map_db_error)?;
@@ -417,24 +423,24 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         let rows = stmt.query_map([], |row| {
             Ok(Invoice {
-                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?,
                 invoice_number: row.get(1)?,
-                order_id: row.get::<_, Option<String>>(2)?.and_then(|s| s.parse().ok()),
-                customer_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
+                order_id: parse_uuid_opt_row(row.get::<_, Option<String>>(2)?, "invoice", "order_id")?,
+                customer_id: parse_uuid_row(&row.get::<_, String>(3)?, "invoice", "customer_id")?,
                 status: row.get::<_, String>(4)?.parse().unwrap_or_default(),
                 invoice_type: stateset_core::InvoiceType::Standard,
-                invoice_date: row.get::<_, String>(5)?.parse().unwrap_or_else(|_| Utc::now()),
-                due_date: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| Utc::now()),
+                invoice_date: parse_datetime_row(&row.get::<_, String>(5)?, "invoice", "invoice_date")?,
+                due_date: parse_datetime_row(&row.get::<_, String>(6)?, "invoice", "due_date")?,
                 payment_terms: None,
-                subtotal: parse_decimal(&row.get::<_, String>(7)?),
-                tax_amount: parse_decimal(&row.get::<_, String>(8)?),
+                subtotal: parse_decimal_row(&row.get::<_, String>(7)?, "invoice", "subtotal")?,
+                tax_amount: parse_decimal_row(&row.get::<_, String>(8)?, "invoice", "tax_amount")?,
                 tax_rate: None,
-                shipping_amount: parse_decimal(&row.get::<_, String>(9)?),
-                discount_amount: parse_decimal(&row.get::<_, String>(10)?),
+                shipping_amount: parse_decimal_row(&row.get::<_, String>(9)?, "invoice", "shipping_amount")?,
+                discount_amount: parse_decimal_row(&row.get::<_, String>(10)?, "invoice", "discount_amount")?,
                 discount_percent: None,
-                total: parse_decimal(&row.get::<_, String>(11)?),
-                amount_paid: parse_decimal(&row.get::<_, String>(12)?),
-                balance_due: parse_decimal(&row.get::<_, String>(13)?),
+                total: parse_decimal_row(&row.get::<_, String>(11)?, "invoice", "total")?,
+                amount_paid: parse_decimal_row(&row.get::<_, String>(12)?, "invoice", "amount_paid")?,
+                balance_due: parse_decimal_row(&row.get::<_, String>(13)?, "invoice", "balance_due")?,
                 currency: row.get(14)?,
                 billing_name: None,
                 billing_email: None,
@@ -452,8 +458,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 paid_at: None,
                 voided_at: None,
                 items: vec![],
-                created_at: row.get::<_, String>(17)?.parse().unwrap_or_else(|_| Utc::now()),
-                updated_at: row.get::<_, String>(18)?.parse().unwrap_or_else(|_| Utc::now()),
+                created_at: parse_datetime_row(&row.get::<_, String>(17)?, "invoice", "created_at")?,
+                updated_at: parse_datetime_row(&row.get::<_, String>(18)?, "invoice", "updated_at")?,
             })
         }).map_err(map_db_error)?;
 
@@ -878,7 +884,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         ).map_err(map_db_error)?;
 
         // Recalculate invoice
-        self.recalculate_invoice(invoice_id.parse().unwrap_or_default())?;
+        let parsed_invoice_id = parse_uuid_row(&invoice_id, "payment_application", "invoice_id").map_err(map_db_error)?;
+        self.recalculate_invoice(parsed_invoice_id)?;
 
         Ok(())
     }
@@ -949,10 +956,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         for inv in inv_rows {
             let (date, number, total) = inv.map_err(map_db_error)?;
-            let amount = parse_decimal(&total);
+            let amount = parse_decimal_safe(&total, "statement_invoice", "total")?;
             running_balance += amount;
             line_items.push(StatementLineItem {
-                date: date.parse().unwrap_or(now),
+                date: parse_datetime_safe(&date, "statement_invoice", "created_at")?,
                 transaction_type: StatementTransactionType::Invoice,
                 reference_number: number,
                 description: "Invoice".into(),
@@ -984,10 +991,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         for pay in pay_rows {
             let (date, id, amount_str) = pay.map_err(map_db_error)?;
-            let amount = parse_decimal(&amount_str);
+            let amount = parse_decimal_safe(&amount_str, "statement_payment", "applied_amount")?;
             running_balance -= amount;
             line_items.push(StatementLineItem {
-                date: date.parse().unwrap_or(now),
+                date: parse_datetime_safe(&date, "statement_payment", "applied_date")?,
                 transaction_type: StatementTransactionType::Payment,
                 reference_number: id[..8].to_string(),
                 description: "Payment".into(),

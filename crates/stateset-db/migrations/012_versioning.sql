@@ -15,3 +15,6 @@ ALTER TABLE product_variants ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
 
 -- Add version column to returns
 ALTER TABLE returns ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+
+-- Add version column to payments
+ALTER TABLE payments ADD COLUMN version INTEGER NOT NULL DEFAULT 1;

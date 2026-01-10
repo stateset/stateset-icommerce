@@ -14,8 +14,13 @@ use stateset_core::{
     SubscriptionPlan, SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionStatus,
     UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
 };
-use std::str::FromStr;
 use uuid::Uuid;
+
+use super::{
+    parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_row, parse_datetime_opt_row,
+    parse_decimal_row, parse_decimal_opt_row,
+};
 
 pub struct SqliteSubscriptionRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -317,17 +322,17 @@ impl SqliteSubscriptionRepository {
 
         let rows = stmt.query_map([plan_id.to_string()], |row| {
             Ok(SubscriptionPlanItem {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                plan_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
-                product_id: Uuid::parse_str(&row.get::<_, String>(2)?).unwrap_or_default(),
-                variant_id: row.get::<_, Option<String>>(3)?.and_then(|s| Uuid::parse_str(&s).ok()),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan_item", "id")?,
+                plan_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_plan_item", "plan_id")?,
+                product_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription_plan_item", "product_id")?,
+                variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "subscription_plan_item", "variant_id")?,
                 sku: row.get(4)?,
                 name: row.get(5)?,
                 quantity: row.get(6)?,
                 min_quantity: row.get(7)?,
                 max_quantity: row.get(8)?,
                 is_required: row.get::<_, i32>(9)? != 0,
-                unit_price: row.get::<_, Option<String>>(10)?.and_then(|s| Decimal::from_str(&s).ok()),
+                unit_price: parse_decimal_opt_row(row.get::<_, Option<String>>(10)?, "subscription_plan_item", "unit_price")?,
             })
         }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
@@ -900,15 +905,15 @@ impl SqliteSubscriptionRepository {
 
         let rows = stmt.query_map([subscription_id.to_string()], |row| {
             Ok(SubscriptionItem {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                subscription_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
-                product_id: Uuid::parse_str(&row.get::<_, String>(2)?).unwrap_or_default(),
-                variant_id: row.get::<_, Option<String>>(3)?.and_then(|s| Uuid::parse_str(&s).ok()),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
+                subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_item", "subscription_id")?,
+                product_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription_item", "product_id")?,
+                variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "subscription_item", "variant_id")?,
                 sku: row.get(4)?,
                 name: row.get(5)?,
                 quantity: row.get(6)?,
-                unit_price: row.get::<_, String>(7).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
-                line_total: row.get::<_, String>(8).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
+                unit_price: parse_decimal_row(&row.get::<_, String>(7)?, "subscription_item", "unit_price")?,
+                line_total: parse_decimal_row(&row.get::<_, String>(8)?, "subscription_item", "line_total")?,
             })
         }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
@@ -1118,15 +1123,13 @@ impl SqliteSubscriptionRepository {
 
         let rows = stmt.query_map([subscription_id.to_string()], |row| {
             Ok(SubscriptionEvent {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                subscription_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_event", "id")?,
+                subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_event", "subscription_id")?,
                 event_type: parse_event_type(&row.get::<_, String>(2)?),
                 description: row.get(3)?,
                 data: row.get::<_, Option<String>>(4)?.and_then(|s| serde_json::from_str(&s).ok()),
                 triggered_by: row.get(5)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .map(|d| d.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at: parse_datetime_row(&row.get::<_, String>(6)?, "subscription_event", "created_at")?,
             })
         }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
@@ -1140,109 +1143,87 @@ impl SqliteSubscriptionRepository {
 
     fn row_to_plan(&self, row: &rusqlite::Row) -> rusqlite::Result<SubscriptionPlan> {
         Ok(SubscriptionPlan {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan", "id")?,
             code: row.get(1)?,
             name: row.get(2)?,
             description: row.get(3)?,
             status: parse_plan_status(&row.get::<_, String>(4)?),
             billing_interval: parse_interval(&row.get::<_, String>(5)?),
             custom_interval_days: row.get(6)?,
-            price: row.get::<_, String>(7).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
-            setup_fee: row.get::<_, Option<String>>(8)?.and_then(|s| Decimal::from_str(&s).ok()),
+            price: parse_decimal_row(&row.get::<_, String>(7)?, "subscription_plan", "price")?,
+            setup_fee: parse_decimal_opt_row(row.get::<_, Option<String>>(8)?, "subscription_plan", "setup_fee")?,
             currency: row.get(9)?,
             trial_days: row.get(10)?,
             trial_requires_payment_method: row.get::<_, i32>(11)? != 0,
             min_cycles: row.get(12)?,
             max_cycles: row.get(13)?,
-            discount_percent: row.get::<_, Option<String>>(14)?.and_then(|s| Decimal::from_str(&s).ok()),
-            discount_amount: row.get::<_, Option<String>>(15)?.and_then(|s| Decimal::from_str(&s).ok()),
+            discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(14)?, "subscription_plan", "discount_percent")?,
+            discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(15)?, "subscription_plan", "discount_amount")?,
             metadata: row.get::<_, Option<String>>(16)?.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(17)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(18)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(17)?, "subscription_plan", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(18)?, "subscription_plan", "updated_at")?,
             items: Vec::new(), // Loaded separately
         })
     }
 
     fn row_to_subscription(&self, row: &rusqlite::Row) -> rusqlite::Result<Subscription> {
         Ok(Subscription {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription", "id")?,
             subscription_number: row.get(1)?,
-            customer_id: Uuid::parse_str(&row.get::<_, String>(2)?).unwrap_or_default(),
-            plan_id: Uuid::parse_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription", "customer_id")?,
+            plan_id: parse_uuid_row(&row.get::<_, String>(3)?, "subscription", "plan_id")?,
             plan_name: row.get(4)?,
             status: parse_subscription_status(&row.get::<_, String>(5)?),
             billing_interval: parse_interval(&row.get::<_, String>(6)?),
             custom_interval_days: row.get(7)?,
-            price: row.get::<_, String>(8).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
+            price: parse_decimal_row(&row.get::<_, String>(8)?, "subscription", "price")?,
             currency: row.get(9)?,
             payment_method_id: row.get(10)?,
-            started_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            current_period_start: DateTime::parse_from_rfc3339(&row.get::<_, String>(12)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            current_period_end: DateTime::parse_from_rfc3339(&row.get::<_, String>(13)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            next_billing_date: row.get::<_, Option<String>>(14)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            trial_ends_at: row.get::<_, Option<String>>(15)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            cancelled_at: row.get::<_, Option<String>>(16)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            ends_at: row.get::<_, Option<String>>(17)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            paused_at: row.get::<_, Option<String>>(18)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            resume_at: row.get::<_, Option<String>>(19)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
+            started_at: parse_datetime_row(&row.get::<_, String>(11)?, "subscription", "started_at")?,
+            current_period_start: parse_datetime_row(&row.get::<_, String>(12)?, "subscription", "current_period_start")?,
+            current_period_end: parse_datetime_row(&row.get::<_, String>(13)?, "subscription", "current_period_end")?,
+            next_billing_date: parse_datetime_opt_row(row.get::<_, Option<String>>(14)?, "subscription", "next_billing_date")?,
+            trial_ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(15)?, "subscription", "trial_ends_at")?,
+            cancelled_at: parse_datetime_opt_row(row.get::<_, Option<String>>(16)?, "subscription", "cancelled_at")?,
+            ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(17)?, "subscription", "ends_at")?,
+            paused_at: parse_datetime_opt_row(row.get::<_, Option<String>>(18)?, "subscription", "paused_at")?,
+            resume_at: parse_datetime_opt_row(row.get::<_, Option<String>>(19)?, "subscription", "resume_at")?,
             billing_cycle_count: row.get(20)?,
             failed_payment_attempts: row.get(21)?,
             shipping_address: row.get::<_, Option<String>>(22)?.and_then(|s| serde_json::from_str(&s).ok()),
             billing_address: row.get::<_, Option<String>>(23)?.and_then(|s| serde_json::from_str(&s).ok()),
-            discount_percent: row.get::<_, Option<String>>(24)?.and_then(|s| Decimal::from_str(&s).ok()),
-            discount_amount: row.get::<_, Option<String>>(25)?.and_then(|s| Decimal::from_str(&s).ok()),
+            discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(24)?, "subscription", "discount_percent")?,
+            discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(25)?, "subscription", "discount_amount")?,
             coupon_code: row.get(26)?,
             metadata: row.get::<_, Option<String>>(27)?.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(28)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(29)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(28)?, "subscription", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(29)?, "subscription", "updated_at")?,
             items: Vec::new(), // Loaded separately
         })
     }
 
     fn row_to_billing_cycle(&self, row: &rusqlite::Row) -> rusqlite::Result<BillingCycle> {
         Ok(BillingCycle {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-            subscription_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "billing_cycle", "id")?,
+            subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "billing_cycle", "subscription_id")?,
             cycle_number: row.get(2)?,
             status: parse_billing_cycle_status(&row.get::<_, String>(3)?),
-            period_start: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            period_end: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            billed_at: row.get::<_, Option<String>>(6)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            subtotal: row.get::<_, String>(7).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
-            discount: row.get::<_, String>(8).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
-            tax: row.get::<_, String>(9).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
-            total: row.get::<_, String>(10).map(|s| Decimal::from_str(&s).unwrap_or_default()).unwrap_or_default(),
+            period_start: parse_datetime_row(&row.get::<_, String>(4)?, "billing_cycle", "period_start")?,
+            period_end: parse_datetime_row(&row.get::<_, String>(5)?, "billing_cycle", "period_end")?,
+            billed_at: parse_datetime_opt_row(row.get::<_, Option<String>>(6)?, "billing_cycle", "billed_at")?,
+            subtotal: parse_decimal_row(&row.get::<_, String>(7)?, "billing_cycle", "subtotal")?,
+            discount: parse_decimal_row(&row.get::<_, String>(8)?, "billing_cycle", "discount")?,
+            tax: parse_decimal_row(&row.get::<_, String>(9)?, "billing_cycle", "tax")?,
+            total: parse_decimal_row(&row.get::<_, String>(10)?, "billing_cycle", "total")?,
             currency: row.get(11)?,
             payment_id: row.get(12)?,
-            order_id: row.get::<_, Option<String>>(13)?.and_then(|s| Uuid::parse_str(&s).ok()),
-            invoice_id: row.get::<_, Option<String>>(14)?.and_then(|s| Uuid::parse_str(&s).ok()),
+            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>(13)?, "billing_cycle", "order_id")?,
+            invoice_id: parse_uuid_opt_row(row.get::<_, Option<String>>(14)?, "billing_cycle", "invoice_id")?,
             failure_reason: row.get(15)?,
             retry_count: row.get(16)?,
-            next_retry_at: row.get::<_, Option<String>>(17)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(18)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(19)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            next_retry_at: parse_datetime_opt_row(row.get::<_, Option<String>>(17)?, "billing_cycle", "next_retry_at")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(18)?, "billing_cycle", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(19)?, "billing_cycle", "updated_at")?,
         })
     }
 }

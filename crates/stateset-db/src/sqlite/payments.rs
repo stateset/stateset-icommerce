@@ -1,6 +1,6 @@
 //! SQLite implementation of payment repository
 
-use super::{build_in_clause, map_db_error, params_refs, parse_decimal, uuid_params};
+use super::{build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_uuid_row, uuid_params};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
@@ -29,16 +29,16 @@ impl SqlitePaymentRepository {
 
     fn row_to_payment(row: &Row) -> rusqlite::Result<Payment> {
         Ok(Payment {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment", "id")?,
             payment_number: row.get("payment_number")?,
             order_id: row.get::<_, Option<String>>("order_id")?.and_then(|s| s.parse().ok()),
             invoice_id: row.get::<_, Option<String>>("invoice_id")?.and_then(|s| s.parse().ok()),
             customer_id: row.get::<_, Option<String>>("customer_id")?.and_then(|s| s.parse().ok()),
             status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
             payment_method: row.get::<_, String>("payment_method")?.parse().unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>("amount")?),
+            amount: parse_decimal_row(&row.get::<_, String>("amount")?, "payment", "amount")?,
             currency: row.get("currency")?,
-            amount_refunded: parse_decimal(&row.get::<_, String>("amount_refunded")?),
+            amount_refunded: parse_decimal_row(&row.get::<_, String>("amount_refunded")?, "payment", "amount_refunded")?,
             external_id: row.get("external_id")?,
             processor: row.get("processor")?,
             card_brand: row.get::<_, Option<String>>("card_brand")?.and_then(|s| s.parse().ok()),
@@ -54,33 +54,33 @@ impl SqlitePaymentRepository {
             metadata: row.get("metadata")?,
             paid_at: row.get::<_, Option<String>>("paid_at")?.and_then(|s| s.parse().ok()),
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "payment", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "payment", "updated_at")?,
         })
     }
 
     fn row_to_refund(row: &Row) -> rusqlite::Result<Refund> {
         Ok(Refund {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "refund", "id")?,
             refund_number: row.get("refund_number")?,
-            payment_id: row.get::<_, String>("payment_id")?.parse().unwrap_or_default(),
+            payment_id: parse_uuid_row(&row.get::<_, String>("payment_id")?, "refund", "payment_id")?,
             status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>("amount")?),
+            amount: parse_decimal_row(&row.get::<_, String>("amount")?, "refund", "amount")?,
             currency: row.get("currency")?,
             reason: row.get("reason")?,
             external_id: row.get("external_id")?,
             failure_reason: row.get("failure_reason")?,
             notes: row.get("notes")?,
             refunded_at: row.get::<_, Option<String>>("refunded_at")?.and_then(|s| s.parse().ok()),
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "refund", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "refund", "updated_at")?,
         })
     }
 
     fn row_to_payment_method(row: &Row) -> rusqlite::Result<PaymentMethod> {
         Ok(PaymentMethod {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>("customer_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_method", "id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "payment_method", "customer_id")?,
             method_type: row.get::<_, String>("method_type")?.parse().unwrap_or_default(),
             is_default: row.get::<_, i32>("is_default")? != 0,
             card_brand: row.get::<_, Option<String>>("card_brand")?.and_then(|s| s.parse().ok()),
@@ -92,8 +92,8 @@ impl SqlitePaymentRepository {
             account_last4: row.get("account_last4")?,
             external_id: row.get("external_id")?,
             billing_address: row.get("billing_address")?,
-            created_at: row.get::<_, String>("created_at")?.parse().unwrap_or_default(),
-            updated_at: row.get::<_, String>("updated_at")?.parse().unwrap_or_default(),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "payment_method", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "payment_method", "updated_at")?,
         })
     }
 }
