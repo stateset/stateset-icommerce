@@ -4983,6 +4983,188 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       ),
 
       // ============================================================================
+      // Stablecoin Payment Tools (Native Crypto Payments)
+      // ============================================================================
+      tool(
+        'get_agent_wallet',
+        'Get the agent wallet address for a specific blockchain. Returns the wallet address derived from VES keys.',
+        {
+          chain: z.string().optional().describe('Blockchain: solana, solana_devnet, set_chain, base, ethereum, arbitrum (default: solana)')
+        },
+        async ({ chain = 'solana' }) => {
+          try {
+            const { getWalletAddress } = await import('./chains/index.js');
+            const address = await getWalletAddress('default', chain, { configDir: '.stateset' });
+            const { getChain, getDefaultStablecoin, getExplorerAddressUrl } = await import('./chains/index.js');
+            const chainConfig = getChain(chain);
+            const stablecoin = getDefaultStablecoin(chain);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  chain: chainConfig?.name || chain,
+                  network: chainConfig?.network,
+                  address,
+                  stablecoin: stablecoin?.symbol,
+                  explorerUrl: getExplorerAddressUrl(chain, address),
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_wallet_balance',
+        'Check the stablecoin balance of the agent wallet on a blockchain.',
+        {
+          chain: z.string().optional().describe('Blockchain: solana, set_chain, base (default: solana)'),
+          token: z.string().optional().describe('Token symbol: USDC, ssUSD, USDT (default: chain stablecoin)')
+        },
+        async ({ chain = 'solana', token }) => {
+          try {
+            const { getWalletAddress, getBalance } = await import('./chains/index.js');
+            const address = await getWalletAddress('default', chain, { configDir: '.stateset' });
+            const balance = await getBalance(address, chain, token);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  chain,
+                  address,
+                  balance: balance.balance,
+                  symbol: balance.symbol,
+                  humanReadable: `${balance.balance} ${balance.symbol}`,
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'create_stablecoin_payment',
+        'Create and execute a stablecoin payment to a wallet address. Supports USDC on Solana, ssUSD on SET Chain, etc.',
+        {
+          toAddress: z.string().describe('Recipient wallet address'),
+          amount: z.number().describe('Amount to send (e.g., 50.00)'),
+          chain: z.string().optional().describe('Blockchain: solana, set_chain, base (default: solana)'),
+          token: z.string().optional().describe('Token: USDC, ssUSD (default: chain stablecoin)'),
+          orderId: z.string().optional().describe('Order ID for audit trail'),
+          customerId: z.string().optional().describe('Customer ID for audit trail'),
+          memo: z.string().optional().describe('Payment memo')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Stablecoin payment requires --apply flag.',
+                  wouldSend: {
+                    to: args.toAddress,
+                    amount: args.amount,
+                    chain: args.chain || 'solana',
+                    token: args.token || 'USDC',
+                  },
+                  instruction: 'Run with --apply to execute this payment'
+                })
+              }]
+            };
+          }
+          try {
+            const { executePayment, getExplorerTxUrl } = await import('./chains/index.js');
+            const result = await executePayment({
+              agentId: 'default',
+              chainId: args.chain || 'solana',
+              toAddress: args.toAddress,
+              amount: args.amount,
+              tokenSymbol: args.token,
+              metadata: {
+                order_id: args.orderId,
+                customer_id: args.customerId,
+                memo: args.memo,
+              },
+            }, {
+              configDir: '.stateset',
+              simulate: false,
+            });
+
+            if (result.success) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    message: 'Stablecoin payment completed',
+                    intentId: result.intentId,
+                    txHash: result.txHash,
+                    explorerUrl: result.explorerUrl,
+                    blockNumber: result.blockNumber,
+                    confirmations: result.confirmations,
+                  }, null, 2)
+                }]
+              };
+            } else {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: false,
+                    error: result.error,
+                    intentId: result.intentId,
+                  })
+                }]
+              };
+            }
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_supported_chains',
+        'List all supported blockchain networks for stablecoin payments.',
+        {},
+        async () => {
+          try {
+            const { listChains, getChain, getDefaultStablecoin } = await import('./chains/index.js');
+            const chains = listChains().map(id => {
+              const chain = getChain(id);
+              const stablecoin = getDefaultStablecoin(id);
+              return {
+                id,
+                name: chain?.name,
+                network: chain?.network,
+                stablecoin: stablecoin?.symbol,
+                blockTime: chain?.blockTimeMs ? `${chain.blockTimeMs}ms` : null,
+              };
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: chains.length,
+                  chains,
+                  recommended: 'solana (USDC) for liquidity, set_chain (ssUSD) for yield',
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
       // Shipment Tools
       // ============================================================================
       tool(

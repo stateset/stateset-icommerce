@@ -34,6 +34,7 @@ This CLI provides natural language access to commerce operations:
 | `stateset-promotions` | promotions | Promotions, discounts & coupons |
 | `stateset-subscriptions` | subscriptions | Subscription plans & recurring billing |
 | `stateset-create` | storefront | Create e-commerce storefronts |
+| `stateset-pay` | stablecoin | Native stablecoin payments (USDC, ssUSD) |
 
 Use specialized commands for focused workflows with domain-specific tooling and prompts.
 
@@ -214,6 +215,12 @@ stateset --apply "create a cart for alice@example.com"
 - `complete_payment` - Mark payment completed (requires --apply)
 - `create_refund` - Process refund (requires --apply)
 
+### commerce-stablecoin (Native Crypto Payments)
+- `get_agent_wallet` - Get agent wallet address for a blockchain
+- `get_wallet_balance` - Check stablecoin balance on a chain
+- `create_stablecoin_payment` - Send stablecoin payment (requires --apply)
+- `list_supported_chains` - List supported blockchains (Solana, SET Chain, Base, etc.)
+
 ### commerce-shipments
 - `list_shipments` - List all shipments
 - `create_shipment` - Create shipment with tracking (requires --apply)
@@ -392,6 +399,49 @@ stateset "show billing history for subscription <id>"
 stateset "get events for subscription <id>"
 ```
 
+### Stablecoin Payments (Native Crypto)
+```bash
+# View supported blockchains
+stateset pay --chains
+
+# Show agent wallet addresses
+stateset pay --wallet                    # All chains
+stateset pay --wallet --chain solana     # Specific chain
+
+# Check stablecoin balance
+stateset pay --balance --chain solana
+stateset pay --balance --chain set_chain
+
+# Send stablecoin payment (simulation - safe preview)
+stateset pay --to 9WzD...WWWM --amount 50.00 --chain solana
+
+# Execute real payment (requires --apply)
+stateset pay --apply --to 9WzD...WWWM --amount 50.00 --chain solana
+
+# Pay with ssUSD on SET Chain (yield-bearing stablecoin)
+stateset pay --apply --to 0x1234...5678 --amount 100 --chain set_chain
+
+# Include order metadata for audit trail
+stateset pay --apply --to 9WzD...WWWM --amount 50.00 --chain solana --order ORD-123 --memo "Widget purchase"
+
+# AI-powered stablecoin payments
+stateset --apply "pay 50 USDC to 9WzD...WWWM on Solana"
+stateset "check my wallet balance on Solana"
+stateset "what chains do we support for payments?"
+```
+
+Supported chains:
+- `solana` - Solana mainnet (USDC) - Fast, cheap, proven liquidity
+- `solana_devnet` - Solana devnet (USDC) - Testing
+- `set_chain` - SET Chain L2 (ssUSD) - StateSet native, yield-bearing
+- `base` - Base L2 (USDC) - Coinbase, low fees
+- `ethereum` - Ethereum mainnet (USDC) - Maximum security
+- `arbitrum` - Arbitrum L2 (USDC) - Fast, cheap
+- `zcash` - Zcash mainnet (ZEC) - Privacy-focused, transparent t-addresses
+- `zcash_testnet` - Zcash testnet (ZEC) - Testing
+- `bitcoin` - Bitcoin mainnet (BTC) - Original cryptocurrency, maximum security
+- `bitcoin_testnet` - Bitcoin testnet (BTC) - Testing
+
 ## Configuration
 
 ### Environment Variables
@@ -443,10 +493,16 @@ stateset-icommerce/cli/
 │   ├── stateset-inventory.js # Inventory agent
 │   ├── stateset-returns.js   # Returns agent
 │   ├── stateset-promotions.js # Promotions agent
-│   └── stateset-subscriptions.js # Subscriptions agent
+│   ├── stateset-subscriptions.js # Subscriptions agent
+│   └── stateset-pay.js       # Native stablecoin payments
 ├── src/
 │   ├── claude-harness.js     # Multi-agent SDK integration
-│   ├── mcp-server.js         # MCP tools (63 total)
+│   ├── mcp-server.js         # MCP tools (67 total)
+│   ├── chains/               # Blockchain integration
+│   │   ├── index.js          # Module exports
+│   │   ├── config.js         # Chain & token configurations
+│   │   ├── wallet.js         # VES key → wallet derivation
+│   │   └── stablecoin.js     # Payment execution & balance
 │   └── utils/
 ├── .claude/
 │   ├── CLAUDE.md             # This file

@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -29,7 +29,8 @@
     "stateset-currency": "./bin/stateset-currency.js",
     "stateset-tax": "./bin/stateset-tax.js",
     "stateset-tutorial": "./bin/stateset-tutorial.js",
-    "stateset-autonomous": "./bin/stateset-autonomous.js"
+    "stateset-autonomous": "./bin/stateset-autonomous.js",
+    "stateset-pay": "./bin/stateset-pay.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -88,6 +89,10 @@
     "ora": "^8.1.1",
     "yaml": "^2.3.4",
     "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.7.15"
   },
   "publishConfig": {
     "access": "public"
