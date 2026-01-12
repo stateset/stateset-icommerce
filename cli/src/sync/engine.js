@@ -2,11 +2,12 @@
  * Sync Engine
  *
  * Orchestrates synchronization between local SQLite and remote sequencer.
+ * Supports both REST and gRPC transports, with real-time streaming via gRPC.
  */
 
 import { EventEmitter } from 'events';
 import { Outbox, createOutbox } from './outbox.js';
-import { SequencerClient, createSequencerClient } from './client.js';
+import { UnifiedSequencerClient, createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { ConflictResolver, createConflictResolver } from './conflict.js';
 
@@ -31,6 +32,8 @@ import { ConflictResolver, createConflictResolver } from './conflict.js';
 /**
  * @typedef {Object} SyncStatus
  * @property {boolean} connected - Connection status
+ * @property {'grpc'|'rest'|null} transport - Transport type
+ * @property {boolean} streaming - Whether streaming is active
  * @property {number} localHead - Local head sequence
  * @property {number} remoteHead - Remote head sequence
  * @property {number} pending - Pending events to push
@@ -38,6 +41,7 @@ import { ConflictResolver, createConflictResolver } from './conflict.js';
  * @property {Date} [lastPush] - Last push timestamp
  * @property {Date} [lastPull] - Last pull timestamp
  * @property {number} conflicts - Unresolved conflicts
+ * @property {number} bufferedEvents - Events in stream buffer
  */
 
 /**
@@ -48,18 +52,31 @@ export class SyncEngine extends EventEmitter {
    * @param {Object} options
    * @param {import('better-sqlite3').Database} options.db - SQLite database
    * @param {SyncConfig} options.config - Sync configuration
+   * @param {boolean} [options.preferGrpc=true] - Prefer gRPC when available
+   * @param {boolean} [options.enableStreaming=true] - Enable real-time streaming
+   * @param {string} [options.configDir] - Config directory for keys
+   * @param {import('./keys.js').AgentKeyManager} [options.keyManager] - Key manager instance
    */
   constructor(options) {
     super();
     this.db = options.db;
     this.config = options.config;
-    this.outbox = createOutbox(options.db);
-    this.client = createSequencerClient(options.config);
+    this.outbox = createOutbox(options.db, {
+      configDir: options.configDir,
+      keyManager: options.keyManager,
+    });
+    this.client = createUnifiedClient(options.config, {
+      preferGrpc: options.preferGrpc !== false,
+      enableStreaming: options.enableStreaming !== false,
+    });
     this.resolver = createConflictResolver(this.outbox, {
       defaultStrategy: options.defaultStrategy || 'remote-wins',
     });
     this._backgroundInterval = null;
     this._initialized = false;
+    this._streamingEnabled = false;
+    this._eventBuffer = [];
+    this._eventBufferSize = 1000;
   }
 
   /**
@@ -82,16 +99,108 @@ export class SyncEngine extends EventEmitter {
       });
     }
 
+    // Set up event handlers for the unified client
+    this._setupClientHandlers();
+
     // Connect to sequencer
     try {
       await this.client.connect();
-      this.emit('connected');
+      this.emit('connected', { transport: this.client.transport });
     } catch (error) {
       this.emit('error', error);
       // Don't throw - allow offline operation
     }
 
     this._initialized = true;
+  }
+
+  /**
+   * Set up event handlers for the unified client
+   * @private
+   */
+  _setupClientHandlers() {
+    // Forward client events
+    this.client.on('connected', () => {
+      this.emit('transport:connected', { transport: this.client.transport });
+    });
+
+    this.client.on('disconnected', () => {
+      this._streamingEnabled = false;
+      this.emit('transport:disconnected');
+    });
+
+    this.client.on('error', (err) => {
+      this.emit('error', err);
+    });
+
+    // Handle streaming events
+    this.client.on('event', (event) => {
+      this._handleStreamedEvent(event);
+    });
+
+    this.client.on('push-ack', (ack) => {
+      this.emit('push:ack', ack);
+    });
+
+    this.client.on('sync-state', (state) => {
+      this.emit('sync:state', state);
+    });
+  }
+
+  /**
+   * Handle an event received from the stream
+   * @private
+   */
+  _handleStreamedEvent(event) {
+    // Buffer the event
+    this._eventBuffer.push(event);
+
+    // Trim buffer if too large
+    if (this._eventBuffer.length > this._eventBufferSize) {
+      this._eventBuffer.shift();
+    }
+
+    // Emit the event for real-time consumers
+    this.emit('event', event);
+
+    // Store the event locally
+    try {
+      // Convert payloadHash buffer to hex string if needed
+      const payloadHashHex = event.payloadHash
+        ? (Buffer.isBuffer(event.payloadHash) ? event.payloadHash.toString('hex') : event.payloadHash)
+        : '0'.repeat(64);
+
+      this.outbox.storePulledEvents([{
+        sequenceNumber: event.sequenceNumber,
+        eventId: event.eventId,
+        commandId: event.commandId,
+        tenantId: event.tenantId,
+        storeId: event.storeId,
+        entityType: event.entityType,
+        entityId: event.entityId,
+        eventType: event.eventType,
+        payload: event.payload,
+        vesVersion: event.vesVersion || 1,
+        payloadKind: event.payloadKind || 0,
+        payloadEncrypted: event.payloadEncrypted || null,
+        payloadPlainHash: payloadHashHex,
+        payloadCipherHash: '0'.repeat(64),  // Zero hash for plaintext
+        agentKeyId: event.agentKeyId || 0,
+        agentSignature: event.agentSignature || '',
+        baseVersion: event.baseVersion,
+        createdAt: event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+        sequencedAt: event.sequencedAt instanceof Date ? event.sequencedAt.toISOString() : event.sequencedAt,
+        sourceAgent: event.sourceAgent,
+      }]);
+
+      // Update sync state
+      this.outbox.updateSyncState({
+        lastPulledSequence: event.sequenceNumber,
+        lastSyncAt: new Date(),
+      });
+    } catch (err) {
+      this.emit('error', err);
+    }
   }
 
   /**
@@ -340,6 +449,8 @@ export class SyncEngine extends EventEmitter {
 
     return {
       connected,
+      transport: this.getTransport(),
+      streaming: this._streamingEnabled,
       localHead: state.lastPulledSequence,
       remoteHead,
       pending: stats.pending,
@@ -347,6 +458,7 @@ export class SyncEngine extends EventEmitter {
       lastPush: stats.lastSynced,
       lastPull: state.lastSyncAt,
       conflicts: this.resolver.getConflictCount(),
+      bufferedEvents: this._eventBuffer.length,
     };
   }
 
@@ -533,6 +645,179 @@ export class SyncEngine extends EventEmitter {
   isBackgroundSyncRunning() {
     return this._backgroundInterval !== null;
   }
+
+  // ===========================================================================
+  // STREAMING SYNC (gRPC only)
+  // ===========================================================================
+
+  /**
+   * Check if streaming is supported (requires gRPC)
+   * @returns {boolean}
+   */
+  supportsStreaming() {
+    return this.client?.supportsStreaming || false;
+  }
+
+  /**
+   * Check if streaming is active
+   * @returns {boolean}
+   */
+  isStreaming() {
+    return this._streamingEnabled;
+  }
+
+  /**
+   * Start real-time streaming sync.
+   * Only available with gRPC transport.
+   * @param {Object} [options]
+   * @param {string[]} [options.entityTypeFilter] - Filter by entity types
+   * @param {string[]} [options.eventTypeFilter] - Filter by event types
+   * @param {boolean} [options.bidirectional=false] - Use bidirectional sync stream
+   * @returns {boolean} Whether streaming was started
+   */
+  startStreamingSync(options = {}) {
+    if (!this.supportsStreaming()) {
+      this.emit('error', new Error('Streaming requires gRPC transport'));
+      return false;
+    }
+
+    if (this._streamingEnabled) {
+      return true;
+    }
+
+    const state = this.outbox.getSyncState();
+
+    if (options.bidirectional) {
+      // Use bidirectional sync stream for push/pull
+      const started = this.client.startSyncStream();
+      if (started) {
+        this._streamingEnabled = true;
+        this.emit('streamingStarted', { mode: 'bidirectional' });
+
+        // Pull initial events
+        this.client.pullViaStream({ fromSequence: state.lastPulledSequence || 0 });
+      }
+      return started;
+    } else {
+      // Use server-side streaming for pull only
+      const started = this.client.startStreaming({
+        fromSequence: state.lastPulledSequence || 0,
+        entityTypeFilter: options.entityTypeFilter,
+        eventTypeFilter: options.eventTypeFilter,
+      });
+      if (started) {
+        this._streamingEnabled = true;
+        this.emit('streamingStarted', { mode: 'server' });
+      }
+      return started;
+    }
+  }
+
+  /**
+   * Stop streaming sync
+   */
+  stopStreamingSync() {
+    if (!this._streamingEnabled) return;
+
+    this.client.stopStreaming();
+    this._streamingEnabled = false;
+    this.emit('streamingStopped');
+  }
+
+  /**
+   * Push events via the bidirectional stream.
+   * Requires startStreamingSync({ bidirectional: true }) to be called first.
+   * @param {Array} events - Events to push
+   * @returns {boolean}
+   */
+  pushViaStream(events) {
+    if (!this._streamingEnabled || !this.client.isStreaming()) {
+      return false;
+    }
+
+    // Convert to stream format
+    const streamEvents = events.map(e => ({
+      eventId: e.eventId,
+      commandId: e.commandId,
+      entityType: e.entityType,
+      entityId: e.entityId,
+      eventType: e.eventType,
+      payload: e.payload,
+      baseVersion: e.baseVersion,
+      createdAt: e.createdAt,
+    }));
+
+    return this.client.pushViaStream(streamEvents);
+  }
+
+  /**
+   * Subscribe to a specific entity's events.
+   * Only available with gRPC transport.
+   * @param {string} entityType
+   * @param {string} entityId
+   * @param {Function} callback - Called for each event
+   * @returns {Object|null} Subscription handle or null if not supported
+   */
+  subscribeEntity(entityType, entityId, callback) {
+    if (!this.supportsStreaming()) {
+      return null;
+    }
+
+    return this.client.subscribeEntity(entityType, entityId, callback);
+  }
+
+  /**
+   * Get recent events from the buffer
+   * @param {number} [limit=100]
+   * @returns {Array}
+   */
+  getRecentEvents(limit = 100) {
+    const start = Math.max(0, this._eventBuffer.length - limit);
+    return this._eventBuffer.slice(start);
+  }
+
+  /**
+   * Register an event listener for streamed events
+   * @param {Function} callback
+   */
+  onEvent(callback) {
+    this.on('event', callback);
+  }
+
+  /**
+   * Remove event listener
+   * @param {Function} callback
+   */
+  offEvent(callback) {
+    this.off('event', callback);
+  }
+
+  // ===========================================================================
+  // TRANSPORT INFO
+  // ===========================================================================
+
+  /**
+   * Get current transport type
+   * @returns {'grpc' | 'rest' | null}
+   */
+  getTransport() {
+    return this.client?.transport || null;
+  }
+
+  /**
+   * Get transport capabilities
+   * @returns {Object}
+   */
+  getCapabilities() {
+    return {
+      transport: this.getTransport(),
+      streaming: this.supportsStreaming(),
+      bidirectionalSync: this.supportsStreaming(),
+      entitySubscription: this.supportsStreaming(),
+      batchPush: true,
+      inclusionProofs: true,
+    };
+  }
 }
 
 /**
@@ -541,6 +826,10 @@ export class SyncEngine extends EventEmitter {
  * @param {import('better-sqlite3').Database} options.db - SQLite database
  * @param {SyncConfig} [options.config] - Sync configuration
  * @param {string} [options.cwd] - Working directory for config
+ * @param {boolean} [options.preferGrpc=true] - Prefer gRPC when available
+ * @param {boolean} [options.enableStreaming=true] - Enable real-time streaming
+ * @param {string} [options.configDir] - Config directory for keys
+ * @param {import('./keys.js').AgentKeyManager} [options.keyManager] - Key manager instance
  * @returns {SyncEngine}
  */
 export function createSyncEngine(options) {
@@ -552,6 +841,19 @@ export function createSyncEngine(options) {
 
   return new SyncEngine({
     db: options.db,
-    config: new SyncConfig(config),
+    config: config instanceof SyncConfig ? config : new SyncConfig(config),
+    preferGrpc: options.preferGrpc,
+    enableStreaming: options.enableStreaming,
+    configDir: options.configDir,
+    keyManager: options.keyManager,
   });
+}
+
+/**
+ * Check if gRPC is available for streaming
+ * @returns {Promise<boolean>}
+ */
+export async function checkGrpcAvailable() {
+  const { checkGrpcAvailability } = await import('./unified-client.js');
+  return checkGrpcAvailability();
 }

@@ -1,0 +1,634 @@
+// VES (Verifiable Event Sync) Protocol v1.0
+// gRPC service definition for StateSet Sequencer
+//
+// This protocol enables distributed AI agents to maintain consistent state
+// through cryptographically signed events with Merkle commitments.
+
+syntax = "proto3";
+
+package stateset.ves.v1;
+
+option go_package = "github.com/stateset/sequencer/pkg/ves/v1;vesv1";
+option java_package = "com.stateset.ves.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// =============================================================================
+// VES SEQUENCER SERVICE
+// =============================================================================
+
+// VesSequencer provides event ingestion, retrieval, and streaming for
+// distributed agent synchronization with cryptographic verification.
+service VesSequencer {
+  // Push events to the sequencer (batch ingestion)
+  rpc PushEvents(PushEventsRequest) returns (PushEventsResponse);
+
+  // Pull events from the sequencer (polling)
+  rpc PullEvents(PullEventsRequest) returns (PullEventsResponse);
+
+  // Get current sync state (head sequence, state root)
+  rpc GetSyncState(GetSyncStateRequest) returns (SyncState);
+
+  // Get Merkle commitment for a batch
+  rpc GetCommitment(GetCommitmentRequest) returns (BatchCommitment);
+
+  // Verify inclusion proof for an event
+  rpc VerifyInclusion(VerifyInclusionRequest) returns (VerifyInclusionResponse);
+
+  // Register agent public key
+  rpc RegisterAgentKey(RegisterAgentKeyRequest) returns (RegisterAgentKeyResponse);
+
+  // Get agent's registered keys
+  rpc GetAgentKeys(GetAgentKeysRequest) returns (GetAgentKeysResponse);
+
+  // Revoke an agent key
+  rpc RevokeAgentKey(RevokeAgentKeyRequest) returns (RevokeAgentKeyResponse);
+
+  // === STREAMING RPCS (Real-Time Sync) ===
+
+  // Stream events in real-time (server-side streaming)
+  rpc StreamEvents(StreamEventsRequest) returns (stream SequencedEvent);
+
+  // Bidirectional stream for push/pull (full-duplex sync)
+  rpc SyncStream(stream SyncMessage) returns (stream SyncMessage);
+
+  // Subscribe to entity-specific events
+  rpc SubscribeEntity(SubscribeEntityRequest) returns (stream SequencedEvent);
+}
+
+// =============================================================================
+// CORE EVENT MESSAGES
+// =============================================================================
+
+// EventEnvelope is the top-level container for a VES event.
+// All events are cryptographically signed by the source agent.
+message EventEnvelope {
+  // === Identification ===
+
+  // Unique event identifier (UUID)
+  string event_id = 1;
+
+  // Optional idempotency key for deduplication
+  string command_id = 2;
+
+  // === Tenant/Store/Entity ===
+
+  // Tenant identifier (UUID)
+  string tenant_id = 3;
+
+  // Store identifier (UUID)
+  string store_id = 4;
+
+  // Entity type (e.g., "order", "customer", "inventory")
+  string entity_type = 5;
+
+  // Entity identifier (e.g., order ID, customer ID)
+  string entity_id = 6;
+
+  // === Event Classification ===
+
+  // Event type (e.g., "order.created", "inventory.adjusted")
+  string event_type = 7;
+
+  // Agent UUID that created this event
+  string source_agent = 8;
+
+  // === VES Protocol Fields ===
+
+  // Protocol version (currently 1)
+  uint32 ves_version = 9;
+
+  // Payload kind: 0 = plaintext, 1 = encrypted
+  PayloadKind payload_kind = 10;
+
+  // === Payload ===
+
+  // Plaintext payload (JSON, only set if payload_kind = PLAINTEXT)
+  google.protobuf.Struct payload = 11;
+
+  // Encrypted payload (only set if payload_kind = ENCRYPTED)
+  EncryptedPayload payload_encrypted = 12;
+
+  // === Hash Bindings (32-byte SHA-256) ===
+
+  // Hash of plaintext payload (JCS canonicalized)
+  // Domain: VES_PAYLOAD_PLAIN_V1 || salt || JCS(payload)
+  bytes payload_plain_hash = 13;
+
+  // Hash of ciphertext (32 zeros if plaintext)
+  // Domain: VES_PAYLOAD_CIPHER_V1 || nonce || aad || ciphertext || tag || recipients_hash
+  bytes payload_cipher_hash = 14;
+
+  // === Signature Fields ===
+
+  // Key ID used for signing (from agent's key rotation)
+  uint32 agent_key_id = 15;
+
+  // Ed25519 signature (64 bytes) over event signing hash
+  // Domain: VES_EVENTSIG_V1 || serialized_fields
+  bytes agent_signature = 16;
+
+  // === Optimistic Concurrency Control ===
+
+  // Base version for OCC (optional)
+  optional uint32 base_version = 17;
+
+  // === Metadata ===
+
+  // Event creation timestamp (RFC 3339)
+  google.protobuf.Timestamp created_at = 18;
+}
+
+// PayloadKind indicates whether the payload is plaintext or encrypted.
+enum PayloadKind {
+  PAYLOAD_KIND_UNSPECIFIED = 0;
+  PAYLOAD_KIND_PLAINTEXT = 1;
+  PAYLOAD_KIND_ENCRYPTED = 2;
+}
+
+// EncryptedPayload contains VES-ENC-1 encrypted content.
+message EncryptedPayload {
+  // Encryption version (currently 1)
+  uint32 enc_version = 1;
+
+  // AEAD algorithm (e.g., "AES-256-GCM")
+  string aead = 2;
+
+  // 12-byte nonce (base64url in JSON, raw bytes here)
+  bytes nonce = 3;
+
+  // Encrypted content
+  bytes ciphertext = 4;
+
+  // 16-byte GCM authentication tag
+  bytes tag = 5;
+
+  // HPKE parameters
+  HpkeParams hpke = 6;
+
+  // Per-recipient wrapped keys
+  repeated RecipientKey recipients = 7;
+}
+
+// HpkeParams defines the HPKE (Hybrid Public Key Encryption) configuration.
+message HpkeParams {
+  string mode = 1;  // "base"
+  string kem = 2;   // "X25519-HKDF-SHA256"
+  string kdf = 3;   // "HKDF-SHA256"
+  string aead = 4;  // "AES-256-GCM"
+}
+
+// RecipientKey contains the wrapped DEK for one recipient.
+message RecipientKey {
+  // Recipient's key ID
+  uint32 recipient_kid = 1;
+
+  // Ephemeral X25519 public key (32 bytes)
+  bytes ephemeral_public_key = 2;
+
+  // Wrapped data encryption key
+  bytes wrapped_dek = 3;
+}
+
+// SequencedEvent is an event that has been assigned a sequence number.
+message SequencedEvent {
+  // The original event envelope
+  EventEnvelope envelope = 1;
+
+  // Unique sequence number assigned by sequencer
+  int64 sequence_number = 2;
+
+  // Server timestamp when sequenced
+  google.protobuf.Timestamp sequenced_at = 3;
+
+  // Optional receipt hash for verification
+  bytes receipt_hash = 4;
+}
+
+// =============================================================================
+// PUSH/PULL MESSAGES
+// =============================================================================
+
+// PushEventsRequest sends a batch of events to the sequencer.
+message PushEventsRequest {
+  // Agent sending the events
+  string agent_id = 1;
+
+  // Tenant context
+  string tenant_id = 2;
+
+  // Store context
+  string store_id = 3;
+
+  // Events to ingest (max 1000 per batch)
+  repeated EventEnvelope events = 4;
+
+  // Request idempotency key
+  string request_id = 5;
+}
+
+// PushEventsResponse returns the result of event ingestion.
+message PushEventsResponse {
+  // Unique batch identifier
+  string batch_id = 1;
+
+  // Number of events accepted
+  uint32 events_accepted = 2;
+
+  // Number of events rejected
+  uint32 events_rejected = 3;
+
+  // First sequence number assigned in this batch
+  int64 sequence_start = 4;
+
+  // Last sequence number assigned in this batch
+  int64 sequence_end = 5;
+
+  // Current head of event log after ingestion
+  int64 head_sequence = 6;
+
+  // Details of rejected events
+  repeated RejectionInfo rejections = 7;
+
+  // Receipt for this batch (for audit)
+  BatchReceipt receipt = 8;
+}
+
+// RejectionInfo explains why an event was rejected.
+message RejectionInfo {
+  string event_id = 1;
+  RejectionReason reason = 2;
+  string message = 3;
+}
+
+// RejectionReason categorizes rejection causes.
+enum RejectionReason {
+  REJECTION_REASON_UNSPECIFIED = 0;
+  REJECTION_REASON_INVALID_SIGNATURE = 1;
+  REJECTION_REASON_UNKNOWN_KEY = 2;
+  REJECTION_REASON_REVOKED_KEY = 3;
+  REJECTION_REASON_DUPLICATE_EVENT = 4;
+  REJECTION_REASON_INVALID_HASH = 5;
+  REJECTION_REASON_VERSION_CONFLICT = 6;
+  REJECTION_REASON_INVALID_FORMAT = 7;
+  REJECTION_REASON_QUOTA_EXCEEDED = 8;
+}
+
+// BatchReceipt provides cryptographic proof of ingestion.
+message BatchReceipt {
+  string batch_id = 1;
+  bytes receipt_hash = 2;  // SHA256(VES_RECEIPT_V1 || batch_data)
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// PullEventsRequest retrieves events from the sequencer.
+message PullEventsRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+
+  // Start sequence (exclusive, pull events > from_sequence)
+  int64 from_sequence = 3;
+
+  // Maximum events to return (default 100, max 1000)
+  uint32 limit = 4;
+
+  // Optional: filter by entity type
+  string entity_type_filter = 5;
+
+  // Optional: filter by entity ID
+  string entity_id_filter = 6;
+
+  // Optional: filter by event types
+  repeated string event_type_filter = 7;
+
+  // Optional: include events from specific agents only
+  repeated string agent_filter = 8;
+}
+
+// PullEventsResponse returns requested events.
+message PullEventsResponse {
+  // Retrieved events (ordered by sequence number)
+  repeated SequencedEvent events = 1;
+
+  // Current head sequence number
+  int64 head_sequence = 2;
+
+  // Whether more events are available
+  bool has_more = 3;
+
+  // Next sequence to use for pagination
+  int64 next_sequence = 4;
+}
+
+// =============================================================================
+// SYNC STATE MESSAGES
+// =============================================================================
+
+// GetSyncStateRequest queries the current sync state.
+message GetSyncStateRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+}
+
+// SyncState represents the current state of the event log.
+message SyncState {
+  // Current head sequence number
+  int64 head_sequence = 1;
+
+  // Merkle state root (hex-encoded)
+  string state_root = 2;
+
+  // Latest committed batch
+  BatchCommitment latest_commitment = 3;
+
+  // Server timestamp
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// =============================================================================
+// MERKLE COMMITMENT MESSAGES
+// =============================================================================
+
+// GetCommitmentRequest retrieves a specific batch commitment.
+message GetCommitmentRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+
+  // Either batch_id or sequence range
+  oneof selector {
+    string batch_id = 3;
+    int64 sequence_number = 4;
+  }
+}
+
+// BatchCommitment is a Merkle root over a batch of events.
+message BatchCommitment {
+  // Unique batch identifier
+  string batch_id = 1;
+
+  // Merkle root (32 bytes)
+  bytes merkle_root = 2;
+
+  // Sequence range covered
+  int64 start_sequence = 3;
+  int64 end_sequence = 4;
+
+  // Number of events in batch
+  uint32 event_count = 5;
+
+  // When commitment was created
+  google.protobuf.Timestamp committed_at = 6;
+
+  // Previous batch's merkle root (chain linking)
+  bytes previous_root = 7;
+}
+
+// VerifyInclusionRequest verifies an event is in a commitment.
+message VerifyInclusionRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+
+  // Event to verify
+  string event_id = 3;
+
+  // Or sequence number
+  int64 sequence_number = 4;
+
+  // Expected merkle root (optional, uses latest if not set)
+  bytes expected_root = 5;
+}
+
+// VerifyInclusionResponse returns the inclusion proof.
+message VerifyInclusionResponse {
+  // Whether event is included
+  bool included = 1;
+
+  // Merkle inclusion proof
+  InclusionProof proof = 2;
+
+  // The event (if found)
+  SequencedEvent event = 3;
+}
+
+// InclusionProof is a Merkle proof for event inclusion.
+message InclusionProof {
+  // Expected merkle root
+  bytes merkle_root = 1;
+
+  // Position of event in tree
+  uint64 leaf_index = 2;
+
+  // Sibling hashes up the tree
+  repeated bytes proof_hashes = 3;
+
+  // Total leaves in tree
+  uint64 leaf_count = 4;
+
+  // Pre-computed leaf hash for verification
+  bytes leaf_hash = 5;
+}
+
+// =============================================================================
+// AGENT KEY MANAGEMENT
+// =============================================================================
+
+// RegisterAgentKeyRequest registers a new agent public key.
+message RegisterAgentKeyRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+
+  // Key identifier (incremental per agent)
+  uint32 key_id = 3;
+
+  // Key type
+  KeyType key_type = 4;
+
+  // Ed25519 or X25519 public key (32 bytes)
+  bytes public_key = 5;
+
+  // Validity window (optional)
+  google.protobuf.Timestamp valid_from = 6;
+  google.protobuf.Timestamp valid_to = 7;
+
+  // Proof of possession (signature over registration data)
+  bytes proof_of_possession = 8;
+}
+
+// KeyType distinguishes signing vs encryption keys.
+enum KeyType {
+  KEY_TYPE_UNSPECIFIED = 0;
+  KEY_TYPE_SIGNING = 1;      // Ed25519 for event signatures
+  KEY_TYPE_ENCRYPTION = 2;   // X25519 for payload encryption
+}
+
+// RegisterAgentKeyResponse confirms key registration.
+message RegisterAgentKeyResponse {
+  bool success = 1;
+  string message = 2;
+  google.protobuf.Timestamp registered_at = 3;
+}
+
+// GetAgentKeysRequest retrieves an agent's registered keys.
+message GetAgentKeysRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+
+  // Filter by key type
+  KeyType key_type_filter = 3;
+
+  // Include revoked keys
+  bool include_revoked = 4;
+}
+
+// GetAgentKeysResponse returns the agent's keys.
+message GetAgentKeysResponse {
+  repeated AgentKey keys = 1;
+}
+
+// AgentKey represents a registered agent key.
+message AgentKey {
+  uint32 key_id = 1;
+  KeyType key_type = 2;
+  bytes public_key = 3;
+  KeyStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp valid_from = 6;
+  google.protobuf.Timestamp valid_to = 7;
+  google.protobuf.Timestamp revoked_at = 8;
+}
+
+// KeyStatus indicates key state.
+enum KeyStatus {
+  KEY_STATUS_UNSPECIFIED = 0;
+  KEY_STATUS_ACTIVE = 1;
+  KEY_STATUS_EXPIRED = 2;
+  KEY_STATUS_REVOKED = 3;
+}
+
+// RevokeAgentKeyRequest revokes an agent key.
+message RevokeAgentKeyRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+  uint32 key_id = 3;
+  string reason = 4;
+
+  // Signature proving ownership (from current active key)
+  bytes authorization_signature = 5;
+}
+
+// RevokeAgentKeyResponse confirms revocation.
+message RevokeAgentKeyResponse {
+  bool success = 1;
+  google.protobuf.Timestamp revoked_at = 2;
+}
+
+// =============================================================================
+// STREAMING MESSAGES
+// =============================================================================
+
+// StreamEventsRequest initiates real-time event streaming.
+message StreamEventsRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+
+  // Start from sequence (0 = from current head)
+  int64 from_sequence = 3;
+
+  // Optional filters
+  repeated string entity_type_filter = 4;
+  repeated string event_type_filter = 5;
+  repeated string agent_filter = 6;
+
+  // Include historical events before streaming new ones
+  bool include_history = 7;
+}
+
+// SubscribeEntityRequest subscribes to specific entity events.
+message SubscribeEntityRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  string entity_type = 3;
+  string entity_id = 4;
+
+  // Include entity's full history
+  bool include_history = 5;
+}
+
+// SyncMessage is used for bidirectional sync streaming.
+message SyncMessage {
+  oneof message {
+    // Client -> Server: Push events
+    PushEventsRequest push = 1;
+
+    // Server -> Client: Push acknowledgment
+    PushEventsResponse push_ack = 2;
+
+    // Client -> Server: Pull request
+    PullEventsRequest pull = 3;
+
+    // Server -> Client: Pull response
+    PullEventsResponse pull_response = 4;
+
+    // Server -> Client: New event notification
+    SequencedEvent event = 5;
+
+    // Bidirectional: Heartbeat/keepalive
+    Heartbeat heartbeat = 6;
+
+    // Server -> Client: Sync state update
+    SyncState sync_state = 7;
+
+    // Client -> Server: Acknowledge receipt
+    EventAck ack = 8;
+  }
+}
+
+// Heartbeat for connection keepalive.
+message Heartbeat {
+  google.protobuf.Timestamp timestamp = 1;
+  int64 last_seen_sequence = 2;
+}
+
+// EventAck acknowledges receipt of streamed events.
+message EventAck {
+  // Sequence numbers being acknowledged
+  repeated int64 sequence_numbers = 1;
+
+  // Agent's current sync position
+  int64 agent_head_sequence = 2;
+}
+
+// =============================================================================
+// ERROR MESSAGES
+// =============================================================================
+
+// VesError provides detailed error information.
+message VesError {
+  ErrorCode code = 1;
+  string message = 2;
+  map<string, string> details = 3;
+
+  // For retryable errors
+  bool retryable = 4;
+  google.protobuf.Duration retry_after = 5;
+}
+
+// ErrorCode categorizes VES errors.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_ARGUMENT = 1;
+  ERROR_CODE_NOT_FOUND = 2;
+  ERROR_CODE_ALREADY_EXISTS = 3;
+  ERROR_CODE_PERMISSION_DENIED = 4;
+  ERROR_CODE_UNAUTHENTICATED = 5;
+  ERROR_CODE_RESOURCE_EXHAUSTED = 6;
+  ERROR_CODE_FAILED_PRECONDITION = 7;
+  ERROR_CODE_INTERNAL = 8;
+  ERROR_CODE_UNAVAILABLE = 9;
+  ERROR_CODE_SIGNATURE_INVALID = 10;
+  ERROR_CODE_KEY_REVOKED = 11;
+  ERROR_CODE_VERSION_CONFLICT = 12;
+  ERROR_CODE_SEQUENCE_GAP = 13;
+}

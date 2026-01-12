@@ -207,6 +207,19 @@ export function computePayloadPlainHash(payload, salt = null) {
 }
 
 /**
+ * Compute legacy payload hash (no domain prefix)
+ * Used for compatibility with legacy gRPC API that uses EventEnvelope
+ * @param {Object} payload - JSON payload
+ * @returns {Buffer} - 32-byte hash
+ */
+export function computeLegacyPayloadHash(payload) {
+  const canonical = canonicalizeJson(payload);
+  const hasher = crypto.createHash('sha256');
+  hasher.update(canonical);
+  return hasher.digest();
+}
+
+/**
  * Compute payload_cipher_hash per VES v1.0 Section 5.3
  * For plaintext events, returns 32 zero bytes
  * @param {Object} params - Encryption parameters (null for plaintext)

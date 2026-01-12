@@ -1,0 +1,427 @@
+syntax = "proto3";
+
+package stateset.sequencer.v2;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ============================================================================
+// StateSet Sequencer gRPC Service v2
+// Full VES v1.0 Protocol Support with Bidirectional Streaming
+// ============================================================================
+
+service Sequencer {
+  // === Unary RPCs ===
+
+  // Push a batch of events for sequencing
+  rpc Push(PushRequest) returns (PushResponse);
+
+  // Pull events (unary, for simple polling)
+  rpc PullEvents(PullEventsRequest) returns (PullEventsResponse);
+
+  // Get current sync state
+  rpc GetSyncState(GetSyncStateRequest) returns (SyncState);
+
+  // Get Merkle inclusion proof
+  rpc GetInclusionProof(GetInclusionProofRequest) returns (GetInclusionProofResponse);
+
+  // Get batch commitment
+  rpc GetCommitment(GetCommitmentRequest) returns (BatchCommitment);
+
+  // Get entity event history
+  rpc GetEntityHistory(GetEntityHistoryRequest) returns (GetEntityHistoryResponse);
+
+  // Health check
+  rpc GetHealth(google.protobuf.Empty) returns (HealthResponse);
+
+  // === Streaming RPCs ===
+
+  // Server-side streaming: continuous event delivery
+  rpc StreamEvents(StreamEventsRequest) returns (stream SequencedEvent);
+
+  // Bidirectional streaming: full-duplex sync
+  rpc SyncStream(stream SyncMessage) returns (stream SyncMessage);
+
+  // Subscribe to specific entity updates
+  rpc SubscribeEntity(SubscribeEntityRequest) returns (stream SequencedEvent);
+}
+
+// Key management service (separate for modularity)
+service KeyManagement {
+  rpc RegisterAgentKey(RegisterKeyRequest) returns (RegisterKeyResponse);
+  rpc GetAgentKeys(GetAgentKeysRequest) returns (GetAgentKeysResponse);
+  rpc RevokeAgentKey(RevokeKeyRequest) returns (RevokeKeyResponse);
+}
+
+// ============================================================================
+// VES v1.0 Event Envelope
+// ============================================================================
+
+message EventEnvelope {
+  // === Identification ===
+  string event_id = 1;                    // UUIDv4
+  string command_id = 2;                  // Idempotency key (empty = not set)
+
+  // === Tenant/Store Context ===
+  string tenant_id = 3;
+  string store_id = 4;
+
+  // === Entity Reference ===
+  string entity_type = 5;
+  string entity_id = 6;
+  string event_type = 7;
+
+  // === Source Agent ===
+  string source_agent = 8;
+
+  // === VES v1.0 Protocol Fields ===
+  uint32 ves_version = 9;                 // Protocol version (1)
+  PayloadKind payload_kind = 10;          // Plaintext or encrypted
+
+  // === Payload ===
+  bytes payload = 11;                     // JSON payload bytes
+  EncryptedPayload payload_encrypted = 12; // Set if payload_kind == ENCRYPTED
+
+  // === Hash Bindings (32-byte SHA-256) ===
+  bytes payload_plain_hash = 13;          // Domain-separated hash
+  bytes payload_cipher_hash = 14;         // 32 zeros if plaintext
+
+  // === Signature ===
+  uint32 agent_key_id = 15;               // Signing key ID
+  bytes agent_signature = 16;             // Ed25519 signature (64 bytes)
+
+  // === Metadata ===
+  uint64 base_version = 17;               // OCC version (0 = not set)
+  google.protobuf.Timestamp created_at = 18;
+}
+
+enum PayloadKind {
+  PAYLOAD_KIND_UNSPECIFIED = 0;
+  PAYLOAD_KIND_PLAINTEXT = 1;
+  PAYLOAD_KIND_ENCRYPTED = 2;
+}
+
+// VES-ENC-1 encrypted payload structure
+message EncryptedPayload {
+  uint32 enc_version = 1;                 // = 1
+  string aead = 2;                        // "AES-256-GCM"
+  bytes nonce = 3;                        // 12 bytes
+  bytes ciphertext = 4;
+  bytes tag = 5;                          // 16 bytes
+
+  HpkeParams hpke = 6;
+  repeated RecipientKey recipients = 7;
+}
+
+message HpkeParams {
+  string mode = 1;                        // "base"
+  string kem = 2;                         // "X25519-HKDF-SHA256"
+  string kdf = 3;                         // "HKDF-SHA256"
+  string aead = 4;                        // "AES-256-GCM"
+}
+
+message RecipientKey {
+  uint32 recipient_kid = 1;
+  bytes ephemeral_public_key = 2;         // 32 bytes
+  bytes wrapped_dek = 3;
+}
+
+// ============================================================================
+// Sequenced Event
+// ============================================================================
+
+message SequencedEvent {
+  EventEnvelope envelope = 1;
+  uint64 sequence_number = 2;
+  google.protobuf.Timestamp sequenced_at = 3;
+  bytes receipt_hash = 4;                 // Empty = not set
+}
+
+// ============================================================================
+// Push (Batch Ingest)
+// ============================================================================
+
+message PushRequest {
+  string agent_id = 1;
+  string tenant_id = 2;
+  string store_id = 3;
+  repeated EventEnvelope events = 4;
+  string request_id = 5;                  // For tracking/idempotency
+}
+
+message PushResponse {
+  string batch_id = 1;
+  string request_id = 2;
+
+  uint32 events_accepted = 3;
+  uint32 events_rejected = 4;
+
+  uint64 sequence_start = 5;
+  uint64 sequence_end = 6;
+  uint64 head_sequence = 7;
+
+  repeated RejectedEvent rejections = 8;
+  BatchCommitment commitment = 9;         // Null message = not set
+}
+
+message RejectedEvent {
+  string event_id = 1;
+  RejectionReason reason = 2;
+  string message = 3;
+}
+
+enum RejectionReason {
+  REJECTION_REASON_UNSPECIFIED = 0;
+  REJECTION_REASON_INVALID_SIGNATURE = 1;
+  REJECTION_REASON_UNKNOWN_KEY = 2;
+  REJECTION_REASON_REVOKED_KEY = 3;
+  REJECTION_REASON_DUPLICATE_EVENT = 4;
+  REJECTION_REASON_DUPLICATE_COMMAND = 5;
+  REJECTION_REASON_INVALID_HASH = 6;
+  REJECTION_REASON_VERSION_CONFLICT = 7;
+  REJECTION_REASON_INVALID_FORMAT = 8;
+  REJECTION_REASON_QUOTA_EXCEEDED = 9;
+}
+
+// ============================================================================
+// Pull Events (Unary)
+// ============================================================================
+
+message PullEventsRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  uint64 from_sequence = 3;
+  uint32 limit = 4;                       // Default 100, max 1000
+
+  // Filters (empty = no filter)
+  string entity_type_filter = 5;
+  string entity_id_filter = 6;
+  repeated string event_type_filter = 7;
+  repeated string agent_filter = 8;
+}
+
+message PullEventsResponse {
+  repeated SequencedEvent events = 1;
+  uint64 next_sequence = 2;
+  bool has_more = 3;
+  uint64 head_sequence = 4;
+}
+
+// ============================================================================
+// Sync State
+// ============================================================================
+
+message GetSyncStateRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+}
+
+message SyncState {
+  string tenant_id = 1;
+  string store_id = 2;
+  uint64 head_sequence = 3;
+  bytes state_root = 4;                   // Empty = not available
+  BatchCommitment latest_commitment = 5;  // Null message = not available
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// ============================================================================
+// Merkle Commitments & Proofs
+// ============================================================================
+
+message BatchCommitment {
+  string batch_id = 1;
+  bytes merkle_root = 2;
+  uint64 start_sequence = 3;
+  uint64 end_sequence = 4;
+  uint32 event_count = 5;
+  google.protobuf.Timestamp committed_at = 6;
+  bytes previous_root = 7;                // Empty = first batch (no previous)
+}
+
+message GetCommitmentRequest {
+  oneof selector {
+    string batch_id = 1;
+    uint64 sequence_number = 2;
+  }
+}
+
+message GetInclusionProofRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  oneof selector {
+    string event_id = 3;
+    uint64 sequence_number = 4;
+  }
+  bytes expected_root = 5;                // Empty = don't verify root
+}
+
+message GetInclusionProofResponse {
+  bool included = 1;
+  InclusionProof proof = 2;
+  SequencedEvent event = 3;
+}
+
+message InclusionProof {
+  bytes merkle_root = 1;
+  uint64 leaf_index = 2;
+  repeated bytes proof_hashes = 3;
+  uint64 leaf_count = 4;
+  bytes leaf_hash = 5;
+}
+
+// ============================================================================
+// Entity History
+// ============================================================================
+
+message GetEntityHistoryRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  string entity_type = 3;
+  string entity_id = 4;
+  uint64 from_version = 5;                // 0 = from beginning
+  uint64 to_version = 6;                  // 0 = to current
+  uint32 limit = 7;                       // 0 = default (100)
+}
+
+message GetEntityHistoryResponse {
+  repeated SequencedEvent events = 1;
+  uint64 current_version = 2;
+}
+
+// ============================================================================
+// Streaming: Server-Side (Event Delivery)
+// ============================================================================
+
+message StreamEventsRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  uint64 from_sequence = 3;
+
+  // Filters (empty = no filter)
+  repeated string entity_type_filter = 4;
+  repeated string event_type_filter = 5;
+  repeated string agent_filter = 6;
+
+  // Options
+  bool include_history = 7;               // Send historical events first
+  uint32 heartbeat_interval_ms = 8;       // 0 = no heartbeats
+}
+
+message SubscribeEntityRequest {
+  string tenant_id = 1;
+  string store_id = 2;
+  string entity_type = 3;
+  string entity_id = 4;
+  bool include_history = 5;
+}
+
+// ============================================================================
+// Streaming: Bidirectional Sync
+// ============================================================================
+
+message SyncMessage {
+  oneof message {
+    // Client -> Server
+    PushRequest push = 1;
+    PullEventsRequest pull = 2;
+    EventAck ack = 3;
+    Heartbeat heartbeat = 4;
+
+    // Server -> Client
+    PushResponse push_response = 5;
+    PullEventsResponse pull_response = 6;
+    SequencedEvent event = 7;
+    SyncState sync_state = 8;
+    Heartbeat server_heartbeat = 9;
+  }
+}
+
+message EventAck {
+  repeated uint64 sequence_numbers = 1;
+  uint64 agent_head_sequence = 2;
+}
+
+message Heartbeat {
+  google.protobuf.Timestamp timestamp = 1;
+  uint64 last_seen_sequence = 2;
+}
+
+// ============================================================================
+// Key Management
+// ============================================================================
+
+message RegisterKeyRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+  uint32 key_id = 3;
+  KeyType key_type = 4;
+  bytes public_key = 5;                   // 32 bytes Ed25519 or X25519
+  google.protobuf.Timestamp valid_from = 6;  // Null = immediately valid
+  google.protobuf.Timestamp valid_to = 7;    // Null = no expiration
+  bytes proof_of_possession = 8;          // Signature proving ownership
+}
+
+enum KeyType {
+  KEY_TYPE_UNSPECIFIED = 0;
+  KEY_TYPE_SIGNING = 1;                   // Ed25519
+  KEY_TYPE_ENCRYPTION = 2;                // X25519
+}
+
+message RegisterKeyResponse {
+  bool success = 1;
+  string message = 2;
+  google.protobuf.Timestamp registered_at = 3;
+}
+
+message GetAgentKeysRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+  KeyType key_type_filter = 3;            // UNSPECIFIED = all types
+  bool include_revoked = 4;
+}
+
+message GetAgentKeysResponse {
+  repeated AgentKey keys = 1;
+}
+
+message AgentKey {
+  uint32 key_id = 1;
+  KeyType key_type = 2;
+  bytes public_key = 3;
+  KeyStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp valid_from = 6;   // Null = always valid
+  google.protobuf.Timestamp valid_to = 7;     // Null = no expiration
+  google.protobuf.Timestamp revoked_at = 8;   // Null = not revoked
+}
+
+enum KeyStatus {
+  KEY_STATUS_UNSPECIFIED = 0;
+  KEY_STATUS_ACTIVE = 1;
+  KEY_STATUS_EXPIRED = 2;
+  KEY_STATUS_REVOKED = 3;
+}
+
+message RevokeKeyRequest {
+  string tenant_id = 1;
+  string agent_id = 2;
+  uint32 key_id = 3;
+  string reason = 4;
+  bytes authorization_signature = 5;
+}
+
+message RevokeKeyResponse {
+  bool success = 1;
+  google.protobuf.Timestamp revoked_at = 2;
+}
+
+// ============================================================================
+// Health Check
+// ============================================================================
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}

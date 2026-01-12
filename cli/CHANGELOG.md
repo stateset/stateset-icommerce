@@ -5,6 +5,169 @@ All notable changes to `@stateset/cli` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-11
+
+### Added
+
+#### Verifiable Event Sync (VES) Protocol v1.0
+A complete event sourcing system with cryptographic verification for multi-agent synchronization:
+
+- **Ed25519 Key Management** (`src/sync/keys.js`)
+  - Agent keypair generation and secure storage
+  - VES-compliant key derivation (HKDF-SHA256)
+  - Key rotation policies with configurable schedules
+  - Automatic key backup and recovery
+
+- **Cryptographic Verification** (`src/sync/crypto.js`)
+  - Domain-separated hashing with `VES_PAYLOAD_PLAIN_V1` prefix
+  - Canonical JSON serialization (RFC 8785) for deterministic hashing
+  - Ed25519 signature generation and verification
+  - Legacy payload hash support for backwards compatibility
+  - `computePayloadHash()`, `computeLegacyPayloadHash()`, `signEvent()`, `verifySignature()`
+
+- **Event Outbox** (`src/sync/outbox.js`)
+  - SQLite-backed event storage with better-sqlite3
+  - Sequence number tracking for ordering
+  - Push/pull state management
+  - Conflict detection at entity level
+
+- **Sync Engine** (`src/sync/engine.js`)
+  - Push/pull orchestration with configurable intervals
+  - Event subscription by entity type/ID
+  - Automatic conflict resolution strategies
+  - Real-time event streaming via callbacks
+
+- **Conflict Resolution** (`src/sync/conflict.js`)
+  - Optimistic concurrency control with base_version
+  - Last-write-wins and custom merge strategies
+  - Conflict event generation for audit trails
+
+#### gRPC Bidirectional Streaming
+Real-time synchronization with the StateSet Sequencer:
+
+- **gRPC Client** (`src/sync/grpc-client.js`)
+  - Bidirectional streaming for push/pull operations
+  - Entity subscription for filtered real-time updates
+  - Automatic reconnection with exponential backoff
+  - Proto-based message serialization
+  - Agent key registration and revocation
+  - Sync state queries (head sequence, checkpoint)
+
+- **Unified Client** (`src/sync/unified-client.js`)
+  - Abstraction layer supporting both HTTP and gRPC transports
+  - Automatic transport selection based on configuration
+  - Consistent API across both protocols
+
+- **Proto Definitions** (`src/sync/proto/`)
+  - `sequencer.proto` - Event ingestion and retrieval
+  - `sync.proto` - Bidirectional sync streams
+  - `keys.proto` - Agent key management
+
+#### Multi-Chain Stablecoin Payments
+Native cryptocurrency payment support across 8 blockchain networks:
+
+- **Supported Chains** (`src/chains/config.js`)
+  - Solana (mainnet/devnet) - USDC
+  - SET Chain - ssUSD (yield-bearing stablecoin)
+  - Base L2 - USDC
+  - Ethereum - USDC, USDT, DAI
+  - Arbitrum L2 - USDC
+  - Zcash (mainnet/testnet) - ZEC (t-addresses)
+  - Bitcoin (mainnet/testnet) - BTC
+
+- **Wallet Derivation** (`src/chains/wallet.js`)
+  - VES Ed25519 seed to chain-specific wallet derivation
+  - Ed25519 wallets for Solana/SET Chain
+  - secp256k1 wallets for EVM chains, Bitcoin, Zcash
+  - Deterministic address generation per agent/chain
+
+- **Payment Operations** (`src/chains/stablecoin.js`)
+  - Balance checking across all supported chains
+  - Transaction building with proper encoding
+  - Signature generation (simulation mode)
+  - Transaction submission with confirmation tracking
+
+- **Address Validation** (`src/chains/validation.js`)
+  - Chain-specific address format validation
+  - Checksum verification (EVM, Bitcoin, Zcash)
+  - Base58/Bech32/Hex encoding support
+
+- **Cryptographic Utilities** (`src/chains/crypto-utils.js`)
+  - RIPEMD-160 implementation for Bitcoin/Zcash
+  - SHA256 double hashing
+  - secp256k1 utilities
+
+#### New CLI Commands
+
+- **`stateset-pay`** - Native stablecoin payment interface
+  ```bash
+  stateset pay --chains                    # List supported chains
+  stateset pay --wallet --chain solana     # Show wallet address
+  stateset pay --balance --chain solana    # Check balance
+  stateset pay --apply --to <addr> --amount 50 --chain solana  # Send payment
+  ```
+
+- **`stateset-sync`** - Event synchronization CLI
+  ```bash
+  stateset sync push            # Push local events to sequencer
+  stateset sync pull            # Pull new events from sequencer
+  stateset sync status          # Show sync state
+  stateset sync stream          # Start real-time sync stream
+  ```
+
+- **`stateset-autonomous`** - Autonomous agent operations
+  ```bash
+  stateset autonomous start     # Start autonomous mode
+  stateset autonomous status    # Check agent status
+  ```
+
+#### New MCP Tools
+
+- **commerce-stablecoin** (4 tools)
+  - `get_agent_wallet` - Get wallet address for a blockchain
+  - `get_wallet_balance` - Check stablecoin balance
+  - `create_stablecoin_payment` - Send payment (requires --apply)
+  - `list_supported_chains` - List available blockchains
+
+### Changed
+
+- **gRPC as Optional Dependency** - `@grpc/grpc-js` and `@grpc/proto-loader` are now optional dependencies, allowing installation without gRPC support for environments that don't need real-time sync.
+
+- **SQLite Improvements** - Enhanced better-sqlite3 implementations with proper type handling, WAL mode, and optimized prepared statements.
+
+- **Reconnection Logic** - Improved exponential backoff with jitter for gRPC reconnections, plus intentional disconnect detection to prevent unnecessary reconnection attempts.
+
+### Fixed
+
+- **Payload Hash Mismatch** - Fixed hash computation to use legacy format (no domain prefix) when communicating with the sequencer's gRPC API, maintaining compatibility with existing infrastructure.
+
+- **Buffer/Hex Conversion** - Fixed `0x` prefix handling when converting between hex strings and buffers in outbox storage and retrieval.
+
+- **Event Field Mapping** - Corrected field mapping when storing pulled events to SQLite, ensuring all VES fields are properly persisted.
+
+- **Reconnection NaN Delay** - Fixed undefined retry policy values causing NaN delays during gRPC reconnection by adding proper nullish coalescing defaults.
+
+### Technical Notes
+
+#### VES Protocol Compatibility
+The VES (Verifiable Event Sync) Protocol v1.0 provides cryptographic guarantees for event integrity:
+- Events are signed with Ed25519 keys
+- Payload hashes use domain-separated SHA256
+- Base version tracking enables optimistic concurrency
+- Sequence numbers ensure global ordering
+
+#### Chain Integration Architecture
+```
+VES Ed25519 Seed (32 bytes)
+       ↓ HKDF-SHA256 with chain-specific info
+Chain-Specific Private Key
+       ↓ Curve-specific derivation
+Public Key → Address
+```
+
+#### Migration Notes
+If upgrading from v0.1.x with an existing sync database, the outbox schema remains compatible. New VES fields will be populated on first sync.
+
 ## [0.1.7] - 2025-12-20
 
 ### Added

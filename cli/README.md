@@ -2,7 +2,17 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.1.9
+**Version:** 0.2.0
+
+[![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+
+## What's New in v0.2.0
+
+- **Verifiable Event Sync (VES) Protocol** - Cryptographically signed event sourcing with Ed25519
+- **gRPC Bidirectional Streaming** - Real-time sync with the StateSet Sequencer
+- **Multi-Chain Stablecoin Payments** - Native crypto payments on Solana, Base, Ethereum, SET Chain, Zcash, and Bitcoin
+- **New `stateset-pay` Command** - Send stablecoin payments directly from CLI
 
 ## Philosophy
 
@@ -15,13 +25,28 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 
 ## Features
 
+### Core
 - **Natural Language Interface** - Ask Claude to perform commerce operations
 - **Multi-Agent System** - 17 specialized agents auto-route to the best handler
-- **87+ MCP Tools** - Full commerce API exposed to Claude
+- **90+ MCP Tools** - Full commerce API exposed to Claude
 - **Multi-turn Sessions** - Resume conversations for complex workflows
 - **Preview Mode** - See what would happen before making changes
 - **Direct Commands** - Fast, non-AI mode for scripting
 - **Interactive Chat** - REPL for exploratory work
+
+### Sync & Streaming
+- **VES Protocol v1.0** - Verifiable Event Sync with Ed25519 signatures
+- **gRPC Streaming** - Real-time bidirectional sync with sequencer
+- **Event Outbox** - SQLite-backed event sourcing with conflict resolution
+- **Optimistic Concurrency** - Base version tracking for safe multi-agent updates
+
+### Payments
+- **Multi-Chain Stablecoins** - USDC on Solana, Base, Ethereum, Arbitrum
+- **SET Chain ssUSD** - Yield-bearing stablecoin on StateSet L2
+- **Bitcoin & Zcash** - Native BTC and ZEC support
+- **VES Key Derivation** - Deterministic wallet addresses per agent
+
+### Infrastructure
 - **Batch Processing** - Sequential or parallel request processing
 - **Interactive Tutorials** - Guided onboarding for new users
 - **SQLite/PostgreSQL** - Flexible storage backends
@@ -144,6 +169,7 @@ stateset --apply --batch orders.txt --parallel 3
 | `stateset-warranties` | warranties | Product warranty & claims |
 | `stateset-currency` | currency | Multi-currency & exchange rates |
 | `stateset-tax` | tax | Tax calculation & compliance |
+| `stateset-pay` | stablecoin | Native crypto payments (USDC, ssUSD, BTC, ZEC) |
 
 ### Utility Commands
 
@@ -169,18 +195,26 @@ stateset-icommerce/
 │   ├── python/              # stateset-embedded (PyO3)
 │   └── wasm/                # WebAssembly for browsers
 └── cli/
-    ├── bin/                 # 25 CLI programs
+    ├── bin/                 # 26 CLI programs
     ├── src/
     │   ├── claude-harness.js    # Multi-agent SDK integration
-    │   ├── mcp-server.js        # 87+ MCP tools for Claude
+    │   ├── mcp-server.js        # 90+ MCP tools for Claude
+    │   ├── sync/                # VES Protocol & gRPC streaming
+    │   │   ├── grpc-client.js   # Bidirectional gRPC client
+    │   │   ├── engine.js        # Sync orchestration
+    │   │   ├── outbox.js        # Event outbox (SQLite)
+    │   │   ├── crypto.js        # Ed25519 signing & hashing
+    │   │   └── proto/           # Protocol buffer definitions
+    │   ├── chains/              # Multi-chain payment support
+    │   │   ├── config.js        # Chain configurations
+    │   │   ├── wallet.js        # VES key → wallet derivation
+    │   │   ├── stablecoin.js    # Payment operations
+    │   │   └── validation.js    # Address validation
     │   ├── permissions.js       # Fine-grained access control
     │   ├── telemetry.js         # Observability & tracing
     │   ├── errors.js            # Structured error handling
-    │   ├── suggestions.js       # Smart command suggestions
     │   ├── session.js           # Session persistence
-    │   ├── database.js          # Connection pooling
-    │   ├── tutorial.js          # Interactive tutorials
-    │   └── context.js           # Request context & tracing
+    │   └── database.js          # Connection pooling
     └── .claude/
         ├── agents/          # 17 specialized agent definitions
         └── skills/          # Domain knowledge documents
@@ -433,6 +467,51 @@ stateset --apply "set exchange rate USD to EUR at 0.92"
 stateset --apply "enable currencies USD, EUR, GBP, JPY"
 ```
 
+### Stablecoin Payments
+
+Send native cryptocurrency payments across multiple blockchains:
+
+```bash
+# List supported blockchains
+stateset pay --chains
+
+# Show agent wallet addresses
+stateset pay --wallet                     # All chains
+stateset pay --wallet --chain solana      # Specific chain
+
+# Check stablecoin balance
+stateset pay --balance --chain solana
+stateset pay --balance --chain set_chain
+
+# Send payment (preview mode - no actual transaction)
+stateset pay --to 9WzDXwBb...WWWM --amount 50.00 --chain solana
+
+# Execute real payment (requires --apply)
+stateset pay --apply --to 9WzDXwBb...WWWM --amount 50.00 --chain solana
+
+# Pay with ssUSD on SET Chain (yield-bearing stablecoin)
+stateset pay --apply --to 0x1234...5678 --amount 100 --chain set_chain
+
+# Include order metadata for audit trail
+stateset pay --apply --to <addr> --amount 50 --chain solana --order ORD-123 --memo "Widget purchase"
+
+# AI-powered payments
+stateset --apply "pay 50 USDC to 9WzDXwBb...WWWM on Solana"
+stateset "check my wallet balance on Base"
+```
+
+**Supported Chains:**
+| Chain | Token | Description |
+|-------|-------|-------------|
+| `solana` | USDC | Fast, cheap, proven liquidity |
+| `solana_devnet` | USDC | Testing |
+| `set_chain` | ssUSD | StateSet L2, yield-bearing |
+| `base` | USDC | Coinbase L2, low fees |
+| `ethereum` | USDC/USDT/DAI | Maximum security |
+| `arbitrum` | USDC | Fast L2 |
+| `zcash` | ZEC | Privacy-focused (t-addresses) |
+| `bitcoin` | BTC | Original cryptocurrency |
+
 ### Supplier Management
 
 ```bash
@@ -472,6 +551,65 @@ stateset-create --apply --dir ~/projects "build an online bookstore"
 
 Available templates: `nextjs`, `nextjs-minimal`, `vite-react`, `astro`
 
+### Event Sync (VES Protocol)
+
+Synchronize events between agents and the StateSet Sequencer using the Verifiable Event Sync protocol:
+
+```bash
+# Check sync status
+stateset sync status
+
+# Push local events to sequencer
+stateset sync push
+
+# Pull new events from sequencer
+stateset sync pull
+
+# Start real-time streaming sync
+stateset sync stream
+
+# Subscribe to specific entities
+stateset sync stream --entity-type order --entity-id ORD-123
+```
+
+**gRPC Streaming** for real-time sync:
+
+```javascript
+import { GrpcSequencerClient } from '@stateset/cli/sync';
+
+const client = new GrpcSequencerClient({
+  url: 'sequencer.stateset.io:8081',
+  tenantId: 'your-tenant-id',
+  storeId: 'your-store-id',
+  agentId: 'your-agent-id',
+});
+
+await client.connect();
+
+// Push events
+await client.pushEvents([{
+  entityType: 'order',
+  entityId: 'ORD-123',
+  eventType: 'OrderCreated',
+  payload: { status: 'pending', amount: 99.99 },
+  baseVersion: 0,
+}]);
+
+// Subscribe to real-time updates
+client.onEvent((event) => {
+  console.log('Received:', event.eventType, event.entityId);
+});
+
+await client.startSyncStream();
+```
+
+**VES Protocol Features:**
+- Ed25519 cryptographic signatures for event integrity
+- Domain-separated hashing (`VES_PAYLOAD_PLAIN_V1`)
+- Optimistic concurrency with base version tracking
+- Automatic conflict detection and resolution
+- Global sequence numbers for ordering
+
 ## Agent System
 
 17 specialized agents handle different commerce domains:
@@ -504,7 +642,7 @@ The main `stateset` command automatically routes requests to the best agent base
 - Domain keyword matching
 - Ambiguity detection
 
-## MCP Tools (87+ Total)
+## MCP Tools (90+ Total)
 
 | Domain | Count | Examples |
 |--------|-------|----------|
@@ -525,6 +663,7 @@ The main `stateset` command automatically routes requests to the best agent base
 | **Suppliers/POs** | 6 | list_suppliers, create_supplier, create_purchase_order |
 | **Invoices** | 5 | list, create, send, record_payment, get_overdue |
 | **Warranties** | 4 | list, create, create_claim, approve_claim |
+| **Stablecoin** | 4 | get_agent_wallet, get_wallet_balance, create_payment, list_chains |
 
 ## Configuration
 
