@@ -4,6 +4,7 @@ use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
     parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row,
+    SqliteCustomerRepository, SqliteOrderRepository,
 };
 use super::parse_helpers::{parse_uuid, parse_decimal as parse_decimal_err};
 use chrono::{Duration, Utc};
@@ -13,8 +14,9 @@ use rust_decimal::Decimal;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
     CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
-    CheckoutResult, CommerceError, CreateCart, FulfillmentType, Result, SetCartPayment,
-    SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder, CreateOrderItem,
+    CustomerRepository, FulfillmentType, OrderRepository, Result, SetCartPayment, SetCartShipping,
+    ShippingRate, UpdateCart, UpdateCartItem,
 };
 use uuid::Uuid;
 
@@ -860,27 +862,69 @@ impl CartRepository for SqliteCartRepository {
         let cart = self.get(id)?
             .ok_or(CommerceError::NotFound)?;
 
-        let conn = self.conn()?;
-        let now = Utc::now();
-        let order_id = Uuid::new_v4();
-        let order_number = format!(
-            "ORD-{}-{:04}",
-            now.timestamp(),
-            (Uuid::new_v4().as_u128() % 10000) as u32
-        );
+        if cart.items.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Cart must have at least one item".to_string(),
+            ));
+        }
 
-        conn.execute(
-            "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
-             payment_status = 'captured', completed_at = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![
-                order_id.to_string(),
-                &order_number,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string()
-            ],
-        )
-        .map_err(map_db_error)?;
+        let customer_id = self.resolve_customer_id(&cart)?;
+        let order_items: Vec<CreateOrderItem> = cart
+            .items
+            .iter()
+            .map(|item| CreateOrderItem {
+                product_id: item.product_id.unwrap_or_else(Uuid::nil),
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                discount: Some(item.discount_amount),
+                tax_amount: Some(item.tax_amount),
+            })
+            .collect();
+
+        let shipping_address = cart.shipping_address.clone().map(Into::into);
+        let billing_address = if cart.billing_same_as_shipping {
+            cart.billing_address
+                .clone()
+                .or_else(|| cart.shipping_address.clone())
+                .map(Into::into)
+        } else {
+            cart.billing_address.clone().map(Into::into)
+        };
+
+        let order_repo = SqliteOrderRepository::new(self.pool.clone());
+        let order = order_repo.create(CreateOrder {
+            customer_id,
+            items: order_items,
+            currency: Some(cart.currency.clone()),
+            shipping_address,
+            billing_address,
+            notes: cart.notes.clone(),
+            payment_method: cart.payment_method.clone(),
+            shipping_method: cart.shipping_method.clone(),
+        })?;
+
+        let order_id = order.id;
+        let order_number = order.order_number.clone();
+        let now = Utc::now();
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE carts SET status = 'completed', order_id = ?, order_number = ?,
+                 payment_status = 'captured', completed_at = ?, updated_at = ?, customer_id = ? WHERE id = ?",
+                rusqlite::params![
+                    order_id.to_string(),
+                    &order_number,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    customer_id.to_string(),
+                    id.to_string()
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
         Ok(CheckoutResult {
             cart_id: id,
@@ -1435,6 +1479,51 @@ impl SqliteCartRepository {
             created_at: now,
             updated_at: now,
         })
+    }
+
+    fn resolve_customer_id(&self, cart: &Cart) -> Result<Uuid> {
+        if let Some(customer_id) = cart.customer_id {
+            return Ok(customer_id);
+        }
+
+        let email = cart.customer_email.as_deref().ok_or_else(|| {
+            CommerceError::ValidationError(
+                "Cart must have a customer_id or customer_email to create an order".to_string(),
+            )
+        })?;
+
+        let customer_repo = SqliteCustomerRepository::new(self.pool.clone());
+        if let Some(customer) = customer_repo.get_by_email(email)? {
+            return Ok(customer.id);
+        }
+
+        let (first_name, last_name) = split_customer_name(cart.customer_name.as_deref());
+        let created = customer_repo.create(CreateCustomer {
+            email: email.to_string(),
+            first_name,
+            last_name,
+            phone: cart.customer_phone.clone(),
+            ..Default::default()
+        })?;
+
+        Ok(created.id)
+    }
+}
+
+fn split_customer_name(name: Option<&str>) -> (String, String) {
+    let trimmed = name.unwrap_or("").trim();
+    if trimmed.is_empty() {
+        return ("Guest".to_string(), "Customer".to_string());
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let first_name = parts.next().unwrap_or("Guest");
+    let last_name = parts.collect::<Vec<_>>().join(" ");
+
+    if last_name.is_empty() {
+        (first_name.to_string(), "Customer".to_string())
+    } else {
+        (first_name.to_string(), last_name)
     }
 }
 

@@ -107,6 +107,13 @@ impl SqliteDatabase {
             );
             (manager, config.max_connections)
         };
+        let manager = manager.with_init(move |conn| {
+            conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
+            if !is_memory {
+                conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+            }
+            Ok(())
+        });
 
         let pool = Pool::builder()
             .max_size(max_connections)
@@ -117,21 +124,6 @@ impl SqliteDatabase {
         // Run migrations
         let conn = pool
             .get()
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Enable foreign keys
-        conn.execute_batch("PRAGMA foreign_keys = ON")
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Enable WAL mode for better concurrent performance (for file-based databases only)
-        // Note: WAL mode is not supported for in-memory shared-cache databases
-        if !is_memory {
-            conn.execute_batch("PRAGMA journal_mode = WAL")
-                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        }
-
-        // Set busy timeout to wait for locks instead of failing immediately
-        conn.execute_batch("PRAGMA busy_timeout = 5000")
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         migrations::run_migrations(&conn)

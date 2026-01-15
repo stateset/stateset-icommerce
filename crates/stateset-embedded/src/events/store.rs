@@ -97,11 +97,14 @@ impl InMemoryEventStore {
 
 impl EventStore for InMemoryEventStore {
     fn append(&self, event: &CommerceEvent) -> Result<u64> {
+        let (aggregate_type, aggregate_id) = Self::extract_aggregate(event);
+        let data = event.to_json().map_err(|e| {
+            stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
+        })?;
+
         let mut sequence = self.sequence.write().unwrap();
         *sequence += 1;
         let seq = *sequence;
-
-        let (aggregate_type, aggregate_id) = Self::extract_aggregate(event);
 
         let stored = StoredEvent {
             sequence: seq,
@@ -109,12 +112,7 @@ impl EventStore for InMemoryEventStore {
             event_type: event.event_type().to_string(),
             aggregate_type,
             aggregate_id,
-            data: event.to_json().map_err(|e| {
-                stateset_core::CommerceError::Internal(format!(
-                    "Failed to serialize event: {}",
-                    e
-                ))
-            })?,
+            data,
             stored_at: Utc::now(),
         };
 
@@ -129,16 +127,21 @@ impl EventStore for InMemoryEventStore {
 
     fn get_events_since(&self, sequence: u64, limit: u32) -> Result<Vec<(u64, CommerceEvent)>> {
         let events = self.events.read().unwrap();
-        let result: Vec<(u64, CommerceEvent)> = events
+        let result = events
             .iter()
             .filter(|e| e.sequence > sequence)
             .take(limit as usize)
-            .filter_map(|e| {
+            .map(|e| {
                 CommerceEvent::from_json(&e.data)
-                    .ok()
                     .map(|event| (e.sequence, event))
+                    .map_err(|err| {
+                        stateset_core::CommerceError::Internal(format!(
+                            "Failed to deserialize event {}: {}",
+                            e.id, err
+                        ))
+                    })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(result)
     }
 
@@ -148,14 +151,21 @@ impl EventStore for InMemoryEventStore {
         aggregate_id: &str,
     ) -> Result<Vec<CommerceEvent>> {
         let events = self.events.read().unwrap();
-        let result: Vec<CommerceEvent> = events
+        let result = events
             .iter()
             .filter(|e| {
                 e.aggregate_type.as_deref() == Some(aggregate_type)
                     && e.aggregate_id.as_deref() == Some(aggregate_id)
             })
-            .filter_map(|e| CommerceEvent::from_json(&e.data).ok())
-            .collect();
+            .map(|e| {
+                CommerceEvent::from_json(&e.data).map_err(|err| {
+                    stateset_core::CommerceError::Internal(format!(
+                        "Failed to deserialize event {}: {}",
+                        e.id, err
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(result)
     }
 
@@ -294,9 +304,13 @@ impl EventStore for SqliteEventStore {
             let (seq, data) = row.map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Failed to read row: {}", e))
             })?;
-            if let Ok(event) = CommerceEvent::from_json(&data) {
-                events.push((seq, event));
-            }
+            let event = CommerceEvent::from_json(&data).map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to deserialize event at sequence {}: {}",
+                    seq, e
+                ))
+            })?;
+            events.push((seq, event));
         }
 
         Ok(events)
@@ -340,9 +354,13 @@ impl EventStore for SqliteEventStore {
             let data = row.map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Failed to read row: {}", e))
             })?;
-            if let Ok(event) = CommerceEvent::from_json(&data) {
-                events.push(event);
-            }
+            let event = CommerceEvent::from_json(&data).map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to deserialize event for {}:{}: {}",
+                    aggregate_type, aggregate_id, e
+                ))
+            })?;
+            events.push(event);
         }
 
         Ok(events)

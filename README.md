@@ -23,11 +23,11 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **CLI Programs** | 25 |
 | **AI Agents** | 8 |
 | **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
-| **Current Version** | 0.1.7 |
+| **Current Version** | 0.2.0 |
 
 ---
 
-## What's New in v0.1.7
+## Recent Highlights
 
 **34 new MCP tools** expanding full commerce coverage:
 
@@ -42,9 +42,9 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.1.7    # Python
-gem install stateset_embedded -v 0.1.7  # Ruby
-npm install @stateset/embedded@0.1.7    # Node.js
+pip install stateset-embedded==0.2.0    # Python
+gem install stateset_embedded -v 0.2.0  # Ruby
+npm install @stateset/embedded@0.2.0    # Node.js
 cargo add stateset-embedded             # Rust
 ```
 
