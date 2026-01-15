@@ -123,6 +123,7 @@ export interface CreateReturnInput {
   orderId: string
   reason: string
   reasonDetails?: string
+  idempotencyKey?: string
   items: Array<CreateReturnItemInput>
 }
 export interface ReturnOutput {
@@ -132,11 +133,13 @@ export interface ReturnOutput {
   reason: string
   version: number
   createdAt: string
+  idempotencyKey?: string
 }
 export interface CreatePaymentInput {
   orderId?: string
   invoiceId?: string
   customerId?: string
+  idempotencyKey?: string
   amount: number
   currency?: string
   paymentMethod?: string
@@ -147,6 +150,7 @@ export interface PaymentOutput {
   orderId?: string
   invoiceId?: string
   customerId?: string
+  idempotencyKey?: string
   amount: number
   currency: string
   status: string
@@ -158,6 +162,7 @@ export interface CreateRefundInput {
   paymentId: string
   amount: number
   reason?: string
+  idempotencyKey?: string
 }
 export interface RefundOutput {
   id: string
@@ -167,6 +172,7 @@ export interface RefundOutput {
   status: string
   reason?: string
   createdAt: string
+  idempotencyKey?: string
 }
 export interface CreateShipmentInput {
   orderId: string

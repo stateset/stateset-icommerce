@@ -1377,6 +1377,8 @@ pub struct Return {
     #[pyo3(get)]
     reason: String,
     #[pyo3(get)]
+    idempotency_key: Option<String>,
+    #[pyo3(get)]
     version: i32,
     #[pyo3(get)]
     created_at: String,
@@ -1396,6 +1398,7 @@ impl From<stateset_core::Return> for Return {
             order_id: r.order_id.to_string(),
             status: format!("{}", r.status),
             reason: format!("{}", r.reason),
+            idempotency_key: r.idempotency_key,
             version: r.version,
             created_at: r.created_at.to_rfc3339(),
         }
@@ -1445,13 +1448,14 @@ impl Returns {
     ///
     /// Returns:
     ///     Return: The created return
-    #[pyo3(signature = (order_id, reason, items, reason_details=None))]
+    #[pyo3(signature = (order_id, reason, items, reason_details=None, idempotency_key=None))]
     fn create(
         &self,
         order_id: String,
         reason: String,
         items: Vec<CreateReturnItemInput>,
         reason_details: Option<String>,
+        idempotency_key: Option<String>,
     ) -> PyResult<Return> {
         let commerce = self.commerce.lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
@@ -1488,6 +1492,7 @@ impl Returns {
                 order_id: ord_uuid,
                 reason: return_reason,
                 reason_details,
+                idempotency_key,
                 items: return_items,
                 ..Default::default()
             })
@@ -1615,6 +1620,8 @@ pub struct Payment {
     #[pyo3(get)]
     customer_id: Option<String>,
     #[pyo3(get)]
+    idempotency_key: Option<String>,
+    #[pyo3(get)]
     amount: f64,
     #[pyo3(get)]
     currency: String,
@@ -1648,6 +1655,7 @@ impl From<stateset_core::Payment> for Payment {
             order_id: p.order_id.map(|id| id.to_string()),
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
+            idempotency_key: p.idempotency_key,
             amount: to_f64_or_nan(p.amount),
             currency: p.currency,
             status: format!("{}", p.status),
@@ -1667,6 +1675,8 @@ pub struct Refund {
     id: String,
     #[pyo3(get)]
     payment_id: String,
+    #[pyo3(get)]
+    idempotency_key: Option<String>,
     #[pyo3(get)]
     amount: f64,
     #[pyo3(get)]
@@ -1689,6 +1699,7 @@ impl From<stateset_core::Refund> for Refund {
         Self {
             id: r.id.to_string(),
             payment_id: r.payment_id.to_string(),
+            idempotency_key: r.idempotency_key,
             amount: to_f64_or_nan(r.amount),
             status: format!("{}", r.status),
             reason: r.reason,
@@ -1720,7 +1731,7 @@ impl Payments {
     ///
     /// Returns:
     ///     Payment: The created payment
-    #[pyo3(signature = (amount, currency=None, order_id=None, customer_id=None, payment_method=None))]
+    #[pyo3(signature = (amount, currency=None, order_id=None, customer_id=None, payment_method=None, idempotency_key=None))]
     fn create(
         &self,
         amount: f64,
@@ -1728,6 +1739,7 @@ impl Payments {
         order_id: Option<String>,
         customer_id: Option<String>,
         payment_method: Option<String>,
+        idempotency_key: Option<String>,
     ) -> PyResult<Payment> {
         let commerce = self.commerce.lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
@@ -1756,6 +1768,7 @@ impl Payments {
             .create(stateset_core::CreatePayment {
                 order_id: order_uuid,
                 customer_id: customer_uuid,
+                idempotency_key,
                 amount: Decimal::from_f64_retain(amount).unwrap_or_default(),
                 currency,
                 payment_method: method,
@@ -1829,8 +1842,8 @@ impl Payments {
     }
 
     /// Create a refund for a payment.
-    #[pyo3(signature = (payment_id, amount, reason=None))]
-    fn create_refund(&self, payment_id: String, amount: f64, reason: Option<String>) -> PyResult<Refund> {
+    #[pyo3(signature = (payment_id, amount, reason=None, idempotency_key=None))]
+    fn create_refund(&self, payment_id: String, amount: f64, reason: Option<String>, idempotency_key: Option<String>) -> PyResult<Refund> {
         let commerce = self.commerce.lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
@@ -1843,6 +1856,7 @@ impl Payments {
                 payment_id: uuid,
                 amount: Some(Decimal::from_f64_retain(amount).unwrap_or_default()),
                 reason,
+                idempotency_key,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create refund: {}", e)))?;

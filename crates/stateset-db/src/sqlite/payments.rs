@@ -40,6 +40,7 @@ impl SqlitePaymentRepository {
             currency: row.get("currency")?,
             amount_refunded: parse_decimal_row(&row.get::<_, String>("amount_refunded")?, "payment", "amount_refunded")?,
             external_id: row.get("external_id")?,
+            idempotency_key: row.get("idempotency_key")?,
             processor: row.get("processor")?,
             card_brand: row.get::<_, Option<String>>("card_brand")?.and_then(|s| s.parse().ok()),
             card_last4: row.get("card_last4")?,
@@ -79,6 +80,7 @@ impl SqlitePaymentRepository {
             currency: row.get("currency")?,
             reason: row.get("reason")?,
             external_id: row.get("external_id")?,
+            idempotency_key: row.get("idempotency_key")?,
             failure_reason: row.get("failure_reason")?,
             notes: row.get("notes")?,
             refunded_at: row.get::<_, Option<String>>("refunded_at")?.and_then(|s| s.parse().ok()),
@@ -110,10 +112,38 @@ impl SqlitePaymentRepository {
             updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "payment_method", "updated_at")?,
         })
     }
+
+    fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Payment>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT * FROM payments WHERE idempotency_key = ?").map_err(map_db_error)?;
+        let result = stmt.query_row([key], Self::row_to_payment);
+        match result {
+            Ok(payment) => Ok(Some(payment)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    fn get_refund_by_idempotency_key(&self, key: &str) -> Result<Option<Refund>> {
+        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT * FROM refunds WHERE idempotency_key = ?").map_err(map_db_error)?;
+        let result = stmt.query_row([key], Self::row_to_refund);
+        match result {
+            Ok(refund) => Ok(Some(refund)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
 }
 
 impl PaymentRepository for SqlitePaymentRepository {
     fn create(&self, input: CreatePayment) -> Result<Payment> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_by_idempotency_key(key)? {
+                return Ok(existing);
+            }
+        }
+
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -121,10 +151,10 @@ impl PaymentRepository for SqlitePaymentRepository {
 
         conn.execute(
             "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
-             payment_method, amount, currency, amount_refunded, external_id, processor,
+             payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
              card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
              billing_address, description, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 id.to_string(),
                 payment_number,
@@ -137,6 +167,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 input.currency.unwrap_or_else(|| "USD".to_string()),
                 "0",
                 input.external_id,
+                input.idempotency_key,
                 input.processor,
                 input.card_brand.map(|b| b.to_string()),
                 input.card_last4,
@@ -291,6 +322,12 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_refund_by_idempotency_key(key)? {
+                return Ok(existing);
+            }
+        }
+
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Get payment to determine refund amount
@@ -302,8 +339,8 @@ impl PaymentRepository for SqlitePaymentRepository {
         let refund_number = generate_refund_number();
 
         conn.execute(
-            "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 id.to_string(),
                 refund_number,
@@ -313,6 +350,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 payment.currency,
                 input.reason,
                 input.external_id,
+                input.idempotency_key,
                 input.notes,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -511,10 +549,10 @@ impl PaymentRepository for SqlitePaymentRepository {
 
             tx.execute(
                 "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
-                 payment_method, amount, currency, amount_refunded, external_id, processor,
+                 payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
                  card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                  billing_address, description, metadata, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     id.to_string(),
                     payment_number.clone(),
@@ -527,6 +565,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                     input.currency.clone().unwrap_or_else(|| "USD".to_string()),
                     "0",
                     input.external_id.clone(),
+                    input.idempotency_key.clone(),
                     input.processor.clone(),
                     input.card_brand.map(|b| b.to_string()),
                     input.card_last4.clone(),
@@ -554,6 +593,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 currency: input.currency.unwrap_or_else(|| "USD".to_string()),
                 amount_refunded: rust_decimal::Decimal::ZERO,
                 external_id: input.external_id,
+                idempotency_key: input.idempotency_key,
                 processor: input.processor,
                 card_brand: input.card_brand,
                 card_last4: input.card_last4,

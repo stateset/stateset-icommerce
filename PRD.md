@@ -587,27 +587,29 @@ stateset-icommerce/
 | Calculate requirements | P2 | Compute component needs |
 | Update BOM | P2 | Modify component list |
 
-### 7.2 Additional Modules (Future)
+### 7.2 Additional Modules (Current + Planned)
 
-| Module | Priority | Description |
-|--------|----------|-------------|
-| Subscriptions | P1 | Recurring billing management |
-| Pricing | P1 | Price lists, tiered pricing |
-| Discounts | P1 | Promotions, coupons |
-| Refunds | P1 | Refund processing (separate from returns) |
-| Taxes | P1 | Tax calculation interface |
-| Accounts | P1 | B2B company/organization |
-| Quotes | P2 | Quote-to-order flow |
-| Contracts | P2 | B2B agreements |
-| Vendors | P2 | Supplier management |
-| Locations | P2 | Multi-warehouse |
-| Transfers | P2 | Inter-location transfers |
-| Fulfillments | P2 | 3PL integration |
-| Receiving | P2 | Inbound inventory |
-| Policies | P0 | NSR rule definitions |
-| Approvals | P1 | Human-in-the-loop workflows |
-| Events | P1 | Event log, audit trail |
-| Conversations | P2 | Customer interaction history |
+Status reflects OSS implementation as of v0.2.x.
+
+| Module | Status | Description |
+|--------|--------|-------------|
+| Subscriptions | Implemented (v0.2.x) | Recurring billing management |
+| Pricing | Planned | Price lists, tiered pricing |
+| Discounts | Implemented (v0.2.x) | Promotions, coupons |
+| Refunds | Implemented (v0.2.x) | Refund processing (via payments) |
+| Taxes | Implemented (v0.2.x) | Tax calculation engine |
+| Accounts | Planned | B2B company/organization |
+| Quotes | Planned | Quote-to-order flow |
+| Contracts | Planned | B2B agreements |
+| Vendors | Implemented (v0.2.x) | Supplier management |
+| Locations | Implemented (v0.2.x) | Multi-warehouse |
+| Transfers | Planned | Inter-location transfers |
+| Fulfillments | Implemented (v0.2.x) | 3PL integration |
+| Receiving | Implemented (v0.2.x) | Inbound inventory |
+| Policies | Planned | NSR rule definitions |
+| Approvals | Planned | Human-in-the-loop workflows |
+| Events | Implemented (feature-gated) | Event log, audit trail |
+| Conversations | Planned | Customer interaction history |
 
 ---
 
@@ -828,7 +830,7 @@ pub enum ReturnReason {
 ### 9.1 JavaScript/TypeScript API
 
 ```typescript
-import { Commerce } from '@stateset/icommerce';
+import { Commerce } from '@stateset/embedded';
 
 // Initialize
 const commerce = new Commerce('./store.db');
@@ -1438,6 +1440,15 @@ await commerce.sync.configure({
 });
 ```
 
+### 12.6 Idempotency and Domain Invariants
+
+CRDT merges make offline sync possible but do not guarantee commerce invariants (order state monotonicity, refund totals, inventory non-negativity). For money-moving workflows:
+
+- Use a single writer per order/payment or funnel writes through the sequencer.
+- Treat external processor IDs and webhook IDs as idempotency keys and de-dupe on ingest.
+- Enforce monotonic state transitions in application logic and ignore stale updates.
+- Keep an append-only event log for reconciliation and audit when events are enabled.
+
 ---
 
 ## 13. Security Requirements
@@ -1450,6 +1461,8 @@ await commerce.sync.configure({
 | Encryption in transit | TLS 1.3 for sync connections |
 | Key management | Customer-managed keys for enterprise |
 | Data isolation | Separate database files per tenant |
+| Payment data handling | Store tokens/last4 only; PSP handles PAN and PCI scope |
+| PII retention/deletion | Configurable retention and delete-by-request workflows |
 
 ### 13.2 Access Control
 
@@ -1548,14 +1561,14 @@ const logs = await commerce.audit.query({
 
 | Platform | Package | Status |
 |----------|---------|--------|
-| Node.js 18+ | `@stateset/icommerce` | P0 |
-| Node.js 20+ | `@stateset/icommerce` | P0 |
-| Python 3.9+ | `stateset-icommerce` | P0 |
-| Browser (WASM) | `@stateset/icommerce-wasm` | P0 |
-| Deno | `@stateset/icommerce` | P1 |
-| Bun | `@stateset/icommerce` | P1 |
-| Cloudflare Workers | `@stateset/icommerce-wasm` | P1 |
-| Rust native | `stateset-icommerce` | P0 |
+| Node.js 18+ | `@stateset/embedded` | P0 |
+| Node.js 20+ | `@stateset/embedded` | P0 |
+| Python 3.9+ | `stateset-embedded` | P0 |
+| Browser (WASM) | `@stateset/embedded-wasm` | P0 |
+| Deno | `@stateset/embedded` | P1 |
+| Bun | `@stateset/embedded` | P1 |
+| Cloudflare Workers | `@stateset/embedded-wasm` | P1 |
+| Rust native | `stateset-embedded` | P0 |
 
 ### 15.2 OS Support
 
@@ -1667,7 +1680,7 @@ const logs = await commerce.audit.query({
 
 | # | Question | Owner | Target Date |
 |---|----------|-------|-------------|
-| Q1 | Should subscriptions be in core or a separate module? | Product | Jan 2025 |
+| Q1 | What is the formal idempotency strategy for external provider webhooks and retries? | Engineering | Jan 2025 |
 | Q2 | What's the right conflict resolution for inventory? | Engineering | Jan 2025 |
 | Q3 | How do we handle payment provider webhooks? | Engineering | Feb 2025 |
 | Q4 | What's the enterprise licensing model? | Business | Mar 2025 |

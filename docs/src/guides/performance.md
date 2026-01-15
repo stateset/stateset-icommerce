@@ -146,6 +146,14 @@ let commerce = Commerce::new("file::memory:?cache=shared")?;
 
 ## Benchmarks
 
+Run the Criterion suites locally:
+
+```bash
+cargo bench -p stateset-core
+cargo bench -p stateset-db
+cargo bench -p stateset-embedded
+```
+
 ### Typical Performance (SQLite, single-threaded)
 
 | Operation | Time (p50) | Time (p99) |

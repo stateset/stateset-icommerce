@@ -149,6 +149,7 @@ impl PostgresDatabase {
             ("027_accounts_receivable", include_str!("migrations/027_accounts_receivable.sql")),
             ("028_general_ledger", include_str!("migrations/028_general_ledger.sql")),
             ("029_performance_indexes", include_str!("migrations/029_performance_indexes.sql")),
+            ("030_idempotency_keys", include_str!("migrations/030_idempotency_keys.sql")),
         ];
 
         for (name, sql) in migrations {

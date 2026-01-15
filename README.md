@@ -33,7 +33,7 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 | New API | Tools | Description |
 |---------|-------|-------------|
-| **Payments** | 5 | Payment processing, capture, and refunds |
+| **Payments** | 5 | Payment tracking and refunds |
 | **Shipments** | 3 | Carrier tracking and delivery confirmation |
 | **Suppliers/POs** | 6 | Supply chain and purchase order management |
 | **Invoices** | 5 | B2B invoicing and accounts receivable |
@@ -171,37 +171,44 @@ commerce.orders().ship(order.id, Some("FEDEX123456".into()))?;
 ```javascript
 const { Commerce } = require('@stateset/embedded');
 
-const commerce = new Commerce('./store.db');
+async function main() {
+  const commerce = new Commerce('./store.db');
 
-// Create a cart and checkout
-const cart = await commerce.carts.create({
-  customerEmail: 'alice@example.com',
-  customerName: 'Alice Smith'
+  // Create a cart and checkout
+  const cart = await commerce.carts.create({
+    customerEmail: 'alice@example.com',
+    customerName: 'Alice Smith'
+  });
+
+  await commerce.carts.addItem(cart.id, {
+    sku: 'SKU-001',
+    name: 'Widget',
+    quantity: 2,
+    unitPrice: 29.99
+  });
+
+  const result = await commerce.carts.complete(cart.id);
+  console.log(`Order created: ${result.orderNumber}`);
+
+  // Convert currency
+  const conversion = await commerce.currency.convert({
+    from: 'USD',
+    to: 'EUR',
+    amount: 100
+  });
+  console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
-
-await commerce.carts.addItem(cart.id, {
-  sku: 'SKU-001',
-  name: 'Widget',
-  quantity: 2,
-  unitPrice: 29.99
-});
-
-const result = await commerce.carts.complete(cart.id);
-console.log(`Order created: ${result.orderNumber}`);
-
-// Convert currency
-const conversion = await commerce.currency.convert({
-  from: 'USD',
-  to: 'EUR',
-  amount: 100
-});
-console.log(`$100 USD = €${conversion.convertedAmount} EUR`);
 ```
 
 ### Python
 
 ```python
-from stateset import Commerce
+from stateset_embedded import Commerce
 
 commerce = Commerce('./store.db')
 
@@ -571,6 +578,14 @@ stateset-sync groups:my-groups  # List your group memberships
 
 ---
 
+## Production Notes
+
+- Payments are recorded as ledger events; integrate a PCI-compliant PSP for capture and store tokens/last4 only.
+- Sync is event-ordered and can surface conflicts; for order/payment state use a single writer or a sequenced event log.
+- Treat external processor IDs and webhook IDs as idempotency keys and de-dupe on ingest to avoid double charges/refunds.
+
+---
+
 ## Domain Models
 
 | Domain | Models | Description |
@@ -580,7 +595,7 @@ stateset-sync groups:my-groups  # List your group memberships
 | **Products** | Product, ProductVariant | Catalog with variants and attributes |
 | **Inventory** | InventoryItem, Balance, Reservation | Multi-location stock tracking |
 | **Carts** | Cart, CartItem, CheckoutResult | Shopping cart with ACP checkout |
-| **Payments** | Payment, Refund, PaymentMethod | Multi-method payment processing |
+| **Payments** | Payment, Refund, PaymentMethod | Payment records and refunds |
 | **Returns** | Return, ReturnItem | RMA processing and refunds |
 | **Shipments** | Shipment, ShipmentEvent | Fulfillment and tracking |
 | **Manufacturing** | BOM, WorkOrder, Task | Bill of materials and production |
@@ -733,7 +748,7 @@ Eight specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.1"
+stateset-embedded = "0.2"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -783,14 +798,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.1.7</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.1.7'
+implementation 'com.stateset:embedded:0.2.0'
 ```
 
 ### Kotlin (Gradle)
@@ -798,7 +813,7 @@ implementation 'com.stateset:embedded:0.1.7'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.1.7")
+    implementation("com.stateset:embedded-kotlin:0.2.0")
 }
 ```
 
@@ -807,32 +822,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.1.7")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.0")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.1.7'
+pod 'StateSet', '~> 0.2.0'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.1.7
+dotnet add package StateSet.Embedded --version 0.2.0
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.1.7" />
+<PackageReference Include="StateSet.Embedded" Version="0.2.0" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.1.7
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.0
 ```
 
 ### CLI
@@ -994,6 +1009,26 @@ cargo run --example manufacturing
 stateset "how many orders do we have?"
 stateset "what's the exchange rate from USD to EUR?"
 stateset --apply "add 50 units to SKU-001"
+```
+
+---
+
+## Development
+
+Core checks (matches CI):
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p stateset-core -p stateset-db -p stateset-embedded
+cargo bench -p stateset-core -p stateset-db -p stateset-embedded
+```
+
+Bindings:
+
+```bash
+cd bindings/node && npm ci && npm test
+cd bindings/python && python -m pip install maturin pytest && maturin develop --release && pytest -q
 ```
 
 ---

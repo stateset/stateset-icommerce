@@ -26,6 +26,7 @@ struct ReturnRow {
     status: String,
     reason: String,
     reason_details: Option<String>,
+    idempotency_key: Option<String>,
     refund_amount: Option<Decimal>,
     refund_method: Option<String>,
     tracking_number: Option<String>,
@@ -60,6 +61,7 @@ impl PgReturnRepository {
             status: parse_return_status(&row.status),
             reason: parse_return_reason(&row.reason),
             reason_details: row.reason_details,
+            idempotency_key: row.idempotency_key,
             refund_amount: row.refund_amount,
             refund_method: row.refund_method,
             tracking_number: row.tracking_number,
@@ -86,6 +88,12 @@ impl PgReturnRepository {
 
     /// Create a return (async)
     pub async fn create_async(&self, input: CreateReturn) -> Result<Return> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
+                return Ok(existing);
+            }
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -101,8 +109,8 @@ impl PgReturnRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
-            VALUES ($1, $2, $3, 'requested', $4, $5, $6, $7, $8)
+            INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
+            VALUES ($1, $2, $3, 'requested', $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(id)
@@ -110,6 +118,7 @@ impl PgReturnRepository {
         .bind(customer_id)
         .bind(input.reason.to_string())
         .bind(&input.reason_details)
+        .bind(&input.idempotency_key)
         .bind(&input.notes)
         .bind(now)
         .bind(now)
@@ -131,6 +140,7 @@ impl PgReturnRepository {
             status: ReturnStatus::Requested,
             reason: input.reason,
             reason_details: input.reason_details,
+            idempotency_key: input.idempotency_key,
             refund_amount: None,
             refund_method: None,
             tracking_number: None,
@@ -188,6 +198,21 @@ impl PgReturnRepository {
             condition,
             refund_amount: refund,
         })
+    }
+
+    async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<Return>> {
+        let row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE idempotency_key = $1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let items = self.get_items_async(row.id).await?;
+        Ok(Some(Self::row_to_return(row, items)))
     }
 
     /// Get a return by ID (async)
@@ -398,8 +423,8 @@ impl PgReturnRepository {
 
             sqlx::query(
                 r#"
-                INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
-                VALUES ($1, $2, $3, 'requested', $4, $5, $6, $7, $8)
+                INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
+                VALUES ($1, $2, $3, 'requested', $4, $5, $6, $7, $8, $9)
                 "#,
             )
             .bind(id)
@@ -407,6 +432,7 @@ impl PgReturnRepository {
             .bind(customer_id)
             .bind(input.reason.to_string())
             .bind(&input.reason_details)
+            .bind(&input.idempotency_key)
             .bind(&input.notes)
             .bind(now)
             .bind(now)
@@ -467,6 +493,7 @@ impl PgReturnRepository {
                 status: ReturnStatus::Requested,
                 reason: input.reason,
                 reason_details: input.reason_details,
+                idempotency_key: input.idempotency_key,
                 refund_amount: None,
                 refund_method: None,
                 tracking_number: None,

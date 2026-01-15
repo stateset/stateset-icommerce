@@ -19,6 +19,14 @@ use stateset_embedded::{
     CreateCreditAccount, RiskRating,
     // Backorder types
     CreateBackorder, BackorderPriority,
+    // Shipment types
+    CreateShipment, CreateShipmentItem, ShipmentStatus, ShippingCarrier,
+    // Warranty types
+    ClaimResolution, ClaimStatus, CreateWarranty, CreateWarrantyClaim, WarrantyStatus, WarrantyType,
+    // Purchase Order types
+    CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PaymentTerms, PurchaseOrderStatus,
+    // Invoice types
+    CreateInvoice, CreateInvoiceItem, InvoiceStatus, RecordInvoicePayment,
 };
 use uuid::Uuid;
 
@@ -442,4 +450,221 @@ fn test_fulfillment_wave_create() {
     let waves = commerce.fulfillment().list_waves(Default::default())
         .expect("Failed to list waves");
     assert!(waves.iter().any(|w| w.id == wave.id));
+}
+
+// ============================================================================
+// Shipments Tests
+// ============================================================================
+
+#[test]
+fn test_shipment_tracking_flow() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "ship@example.com".into(),
+        first_name: "Ship".into(),
+        last_name: "Test".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let order = commerce.orders().create(stateset_embedded::CreateOrder {
+        customer_id: customer.id,
+        items: vec![
+            stateset_embedded::CreateOrderItem {
+                sku: "SHIP-SKU-001".into(),
+                name: "Shipment Item".into(),
+                quantity: 1,
+                unit_price: dec!(19.99),
+                ..Default::default()
+            }
+        ],
+        ..Default::default()
+    }).expect("Failed to create order");
+
+    let tracking_number = "1Z999AA10123456784".to_string();
+
+    let shipment = commerce.shipments().create(CreateShipment {
+        order_id: order.id,
+        carrier: Some(ShippingCarrier::Ups),
+        recipient_name: "Alice Smith".into(),
+        shipping_address: "123 Main St, City, ST 12345".into(),
+        items: Some(vec![CreateShipmentItem {
+            sku: "SHIP-SKU-001".into(),
+            name: "Shipment Item".into(),
+            quantity: 1,
+            ..Default::default()
+        }]),
+        ..Default::default()
+    }).expect("Failed to create shipment");
+
+    assert_eq!(shipment.status, ShipmentStatus::Pending);
+
+    let shipped = commerce.shipments().ship(shipment.id, Some(tracking_number.clone()))
+        .expect("Failed to ship");
+    assert_eq!(shipped.status, ShipmentStatus::Shipped);
+    assert!(shipped.tracking_url.as_ref().map_or(false, |url| url.contains("ups.com")));
+
+    let delivered = commerce.shipments().mark_delivered(shipment.id)
+        .expect("Failed to mark delivered");
+    assert_eq!(delivered.status, ShipmentStatus::Delivered);
+
+    let by_tracking = commerce.shipments().get_by_tracking(&tracking_number)
+        .expect("Failed to fetch by tracking")
+        .expect("Shipment not found by tracking");
+    assert_eq!(by_tracking.id, shipment.id);
+}
+
+// ============================================================================
+// Warranty Tests
+// ============================================================================
+
+#[test]
+fn test_warranty_claim_lifecycle() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "warranty@example.com".into(),
+        first_name: "Warranty".into(),
+        last_name: "Test".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let warranty = commerce.warranties().create(CreateWarranty {
+        customer_id: customer.id,
+        sku: Some("WRN-SKU-001".into()),
+        warranty_type: Some(WarrantyType::Standard),
+        duration_months: Some(12),
+        ..Default::default()
+    }).expect("Failed to create warranty");
+
+    assert_eq!(warranty.status, WarrantyStatus::Active);
+
+    let fetched = commerce.warranties().get_by_number(&warranty.warranty_number)
+        .expect("Failed to get warranty by number")
+        .expect("Warranty not found");
+    assert_eq!(fetched.id, warranty.id);
+
+    let claim = commerce.warranties().create_claim(CreateWarrantyClaim {
+        warranty_id: warranty.id,
+        issue_description: "Stopped working after 3 months".into(),
+        contact_email: Some("warranty@example.com".into()),
+        ..Default::default()
+    }).expect("Failed to create warranty claim");
+
+    assert_eq!(claim.status, ClaimStatus::Submitted);
+
+    let approved = commerce.warranties().approve_claim(claim.id)
+        .expect("Failed to approve claim");
+    assert_eq!(approved.status, ClaimStatus::Approved);
+
+    let completed = commerce.warranties().complete_claim(claim.id, ClaimResolution::Replacement)
+        .expect("Failed to complete claim");
+    assert_eq!(completed.status, ClaimStatus::Completed);
+    assert_eq!(completed.resolution, ClaimResolution::Replacement);
+}
+
+// ============================================================================
+// Purchase Order Tests
+// ============================================================================
+
+#[test]
+fn test_purchase_order_workflow() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let supplier = commerce.purchase_orders().create_supplier(CreateSupplier {
+        name: "Acme Supplies".into(),
+        email: Some("orders@acme.test".into()),
+        payment_terms: Some(PaymentTerms::Net30),
+        ..Default::default()
+    }).expect("Failed to create supplier");
+
+    let po = commerce.purchase_orders().create(CreatePurchaseOrder {
+        supplier_id: supplier.id,
+        items: vec![
+            CreatePurchaseOrderItem {
+                sku: "PART-001".into(),
+                name: "Widget Part".into(),
+                quantity: dec!(10),
+                unit_cost: dec!(2.50),
+                ..Default::default()
+            }
+        ],
+        ..Default::default()
+    }).expect("Failed to create purchase order");
+
+    assert_eq!(po.status, PurchaseOrderStatus::Draft);
+    assert_eq!(po.items.len(), 1);
+
+    let submitted = commerce.purchase_orders().submit(po.id)
+        .expect("Failed to submit PO");
+    assert_eq!(submitted.status, PurchaseOrderStatus::PendingApproval);
+
+    let approved = commerce.purchase_orders().approve(po.id, "tester")
+        .expect("Failed to approve PO");
+    assert_eq!(approved.status, PurchaseOrderStatus::Approved);
+
+    let sent = commerce.purchase_orders().send(po.id)
+        .expect("Failed to send PO");
+    assert_eq!(sent.status, PurchaseOrderStatus::Sent);
+
+    let fetched = commerce.purchase_orders().get_by_number(&po.po_number)
+        .expect("Failed to get PO by number")
+        .expect("PO not found");
+    assert_eq!(fetched.id, po.id);
+
+    let by_code = commerce.purchase_orders().get_supplier_by_code(&supplier.supplier_code)
+        .expect("Failed to get supplier by code")
+        .expect("Supplier not found");
+    assert_eq!(by_code.id, supplier.id);
+}
+
+// ============================================================================
+// Invoice Tests
+// ============================================================================
+
+#[test]
+fn test_invoice_send_and_payment() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "invoice@example.com".into(),
+        first_name: "Invoice".into(),
+        last_name: "Test".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let invoice = commerce.invoices().create(CreateInvoice {
+        customer_id: customer.id,
+        items: vec![
+            CreateInvoiceItem {
+                description: "Implementation services".into(),
+                quantity: dec!(2),
+                unit_price: dec!(100.00),
+                ..Default::default()
+            }
+        ],
+        ..Default::default()
+    }).expect("Failed to create invoice");
+
+    assert_eq!(invoice.status, InvoiceStatus::Draft);
+    assert_eq!(invoice.total, dec!(200.00));
+
+    let sent = commerce.invoices().send(invoice.id)
+        .expect("Failed to send invoice");
+    assert_eq!(sent.status, InvoiceStatus::Sent);
+
+    let paid = commerce.invoices().record_payment(invoice.id, RecordInvoicePayment {
+        amount: dec!(200.00),
+        payment_method: Some("card".into()),
+        reference: Some("PAY-TEST-001".into()),
+        ..Default::default()
+    }).expect("Failed to record payment");
+
+    assert_eq!(paid.status, InvoiceStatus::Paid);
+    assert_eq!(paid.balance_due, dec!(0));
+
+    let fetched = commerce.invoices().get_by_number(&invoice.invoice_number)
+        .expect("Failed to get invoice by number")
+        .expect("Invoice not found");
+    assert_eq!(fetched.id, invoice.id);
 }

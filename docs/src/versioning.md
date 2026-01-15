@@ -4,7 +4,7 @@ This book represents the **latest** documentation from the main branch.
 
 ## Release snapshots
 
-For each tagged release, create a snapshot under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.1.7/`).
+For each tagged release, create a snapshot under `docs/versions/vX.Y.Z/`. Each snapshot is a standalone mdBook so it can be built and hosted under a stable path (for example, `/docs/v0.2.0/`).
 
 ## Process
 

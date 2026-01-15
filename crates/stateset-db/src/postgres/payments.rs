@@ -32,6 +32,7 @@ struct PaymentRow {
     currency: String,
     amount_refunded: Decimal,
     external_id: Option<String>,
+    idempotency_key: Option<String>,
     processor: Option<String>,
     card_brand: Option<String>,
     card_last4: Option<String>,
@@ -60,6 +61,7 @@ struct RefundRow {
     currency: String,
     reason: Option<String>,
     external_id: Option<String>,
+    idempotency_key: Option<String>,
     failure_reason: Option<String>,
     notes: Option<String>,
     refunded_at: Option<DateTime<Utc>>,
@@ -120,6 +122,7 @@ impl PgPaymentRepository {
             currency: row.currency,
             amount_refunded: row.amount_refunded,
             external_id: row.external_id,
+            idempotency_key: row.idempotency_key,
             processor: row.processor,
             card_brand: row.card_brand.map(|s| Self::parse_card_brand(&s)),
             card_last4: row.card_last4,
@@ -149,6 +152,7 @@ impl PgPaymentRepository {
             currency: row.currency,
             reason: row.reason,
             external_id: row.external_id,
+            idempotency_key: row.idempotency_key,
             failure_reason: row.failure_reason,
             notes: row.notes,
             refunded_at: row.refunded_at,
@@ -179,16 +183,22 @@ impl PgPaymentRepository {
 
     /// Create payment (async)
     pub async fn create_async(&self, input: CreatePayment) -> Result<Payment> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
+                return Ok(existing);
+            }
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let payment_number = generate_payment_number();
 
         sqlx::query(
             "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
-             payment_method, amount, currency, amount_refunded, external_id, processor,
+             payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
              card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
              billing_address, description, metadata, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
         )
         .bind(id)
         .bind(&payment_number)
@@ -201,6 +211,7 @@ impl PgPaymentRepository {
         .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
         .bind(Decimal::ZERO)
         .bind(&input.external_id)
+        .bind(&input.idempotency_key)
         .bind(&input.processor)
         .bind(input.card_brand.map(|b| b.to_string()))
         .bind(&input.card_last4)
@@ -224,7 +235,7 @@ impl PgPaymentRepository {
     pub async fn get_async(&self, id: Uuid) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = $1"
@@ -241,7 +252,7 @@ impl PgPaymentRepository {
     pub async fn get_by_number_async(&self, payment_number: &str) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE payment_number = $1"
@@ -258,12 +269,28 @@ impl PgPaymentRepository {
     pub async fn get_by_external_id_async(&self, external_id: &str) -> Result<Option<Payment>> {
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE external_id = $1"
         )
         .bind(external_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(row.map(Self::row_to_payment))
+    }
+
+    async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<Payment>> {
+        let row = sqlx::query_as::<_, PaymentRow>(
+            "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
+             card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
+             description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
+             FROM payments WHERE idempotency_key = $1"
+        )
+        .bind(key)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -301,7 +328,7 @@ impl PgPaymentRepository {
 
         let mut query = String::from(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE 1=1"
@@ -396,6 +423,12 @@ impl PgPaymentRepository {
 
     /// Create refund (async)
     pub async fn create_refund_async(&self, input: CreateRefund) -> Result<Refund> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_refund_by_idempotency_key_async(key).await? {
+                return Ok(existing);
+            }
+        }
+
         let payment = self.get_async(input.payment_id).await?.ok_or(CommerceError::NotFound)?;
         let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
 
@@ -404,8 +437,8 @@ impl PgPaymentRepository {
         let refund_number = generate_refund_number();
 
         sqlx::query(
-            "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+            "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
         )
         .bind(id)
         .bind(&refund_number)
@@ -415,6 +448,7 @@ impl PgPaymentRepository {
         .bind(&payment.currency)
         .bind(&input.reason)
         .bind(&input.external_id)
+        .bind(&input.idempotency_key)
         .bind(&input.notes)
         .bind(now)
         .bind(now)
@@ -428,7 +462,7 @@ impl PgPaymentRepository {
     /// Get refund by ID (async)
     pub async fn get_refund_async(&self, id: Uuid) -> Result<Option<Refund>> {
         let row = sqlx::query_as::<_, RefundRow>(
-            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id,
+            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key,
              failure_reason, notes, refunded_at, created_at, updated_at
              FROM refunds WHERE id = $1"
         )
@@ -440,10 +474,24 @@ impl PgPaymentRepository {
         Ok(row.map(Self::row_to_refund))
     }
 
+    async fn get_refund_by_idempotency_key_async(&self, key: &str) -> Result<Option<Refund>> {
+        let row = sqlx::query_as::<_, RefundRow>(
+            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key,
+             failure_reason, notes, refunded_at, created_at, updated_at
+             FROM refunds WHERE idempotency_key = $1"
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(row.map(Self::row_to_refund))
+    }
+
     /// Get refunds for payment (async)
     pub async fn get_refunds_async(&self, payment_id: Uuid) -> Result<Vec<Refund>> {
         let rows = sqlx::query_as::<_, RefundRow>(
-            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id,
+            "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key,
              failure_reason, notes, refunded_at, created_at, updated_at
              FROM refunds WHERE payment_id = $1 ORDER BY created_at DESC"
         )
@@ -683,11 +731,11 @@ impl PgPaymentRepository {
             let payment_number = generate_payment_number();
 
             sqlx::query(
-                "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
-                 payment_method, amount, currency, amount_refunded, external_id, processor,
+            "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
+                 payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
                  card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                  billing_address, description, metadata, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
             )
             .bind(id)
             .bind(&payment_number)
@@ -700,6 +748,7 @@ impl PgPaymentRepository {
             .bind(input.currency.clone().unwrap_or_else(|| "USD".to_string()))
             .bind(Decimal::ZERO)
             .bind(&input.external_id)
+            .bind(&input.idempotency_key)
             .bind(&input.processor)
             .bind(input.card_brand.map(|b| b.to_string()))
             .bind(&input.card_last4)
@@ -728,6 +777,7 @@ impl PgPaymentRepository {
                 currency: input.currency.unwrap_or_else(|| "USD".to_string()),
                 amount_refunded: Decimal::ZERO,
                 external_id: input.external_id,
+                idempotency_key: input.idempotency_key,
                 processor: input.processor,
                 card_brand: input.card_brand,
                 card_last4: input.card_last4,
@@ -777,7 +827,7 @@ impl PgPaymentRepository {
         for (id, input) in updates {
             let payment = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                 amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+                 amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
                  card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1"
@@ -809,7 +859,7 @@ impl PgPaymentRepository {
             // Fetch the updated payment
             let updated_row = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                 amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+                 amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
                  card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
                  description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
                  FROM payments WHERE id = $1"
@@ -880,7 +930,7 @@ impl PgPaymentRepository {
 
         let rows = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-             amount, currency, amount_refunded, external_id, processor, card_brand, card_last4,
+             amount, currency, amount_refunded, external_id, idempotency_key, processor, card_brand, card_last4,
              card_exp_month, card_exp_year, billing_email, billing_name, billing_address,
              description, failure_reason, failure_code, metadata, paid_at, version, created_at, updated_at
              FROM payments WHERE id = ANY($1)"

@@ -39,6 +39,7 @@ impl SqliteReturnRepository {
             status: parse_return_status(&row.get::<_, String>("status")?),
             reason: parse_return_reason(&row.get::<_, String>("reason")?),
             reason_details: row.get("reason_details")?,
+            idempotency_key: row.get("idempotency_key")?,
             refund_amount: parse_decimal_opt_row(row.get::<_, Option<String>>("refund_amount")?, "return", "refund_amount")?,
             refund_method: row.get("refund_method")?,
             tracking_number: row.get("tracking_number")?,
@@ -92,10 +93,57 @@ impl SqliteReturnRepository {
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
+
+    fn get_by_idempotency_key(&self, key: &str) -> Result<Option<Return>> {
+        let conn = self.conn()?;
+        let result = conn.query_row(
+            "SELECT * FROM returns WHERE idempotency_key = ?",
+            [key],
+            Self::row_to_return,
+        );
+
+        match result {
+            Ok(mut ret) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, return_id, order_item_id, sku, name, quantity, condition, refund_amount
+                         FROM return_items WHERE return_id = ?",
+                    )
+                    .map_err(map_db_error)?;
+
+                ret.items = stmt
+                    .query_map([ret.id.to_string()], |row| {
+                        Ok(ReturnItem {
+                            id: parse_uuid_row(&row.get::<_, String>("id")?, "return_item", "id")?,
+                            return_id: parse_uuid_row(&row.get::<_, String>("return_id")?, "return_item", "return_id")?,
+                            order_item_id: parse_uuid_row(&row.get::<_, String>("order_item_id")?, "return_item", "order_item_id")?,
+                            sku: row.get("sku")?,
+                            name: row.get("name")?,
+                            quantity: row.get("quantity")?,
+                            condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                            refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
+                        })
+                    })
+                    .map_err(map_db_error)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(map_db_error)?;
+
+                Ok(Some(ret))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
 }
 
 impl ReturnRepository for SqliteReturnRepository {
     fn create(&self, input: CreateReturn) -> Result<Return> {
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = self.get_by_idempotency_key(key)? {
+                return Ok(existing);
+            }
+        }
+
         // Validate return has at least one item
         if input.items.is_empty() {
             return Err(CommerceError::ValidationError(
@@ -128,14 +176,15 @@ impl ReturnRepository for SqliteReturnRepository {
             .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
 
         tx.execute(
-            "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
-             VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?)",
+            "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
+             VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 id.to_string(),
                 input.order_id.to_string(),
                 customer_id,
                 input.reason.to_string(),
                 input.reason_details,
+                input.idempotency_key,
                 input.notes,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
@@ -538,14 +587,15 @@ impl ReturnRepository for SqliteReturnRepository {
                 .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
 
             tx.execute(
-                "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?)",
+                "INSERT INTO returns (id, order_id, customer_id, status, reason, reason_details, idempotency_key, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, 'requested', ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     id.to_string(),
                     input.order_id.to_string(),
                     customer_id,
                     input.reason.to_string(),
                     input.reason_details,
+                    input.idempotency_key.clone(),
                     input.notes,
                     now.to_rfc3339(),
                     now.to_rfc3339(),
@@ -619,6 +669,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 status: ReturnStatus::Requested,
                 reason: input.reason,
                 reason_details: input.reason_details,
+                idempotency_key: input.idempotency_key,
                 refund_amount: Some(Decimal::try_from(total_refund).unwrap_or_default()),
                 refund_method: None,
                 tracking_number: None,

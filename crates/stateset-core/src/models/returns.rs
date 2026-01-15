@@ -14,6 +14,7 @@ pub struct Return {
     pub status: ReturnStatus,
     pub reason: ReturnReason,
     pub reason_details: Option<String>,
+    pub idempotency_key: Option<String>,
     pub refund_amount: Option<Decimal>,
     pub refund_method: Option<String>,
     pub tracking_number: Option<String>,
@@ -143,6 +144,7 @@ pub struct CreateReturn {
     pub order_id: Uuid,
     pub reason: ReturnReason,
     pub reason_details: Option<String>,
+    pub idempotency_key: Option<String>,
     pub items: Vec<CreateReturnItem>,
     pub notes: Option<String>,
 }
@@ -153,6 +155,7 @@ impl Default for CreateReturn {
             order_id: Uuid::nil(),
             reason: ReturnReason::Other,
             reason_details: None,
+            idempotency_key: None,
             items: vec![],
             notes: None,
         }

@@ -18,7 +18,7 @@
 //! }
 //! ```
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
 use stateset_core::{CommerceError, Result};
@@ -59,14 +59,14 @@ pub fn parse_uuid_opt(s: Option<String>, entity: &str, field: &str) -> Result<Op
 // DateTime Parsing
 // ============================================================================
 
-/// Parse a required DateTime<Utc> from an RFC3339 string.
+/// Parse a required DateTime<Utc> from RFC3339 or SQLite datetime strings.
 ///
 /// Returns an error with context if parsing fails.
 pub fn parse_datetime(s: &str, entity: &str, field: &str) -> Result<DateTime<Utc>> {
-    s.parse::<DateTime<Utc>>().map_err(|e| {
+    parse_datetime_any(s).ok_or_else(|| {
         CommerceError::DatabaseError(format!(
-            "Invalid datetime for {}.{}: '{}' - {}",
-            entity, field, s, e
+            "Invalid datetime for {}.{}: '{}' - expected RFC3339 or SQLite datetime",
+            entity, field, s
         ))
     })
 }
@@ -304,13 +304,16 @@ pub fn parse_datetime_row(
     entity: &str,
     field: &str,
 ) -> std::result::Result<DateTime<Utc>, rusqlite::Error> {
-    s.parse::<DateTime<Utc>>().map_err(|e| {
+    parse_datetime_any(s).ok_or_else(|| {
         rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid datetime for {}.{}: '{}' - {}", entity, field, s, e),
+                format!(
+                    "Invalid datetime for {}.{}: '{}' - expected RFC3339 or SQLite datetime",
+                    entity, field, s
+                ),
             )),
         )
     })
@@ -407,6 +410,34 @@ pub fn parse_date_row(
     })
 }
 
+fn parse_datetime_any(s: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = s.parse::<DateTime<Utc>>() {
+        return Some(dt);
+    }
+
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(dt.and_utc());
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
+        return Some(dt.and_utc());
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(dt.and_utc());
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(dt.and_utc());
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +490,12 @@ mod tests {
     #[test]
     fn test_parse_datetime_valid() {
         let result = parse_datetime("2024-01-15T10:30:00Z", "order", "created_at");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_datetime_sqlite_format() {
+        let result = parse_datetime("2026-01-15 06:35:19", "bill", "updated_at");
         assert!(result.is_ok());
     }
 

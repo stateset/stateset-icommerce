@@ -11,13 +11,13 @@ cargo add stateset-embedded
 Node.js:
 
 ```bash
-npm install @stateset/embedded@0.1.7
+npm install @stateset/embedded@0.2.0
 ```
 
 Python:
 
 ```bash
-pip install stateset-embedded==0.1.7
+pip install stateset-embedded==0.2.0
 ```
 
 ## Initialize (Rust)

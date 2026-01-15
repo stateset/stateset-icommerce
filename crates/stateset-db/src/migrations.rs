@@ -78,5 +78,6 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("023_accounts_receivable", include_str!("../migrations/023_accounts_receivable.sql")),
         ("024_general_ledger", include_str!("../migrations/024_general_ledger.sql")),
         ("025_performance_indexes", include_str!("../migrations/025_performance_indexes.sql")),
+        ("026_idempotency_keys", include_str!("../migrations/026_idempotency_keys.sql")),
     ]
 }

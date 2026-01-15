@@ -12,7 +12,7 @@ Demonstrates the full commerce workflow:
 Run with: python basic_usage.py
 """
 
-from stateset import Commerce
+from stateset_embedded import Commerce
 
 
 def main():

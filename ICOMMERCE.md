@@ -92,7 +92,7 @@ StateSet is the reference implementation of iCommerce—an embedded commerce lib
 **Developer experience:**
 
 ```javascript
-import { Commerce } from '@stateset/icommerce';
+import { Commerce } from '@stateset/embedded';
 
 const commerce = new Commerce('./store.db');
 
@@ -111,10 +111,10 @@ One Rust core, every platform:
 
 | Platform | Package | Install |
 |----------|---------|---------|
-| Node.js | `@stateset/icommerce` | `npm install` |
-| Python | `stateset-icommerce` | `pip install` |
-| Browser/Edge | `@stateset/icommerce-wasm` | `import init` |
-| Rust | `stateset-icommerce` | `cargo add` |
+| Node.js | `@stateset/embedded` | `npm install` |
+| Python | `stateset-embedded` | `pip install` |
+| Browser/Edge | `@stateset/embedded-wasm` | `import init` |
+| Rust | `stateset-embedded` | `cargo add` |
 | CLI | `@stateset/cli` | `npm install -g` |
 
 ---
@@ -165,6 +165,8 @@ MCP (generic tool protocol)
 ---
 
 ## Neuro-Symbolic Reasoning Engine
+
+**Status:** Planned. Current releases provide deterministic core logic and CLI preview/apply gating; policy and approval workflows are on the roadmap.
 
 ### The Trust Problem
 

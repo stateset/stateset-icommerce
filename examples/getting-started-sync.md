@@ -39,7 +39,7 @@ stateset-sync push
 
 - Docker and Docker Compose (for running the sequencer)
 - Node.js 18+ (for the CLI)
-- The `stateset-icommerce` CLI installed
+- The StateSet CLI (`@stateset/cli`) installed
 
 ## Architecture Overview
 

@@ -364,6 +364,8 @@ pub struct Payment {
     pub amount_refunded: Decimal,
     /// External payment processor ID (e.g., Stripe payment intent ID)
     pub external_id: Option<String>,
+    /// Idempotency key for safely retrying payment creation
+    pub idempotency_key: Option<String>,
     /// Payment processor/gateway used
     pub processor: Option<String>,
     /// Card brand (if card payment)
@@ -437,6 +439,8 @@ pub struct CreatePayment {
     pub currency: Option<String>,
     /// External payment processor ID
     pub external_id: Option<String>,
+    /// Idempotency key for safely retrying payment creation
+    pub idempotency_key: Option<String>,
     /// Payment processor/gateway
     pub processor: Option<String>,
     /// Card brand
@@ -549,6 +553,8 @@ pub struct Refund {
     pub reason: Option<String>,
     /// External refund ID from processor
     pub external_id: Option<String>,
+    /// Idempotency key for safely retrying refund creation
+    pub idempotency_key: Option<String>,
     /// Failure reason (if failed)
     pub failure_reason: Option<String>,
     /// Additional notes
@@ -572,6 +578,8 @@ pub struct CreateRefund {
     pub reason: Option<String>,
     /// External refund ID
     pub external_id: Option<String>,
+    /// Idempotency key for safely retrying refund creation
+    pub idempotency_key: Option<String>,
     /// Additional notes
     pub notes: Option<String>,
 }

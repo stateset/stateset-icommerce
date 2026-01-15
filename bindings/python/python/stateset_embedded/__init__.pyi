@@ -402,6 +402,7 @@ class Return:
     order_id: str
     status: str
     reason: str
+    idempotency_key: Optional[str]
     created_at: str
 
 class CreateReturnItemInput:
@@ -421,6 +422,7 @@ class Returns:
         reason: str,
         items: List[CreateReturnItemInput],
         reason_details: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Return:
         """Create a new return request."""
         ...
@@ -457,6 +459,7 @@ class Payment:
     order_id: Optional[str]
     invoice_id: Optional[str]
     customer_id: Optional[str]
+    idempotency_key: Optional[str]
     amount: float
     currency: str
     status: str
@@ -469,6 +472,7 @@ class Refund:
 
     id: str
     payment_id: str
+    idempotency_key: Optional[str]
     amount: float
     status: str
     reason: Optional[str]
@@ -484,6 +488,7 @@ class Payments:
         order_id: Optional[str] = None,
         customer_id: Optional[str] = None,
         payment_method: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Payment: ...
 
     def get(self, id: str) -> Optional[Payment]: ...
@@ -494,7 +499,13 @@ class Payments:
 
     def mark_failed(self, id: str, reason: str, code: Optional[str] = None) -> Payment: ...
 
-    def create_refund(self, payment_id: str, amount: float, reason: Optional[str] = None) -> Refund: ...
+    def create_refund(
+        self,
+        payment_id: str,
+        amount: float,
+        reason: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Refund: ...
 
     def count(self) -> int: ...
 

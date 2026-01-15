@@ -993,6 +993,7 @@ pub struct CreateReturnInput {
     pub order_id: String,
     pub reason: String,
     pub reason_details: Option<String>,
+    pub idempotency_key: Option<String>,
     pub items: Vec<CreateReturnItemInput>,
 }
 
@@ -1005,6 +1006,7 @@ pub struct ReturnOutput {
     pub reason: String,
     pub version: i32,
     pub created_at: String,
+    pub idempotency_key: Option<String>,
 }
 
 impl From<stateset_core::Return> for ReturnOutput {
@@ -1016,6 +1018,7 @@ impl From<stateset_core::Return> for ReturnOutput {
             reason: format!("{}", r.reason),
             version: r.version,
             created_at: r.created_at.to_rfc3339(),
+            idempotency_key: r.idempotency_key,
         }
     }
 }
@@ -1066,6 +1069,7 @@ impl Returns {
                 order_id,
                 reason,
                 reason_details: input.reason_details,
+                idempotency_key: input.idempotency_key,
                 items,
                 ..Default::default()
             })
@@ -1152,6 +1156,7 @@ pub struct CreatePaymentInput {
     pub order_id: Option<String>,
     pub invoice_id: Option<String>,
     pub customer_id: Option<String>,
+    pub idempotency_key: Option<String>,
     pub amount: f64,
     pub currency: Option<String>,
     pub payment_method: Option<String>,
@@ -1165,6 +1170,7 @@ pub struct PaymentOutput {
     pub order_id: Option<String>,
     pub invoice_id: Option<String>,
     pub customer_id: Option<String>,
+    pub idempotency_key: Option<String>,
     pub amount: f64,
     pub currency: String,
     pub status: String,
@@ -1181,6 +1187,7 @@ impl From<stateset_core::Payment> for PaymentOutput {
             order_id: p.order_id.map(|id| id.to_string()),
             invoice_id: p.invoice_id.map(|id| id.to_string()),
             customer_id: p.customer_id.map(|id| id.to_string()),
+            idempotency_key: p.idempotency_key,
             amount: to_f64_or_nan(p.amount),
             currency: p.currency,
             status: format!("{}", p.status),
@@ -1197,6 +1204,7 @@ pub struct CreateRefundInput {
     pub payment_id: String,
     pub amount: f64,
     pub reason: Option<String>,
+    pub idempotency_key: Option<String>,
 }
 
 #[napi(object)]
@@ -1209,6 +1217,7 @@ pub struct RefundOutput {
     pub status: String,
     pub reason: Option<String>,
     pub created_at: String,
+    pub idempotency_key: Option<String>,
 }
 
 impl From<stateset_core::Refund> for RefundOutput {
@@ -1221,6 +1230,7 @@ impl From<stateset_core::Refund> for RefundOutput {
             status: format!("{}", r.status),
             reason: r.reason,
             created_at: r.created_at.to_rfc3339(),
+            idempotency_key: r.idempotency_key,
         }
     }
 }
@@ -1273,6 +1283,7 @@ impl Payments {
                 order_id,
                 invoice_id,
                 customer_id,
+                idempotency_key: input.idempotency_key,
                 amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
                 currency: input.currency,
                 payment_method,
@@ -1368,6 +1379,7 @@ impl Payments {
                 payment_id,
                 amount: Some(Decimal::from_f64_retain(input.amount).unwrap_or_default()),
                 reason: input.reason,
+                idempotency_key: input.idempotency_key,
                 ..Default::default()
             })
             .map_err(|e| Error::from_reason(format!("Failed to create refund: {}", e)))?;
