@@ -36,7 +36,9 @@ impl Inventory {
     /// })?;
     /// # Ok::<(), CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self, input), fields(sku = %input.sku, name = %input.name))]
     pub fn create_item(&self, input: CreateInventoryItem) -> Result<InventoryItem> {
+        tracing::info!("creating inventory item");
         self.db.inventory().create_item(input)
     }
 
@@ -86,7 +88,9 @@ impl Inventory {
     /// commerce.inventory().adjust("SKU-001", dec!(-5), "Damaged items")?;
     /// # Ok::<(), CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self), fields(sku = %sku, quantity = %quantity))]
     pub fn adjust(&self, sku: &str, quantity: Decimal, reason: &str) -> Result<InventoryTransaction> {
+        tracing::info!("adjusting inventory");
         self.db.inventory().adjust(stateset_core::AdjustInventory {
             sku: sku.to_string(),
             location_id: None,
@@ -132,6 +136,7 @@ impl Inventory {
     /// )?;
     /// # Ok::<(), CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self), fields(sku = %sku, quantity = %quantity, reference_type = %reference_type))]
     pub fn reserve(
         &self,
         sku: &str,
@@ -140,6 +145,7 @@ impl Inventory {
         reference_id: &str,
         expires_in_seconds: Option<i64>,
     ) -> Result<InventoryReservation> {
+        tracing::info!("reserving inventory");
         self.db.inventory().reserve(stateset_core::ReserveInventory {
             sku: sku.to_string(),
             location_id: None,

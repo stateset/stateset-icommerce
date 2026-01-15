@@ -2236,7 +2236,7 @@ impl AsyncSubscriptions {
         &self,
         id: Uuid,
         input: SkipBillingCycle,
-    ) -> Result<BillingCycle> {
+    ) -> Result<Subscription> {
         self.db.subscriptions().skip_billing_cycle_async(id, input).await
     }
 

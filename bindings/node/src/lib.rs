@@ -5313,14 +5313,14 @@ impl Subscriptions {
 
     /// Get events for a subscription
     #[napi]
-    pub async fn get_events(&self, subscription_id: String, limit: Option<i32>) -> Result<Vec<SubscriptionEventOutput>> {
+    pub async fn get_events(&self, subscription_id: String) -> Result<Vec<SubscriptionEventOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&subscription_id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
         let events = commerce
             .subscriptions()
-            .get_events(uuid, limit.map(|v| v as u32))
+            .get_events(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get events: {}", e)))?;
 
         Ok(events.into_iter().map(|e| e.into()).collect())

@@ -745,7 +745,7 @@ impl SubscriptionRepository for UnsupportedPostgresRepository {
     fn update_billing_cycle_status(&self, _id: Uuid, _status: BillingCycleStatus) -> Result<BillingCycle> {
         self.not_supported()
     }
-    fn skip_billing_cycle(&self, _id: Uuid, _input: SkipBillingCycle) -> Result<BillingCycle> {
+    fn skip_billing_cycle(&self, _id: Uuid, _input: SkipBillingCycle) -> Result<Subscription> {
         self.not_supported()
     }
     fn record_event(

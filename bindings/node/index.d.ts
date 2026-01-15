@@ -1966,7 +1966,7 @@ export declare class Subscriptions {
   /** Get a billing cycle by ID */
   getBillingCycle(id: string): Promise<BillingCycleOutput | null>
   /** Get events for a subscription */
-  getEvents(subscriptionId: string, limit?: number | undefined | null): Promise<Array<SubscriptionEventOutput>>
+  getEvents(subscriptionId: string): Promise<Array<SubscriptionEventOutput>>
 }
 /** Promotions API for managing discounts and coupon codes */
 export declare class Promotions {

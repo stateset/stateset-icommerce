@@ -40,7 +40,9 @@ impl Orders {
     /// })?;
     /// # Ok::<(), CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self, input), fields(customer_id = %input.customer_id, items = input.items.len()))]
     pub fn create(&self, input: CreateOrder) -> Result<Order> {
+        tracing::info!("creating order");
         self.db.orders().create(input)
     }
 
@@ -60,7 +62,9 @@ impl Orders {
     }
 
     /// Update order status.
+    #[tracing::instrument(skip(self), fields(order_id = %id, status = ?status))]
     pub fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
+        tracing::info!("updating order status");
         self.db.orders().update(
             id,
             UpdateOrder {
@@ -104,12 +108,16 @@ impl Orders {
     }
 
     /// Cancel an order.
+    #[tracing::instrument(skip(self), fields(order_id = %id))]
     pub fn cancel(&self, id: Uuid) -> Result<Order> {
+        tracing::info!("cancelling order");
         self.update_status(id, OrderStatus::Cancelled)
     }
 
     /// Mark an order as shipped.
+    #[tracing::instrument(skip(self), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
     pub fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
+        tracing::info!("shipping order");
         self.db.orders().update(
             id,
             UpdateOrder {
@@ -121,7 +129,9 @@ impl Orders {
     }
 
     /// Mark an order as delivered.
+    #[tracing::instrument(skip(self), fields(order_id = %id))]
     pub fn deliver(&self, id: Uuid) -> Result<Order> {
+        tracing::info!("marking order as delivered");
         self.update_status(id, OrderStatus::Delivered)
     }
 }

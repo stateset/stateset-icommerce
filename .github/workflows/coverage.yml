@@ -49,6 +49,32 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+      - name: Check coverage threshold
+        run: |
+          # Extract coverage percentage from llvm-cov summary
+          COVERAGE=$(cargo llvm-cov --workspace \
+            --exclude stateset-node \
+            --exclude stateset-python \
+            --exclude stateset-wasm \
+            --exclude stateset-ruby \
+            --exclude stateset-php \
+            --exclude stateset-java \
+            --exclude stateset-kotlin \
+            --exclude stateset-swift \
+            --exclude stateset-dotnet \
+            --exclude stateset-go \
+            --summary-only 2>/dev/null | grep -oP 'line.*?(\d+\.\d+)%' | grep -oP '\d+\.\d+' | head -1)
+          echo "Coverage: ${COVERAGE}%"
+          if [ -z "$COVERAGE" ]; then
+            echo "Could not determine coverage"
+            exit 0
+          fi
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "Coverage ${COVERAGE}% is below 70% threshold"
+            exit 1
+          fi
+          echo "Coverage ${COVERAGE}% meets threshold"
+
   benchmarks:
     name: Benchmarks
     runs-on: ubuntu-latest

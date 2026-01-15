@@ -811,25 +811,28 @@ impl SqliteSubscriptionRepository {
             ));
         }
 
-        let reason = input.reason.clone().unwrap_or_else(|| "Customer skipped billing cycle".to_string());
+        let reason = input
+            .reason
+            .clone()
+            .unwrap_or_else(|| "Customer skipped billing cycle".to_string());
 
-        // Update subscription - connection scoped to this block
+        let interval_days = if sub.billing_interval == BillingInterval::Custom {
+            sub.custom_interval_days.unwrap_or(30) as i64
+        } else {
+            sub.billing_interval.days()
+        };
+
+        let new_billing_date = sub
+            .next_billing_date
+            .unwrap_or(sub.current_period_end)
+            + Duration::days(interval_days);
+
         {
             let conn = self.pool.get().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
 
             let now = Utc::now();
-
-            // Push billing date forward by one interval
-            let interval_days = if sub.billing_interval == BillingInterval::Custom {
-                sub.custom_interval_days.unwrap_or(30) as i64
-            } else {
-                sub.billing_interval.days()
-            };
-
-            let new_billing_date = sub.next_billing_date
-                .unwrap_or(sub.current_period_end) + Duration::days(interval_days);
 
             conn.execute(
                 "UPDATE subscriptions SET
@@ -846,7 +849,13 @@ impl SqliteSubscriptionRepository {
             ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
         } // Connection dropped here
 
-        self.record_event(id, SubscriptionEventType::Skipped, &reason, None, None)?;
+        self.record_event(
+            id,
+            SubscriptionEventType::Skipped,
+            &reason,
+            None,
+            None,
+        )?;
 
         self.get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)
@@ -1313,10 +1322,10 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
     }
 
     fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle> {
-        SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status)
+        SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status, None, None)
     }
 
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<BillingCycle> {
+    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
         SqliteSubscriptionRepository::skip_billing_cycle(self, id, input)
     }
 
@@ -1326,11 +1335,12 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
-        SqliteSubscriptionRepository::record_event(self, subscription_id, event_type, notes)
+        let description = notes.as_deref().unwrap_or("");
+        SqliteSubscriptionRepository::record_event(self, subscription_id, event_type, description, None, None)
     }
 
     fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
-        SqliteSubscriptionRepository::get_subscription_events(self, subscription_id)
+        SqliteSubscriptionRepository::get_subscription_events(self, subscription_id, None)
     }
 }
 

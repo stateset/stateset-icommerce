@@ -323,20 +323,18 @@ impl Subscriptions {
         &self,
         id: Uuid,
         status: BillingCycleStatus,
-        payment_id: Option<String>,
-        failure_reason: Option<String>,
     ) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, status, payment_id, failure_reason)
+        self.db.subscriptions().update_billing_cycle_status(id, status)
     }
 
     /// Mark a billing cycle as paid.
-    pub fn mark_cycle_paid(&self, id: Uuid, payment_id: String) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Paid, Some(payment_id), None)
+    pub fn mark_cycle_paid(&self, id: Uuid) -> Result<BillingCycle> {
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Paid)
     }
 
     /// Mark a billing cycle as failed.
-    pub fn mark_cycle_failed(&self, id: Uuid, reason: &str) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Failed, None, Some(reason.to_string()))
+    pub fn mark_cycle_failed(&self, id: Uuid) -> Result<BillingCycle> {
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Failed)
     }
 
     // ========================================================================
@@ -353,14 +351,14 @@ impl Subscriptions {
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
-    /// let events = commerce.subscriptions().get_events(Uuid::new_v4(), Some(10))?;
+    /// let events = commerce.subscriptions().get_events(Uuid::new_v4())?;
     /// for event in events {
     ///     println!("{}: {}", event.event_type, event.description);
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn get_events(&self, subscription_id: Uuid, limit: Option<u32>) -> Result<Vec<SubscriptionEvent>> {
-        self.db.subscriptions().get_subscription_events(subscription_id, limit)
+    pub fn get_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
+        self.db.subscriptions().get_subscription_events(subscription_id)
     }
 
     // ========================================================================

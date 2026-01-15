@@ -1391,8 +1391,8 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.update_billing_cycle_status_async(id, status))
     }
 
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<BillingCycle> {
-        super::block_on(self.skip_billing_cycle_record_async(id, input))
+    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
+        super::block_on(self.skip_billing_cycle_async(id, input))
     }
 
     fn record_event(

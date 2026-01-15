@@ -178,6 +178,78 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    pub fn quality(&self) -> Quality {
+        Quality {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn lots(&self) -> Lots {
+        Lots {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn serials(&self) -> Serials {
+        Serials {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn warehouse(&self) -> WarehouseApi {
+        WarehouseApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn receiving(&self) -> Receiving {
+        Receiving {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn fulfillment(&self) -> Fulfillment {
+        Fulfillment {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn accounts_payable(&self) -> AccountsPayable {
+        AccountsPayable {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn accounts_receivable(&self) -> AccountsReceivable {
+        AccountsReceivable {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn cost_accounting(&self) -> CostAccounting {
+        CostAccounting {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn credit(&self) -> CreditApi {
+        CreditApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn backorders(&self) -> Backorders {
+        Backorders {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    pub fn general_ledger(&self) -> GeneralLedger {
+        GeneralLedger {
+            commerce: self.inner.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -4130,6 +4202,791 @@ impl Tax {
             .map_err(|e| PhpException::default(format!("Failed to set tax status: {}", e)))?;
 
         Ok(true)
+    }
+}
+
+// ============================================================================
+// Quality API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Quality")]
+#[derive(Clone)]
+pub struct Quality {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Quality {
+    pub fn create_inspection(&self, inspection_type: String, reference_type: String, reference_id: String) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let ref_uuid = parse_uuid!(reference_id, "reference");
+
+        let inspection = commerce
+            .quality()
+            .create_inspection(stateset_core::CreateInspection {
+                inspection_type,
+                reference_type,
+                reference_id: ref_uuid,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create inspection: {}", e)))?;
+
+        Ok(inspection.id.to_string())
+    }
+
+    pub fn list_inspections(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let inspections = commerce
+            .quality()
+            .list_inspections(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list inspections: {}", e)))?;
+
+        Ok(inspections.into_iter().map(|i| i.id.to_string()).collect())
+    }
+
+    pub fn create_hold(&self, sku: String, quantity: i32, reason: String, hold_type: String) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let hold = commerce
+            .quality()
+            .create_hold(stateset_core::CreateQualityHold {
+                sku,
+                quantity_held: quantity,
+                reason,
+                hold_type,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create hold: {}", e)))?;
+
+        Ok(hold.id.to_string())
+    }
+
+    pub fn release_hold(&self, id: String, released_by: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "hold");
+
+        commerce
+            .quality()
+            .release_hold(uuid, &released_by)
+            .map_err(|e| PhpException::default(format!("Failed to release hold: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Lots API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Lots")]
+#[derive(Clone)]
+pub struct Lots {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Lots {
+    pub fn create(&self, sku: String, quantity_produced: i32) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let lot = commerce
+            .lots()
+            .create(stateset_core::CreateLot {
+                sku,
+                quantity_produced,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create lot: {}", e)))?;
+
+        Ok(lot.id.to_string())
+    }
+
+    pub fn get(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "lot");
+
+        let lot = commerce
+            .lots()
+            .get(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get lot: {}", e)))?;
+
+        Ok(lot.map(|l| l.lot_number))
+    }
+
+    pub fn list(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let lots = commerce
+            .lots()
+            .list(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list lots: {}", e)))?;
+
+        Ok(lots.into_iter().map(|l| l.id.to_string()).collect())
+    }
+
+    pub fn quarantine(&self, id: String, reason: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "lot");
+
+        commerce
+            .lots()
+            .quarantine(uuid, &reason)
+            .map_err(|e| PhpException::default(format!("Failed to quarantine: {}", e)))?;
+
+        Ok(true)
+    }
+
+    pub fn release_quarantine(&self, id: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "lot");
+
+        commerce
+            .lots()
+            .release_quarantine(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to release: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Serials API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Serials")]
+#[derive(Clone)]
+pub struct Serials {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Serials {
+    pub fn create(&self, sku: String, lot_number: Option<String>) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let serial = commerce
+            .serials()
+            .create(stateset_core::CreateSerial {
+                sku,
+                lot_number,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create serial: {}", e)))?;
+
+        Ok(serial.serial_number)
+    }
+
+    pub fn get(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "serial");
+
+        let serial = commerce
+            .serials()
+            .get(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get serial: {}", e)))?;
+
+        Ok(serial.map(|s| s.serial_number))
+    }
+
+    pub fn list(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let serials = commerce
+            .serials()
+            .list(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list serials: {}", e)))?;
+
+        Ok(serials.into_iter().map(|s| s.serial_number).collect())
+    }
+
+    pub fn mark_sold(&self, id: String, customer_id: String, order_id: Option<String>) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "serial");
+        let cust_uuid = parse_uuid!(customer_id, "customer");
+        let ord_uuid = order_id.map(|o| o.parse()).transpose()
+            .map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
+
+        commerce
+            .serials()
+            .mark_sold(uuid, cust_uuid, ord_uuid)
+            .map_err(|e| PhpException::default(format!("Failed to mark sold: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Warehouse API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Warehouse")]
+#[derive(Clone)]
+pub struct WarehouseApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl WarehouseApi {
+    pub fn create_warehouse(&self, code: String, name: String, warehouse_type: String) -> PhpResult<i32> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let warehouse = commerce
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code,
+                name,
+                warehouse_type,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create warehouse: {}", e)))?;
+
+        Ok(warehouse.id)
+    }
+
+    pub fn get_warehouse(&self, id: i32) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let warehouse = commerce
+            .warehouse()
+            .get_warehouse(id)
+            .map_err(|e| PhpException::default(format!("Failed to get warehouse: {}", e)))?;
+
+        Ok(warehouse.map(|w| w.name))
+    }
+
+    pub fn list_warehouses(&self) -> PhpResult<Vec<i32>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let warehouses = commerce
+            .warehouse()
+            .list_warehouses()
+            .map_err(|e| PhpException::default(format!("Failed to list warehouses: {}", e)))?;
+
+        Ok(warehouses.into_iter().map(|w| w.id).collect())
+    }
+
+    pub fn create_location(&self, warehouse_id: i32, location_type: String, zone: Option<String>, aisle: Option<String>) -> PhpResult<i32> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let location = commerce
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id,
+                location_type,
+                zone,
+                aisle,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create location: {}", e)))?;
+
+        Ok(location.id)
+    }
+}
+
+// ============================================================================
+// Receiving API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Receiving")]
+#[derive(Clone)]
+pub struct Receiving {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Receiving {
+    pub fn create_receipt(&self, receipt_type: String, warehouse_id: i32, po_id: Option<String>) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let po_uuid = po_id.map(|p| p.parse()).transpose()
+            .map_err(|_| PhpException::default("Invalid PO UUID".to_string()))?;
+
+        let receipt = commerce
+            .receiving()
+            .create_receipt(stateset_core::CreateReceipt {
+                receipt_type,
+                warehouse_id,
+                purchase_order_id: po_uuid,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create receipt: {}", e)))?;
+
+        Ok(receipt.id.to_string())
+    }
+
+    pub fn get_receipt(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "receipt");
+
+        let receipt = commerce
+            .receiving()
+            .get_receipt(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get receipt: {}", e)))?;
+
+        Ok(receipt.map(|r| r.receipt_number))
+    }
+
+    pub fn list_receipts(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let receipts = commerce
+            .receiving()
+            .list_receipts(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list receipts: {}", e)))?;
+
+        Ok(receipts.into_iter().map(|r| r.id.to_string()).collect())
+    }
+
+    pub fn complete_receipt(&self, id: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "receipt");
+
+        commerce
+            .receiving()
+            .complete_receipt(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to complete receipt: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Fulfillment API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Fulfillment")]
+#[derive(Clone)]
+pub struct Fulfillment {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Fulfillment {
+    pub fn create_wave(&self, warehouse_id: i32, order_ids: Vec<String>, priority: i32) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuids: Result<Vec<_>, _> = order_ids.iter().map(|id| id.parse()).collect();
+        let uuids = uuids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
+
+        let wave = commerce
+            .fulfillment()
+            .create_wave(stateset_core::CreateWave {
+                warehouse_id,
+                order_ids: uuids,
+                priority,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create wave: {}", e)))?;
+
+        Ok(wave.id.to_string())
+    }
+
+    pub fn get_wave(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "wave");
+
+        let wave = commerce
+            .fulfillment()
+            .get_wave(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get wave: {}", e)))?;
+
+        Ok(wave.map(|w| w.wave_number))
+    }
+
+    pub fn release_wave(&self, id: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "wave");
+
+        commerce
+            .fulfillment()
+            .release_wave(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to release wave: {}", e)))?;
+
+        Ok(true)
+    }
+
+    pub fn complete_wave(&self, id: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "wave");
+
+        commerce
+            .fulfillment()
+            .complete_wave(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to complete wave: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Accounts Payable API
+// ============================================================================
+
+#[php_class(name = "StateSet\\AccountsPayable")]
+#[derive(Clone)]
+pub struct AccountsPayable {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl AccountsPayable {
+    pub fn create_bill(&self, supplier_id: String, due_date: String, payment_terms: Option<String>) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let supp_uuid = parse_uuid!(supplier_id, "supplier");
+
+        let bill = commerce
+            .accounts_payable()
+            .create_bill(stateset_core::CreateBill {
+                supplier_id: supp_uuid,
+                due_date,
+                payment_terms,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create bill: {}", e)))?;
+
+        Ok(bill.id.to_string())
+    }
+
+    pub fn get_bill(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "bill");
+
+        let bill = commerce
+            .accounts_payable()
+            .get_bill(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get bill: {}", e)))?;
+
+        Ok(bill.map(|b| b.bill_number))
+    }
+
+    pub fn list_bills(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let bills = commerce
+            .accounts_payable()
+            .list_bills(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list bills: {}", e)))?;
+
+        Ok(bills.into_iter().map(|b| b.id.to_string()).collect())
+    }
+
+    pub fn get_total_outstanding(&self) -> PhpResult<f64> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let total = commerce
+            .accounts_payable()
+            .get_total_outstanding()
+            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+
+        Ok(to_f64_or_nan(total))
+    }
+}
+
+// ============================================================================
+// Accounts Receivable API
+// ============================================================================
+
+#[php_class(name = "StateSet\\AccountsReceivable")]
+#[derive(Clone)]
+pub struct AccountsReceivable {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl AccountsReceivable {
+    pub fn get_total_outstanding(&self) -> PhpResult<f64> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let total = commerce
+            .accounts_receivable()
+            .get_total_outstanding()
+            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+
+        Ok(to_f64_or_nan(total))
+    }
+
+    pub fn get_dso(&self, days: i32) -> PhpResult<f64> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let dso = commerce
+            .accounts_receivable()
+            .get_dso(days)
+            .map_err(|e| PhpException::default(format!("Failed to get DSO: {}", e)))?;
+
+        Ok(dso)
+    }
+
+    pub fn create_credit_memo(&self, customer_id: String, amount: f64, reason: String) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let cust_uuid = parse_uuid!(customer_id, "customer");
+        let decimal_amount = Decimal::from_f64_retain(amount).unwrap_or_default();
+
+        let memo = commerce
+            .accounts_receivable()
+            .create_credit_memo(stateset_core::CreateCreditMemo {
+                customer_id: cust_uuid,
+                amount: decimal_amount,
+                reason,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create credit memo: {}", e)))?;
+
+        Ok(memo.id.to_string())
+    }
+}
+
+// ============================================================================
+// Cost Accounting API
+// ============================================================================
+
+#[php_class(name = "StateSet\\CostAccounting")]
+#[derive(Clone)]
+pub struct CostAccounting {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl CostAccounting {
+    pub fn get_item_cost(&self, sku: String) -> PhpResult<Option<f64>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let cost = commerce
+            .cost_accounting()
+            .get_item_cost(&sku)
+            .map_err(|e| PhpException::default(format!("Failed to get cost: {}", e)))?;
+
+        Ok(cost.map(|c| to_f64_or_nan(c.current_cost)))
+    }
+
+    pub fn set_item_cost(&self, sku: String, standard_cost: f64, current_cost: Option<f64>) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let std = Decimal::from_f64_retain(standard_cost).unwrap_or_default();
+        let curr = current_cost.map(|c| Decimal::from_f64_retain(c).unwrap_or_default());
+
+        commerce
+            .cost_accounting()
+            .set_item_cost(&sku, std, curr)
+            .map_err(|e| PhpException::default(format!("Failed to set cost: {}", e)))?;
+
+        Ok(true)
+    }
+
+    pub fn get_total_inventory_value(&self) -> PhpResult<f64> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let total = commerce
+            .cost_accounting()
+            .get_total_inventory_value()
+            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+
+        Ok(to_f64_or_nan(total))
+    }
+}
+
+// ============================================================================
+// Credit API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Credit")]
+#[derive(Clone)]
+pub struct CreditApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl CreditApi {
+    pub fn create_account(&self, customer_id: String, credit_limit: f64) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let cust_uuid = parse_uuid!(customer_id, "customer");
+        let limit = Decimal::from_f64_retain(credit_limit).unwrap_or_default();
+
+        let account = commerce
+            .credit()
+            .create_account(stateset_core::CreateCreditAccount {
+                customer_id: cust_uuid,
+                credit_limit: limit,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create account: {}", e)))?;
+
+        Ok(account.id.to_string())
+    }
+
+    pub fn check_credit(&self, customer_id: String, order_amount: f64) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let cust_uuid = parse_uuid!(customer_id, "customer");
+        let amount = Decimal::from_f64_retain(order_amount).unwrap_or_default();
+
+        let result = commerce
+            .credit()
+            .check_credit(cust_uuid, amount)
+            .map_err(|e| PhpException::default(format!("Failed to check credit: {}", e)))?;
+
+        Ok(result.approved)
+    }
+
+    pub fn adjust_limit(&self, customer_id: String, new_limit: f64, reason: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let cust_uuid = parse_uuid!(customer_id, "customer");
+        let limit = Decimal::from_f64_retain(new_limit).unwrap_or_default();
+
+        commerce
+            .credit()
+            .adjust_limit(cust_uuid, limit, &reason)
+            .map_err(|e| PhpException::default(format!("Failed to adjust limit: {}", e)))?;
+
+        Ok(true)
+    }
+}
+
+// ============================================================================
+// Backorders API
+// ============================================================================
+
+#[php_class(name = "StateSet\\Backorders")]
+#[derive(Clone)]
+pub struct Backorders {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl Backorders {
+    pub fn create(&self, order_id: String, sku: String, quantity: i32, expected_date: Option<String>) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+        let ord_uuid = parse_uuid!(order_id, "order");
+
+        let backorder = commerce
+            .backorders()
+            .create(stateset_core::CreateBackorder {
+                order_id: ord_uuid,
+                sku,
+                quantity,
+                expected_date,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create backorder: {}", e)))?;
+
+        Ok(backorder.id.to_string())
+    }
+
+    pub fn get(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "backorder");
+
+        let backorder = commerce
+            .backorders()
+            .get(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get backorder: {}", e)))?;
+
+        Ok(backorder.map(|b| b.backorder_number))
+    }
+
+    pub fn list(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let backorders = commerce
+            .backorders()
+            .list(Default::default())
+            .map_err(|e| PhpException::default(format!("Failed to list backorders: {}", e)))?;
+
+        Ok(backorders.into_iter().map(|b| b.id.to_string()).collect())
+    }
+
+    pub fn cancel(&self, id: String) -> PhpResult<bool> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "backorder");
+
+        commerce
+            .backorders()
+            .cancel(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to cancel backorder: {}", e)))?;
+
+        Ok(true)
+    }
+
+    pub fn count_pending(&self) -> PhpResult<i32> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let count = commerce
+            .backorders()
+            .count_pending()
+            .map_err(|e| PhpException::default(format!("Failed to count: {}", e)))?;
+
+        Ok(count as i32)
+    }
+}
+
+// ============================================================================
+// General Ledger API
+// ============================================================================
+
+#[php_class(name = "StateSet\\GeneralLedger")]
+#[derive(Clone)]
+pub struct GeneralLedger {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[php_impl]
+impl GeneralLedger {
+    pub fn create_account(&self, account_number: String, name: String, account_type: String) -> PhpResult<String> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let account = commerce
+            .general_ledger()
+            .create_account(stateset_core::CreateGlAccount {
+                account_number,
+                name,
+                account_type,
+                ..Default::default()
+            })
+            .map_err(|e| PhpException::default(format!("Failed to create account: {}", e)))?;
+
+        Ok(account.id.to_string())
+    }
+
+    pub fn get_account(&self, id: String) -> PhpResult<Option<String>> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(id, "account");
+
+        let account = commerce
+            .general_ledger()
+            .get_account(uuid)
+            .map_err(|e| PhpException::default(format!("Failed to get account: {}", e)))?;
+
+        Ok(account.map(|a| a.name))
+    }
+
+    pub fn list_accounts(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let accounts = commerce
+            .general_ledger()
+            .list_accounts()
+            .map_err(|e| PhpException::default(format!("Failed to list accounts: {}", e)))?;
+
+        Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
+    }
+
+    pub fn get_account_balance(&self, account_id: String, as_of_date: Option<String>) -> PhpResult<f64> {
+        let commerce = lock_commerce!(self.commerce);
+        let uuid = parse_uuid!(account_id, "account");
+
+        let balance = commerce
+            .general_ledger()
+            .get_account_balance(uuid, as_of_date.as_deref())
+            .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
+
+        Ok(to_f64_or_nan(balance))
+    }
+
+    pub fn initialize_chart_of_accounts(&self) -> PhpResult<Vec<String>> {
+        let commerce = lock_commerce!(self.commerce);
+
+        let accounts = commerce
+            .general_ledger()
+            .initialize_chart_of_accounts()
+            .map_err(|e| PhpException::default(format!("Failed to initialize COA: {}", e)))?;
+
+        Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
     }
 }
 

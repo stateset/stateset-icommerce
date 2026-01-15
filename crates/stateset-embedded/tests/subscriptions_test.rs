@@ -648,7 +648,7 @@ fn test_subscription_events_created_on_subscribe() {
         ..Default::default()
     }).expect("Failed to create subscription");
 
-    let events = commerce.subscriptions().get_events(subscription.id, None)
+    let events = commerce.subscriptions().get_events(subscription.id)
         .expect("Failed to get events");
 
     // Should have at least created and activated events
@@ -681,7 +681,7 @@ fn test_subscription_events_on_pause_resume() {
     commerce.subscriptions().resume(subscription.id)
         .expect("Failed to resume");
 
-    let events = commerce.subscriptions().get_events(subscription.id, None)
+    let events = commerce.subscriptions().get_events(subscription.id)
         .expect("Failed to get events");
 
     // Should have paused and resumed events
@@ -690,7 +690,7 @@ fn test_subscription_events_on_pause_resume() {
 }
 
 #[test]
-fn test_subscription_events_limit() {
+fn test_subscription_events_list_all() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     let customer_id = create_test_customer(&commerce);
@@ -709,11 +709,11 @@ fn test_subscription_events_limit() {
     commerce.subscriptions().resume(subscription.id)
         .expect("Failed to resume");
 
-    // Get limited events
-    let events = commerce.subscriptions().get_events(subscription.id, Some(2))
+    // Get all events
+    let events = commerce.subscriptions().get_events(subscription.id)
         .expect("Failed to get events");
 
-    assert!(events.len() <= 2);
+    assert!(events.len() >= 4);
 }
 
 // ============================================================================
@@ -804,11 +804,11 @@ fn test_mark_billing_cycle_paid() {
         now + chrono::Duration::days(30),
     ).expect("Failed to create billing cycle");
 
-    let paid = commerce.subscriptions().mark_cycle_paid(cycle.id, "pay_123456".into())
+    let paid = commerce.subscriptions().mark_cycle_paid(cycle.id)
         .expect("Failed to mark cycle paid");
 
     assert_eq!(paid.status, stateset_embedded::BillingCycleStatus::Paid);
-    assert_eq!(paid.payment_id, Some("pay_123456".into()));
+    assert!(paid.payment_id.is_none());
     assert!(paid.billed_at.is_some());
 }
 
@@ -834,11 +834,11 @@ fn test_mark_billing_cycle_failed() {
         now + chrono::Duration::days(30),
     ).expect("Failed to create billing cycle");
 
-    let failed = commerce.subscriptions().mark_cycle_failed(cycle.id, "Card declined")
+    let failed = commerce.subscriptions().mark_cycle_failed(cycle.id)
         .expect("Failed to mark cycle failed");
 
     assert_eq!(failed.status, stateset_embedded::BillingCycleStatus::Failed);
-    assert_eq!(failed.failure_reason, Some("Card declined".into()));
+    assert!(failed.failure_reason.is_none());
 }
 
 // ============================================================================

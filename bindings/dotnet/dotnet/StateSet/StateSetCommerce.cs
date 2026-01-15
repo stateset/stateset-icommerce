@@ -123,6 +123,81 @@ public sealed class StateSetCommerce : IDisposable
     public CurrencyApi Currency { get; }
 
     /// <summary>
+    /// Subscriptions API
+    /// </summary>
+    public SubscriptionsApi Subscriptions { get; }
+
+    /// <summary>
+    /// Promotions API
+    /// </summary>
+    public PromotionsApi Promotions { get; }
+
+    /// <summary>
+    /// Tax API
+    /// </summary>
+    public TaxApi Tax { get; }
+
+    /// <summary>
+    /// Quality API
+    /// </summary>
+    public QualityApi Quality { get; }
+
+    /// <summary>
+    /// Lots API
+    /// </summary>
+    public LotsApi Lots { get; }
+
+    /// <summary>
+    /// Serials API
+    /// </summary>
+    public SerialsApi Serials { get; }
+
+    /// <summary>
+    /// Warehouse API
+    /// </summary>
+    public WarehouseApi Warehouse { get; }
+
+    /// <summary>
+    /// Receiving API
+    /// </summary>
+    public ReceivingApi Receiving { get; }
+
+    /// <summary>
+    /// Fulfillment API
+    /// </summary>
+    public FulfillmentApi Fulfillment { get; }
+
+    /// <summary>
+    /// Accounts Payable API
+    /// </summary>
+    public AccountsPayableApi AccountsPayable { get; }
+
+    /// <summary>
+    /// Accounts Receivable API
+    /// </summary>
+    public AccountsReceivableApi AccountsReceivable { get; }
+
+    /// <summary>
+    /// Cost Accounting API
+    /// </summary>
+    public CostAccountingApi CostAccounting { get; }
+
+    /// <summary>
+    /// Credit API
+    /// </summary>
+    public CreditApi Credit { get; }
+
+    /// <summary>
+    /// Backorders API
+    /// </summary>
+    public BackordersApi Backorders { get; }
+
+    /// <summary>
+    /// General Ledger API
+    /// </summary>
+    public GeneralLedgerApi GeneralLedger { get; }
+
+    /// <summary>
     /// Create a new Commerce instance
     /// </summary>
     /// <param name="dbPath">Path to SQLite database file, or ":memory:" for in-memory database</param>
@@ -151,6 +226,21 @@ public sealed class StateSetCommerce : IDisposable
         Bom = new BomApi(this);
         WorkOrders = new WorkOrdersApi(this);
         Currency = new CurrencyApi(this);
+        Subscriptions = new SubscriptionsApi(this);
+        Promotions = new PromotionsApi(this);
+        Tax = new TaxApi(this);
+        Quality = new QualityApi(this);
+        Lots = new LotsApi(this);
+        Serials = new SerialsApi(this);
+        Warehouse = new WarehouseApi(this);
+        Receiving = new ReceivingApi(this);
+        Fulfillment = new FulfillmentApi(this);
+        AccountsPayable = new AccountsPayableApi(this);
+        AccountsReceivable = new AccountsReceivableApi(this);
+        CostAccounting = new CostAccountingApi(this);
+        Credit = new CreditApi(this);
+        Backorders = new BackordersApi(this);
+        GeneralLedger = new GeneralLedgerApi(this);
     }
 
     internal IntPtr Handle

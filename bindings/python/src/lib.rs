@@ -6319,8 +6319,7 @@ impl Subscriptions {
     // ========================================================================
 
     /// Get events for a subscription.
-    #[pyo3(signature = (subscription_id, limit=None))]
-    fn get_events(&self, subscription_id: String, limit: Option<u32>) -> PyResult<Vec<SubscriptionEvent>> {
+    fn get_events(&self, subscription_id: String) -> PyResult<Vec<SubscriptionEvent>> {
         let commerce = self.commerce.lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
@@ -6329,7 +6328,7 @@ impl Subscriptions {
 
         let events = commerce
             .subscriptions()
-            .get_events(uuid, limit)
+            .get_events(uuid)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get events: {}", e)))?;
 
         Ok(events.into_iter().map(|e| e.into()).collect())

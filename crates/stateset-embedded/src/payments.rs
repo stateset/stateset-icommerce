@@ -73,7 +73,9 @@ impl Payments {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self, input), fields(amount = %input.amount, method = ?input.payment_method))]
     pub fn create(&self, input: CreatePayment) -> Result<Payment> {
+        tracing::info!("creating payment");
         self.db.payments().create(input)
     }
 
@@ -120,7 +122,9 @@ impl Payments {
     /// Mark payment as completed
     ///
     /// This records the payment timestamp and marks the transaction as successful.
+    #[tracing::instrument(skip(self), fields(payment_id = %id))]
     pub fn mark_completed(&self, id: Uuid) -> Result<Payment> {
+        tracing::info!("marking payment as completed");
         self.db.payments().mark_completed(id)
     }
 
@@ -167,7 +171,9 @@ impl Payments {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    #[tracing::instrument(skip(self, input), fields(payment_id = %input.payment_id))]
     pub fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
+        tracing::info!("creating refund");
         self.db.payments().create_refund(input)
     }
 

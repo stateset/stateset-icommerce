@@ -78,6 +78,51 @@ public final class StateSetCommerce {
     /// Currency API
     public private(set) lazy var currency = CurrencyAPI(commerce: self)
 
+    /// Subscriptions API
+    public private(set) lazy var subscriptions = SubscriptionsAPI(commerce: self)
+
+    /// Promotions API
+    public private(set) lazy var promotions = PromotionsAPI(commerce: self)
+
+    /// Tax API
+    public private(set) lazy var tax = TaxAPI(commerce: self)
+
+    /// Quality API
+    public private(set) lazy var quality = QualityAPI(commerce: self)
+
+    /// Lots API
+    public private(set) lazy var lots = LotsAPI(commerce: self)
+
+    /// Serials API
+    public private(set) lazy var serials = SerialsAPI(commerce: self)
+
+    /// Warehouse API
+    public private(set) lazy var warehouse = WarehouseAPI(commerce: self)
+
+    /// Receiving API
+    public private(set) lazy var receiving = ReceivingAPI(commerce: self)
+
+    /// Fulfillment API
+    public private(set) lazy var fulfillment = FulfillmentAPI(commerce: self)
+
+    /// Accounts Payable API
+    public private(set) lazy var accountsPayable = AccountsPayableAPI(commerce: self)
+
+    /// Accounts Receivable API
+    public private(set) lazy var accountsReceivable = AccountsReceivableAPI(commerce: self)
+
+    /// Cost Accounting API
+    public private(set) lazy var costAccounting = CostAccountingAPI(commerce: self)
+
+    /// Credit API
+    public private(set) lazy var credit = CreditAPI(commerce: self)
+
+    /// Backorders API
+    public private(set) lazy var backorders = BackordersAPI(commerce: self)
+
+    /// General Ledger API
+    public private(set) lazy var generalLedger = GeneralLedgerAPI(commerce: self)
+
     /// Create a new Commerce instance
     /// - Parameter dbPath: Path to SQLite database file, or ":memory:" for in-memory database
     /// - Throws: StateSetError if database initialization fails

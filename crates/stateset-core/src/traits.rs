@@ -1286,7 +1286,7 @@ pub trait SubscriptionRepository {
     fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>>;
     fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>>;
     fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle>;
-    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<BillingCycle>;
+    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription>;
 
     // Events
     fn record_event(

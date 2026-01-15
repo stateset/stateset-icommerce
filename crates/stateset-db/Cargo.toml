@@ -27,6 +27,12 @@ tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 rust_decimal_macros = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.10"
+
+[[bench]]
+name = "db_benchmarks"
+harness = false
 
 [features]
 default = ["sqlite"]
