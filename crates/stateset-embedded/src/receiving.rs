@@ -35,17 +35,18 @@ use stateset_core::{
     Receipt, ReceiptFilter, ReceiptItem, ReceiveItems, ReceivingRepository, Result,
     UpdateReceipt,
 };
-use stateset_db::sqlite::SqliteReceivingRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Receiving and goods receipt management interface.
 pub struct Receiving {
-    repo: SqliteReceivingRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Receiving {
-    pub(crate) fn new(repo: SqliteReceivingRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -90,22 +91,22 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt> {
-        self.repo.create_receipt(input)
+        self.db.receiving().create_receipt(input)
     }
 
     /// Get a receipt by ID.
     pub fn get_receipt(&self, id: Uuid) -> Result<Option<Receipt>> {
-        self.repo.get_receipt(id)
+        self.db.receiving().get_receipt(id)
     }
 
     /// Get a receipt by receipt number.
     pub fn get_receipt_by_number(&self, number: &str) -> Result<Option<Receipt>> {
-        self.repo.get_receipt_by_number(number)
+        self.db.receiving().get_receipt_by_number(number)
     }
 
     /// Update receipt details (carrier, tracking, expected date).
     pub fn update_receipt(&self, id: Uuid, input: UpdateReceipt) -> Result<Receipt> {
-        self.repo.update_receipt(id, input)
+        self.db.receiving().update_receipt(id, input)
     }
 
     /// List receipts with optional filtering.
@@ -127,19 +128,19 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_receipts(&self, filter: ReceiptFilter) -> Result<Vec<Receipt>> {
-        self.repo.list_receipts(filter)
+        self.db.receiving().list_receipts(filter)
     }
 
     /// Delete a receipt (only if still in 'expected' status).
     pub fn delete_receipt(&self, id: Uuid) -> Result<()> {
-        self.repo.delete_receipt(id)
+        self.db.receiving().delete_receipt(id)
     }
 
     /// Start receiving goods (transition from 'expected' to 'in_progress').
     ///
     /// Call this when goods arrive and receiving process begins.
     pub fn start_receiving(&self, id: Uuid) -> Result<Receipt> {
-        self.repo.start_receiving(id)
+        self.db.receiving().start_receiving(id)
     }
 
     /// Receive items against a receipt.
@@ -175,29 +176,29 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn receive_items(&self, input: ReceiveItems) -> Result<Receipt> {
-        self.repo.receive_items(input)
+        self.db.receiving().receive_items(input)
     }
 
     /// Complete receiving (all items received).
     ///
     /// Transitions receipt to 'received' status.
     pub fn complete_receiving(&self, id: Uuid) -> Result<Receipt> {
-        self.repo.complete_receiving(id)
+        self.db.receiving().complete_receiving(id)
     }
 
     /// Cancel a receipt.
     pub fn cancel_receipt(&self, id: Uuid) -> Result<Receipt> {
-        self.repo.cancel_receipt(id)
+        self.db.receiving().cancel_receipt(id)
     }
 
     /// Get all line items for a receipt.
     pub fn get_receipt_items(&self, receipt_id: Uuid) -> Result<Vec<ReceiptItem>> {
-        self.repo.get_receipt_items(receipt_id)
+        self.db.receiving().get_receipt_items(receipt_id)
     }
 
     /// Count receipts matching the filter.
     pub fn count_receipts(&self, filter: ReceiptFilter) -> Result<u64> {
-        self.repo.count_receipts(filter)
+        self.db.receiving().count_receipts(filter)
     }
 
     // ========================================================================
@@ -232,27 +233,27 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_put_away(&self, input: CreatePutAway) -> Result<PutAway> {
-        self.repo.create_put_away(input)
+        self.db.receiving().create_put_away(input)
     }
 
     /// Get a put-away task by ID.
     pub fn get_put_away(&self, id: Uuid) -> Result<Option<PutAway>> {
-        self.repo.get_put_away(id)
+        self.db.receiving().get_put_away(id)
     }
 
     /// List put-away tasks with optional filtering.
     pub fn list_put_aways(&self, filter: PutAwayFilter) -> Result<Vec<PutAway>> {
-        self.repo.list_put_aways(filter)
+        self.db.receiving().list_put_aways(filter)
     }
 
     /// Assign a put-away task to a user.
     pub fn assign_put_away(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
-        self.repo.assign_put_away(id, assigned_to)
+        self.db.receiving().assign_put_away(id, assigned_to)
     }
 
     /// Start a put-away task.
     pub fn start_put_away(&self, id: Uuid) -> Result<PutAway> {
-        self.repo.start_put_away(id)
+        self.db.receiving().start_put_away(id)
     }
 
     /// Complete a put-away task.
@@ -275,22 +276,22 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway> {
-        self.repo.complete_put_away(input)
+        self.db.receiving().complete_put_away(input)
     }
 
     /// Cancel a put-away task.
     pub fn cancel_put_away(&self, id: Uuid) -> Result<PutAway> {
-        self.repo.cancel_put_away(id)
+        self.db.receiving().cancel_put_away(id)
     }
 
     /// Get pending put-away tasks for a receipt.
     pub fn get_pending_put_aways(&self, receipt_id: Uuid) -> Result<Vec<PutAway>> {
-        self.repo.get_pending_put_aways(receipt_id)
+        self.db.receiving().get_pending_put_aways(receipt_id)
     }
 
     /// Count put-away tasks matching the filter.
     pub fn count_put_aways(&self, filter: PutAwayFilter) -> Result<u64> {
-        self.repo.count_put_aways(filter)
+        self.db.receiving().count_put_aways(filter)
     }
 
     // ========================================================================
@@ -318,7 +319,7 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
-        self.repo.create_receipt_from_po(po_id, warehouse_id)
+        self.db.receiving().create_receipt_from_po(po_id, warehouse_id)
     }
 
     // ========================================================================
@@ -327,11 +328,11 @@ impl Receiving {
 
     /// Create multiple receipts in a batch.
     pub fn create_receipts_batch(&self, inputs: Vec<CreateReceipt>) -> Result<BatchResult<Receipt>> {
-        self.repo.create_receipts_batch(inputs)
+        self.db.receiving().create_receipts_batch(inputs)
     }
 
     /// Get multiple receipts by ID.
     pub fn get_receipts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Receipt>> {
-        self.repo.get_receipts_batch(ids)
+        self.db.receiving().get_receipts_batch(ids)
     }
 }

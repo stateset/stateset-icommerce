@@ -43,16 +43,17 @@ use stateset_core::{
     MoveInventory, MovementFilter, Result, UpdateLocation, UpdateWarehouse, UpdateZone,
     Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
-use stateset_db::sqlite::SqliteWarehouseRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 
 /// Warehouse and Location management interface.
 pub struct WarehouseOps {
-    repo: SqliteWarehouseRepository,
+    db: Arc<dyn Database>,
 }
 
 impl WarehouseOps {
-    pub(crate) fn new(repo: SqliteWarehouseRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -85,22 +86,22 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_warehouse(&self, input: CreateWarehouse) -> Result<Warehouse> {
-        self.repo.create_warehouse(input)
+        self.db.warehouse().create_warehouse(input)
     }
 
     /// Get a warehouse by ID.
     pub fn get_warehouse(&self, id: i32) -> Result<Option<Warehouse>> {
-        self.repo.get_warehouse(id)
+        self.db.warehouse().get_warehouse(id)
     }
 
     /// Get a warehouse by code.
     pub fn get_warehouse_by_code(&self, code: &str) -> Result<Option<Warehouse>> {
-        self.repo.get_warehouse_by_code(code)
+        self.db.warehouse().get_warehouse_by_code(code)
     }
 
     /// Update a warehouse.
     pub fn update_warehouse(&self, id: i32, input: UpdateWarehouse) -> Result<Warehouse> {
-        self.repo.update_warehouse(id, input)
+        self.db.warehouse().update_warehouse(id, input)
     }
 
     /// List warehouses with optional filtering.
@@ -121,17 +122,17 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_warehouses(&self, filter: WarehouseFilter) -> Result<Vec<Warehouse>> {
-        self.repo.list_warehouses(filter)
+        self.db.warehouse().list_warehouses(filter)
     }
 
     /// Delete a warehouse. Only warehouses without locations can be deleted.
     pub fn delete_warehouse(&self, id: i32) -> Result<()> {
-        self.repo.delete_warehouse(id)
+        self.db.warehouse().delete_warehouse(id)
     }
 
     /// Count warehouses matching the filter.
     pub fn count_warehouses(&self, filter: WarehouseFilter) -> Result<u64> {
-        self.repo.count_warehouses(filter)
+        self.db.warehouse().count_warehouses(filter)
     }
 
     // ========================================================================
@@ -142,27 +143,27 @@ impl WarehouseOps {
     ///
     /// Zones are logical groupings of locations (e.g., "Bulk Storage", "Pick Area", "Returns").
     pub fn create_zone(&self, input: CreateZone) -> Result<Zone> {
-        self.repo.create_zone(input)
+        self.db.warehouse().create_zone(input)
     }
 
     /// Get a zone by ID.
     pub fn get_zone(&self, id: i32) -> Result<Option<Zone>> {
-        self.repo.get_zone(id)
+        self.db.warehouse().get_zone(id)
     }
 
     /// Get all zones in a warehouse.
     pub fn get_zones(&self, warehouse_id: i32) -> Result<Vec<Zone>> {
-        self.repo.get_zones(warehouse_id)
+        self.db.warehouse().get_zones(warehouse_id)
     }
 
     /// Update a zone.
     pub fn update_zone(&self, id: i32, input: UpdateZone) -> Result<Zone> {
-        self.repo.update_zone(id, input)
+        self.db.warehouse().update_zone(id, input)
     }
 
     /// Delete a zone.
     pub fn delete_zone(&self, id: i32) -> Result<()> {
-        self.repo.delete_zone(id)
+        self.db.warehouse().delete_zone(id)
     }
 
     // ========================================================================
@@ -199,22 +200,22 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_location(&self, input: CreateLocation) -> Result<Location> {
-        self.repo.create_location(input)
+        self.db.warehouse().create_location(input)
     }
 
     /// Get a location by ID.
     pub fn get_location(&self, id: i32) -> Result<Option<Location>> {
-        self.repo.get_location(id)
+        self.db.warehouse().get_location(id)
     }
 
     /// Get a location by code within a warehouse.
     pub fn get_location_by_code(&self, warehouse_id: i32, code: &str) -> Result<Option<Location>> {
-        self.repo.get_location_by_code(warehouse_id, code)
+        self.db.warehouse().get_location_by_code(warehouse_id, code)
     }
 
     /// Update a location.
     pub fn update_location(&self, id: i32, input: UpdateLocation) -> Result<Location> {
-        self.repo.update_location(id, input)
+        self.db.warehouse().update_location(id, input)
     }
 
     /// List locations with optional filtering.
@@ -237,22 +238,22 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_locations(&self, filter: LocationFilter) -> Result<Vec<Location>> {
-        self.repo.list_locations(filter)
+        self.db.warehouse().list_locations(filter)
     }
 
     /// Delete a location. Only locations without inventory can be deleted.
     pub fn delete_location(&self, id: i32) -> Result<()> {
-        self.repo.delete_location(id)
+        self.db.warehouse().delete_location(id)
     }
 
     /// Count locations matching the filter.
     pub fn count_locations(&self, filter: LocationFilter) -> Result<u64> {
-        self.repo.count_locations(filter)
+        self.db.warehouse().count_locations(filter)
     }
 
     /// Get all active locations for a warehouse.
     pub fn get_locations_for_warehouse(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self.repo.get_locations_for_warehouse(warehouse_id)
+        self.db.warehouse().get_locations_for_warehouse(warehouse_id)
     }
 
     /// Get pickable locations with available inventory for a SKU.
@@ -260,26 +261,26 @@ impl WarehouseOps {
     /// Returns locations that are marked as pickable and have available
     /// (non-reserved) inventory for the specified SKU.
     pub fn get_pickable_locations(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>> {
-        self.repo.get_pickable_locations(warehouse_id, sku)
+        self.db.warehouse().get_pickable_locations(warehouse_id, sku)
     }
 
     /// Get receivable locations for a warehouse.
     ///
     /// Returns locations where inventory can be received (e.g., receiving docks, staging areas).
     pub fn get_receivable_locations(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self.repo.get_receivable_locations(warehouse_id)
+        self.db.warehouse().get_receivable_locations(warehouse_id)
     }
 
     /// Create multiple locations in a batch.
     ///
     /// Returns a BatchResult with succeeded and failed operations.
     pub fn create_locations_batch(&self, inputs: Vec<CreateLocation>) -> Result<BatchResult<Location>> {
-        self.repo.create_locations_batch(inputs)
+        self.db.warehouse().create_locations_batch(inputs)
     }
 
     /// Get multiple locations by ID.
     pub fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>> {
-        self.repo.get_locations_batch(ids)
+        self.db.warehouse().get_locations_batch(ids)
     }
 
     // ========================================================================
@@ -288,12 +289,12 @@ impl WarehouseOps {
 
     /// Get all inventory at a specific location.
     pub fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>> {
-        self.repo.get_location_inventory(location_id)
+        self.db.warehouse().get_location_inventory(location_id)
     }
 
     /// Get all locations with inventory for a SKU within a warehouse.
     pub fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
-        self.repo.get_inventory_for_sku(warehouse_id, sku)
+        self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)
     }
 
     /// Adjust inventory at a location.
@@ -325,7 +326,7 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
-        self.repo.adjust_inventory(input)
+        self.db.warehouse().adjust_inventory(input)
     }
 
     /// Move inventory between locations.
@@ -354,25 +355,25 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement> {
-        self.repo.move_inventory(input)
+        self.db.warehouse().move_inventory(input)
     }
 
     /// List location inventory with optional filtering.
     pub fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
-        self.repo.list_location_inventory(filter)
+        self.db.warehouse().list_location_inventory(filter)
     }
 
     /// Get total available quantity for a SKU across a warehouse.
     ///
     /// Sums available quantity (on_hand - reserved) across all locations.
     pub fn get_total_available(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self.repo.get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_available).sum())
     }
 
     /// Get total on-hand quantity for a SKU across a warehouse.
     pub fn get_total_on_hand(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self.repo.get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_on_hand).sum())
     }
 
@@ -401,11 +402,11 @@ impl WarehouseOps {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_movements(&self, filter: MovementFilter) -> Result<Vec<LocationMovement>> {
-        self.repo.get_movements(filter)
+        self.db.warehouse().get_movements(filter)
     }
 
     /// Count movements matching the filter.
     pub fn count_movements(&self, filter: MovementFilter) -> Result<u64> {
-        self.repo.count_movements(filter)
+        self.db.warehouse().count_movements(filter)
     }
 }

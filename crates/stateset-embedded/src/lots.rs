@@ -34,17 +34,18 @@ use stateset_core::{
     LotFilter, LotLocation, LotRepository, LotStatus, LotTransaction,
     MergeLots, ReserveLot, Result, SplitLot, TraceabilityResult, TransferLot, UpdateLot,
 };
-use stateset_db::sqlite::SqliteLotRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Lot/Batch tracking management interface.
 pub struct Lots {
-    repo: SqliteLotRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Lots {
-    pub(crate) fn new(repo: SqliteLotRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -73,17 +74,17 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateLot) -> Result<Lot> {
-        self.repo.create(input)
+        self.db.lots().create(input)
     }
 
     /// Get a lot by ID.
     pub fn get(&self, id: Uuid) -> Result<Option<Lot>> {
-        self.repo.get(id)
+        self.db.lots().get(id)
     }
 
     /// Get a lot by lot number.
     pub fn get_by_number(&self, lot_number: &str) -> Result<Option<Lot>> {
-        self.repo.get_by_number(lot_number)
+        self.db.lots().get_by_number(lot_number)
     }
 
     /// List lots with optional filtering.
@@ -104,17 +105,17 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list(&self, filter: LotFilter) -> Result<Vec<Lot>> {
-        self.repo.list(filter)
+        self.db.lots().list(filter)
     }
 
     /// Update a lot.
     pub fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
-        self.repo.update(id, input)
+        self.db.lots().update(id, input)
     }
 
     /// Delete a lot (only if unused).
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.repo.delete(id)
+        self.db.lots().delete(id)
     }
 
     // ========================================================================
@@ -135,12 +136,12 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
-        self.repo.quarantine(id, reason)
+        self.db.lots().quarantine(id, reason)
     }
 
     /// Release a lot from quarantine.
     pub fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
-        self.repo.release_quarantine(id)
+        self.db.lots().release_quarantine(id)
     }
 
     // ========================================================================
@@ -169,7 +170,7 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn adjust(&self, input: AdjustLot) -> Result<LotTransaction> {
-        self.repo.adjust(input)
+        self.db.lots().adjust(input)
     }
 
     /// Consume quantity from a lot.
@@ -193,29 +194,29 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn consume(&self, input: ConsumeLot) -> Result<LotTransaction> {
-        self.repo.consume(input)
+        self.db.lots().consume(input)
     }
 
     /// Reserve quantity in a lot.
     ///
     /// Returns the reservation ID which can be used to release or confirm the reservation.
     pub fn reserve(&self, input: ReserveLot) -> Result<Uuid> {
-        self.repo.reserve(input)
+        self.db.lots().reserve(input)
     }
 
     /// Release a reservation (cancel it without consuming).
     pub fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.repo.release_reservation(reservation_id)
+        self.db.lots().release_reservation(reservation_id)
     }
 
     /// Confirm a reservation (convert to actual consumption).
     pub fn confirm_reservation(&self, reservation_id: Uuid) -> Result<LotTransaction> {
-        self.repo.confirm_reservation(reservation_id)
+        self.db.lots().confirm_reservation(reservation_id)
     }
 
     /// Transfer lot to a different location.
     pub fn transfer(&self, input: TransferLot) -> Result<LotTransaction> {
-        self.repo.transfer(input)
+        self.db.lots().transfer(input)
     }
 
     /// Split a lot into two.
@@ -240,12 +241,12 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn split(&self, input: SplitLot) -> Result<Lot> {
-        self.repo.split(input)
+        self.db.lots().split(input)
     }
 
     /// Merge multiple lots into one.
     pub fn merge(&self, input: MergeLots) -> Result<Lot> {
-        self.repo.merge(input)
+        self.db.lots().merge(input)
     }
 
     // ========================================================================
@@ -272,17 +273,17 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
-        self.repo.add_certificate(input)
+        self.db.lots().add_certificate(input)
     }
 
     /// Get certificates for a lot.
     pub fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>> {
-        self.repo.get_certificates(lot_id)
+        self.db.lots().get_certificates(lot_id)
     }
 
     /// Remove a certificate from a lot.
     pub fn delete_certificate(&self, certificate_id: Uuid) -> Result<()> {
-        self.repo.delete_certificate(certificate_id)
+        self.db.lots().delete_certificate(certificate_id)
     }
 
     // ========================================================================
@@ -291,12 +292,12 @@ impl Lots {
 
     /// Get lot quantities by location.
     pub fn get_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
-        self.repo.get_lot_locations(lot_id)
+        self.db.lots().get_lot_locations(lot_id)
     }
 
     /// Get quantity at a specific location.
     pub fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
-        self.repo.get_quantity_at_location(lot_id, location_id)
+        self.db.lots().get_quantity_at_location(lot_id, location_id)
     }
 
     // ========================================================================
@@ -324,7 +325,7 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
-        self.repo.get_transactions(lot_id, limit)
+        self.db.lots().get_transactions(lot_id, limit)
     }
 
     // ========================================================================
@@ -348,7 +349,7 @@ impl Lots {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
-        self.repo.trace(lot_id)
+        self.db.lots().trace(lot_id)
     }
 
     // ========================================================================
@@ -357,24 +358,24 @@ impl Lots {
 
     /// Get lots expiring within a number of days.
     pub fn get_expiring_lots(&self, days: i32) -> Result<Vec<Lot>> {
-        self.repo.get_expiring_lots(days)
+        self.db.lots().get_expiring_lots(days)
     }
 
     /// Get already expired lots.
     pub fn get_expired_lots(&self) -> Result<Vec<Lot>> {
-        self.repo.get_expired_lots()
+        self.db.lots().get_expired_lots()
     }
 
     /// Get lots with available quantity for a SKU.
     ///
     /// Returns lots ordered by production date (FIFO).
     pub fn get_available_lots_for_sku(&self, sku: &str) -> Result<Vec<Lot>> {
-        self.repo.get_available_lots_for_sku(sku)
+        self.db.lots().get_available_lots_for_sku(sku)
     }
 
     /// Count lots matching filter.
     pub fn count(&self, filter: LotFilter) -> Result<u64> {
-        self.repo.count(filter)
+        self.db.lots().count(filter)
     }
 
     // ========================================================================
@@ -383,12 +384,12 @@ impl Lots {
 
     /// Create multiple lots at once.
     pub fn create_batch(&self, inputs: Vec<CreateLot>) -> Result<stateset_core::BatchResult<Lot>> {
-        self.repo.create_batch(inputs)
+        self.db.lots().create_batch(inputs)
     }
 
     /// Get multiple lots by ID.
     pub fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
-        self.repo.get_batch(ids)
+        self.db.lots().get_batch(ids)
     }
 
     // ========================================================================

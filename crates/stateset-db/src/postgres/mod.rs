@@ -2,37 +2,67 @@
 //!
 //! This module provides async PostgreSQL support for production deployments.
 
+mod accounts_payable;
+mod accounts_receivable;
 mod analytics;
+mod backorder;
 mod bom;
 mod carts;
+mod cost_accounting;
+mod credit;
 mod currency;
 mod customers;
+mod fulfillment;
+mod general_ledger;
 mod inventory;
 mod invoices;
+mod lots;
 mod orders;
 mod payments;
+mod promotions;
 mod products;
 mod purchase_orders;
+mod quality;
+mod receiving;
 mod returns;
+mod serials;
 mod shipments;
+mod subscriptions;
+mod tax;
 mod unsupported;
+mod warehouse;
 mod warranties;
 mod work_orders;
 
+pub use accounts_payable::*;
+pub use accounts_receivable::*;
 pub use analytics::*;
+pub use backorder::*;
 pub use bom::*;
 pub use carts::*;
+pub use cost_accounting::*;
+pub use credit::*;
 pub use currency::*;
 pub use customers::*;
+pub use fulfillment::*;
+pub use general_ledger::*;
 pub use inventory::*;
 pub use invoices::*;
+pub use lots::*;
 pub use orders::*;
 pub use payments::*;
+pub use promotions::*;
 pub use products::*;
 pub use purchase_orders::*;
+pub use quality::*;
+pub use receiving::*;
 pub use returns::*;
+pub use serials::*;
 pub use shipments::*;
+pub use subscriptions::*;
+pub use tax::*;
 pub use unsupported::*;
+pub use warehouse::*;
 pub use warranties::*;
 pub use work_orders::*;
 
@@ -103,6 +133,22 @@ impl PostgresDatabase {
             ("011_carts", include_str!("migrations/011_carts.sql")),
             ("012_versioning", include_str!("migrations/012_versioning.sql")),
             ("013_versioning_catalog", include_str!("migrations/013_versioning_catalog.sql")),
+            ("014_tax", include_str!("migrations/014_tax.sql")),
+            ("015_promotions", include_str!("migrations/015_promotions.sql")),
+            ("016_subscriptions", include_str!("migrations/016_subscriptions.sql")),
+            ("017_quality", include_str!("migrations/017_quality.sql")),
+            ("018_lots", include_str!("migrations/018_lots.sql")),
+            ("019_serials", include_str!("migrations/019_serials.sql")),
+            ("020_warehouse", include_str!("migrations/020_warehouse.sql")),
+            ("021_receiving", include_str!("migrations/021_receiving.sql")),
+            ("022_fulfillment", include_str!("migrations/022_fulfillment.sql")),
+            ("023_accounts_payable", include_str!("migrations/023_accounts_payable.sql")),
+            ("024_cost_accounting", include_str!("migrations/024_cost_accounting.sql")),
+            ("025_credit", include_str!("migrations/025_credit.sql")),
+            ("026_backorder", include_str!("migrations/026_backorder.sql")),
+            ("027_accounts_receivable", include_str!("migrations/027_accounts_receivable.sql")),
+            ("028_general_ledger", include_str!("migrations/028_general_ledger.sql")),
+            ("029_performance_indexes", include_str!("migrations/029_performance_indexes.sql")),
         ];
 
         for (name, sql) in migrations {
@@ -207,6 +253,81 @@ impl PostgresDatabase {
     /// Get analytics repository
     pub fn analytics(&self) -> PgAnalyticsRepository {
         PgAnalyticsRepository::new(self.pool.clone())
+    }
+
+    /// Get tax repository
+    pub fn tax(&self) -> PgTaxRepository {
+        PgTaxRepository::new(self.pool.clone())
+    }
+
+    /// Get promotions repository
+    pub fn promotions(&self) -> PgPromotionRepository {
+        PgPromotionRepository::new(self.pool.clone())
+    }
+
+    /// Get subscriptions repository
+    pub fn subscriptions(&self) -> PgSubscriptionRepository {
+        PgSubscriptionRepository::new(self.pool.clone())
+    }
+
+    /// Get quality repository
+    pub fn quality(&self) -> PgQualityRepository {
+        PgQualityRepository::new(self.pool.clone())
+    }
+
+    /// Get lots repository
+    pub fn lots(&self) -> PgLotRepository {
+        PgLotRepository::new(self.pool.clone())
+    }
+
+    /// Get serials repository
+    pub fn serials(&self) -> PgSerialRepository {
+        PgSerialRepository::new(self.pool.clone())
+    }
+
+    /// Get warehouse repository
+    pub fn warehouse(&self) -> PgWarehouseRepository {
+        PgWarehouseRepository::new(self.pool.clone())
+    }
+
+    /// Get receiving repository
+    pub fn receiving(&self) -> PgReceivingRepository {
+        PgReceivingRepository::new(self.pool.clone())
+    }
+
+    /// Get fulfillment repository
+    pub fn fulfillment(&self) -> PgFulfillmentRepository {
+        PgFulfillmentRepository::new(self.pool.clone())
+    }
+
+    /// Get accounts payable repository
+    pub fn accounts_payable(&self) -> PgAccountsPayableRepository {
+        PgAccountsPayableRepository::new(self.pool.clone())
+    }
+
+    /// Get cost accounting repository
+    pub fn cost_accounting(&self) -> PgCostAccountingRepository {
+        PgCostAccountingRepository::new(self.pool.clone())
+    }
+
+    /// Get credit repository
+    pub fn credit(&self) -> PgCreditRepository {
+        PgCreditRepository::new(self.pool.clone())
+    }
+
+    /// Get backorder repository
+    pub fn backorder(&self) -> PgBackorderRepository {
+        PgBackorderRepository::new(self.pool.clone())
+    }
+
+    /// Get accounts receivable repository
+    pub fn accounts_receivable(&self) -> PgAccountsReceivableRepository {
+        PgAccountsReceivableRepository::new(self.pool.clone())
+    }
+
+    /// Get general ledger repository
+    pub fn general_ledger(&self) -> PgGeneralLedgerRepository {
+        PgGeneralLedgerRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

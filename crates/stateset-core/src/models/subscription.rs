@@ -553,6 +553,15 @@ pub struct SkipBillingCycle {
     pub reason: Option<String>,
 }
 
+/// Create a billing cycle for a subscription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateBillingCycle {
+    pub subscription_id: Uuid,
+    pub cycle_number: i32,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+}
+
 /// Change subscription plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeSubscriptionPlan {

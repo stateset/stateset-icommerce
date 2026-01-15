@@ -40,17 +40,18 @@ use stateset_core::{
     CreatePaymentRun, PaymentAllocation, PaymentRun, PaymentRunFilter, Result,
     SupplierApSummary, UpdateBill,
 };
-use stateset_db::sqlite::SqliteAccountsPayableRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Accounts Payable management interface.
 pub struct AccountsPayable {
-    repo: SqliteAccountsPayableRepository,
+    db: Arc<dyn Database>,
 }
 
 impl AccountsPayable {
-    pub(crate) fn new(repo: SqliteAccountsPayableRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -95,22 +96,22 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_bill(&self, input: CreateBill) -> Result<Bill> {
-        self.repo.create_bill(input)
+        self.db.accounts_payable().create_bill(input)
     }
 
     /// Get a bill by ID.
     pub fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
-        self.repo.get_bill(id)
+        self.db.accounts_payable().get_bill(id)
     }
 
     /// Get a bill by bill number.
     pub fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
-        self.repo.get_bill_by_number(number)
+        self.db.accounts_payable().get_bill_by_number(number)
     }
 
     /// Update a bill.
     pub fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
-        self.repo.update_bill(id, input)
+        self.db.accounts_payable().update_bill(id, input)
     }
 
     /// List bills with optional filtering.
@@ -133,56 +134,56 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>> {
-        self.repo.list_bills(filter)
+        self.db.accounts_payable().list_bills(filter)
     }
 
     /// Delete a bill (only if draft).
     pub fn delete_bill(&self, id: Uuid) -> Result<()> {
-        self.repo.delete_bill(id)
+        self.db.accounts_payable().delete_bill(id)
     }
 
     /// Approve a bill for payment.
     ///
     /// Transitions bill from draft/pending to approved status.
     pub fn approve_bill(&self, id: Uuid) -> Result<Bill> {
-        self.repo.approve_bill(id)
+        self.db.accounts_payable().approve_bill(id)
     }
 
     /// Cancel a bill.
     pub fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
-        self.repo.cancel_bill(id)
+        self.db.accounts_payable().cancel_bill(id)
     }
 
     /// Mark a bill as disputed.
     pub fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
-        self.repo.dispute_bill(id)
+        self.db.accounts_payable().dispute_bill(id)
     }
 
     /// Get all line items for a bill.
     pub fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
-        self.repo.get_bill_items(bill_id)
+        self.db.accounts_payable().get_bill_items(bill_id)
     }
 
     /// Add an item to a bill.
     pub fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
-        self.repo.add_bill_item(bill_id, item)
+        self.db.accounts_payable().add_bill_item(bill_id, item)
     }
 
     /// Remove an item from a bill.
     pub fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
-        self.repo.remove_bill_item(item_id)
+        self.db.accounts_payable().remove_bill_item(item_id)
     }
 
     /// Count bills matching the filter.
     pub fn count_bills(&self, filter: BillFilter) -> Result<u64> {
-        self.repo.count_bills(filter)
+        self.db.accounts_payable().count_bills(filter)
     }
 
     /// Get all overdue bills.
     ///
     /// Returns bills past their due date that haven't been paid.
     pub fn get_overdue_bills(&self) -> Result<Vec<Bill>> {
-        self.repo.get_overdue_bills()
+        self.db.accounts_payable().get_overdue_bills()
     }
 
     /// Get bills due soon (within specified days).
@@ -202,7 +203,7 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>> {
-        self.repo.get_bills_due_soon(days)
+        self.db.accounts_payable().get_bills_due_soon(days)
     }
 
     // ========================================================================
@@ -240,49 +241,49 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment> {
-        self.repo.create_payment(input)
+        self.db.accounts_payable().create_payment(input)
     }
 
     /// Get a payment by ID.
     pub fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
-        self.repo.get_payment(id)
+        self.db.accounts_payable().get_payment(id)
     }
 
     /// Get a payment by payment number.
     pub fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>> {
-        self.repo.get_payment_by_number(number)
+        self.db.accounts_payable().get_payment_by_number(number)
     }
 
     /// List payments with optional filtering.
     pub fn list_payments(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>> {
-        self.repo.list_payments(filter)
+        self.db.accounts_payable().list_payments(filter)
     }
 
     /// Void a payment.
     ///
     /// Reverses the effect of the payment on associated bills.
     pub fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
-        self.repo.void_payment(id)
+        self.db.accounts_payable().void_payment(id)
     }
 
     /// Mark a payment as cleared (e.g., check cleared the bank).
     pub fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
-        self.repo.clear_payment(id)
+        self.db.accounts_payable().clear_payment(id)
     }
 
     /// Get allocations for a payment.
     pub fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
-        self.repo.get_payment_allocations(payment_id)
+        self.db.accounts_payable().get_payment_allocations(payment_id)
     }
 
     /// Get all payments for a specific bill.
     pub fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
-        self.repo.get_payments_for_bill(bill_id)
+        self.db.accounts_payable().get_payments_for_bill(bill_id)
     }
 
     /// Count payments matching the filter.
     pub fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64> {
-        self.repo.count_payments(filter)
+        self.db.accounts_payable().count_payments(filter)
     }
 
     /// Pay a bill directly with a single payment.
@@ -311,7 +312,7 @@ impl AccountsPayable {
     /// ```
     pub fn pay_bill(&self, bill_id: Uuid, input: stateset_core::PayBill) -> Result<Bill> {
         // Get the bill to find the supplier
-        let bill = self.repo.get_bill(bill_id)?
+        let bill = self.db.accounts_payable().get_bill(bill_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Create a payment for this bill
@@ -331,10 +332,10 @@ impl AccountsPayable {
             }],
         };
 
-        self.repo.create_payment(payment_input)?;
+        self.db.accounts_payable().create_payment(payment_input)?;
 
         // Return the updated bill
-        self.repo.get_bill(bill_id)?
+        self.db.accounts_payable().get_bill(bill_id)?
             .ok_or(stateset_core::CommerceError::NotFound)
     }
 
@@ -370,41 +371,41 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun> {
-        self.repo.create_payment_run(input)
+        self.db.accounts_payable().create_payment_run(input)
     }
 
     /// Get a payment run by ID.
     pub fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
-        self.repo.get_payment_run(id)
+        self.db.accounts_payable().get_payment_run(id)
     }
 
     /// List payment runs with optional filtering.
     pub fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
-        self.repo.list_payment_runs(filter)
+        self.db.accounts_payable().list_payment_runs(filter)
     }
 
     /// Approve a payment run.
     ///
     /// Requires approval before processing.
     pub fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
-        self.repo.approve_payment_run(id, approved_by)
+        self.db.accounts_payable().approve_payment_run(id, approved_by)
     }
 
     /// Process a payment run.
     ///
     /// Creates individual payments for each bill and updates their status.
     pub fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.repo.process_payment_run(id)
+        self.db.accounts_payable().process_payment_run(id)
     }
 
     /// Cancel a payment run.
     pub fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.repo.cancel_payment_run(id)
+        self.db.accounts_payable().cancel_payment_run(id)
     }
 
     /// Get bills included in a payment run.
     pub fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
-        self.repo.get_payment_run_bills(run_id)
+        self.db.accounts_payable().get_payment_run_bills(run_id)
     }
 
     // ========================================================================
@@ -433,17 +434,17 @@ impl AccountsPayable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_aging_summary(&self) -> Result<ApAgingSummary> {
-        self.repo.get_aging_summary()
+        self.db.accounts_payable().get_aging_summary()
     }
 
     /// Get AP summary for a specific supplier.
     pub fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
-        self.repo.get_supplier_summary(supplier_id)
+        self.db.accounts_payable().get_supplier_summary(supplier_id)
     }
 
     /// Get total AP outstanding across all suppliers.
     pub fn get_total_outstanding(&self) -> Result<Decimal> {
-        self.repo.get_total_outstanding()
+        self.db.accounts_payable().get_total_outstanding()
     }
 
     // ========================================================================
@@ -452,11 +453,11 @@ impl AccountsPayable {
 
     /// Create multiple bills in a batch.
     pub fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {
-        self.repo.create_bills_batch(inputs)
+        self.db.accounts_payable().create_bills_batch(inputs)
     }
 
     /// Get multiple bills by ID.
     pub fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
-        self.repo.get_bills_batch(ids)
+        self.db.accounts_payable().get_bills_batch(ids)
     }
 }

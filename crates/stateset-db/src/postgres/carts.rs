@@ -416,10 +416,12 @@ impl PgCartRepository {
                 shipping_method = COALESCE($9, shipping_method),
                 shipping_carrier = COALESCE($10, shipping_carrier),
                 coupon_code = COALESCE($11, coupon_code),
-                notes = COALESCE($12, notes),
-                metadata = COALESCE($13, metadata),
-                updated_at = $14
-            WHERE id = $15"#,
+                discount_amount = COALESCE($12, discount_amount),
+                discount_description = COALESCE($13, discount_description),
+                notes = COALESCE($14, notes),
+                metadata = COALESCE($15, metadata),
+                updated_at = $16
+            WHERE id = $17"#,
         )
         .bind(input.customer_id)
         .bind(&input.customer_email)
@@ -432,6 +434,8 @@ impl PgCartRepository {
         .bind(&input.shipping_method)
         .bind(&input.shipping_carrier)
         .bind(&input.coupon_code)
+        .bind(input.discount_amount)
+        .bind(&input.discount_description)
         .bind(&input.notes)
         .bind(&input.metadata)
         .bind(now)
@@ -617,6 +621,15 @@ impl PgCartRepository {
         if let Some(price) = input.unit_price {
             sqlx::query("UPDATE cart_items SET unit_price = $1, updated_at = $2 WHERE id = $3")
                 .bind(price)
+                .bind(now)
+                .bind(item_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+        }
+        if let Some(discount) = input.discount_amount {
+            sqlx::query("UPDATE cart_items SET discount_amount = $1, updated_at = $2 WHERE id = $3")
+                .bind(discount)
                 .bind(now)
                 .bind(item_id)
                 .execute(&mut *tx)

@@ -9,8 +9,8 @@ use stateset_core::{
     CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType,
     JurisdictionLevel, ProductTaxCategory, Result, TaxAddress, TaxBreakdown, TaxCalculationMethod,
     TaxCalculationRequest, TaxCalculationResult, TaxCompoundMethod, TaxExemption, TaxJurisdiction,
-    TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxSettings, TaxType, LineItemTax, TaxDetail,
-    JurisdictionSummary,
+    TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings, TaxType,
+    LineItemTax, TaxDetail, JurisdictionSummary,
 };
 use uuid::Uuid;
 
@@ -955,5 +955,88 @@ impl SqliteTaxRepository {
         ).map_err(map_db_error)?;
 
         Ok(())
+    }
+}
+
+impl TaxRepository for SqliteTaxRepository {
+    fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction> {
+        SqliteTaxRepository::create_jurisdiction(self, input)
+    }
+
+    fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>> {
+        SqliteTaxRepository::get_jurisdiction(self, id)
+    }
+
+    fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>> {
+        SqliteTaxRepository::get_jurisdiction_by_code(self, code)
+    }
+
+    fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>> {
+        SqliteTaxRepository::list_jurisdictions(self, filter)
+    }
+
+    fn create_rate(&self, input: CreateTaxRate) -> Result<TaxRate> {
+        SqliteTaxRepository::create_rate(self, input)
+    }
+
+    fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>> {
+        SqliteTaxRepository::get_rate(self, id)
+    }
+
+    fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>> {
+        SqliteTaxRepository::list_rates(self, filter)
+    }
+
+    fn get_rates_for_address(
+        &self,
+        address: &TaxAddress,
+        category: ProductTaxCategory,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<TaxRate>> {
+        SqliteTaxRepository::get_rates_for_address(self, address, category, date)
+    }
+
+    fn create_exemption(&self, input: CreateTaxExemption) -> Result<TaxExemption> {
+        SqliteTaxRepository::create_exemption(self, input)
+    }
+
+    fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>> {
+        SqliteTaxRepository::get_exemption(self, id)
+    }
+
+    fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
+        SqliteTaxRepository::get_customer_exemptions(self, customer_id)
+    }
+
+    fn get_settings(&self) -> Result<TaxSettings> {
+        SqliteTaxRepository::get_settings(self)
+    }
+
+    fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings> {
+        SqliteTaxRepository::update_settings(self, settings)
+    }
+
+    fn calculate_tax(&self, request: TaxCalculationRequest) -> Result<TaxCalculationResult> {
+        SqliteTaxRepository::calculate_tax(self, request)
+    }
+
+    fn save_calculation(
+        &self,
+        result: &TaxCalculationResult,
+        order_id: Option<Uuid>,
+        cart_id: Option<Uuid>,
+        customer_id: Option<Uuid>,
+        address: &TaxAddress,
+        currency: &str,
+    ) -> Result<()> {
+        SqliteTaxRepository::save_calculation(
+            self,
+            result,
+            order_id,
+            cart_id,
+            customer_id,
+            address,
+            currency,
+        )
     }
 }

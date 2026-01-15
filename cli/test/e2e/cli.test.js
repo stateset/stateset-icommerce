@@ -10,8 +10,10 @@ import { spawn, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const CLI_DIR = path.join(import.meta.dirname, '..', '..', 'bin');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CLI_DIR = path.join(__dirname, '..', '..', 'bin');
 const TEST_DB = path.join(os.tmpdir(), `stateset-e2e-${Date.now()}.db`);
 
 /**

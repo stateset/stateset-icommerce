@@ -40,17 +40,18 @@ use stateset_core::{
     IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result, SetItemCost,
     SkuCostSummary,
 };
-use stateset_db::sqlite::SqliteCostAccountingRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Cost Accounting management interface.
 pub struct CostAccounting {
-    repo: SqliteCostAccountingRepository,
+    db: Arc<dyn Database>,
 }
 
 impl CostAccounting {
-    pub(crate) fn new(repo: SqliteCostAccountingRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -59,7 +60,7 @@ impl CostAccounting {
 
     /// Get the cost record for an item by SKU.
     pub fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>> {
-        self.repo.get_item_cost(sku)
+        self.db.cost_accounting().get_item_cost(sku)
     }
 
     /// Set or update the cost for an item.
@@ -82,12 +83,12 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn set_item_cost(&self, input: SetItemCost) -> Result<ItemCost> {
-        self.repo.set_item_cost(input)
+        self.db.cost_accounting().set_item_cost(input)
     }
 
     /// List item costs with optional filtering.
     pub fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
-        self.repo.list_item_costs(filter)
+        self.db.cost_accounting().list_item_costs(filter)
     }
 
     /// Update the average cost when receiving inventory.
@@ -95,12 +96,12 @@ impl CostAccounting {
     /// This performs a weighted average calculation based on
     /// existing quantity/cost and new receipt.
     pub fn update_average_cost(&self, sku: &str, quantity: Decimal, unit_cost: Decimal) -> Result<ItemCost> {
-        self.repo.update_average_cost(sku, quantity, unit_cost)
+        self.db.cost_accounting().update_average_cost(sku, quantity, unit_cost)
     }
 
     /// Update the last purchase cost.
     pub fn update_last_cost(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
-        self.repo.update_last_cost(sku, unit_cost)
+        self.db.cost_accounting().update_last_cost(sku, unit_cost)
     }
 
     // ========================================================================
@@ -133,17 +134,17 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_cost_layer(&self, input: CreateCostLayer) -> Result<CostLayer> {
-        self.repo.create_cost_layer(input)
+        self.db.cost_accounting().create_cost_layer(input)
     }
 
     /// Get a cost layer by ID.
     pub fn get_cost_layer(&self, id: Uuid) -> Result<Option<CostLayer>> {
-        self.repo.get_cost_layer(id)
+        self.db.cost_accounting().get_cost_layer(id)
     }
 
     /// List cost layers with optional filtering.
     pub fn list_cost_layers(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>> {
-        self.repo.list_cost_layers(filter)
+        self.db.cost_accounting().list_cost_layers(filter)
     }
 
     /// Issue inventory using FIFO (First-In-First-Out) costing.
@@ -173,19 +174,19 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        self.repo.issue_fifo(input)
+        self.db.cost_accounting().issue_fifo(input)
     }
 
     /// Issue inventory using LIFO (Last-In-First-Out) costing.
     ///
     /// Consumes from newest cost layers first.
     pub fn issue_lifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
-        self.repo.issue_lifo(input)
+        self.db.cost_accounting().issue_lifo(input)
     }
 
     /// Get total remaining quantity in cost layers for a SKU.
     pub fn get_layers_remaining(&self, sku: &str) -> Result<Decimal> {
-        self.repo.get_layers_remaining(sku)
+        self.db.cost_accounting().get_layers_remaining(sku)
     }
 
     // ========================================================================
@@ -204,7 +205,7 @@ impl CostAccounting {
         reference_id: Option<Uuid>,
         notes: Option<&str>,
     ) -> Result<CostTransaction> {
-        self.repo.record_cost_transaction(
+        self.db.cost_accounting().record_cost_transaction(
             sku, transaction_type, quantity, unit_cost,
             layer_id, reference_type, reference_id, notes
         )
@@ -212,7 +213,7 @@ impl CostAccounting {
 
     /// List cost transactions with optional filtering.
     pub fn list_cost_transactions(&self, filter: CostTransactionFilter) -> Result<Vec<CostTransaction>> {
-        self.repo.list_cost_transactions(filter)
+        self.db.cost_accounting().list_cost_transactions(filter)
     }
 
     // ========================================================================
@@ -246,17 +247,17 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn record_variance(&self, input: RecordCostVariance) -> Result<CostVariance> {
-        self.repo.record_variance(input)
+        self.db.cost_accounting().record_variance(input)
     }
 
     /// List cost variances with optional filtering.
     pub fn list_variances(&self, filter: CostVarianceFilter) -> Result<Vec<CostVariance>> {
-        self.repo.list_variances(filter)
+        self.db.cost_accounting().list_variances(filter)
     }
 
     /// Get total variance for a period.
     pub fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Decimal> {
-        self.repo.get_variance_summary(from, to)
+        self.db.cost_accounting().get_variance_summary(from, to)
     }
 
     // ========================================================================
@@ -287,34 +288,34 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
-        self.repo.create_adjustment(input)
+        self.db.cost_accounting().create_adjustment(input)
     }
 
     /// Get a cost adjustment by ID.
     pub fn get_adjustment(&self, id: Uuid) -> Result<Option<CostAdjustment>> {
-        self.repo.get_adjustment(id)
+        self.db.cost_accounting().get_adjustment(id)
     }
 
     /// List cost adjustments with optional filtering.
     pub fn list_adjustments(&self, filter: CostAdjustmentFilter) -> Result<Vec<CostAdjustment>> {
-        self.repo.list_adjustments(filter)
+        self.db.cost_accounting().list_adjustments(filter)
     }
 
     /// Approve a cost adjustment.
     pub fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment> {
-        self.repo.approve_adjustment(id, approved_by)
+        self.db.cost_accounting().approve_adjustment(id, approved_by)
     }
 
     /// Apply an approved cost adjustment.
     ///
     /// Updates the item's standard cost.
     pub fn apply_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
-        self.repo.apply_adjustment(id)
+        self.db.cost_accounting().apply_adjustment(id)
     }
 
     /// Reject a cost adjustment.
     pub fn reject_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
-        self.repo.reject_adjustment(id)
+        self.db.cost_accounting().reject_adjustment(id)
     }
 
     // ========================================================================
@@ -325,12 +326,12 @@ impl CostAccounting {
     ///
     /// Sums component costs from the BOM to determine total cost.
     pub fn calculate_rollup(&self, sku: &str, bom_id: Option<Uuid>) -> Result<CostRollup> {
-        self.repo.calculate_rollup(sku, bom_id)
+        self.db.cost_accounting().calculate_rollup(sku, bom_id)
     }
 
     /// Get the latest cost rollup for a SKU.
     pub fn get_rollup(&self, sku: &str) -> Result<Option<CostRollup>> {
-        self.repo.get_rollup(sku)
+        self.db.cost_accounting().get_rollup(sku)
     }
 
     // ========================================================================
@@ -353,16 +354,16 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        self.repo.get_inventory_valuation(cost_method)
+        self.db.cost_accounting().get_inventory_valuation(cost_method)
     }
 
     /// Get cost summary for a specific SKU.
     pub fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
-        self.repo.get_sku_cost_summary(sku)
+        self.db.cost_accounting().get_sku_cost_summary(sku)
     }
 
     /// Get total inventory value.
     pub fn get_total_inventory_value(&self) -> Result<Decimal> {
-        self.repo.get_total_inventory_value()
+        self.db.cost_accounting().get_total_inventory_value()
     }
 }

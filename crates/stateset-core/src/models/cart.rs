@@ -318,6 +318,7 @@ impl Default for AddCartItem {
 pub struct UpdateCartItem {
     pub quantity: Option<i32>,
     pub unit_price: Option<Decimal>,
+    pub discount_amount: Option<Decimal>,
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -335,6 +336,8 @@ pub struct UpdateCart {
     pub shipping_method: Option<String>,
     pub shipping_carrier: Option<String>,
     pub coupon_code: Option<String>,
+    pub discount_amount: Option<Decimal>,
+    pub discount_description: Option<String>,
     pub notes: Option<String>,
     pub metadata: Option<serde_json::Value>,
 }

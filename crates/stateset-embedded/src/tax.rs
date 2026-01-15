@@ -13,7 +13,8 @@ use stateset_core::{
     Result, TaxAddress, TaxCalculationRequest, TaxCalculationResult, TaxExemption, TaxJurisdiction,
     TaxJurisdictionFilter, TaxLineItem, TaxRate, TaxRateFilter, TaxSettings,
 };
-use stateset_db::sqlite::SqliteTaxRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Tax calculation and management interface.
@@ -53,12 +54,12 @@ use uuid::Uuid;
 /// # Ok::<(), stateset_embedded::CommerceError>(())
 /// ```
 pub struct Tax {
-    repo: SqliteTaxRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Tax {
-    pub(crate) fn new(repo: SqliteTaxRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -100,7 +101,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn calculate(&self, request: TaxCalculationRequest) -> Result<TaxCalculationResult> {
-        self.repo.calculate_tax(request)
+        self.db.tax().calculate_tax(request)
     }
 
     /// Calculate tax for a single item (convenience method).
@@ -177,7 +178,7 @@ impl Tax {
         category: ProductTaxCategory,
     ) -> Result<Decimal> {
         let today = chrono::Utc::now().date_naive();
-        let rates = self.repo.get_rates_for_address(address, category, today)?;
+        let rates = self.db.tax().get_rates_for_address(address, category, today)?;
 
         let total_rate: Decimal = rates.iter()
             .filter(|r| !r.is_compound)
@@ -193,7 +194,7 @@ impl Tax {
 
     /// Get a tax jurisdiction by ID.
     pub fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>> {
-        self.repo.get_jurisdiction(id)
+        self.db.tax().get_jurisdiction(id)
     }
 
     /// Get a tax jurisdiction by code (e.g., "US-CA").
@@ -209,7 +210,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>> {
-        self.repo.get_jurisdiction_by_code(code)
+        self.db.tax().get_jurisdiction_by_code(code)
     }
 
     /// List tax jurisdictions with optional filtering.
@@ -233,7 +234,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>> {
-        self.repo.list_jurisdictions(filter)
+        self.db.tax().list_jurisdictions(filter)
     }
 
     /// Create a new tax jurisdiction.
@@ -255,7 +256,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction> {
-        self.repo.create_jurisdiction(input)
+        self.db.tax().create_jurisdiction(input)
     }
 
     // ========================================================================
@@ -264,7 +265,7 @@ impl Tax {
 
     /// Get a tax rate by ID.
     pub fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>> {
-        self.repo.get_rate(id)
+        self.db.tax().get_rate(id)
     }
 
     /// List tax rates with optional filtering.
@@ -287,7 +288,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>> {
-        self.repo.list_rates(filter)
+        self.db.tax().list_rates(filter)
     }
 
     /// Create a new tax rate.
@@ -311,7 +312,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create_rate(&self, input: CreateTaxRate) -> Result<TaxRate> {
-        self.repo.create_rate(input)
+        self.db.tax().create_rate(input)
     }
 
     /// Get rates for a specific address and product category.
@@ -323,7 +324,7 @@ impl Tax {
         category: ProductTaxCategory,
         date: NaiveDate,
     ) -> Result<Vec<TaxRate>> {
-        self.repo.get_rates_for_address(address, category, date)
+        self.db.tax().get_rates_for_address(address, category, date)
     }
 
     // ========================================================================
@@ -332,7 +333,7 @@ impl Tax {
 
     /// Get an exemption by ID.
     pub fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>> {
-        self.repo.get_exemption(id)
+        self.db.tax().get_exemption(id)
     }
 
     /// Get active exemptions for a customer.
@@ -353,7 +354,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
-        self.repo.get_customer_exemptions(customer_id)
+        self.db.tax().get_customer_exemptions(customer_id)
     }
 
     /// Create a tax exemption for a customer.
@@ -375,7 +376,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create_exemption(&self, input: CreateTaxExemption) -> Result<TaxExemption> {
-        self.repo.create_exemption(input)
+        self.db.tax().create_exemption(input)
     }
 
     /// Check if a customer has an active exemption.
@@ -414,7 +415,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn get_settings(&self) -> Result<TaxSettings> {
-        self.repo.get_settings()
+        self.db.tax().get_settings()
     }
 
     /// Update tax settings.
@@ -432,7 +433,7 @@ impl Tax {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings> {
-        self.repo.update_settings(settings)
+        self.db.tax().update_settings(settings)
     }
 
     /// Enable or disable tax calculation.

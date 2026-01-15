@@ -32,17 +32,18 @@ use stateset_core::{
     CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
     GenerateStatementRequest, Invoice, Result, WriteOff, WriteOffFilter,
 };
-use stateset_db::sqlite::SqliteAccountsReceivableRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Accounts Receivable interface.
 pub struct AccountsReceivable {
-    repo: SqliteAccountsReceivableRepository,
+    db: Arc<dyn Database>,
 }
 
 impl AccountsReceivable {
-    pub(crate) fn new(repo: SqliteAccountsReceivableRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -68,17 +69,17 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_aging_summary(&self) -> Result<ArAgingSummary> {
-        self.repo.get_aging_summary()
+        self.db.accounts_receivable().get_aging_summary()
     }
 
     /// Get AR aging for a specific customer.
     pub fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
-        self.repo.get_customer_aging(customer_id)
+        self.db.accounts_receivable().get_customer_aging(customer_id)
     }
 
     /// Get detailed AR aging report with filtering.
     pub fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
-        self.repo.get_aging_report(filter)
+        self.db.accounts_receivable().get_aging_report(filter)
     }
 
     // ========================================================================
@@ -109,17 +110,17 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
-        self.repo.log_collection_activity(input)
+        self.db.accounts_receivable().log_collection_activity(input)
     }
 
     /// List collection activities with filtering.
     pub fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>> {
-        self.repo.list_collection_activities(filter)
+        self.db.accounts_receivable().list_collection_activities(filter)
     }
 
     /// Update the collection status of an invoice.
     pub fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
-        self.repo.update_collection_status(invoice_id, status)
+        self.db.accounts_receivable().update_collection_status(invoice_id, status)
     }
 
     // ========================================================================
@@ -128,7 +129,7 @@ impl AccountsReceivable {
 
     /// Get invoices that are due for dunning letters.
     pub fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
-        self.repo.get_invoices_due_for_dunning()
+        self.db.accounts_receivable().get_invoices_due_for_dunning()
     }
 
     /// Send a dunning letter and log the activity.
@@ -154,7 +155,7 @@ impl AccountsReceivable {
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
-        self.repo.send_dunning_letter(invoice_id, letter_type, sent_by)
+        self.db.accounts_receivable().send_dunning_letter(invoice_id, letter_type, sent_by)
     }
 
     // ========================================================================
@@ -182,22 +183,22 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
-        self.repo.create_write_off(input)
+        self.db.accounts_receivable().create_write_off(input)
     }
 
     /// Get a write-off by ID.
     pub fn get_write_off(&self, id: Uuid) -> Result<Option<WriteOff>> {
-        self.repo.get_write_off(id)
+        self.db.accounts_receivable().get_write_off(id)
     }
 
     /// List write-offs with filtering.
     pub fn list_write_offs(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>> {
-        self.repo.list_write_offs(filter)
+        self.db.accounts_receivable().list_write_offs(filter)
     }
 
     /// Reverse a write-off (restore invoice to collections).
     pub fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff> {
-        self.repo.reverse_write_off(id)
+        self.db.accounts_receivable().reverse_write_off(id)
     }
 
     // ========================================================================
@@ -225,37 +226,37 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
-        self.repo.create_credit_memo(input)
+        self.db.accounts_receivable().create_credit_memo(input)
     }
 
     /// Get a credit memo by ID.
     pub fn get_credit_memo(&self, id: Uuid) -> Result<Option<CreditMemo>> {
-        self.repo.get_credit_memo(id)
+        self.db.accounts_receivable().get_credit_memo(id)
     }
 
     /// Get a credit memo by number.
     pub fn get_credit_memo_by_number(&self, number: &str) -> Result<Option<CreditMemo>> {
-        self.repo.get_credit_memo_by_number(number)
+        self.db.accounts_receivable().get_credit_memo_by_number(number)
     }
 
     /// List credit memos with filtering.
     pub fn list_credit_memos(&self, filter: CreditMemoFilter) -> Result<Vec<CreditMemo>> {
-        self.repo.list_credit_memos(filter)
+        self.db.accounts_receivable().list_credit_memos(filter)
     }
 
     /// Apply a credit memo to an invoice.
     pub fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
-        self.repo.apply_credit_memo(input)
+        self.db.accounts_receivable().apply_credit_memo(input)
     }
 
     /// Void a credit memo (only if not yet applied).
     pub fn void_credit_memo(&self, id: Uuid) -> Result<CreditMemo> {
-        self.repo.void_credit_memo(id)
+        self.db.accounts_receivable().void_credit_memo(id)
     }
 
     /// Get unapplied credit memos for a customer.
     pub fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
-        self.repo.get_unapplied_credits(customer_id)
+        self.db.accounts_receivable().get_unapplied_credits(customer_id)
     }
 
     // ========================================================================
@@ -291,17 +292,17 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>> {
-        self.repo.apply_payment_to_invoices(input)
+        self.db.accounts_receivable().apply_payment_to_invoices(input)
     }
 
     /// Get all payment applications for a payment.
     pub fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>> {
-        self.repo.get_payment_applications(payment_id)
+        self.db.accounts_receivable().get_payment_applications(payment_id)
     }
 
     /// Unapply a payment application (remove application, restore invoice balance).
     pub fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        self.repo.unapply_payment(application_id)
+        self.db.accounts_receivable().unapply_payment(application_id)
     }
 
     // ========================================================================
@@ -310,7 +311,7 @@ impl AccountsReceivable {
 
     /// Get AR summary for a customer.
     pub fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
-        self.repo.get_customer_summary(customer_id)
+        self.db.accounts_receivable().get_customer_summary(customer_id)
     }
 
     /// Generate a customer statement.
@@ -338,7 +339,7 @@ impl AccountsReceivable {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
-        self.repo.generate_statement(request)
+        self.db.accounts_receivable().generate_statement(request)
     }
 
     // ========================================================================
@@ -347,21 +348,21 @@ impl AccountsReceivable {
 
     /// Get total outstanding receivables.
     pub fn get_total_outstanding(&self) -> Result<Decimal> {
-        self.repo.get_total_outstanding()
+        self.db.accounts_receivable().get_total_outstanding()
     }
 
     /// Calculate Days Sales Outstanding (DSO).
     pub fn get_dso(&self, days: i32) -> Result<Decimal> {
-        self.repo.get_dso(days)
+        self.db.accounts_receivable().get_dso(days)
     }
 
     /// Get average days to pay for a customer.
     pub fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>> {
-        self.repo.get_average_days_to_pay(customer_id)
+        self.db.accounts_receivable().get_average_days_to_pay(customer_id)
     }
 
     /// Get AR summary for multiple customers.
     pub fn get_customers_batch(&self, ids: Vec<Uuid>) -> Result<Vec<CustomerArSummary>> {
-        self.repo.get_customers_batch(ids)
+        self.db.accounts_receivable().get_customers_batch(ids)
     }
 }

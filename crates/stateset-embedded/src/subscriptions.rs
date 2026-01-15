@@ -41,21 +41,22 @@
 use chrono::{DateTime, Utc};
 use stateset_core::{
     BillingCycle, BillingCycleFilter, BillingCycleStatus, CancelSubscription,
-    CreateSubscription, CreateSubscriptionPlan, PauseSubscription, Result,
+    CreateBillingCycle, CreateSubscription, CreateSubscriptionPlan, PauseSubscription, Result,
     SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionFilter,
     SubscriptionPlan, SubscriptionPlanFilter, UpdateSubscription, UpdateSubscriptionPlan,
 };
-use stateset_db::sqlite::SqliteSubscriptionRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Subscription management interface.
 pub struct Subscriptions {
-    repo: SqliteSubscriptionRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Subscriptions {
-    pub(crate) fn new(repo: SqliteSubscriptionRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -82,17 +83,17 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
-        self.repo.create_plan(input)
+        self.db.subscriptions().create_plan(input)
     }
 
     /// Get a subscription plan by ID.
     pub fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>> {
-        self.repo.get_plan(id)
+        self.db.subscriptions().get_plan(id)
     }
 
     /// Get a subscription plan by its code.
     pub fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>> {
-        self.repo.get_plan_by_code(code)
+        self.db.subscriptions().get_plan_by_code(code)
     }
 
     /// List subscription plans with optional filtering.
@@ -112,22 +113,22 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>> {
-        self.repo.list_plans(filter)
+        self.db.subscriptions().list_plans(filter)
     }
 
     /// Update a subscription plan.
     pub fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan> {
-        self.repo.update_plan(id, input)
+        self.db.subscriptions().update_plan(id, input)
     }
 
     /// Activate a subscription plan (make it available for new subscriptions).
     pub fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.repo.activate_plan(id)
+        self.db.subscriptions().activate_plan(id)
     }
 
     /// Archive a subscription plan (no new subscriptions, existing ones continue).
     pub fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.repo.archive_plan(id)
+        self.db.subscriptions().archive_plan(id)
     }
 
     // ========================================================================
@@ -155,17 +156,17 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn subscribe(&self, input: CreateSubscription) -> Result<Subscription> {
-        self.repo.create_subscription(input)
+        self.db.subscriptions().create_subscription(input)
     }
 
     /// Get a subscription by ID.
     pub fn get(&self, id: Uuid) -> Result<Option<Subscription>> {
-        self.repo.get_subscription(id)
+        self.db.subscriptions().get_subscription(id)
     }
 
     /// Get a subscription by its number (e.g., "SUB-123456").
     pub fn get_by_number(&self, number: &str) -> Result<Option<Subscription>> {
-        self.repo.get_subscription_by_number(number)
+        self.db.subscriptions().get_subscription_by_number(number)
     }
 
     /// List subscriptions with optional filtering.
@@ -187,12 +188,12 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>> {
-        self.repo.list_subscriptions(filter)
+        self.db.subscriptions().list_subscriptions(filter)
     }
 
     /// Update a subscription.
     pub fn update(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
-        self.repo.update_subscription(id, input)
+        self.db.subscriptions().update_subscription(id, input)
     }
 
     // ========================================================================
@@ -221,14 +222,14 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn pause(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
-        self.repo.pause_subscription(id, input)
+        self.db.subscriptions().pause_subscription(id, input)
     }
 
     /// Resume a paused subscription.
     ///
     /// This reactivates billing and creates a new billing period.
     pub fn resume(&self, id: Uuid) -> Result<Subscription> {
-        self.repo.resume_subscription(id)
+        self.db.subscriptions().resume_subscription(id)
     }
 
     /// Cancel a subscription.
@@ -259,7 +260,7 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn cancel(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
-        self.repo.cancel_subscription(id, input)
+        self.db.subscriptions().cancel_subscription(id, input)
     }
 
     /// Skip the next billing cycle.
@@ -281,7 +282,7 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn skip_next_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
-        self.repo.skip_billing_cycle(id, input)
+        self.db.subscriptions().skip_billing_cycle(id, input)
     }
 
     // ========================================================================
@@ -299,17 +300,22 @@ impl Subscriptions {
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
     ) -> Result<BillingCycle> {
-        self.repo.create_billing_cycle(subscription_id, cycle_number, period_start, period_end)
+        self.db.subscriptions().create_billing_cycle(CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+        })
     }
 
     /// Get a billing cycle by ID.
     pub fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
-        self.repo.get_billing_cycle(id)
+        self.db.subscriptions().get_billing_cycle(id)
     }
 
     /// List billing cycles with optional filtering.
     pub fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
-        self.repo.list_billing_cycles(filter)
+        self.db.subscriptions().list_billing_cycles(filter)
     }
 
     /// Update billing cycle status (mark as paid, failed, etc.).
@@ -320,17 +326,17 @@ impl Subscriptions {
         payment_id: Option<String>,
         failure_reason: Option<String>,
     ) -> Result<BillingCycle> {
-        self.repo.update_billing_cycle_status(id, status, payment_id, failure_reason)
+        self.db.subscriptions().update_billing_cycle_status(id, status, payment_id, failure_reason)
     }
 
     /// Mark a billing cycle as paid.
     pub fn mark_cycle_paid(&self, id: Uuid, payment_id: String) -> Result<BillingCycle> {
-        self.repo.update_billing_cycle_status(id, BillingCycleStatus::Paid, Some(payment_id), None)
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Paid, Some(payment_id), None)
     }
 
     /// Mark a billing cycle as failed.
     pub fn mark_cycle_failed(&self, id: Uuid, reason: &str) -> Result<BillingCycle> {
-        self.repo.update_billing_cycle_status(id, BillingCycleStatus::Failed, None, Some(reason.to_string()))
+        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Failed, None, Some(reason.to_string()))
     }
 
     // ========================================================================
@@ -354,7 +360,7 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_events(&self, subscription_id: Uuid, limit: Option<u32>) -> Result<Vec<SubscriptionEvent>> {
-        self.repo.get_subscription_events(subscription_id, limit)
+        self.db.subscriptions().get_subscription_events(subscription_id, limit)
     }
 
     // ========================================================================

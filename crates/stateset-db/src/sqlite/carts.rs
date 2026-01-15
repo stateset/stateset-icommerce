@@ -392,6 +392,14 @@ impl CartRepository for SqliteCartRepository {
             updates.push("coupon_code = ?");
             params.push(Box::new(coupon.clone()));
         }
+        if let Some(discount_amount) = &input.discount_amount {
+            updates.push("discount_amount = ?");
+            params.push(Box::new(discount_amount.to_string()));
+        }
+        if let Some(description) = &input.discount_description {
+            updates.push("discount_description = ?");
+            params.push(Box::new(description.clone()));
+        }
         if let Some(notes) = &input.notes {
             updates.push("notes = ?");
             params.push(Box::new(notes.clone()));
@@ -542,6 +550,10 @@ impl CartRepository for SqliteCartRepository {
         if let Some(price) = input.unit_price {
             updates.push("unit_price = ?");
             params.push(Box::new(price.to_string()));
+        }
+        if let Some(discount) = input.discount_amount {
+            updates.push("discount_amount = ?");
+            params.push(Box::new(discount.to_string()));
         }
         if let Some(meta) = &input.metadata {
             updates.push("metadata = ?");

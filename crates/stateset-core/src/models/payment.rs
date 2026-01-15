@@ -84,8 +84,10 @@ pub enum PaymentMethodType {
     ApplePay,
     /// Google Pay
     GooglePay,
-    /// Cryptocurrency
+    /// Cryptocurrency (native tokens)
     Crypto,
+    /// Stablecoin (USDC, USDT, ssUSD)
+    Stablecoin,
     /// Store credit
     StoreCredit,
     /// Gift card
@@ -98,6 +100,110 @@ pub enum PaymentMethodType {
     Other,
 }
 
+/// Blockchain network for crypto/stablecoin payments
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockchainNetwork {
+    /// Solana mainnet
+    #[default]
+    Solana,
+    /// Solana devnet (testing)
+    SolanaDevnet,
+    /// SET Chain L2 (StateSet native)
+    SetChain,
+    /// SET Chain testnet
+    SetChainTestnet,
+    /// Ethereum mainnet
+    Ethereum,
+    /// Base L2 (Coinbase)
+    Base,
+    /// Arbitrum L2
+    Arbitrum,
+    /// NEAR Protocol
+    Near,
+    /// Cosmos Hub
+    Cosmos,
+}
+
+impl std::fmt::Display for BlockchainNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Solana => write!(f, "solana"),
+            Self::SolanaDevnet => write!(f, "solana_devnet"),
+            Self::SetChain => write!(f, "set_chain"),
+            Self::SetChainTestnet => write!(f, "set_chain_testnet"),
+            Self::Ethereum => write!(f, "ethereum"),
+            Self::Base => write!(f, "base"),
+            Self::Arbitrum => write!(f, "arbitrum"),
+            Self::Near => write!(f, "near"),
+            Self::Cosmos => write!(f, "cosmos"),
+        }
+    }
+}
+
+impl std::str::FromStr for BlockchainNetwork {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "solana" | "solana_mainnet" | "mainnet-beta" => Ok(Self::Solana),
+            "solana_devnet" | "devnet" => Ok(Self::SolanaDevnet),
+            "set_chain" | "set" | "ssc" => Ok(Self::SetChain),
+            "set_chain_testnet" | "set_testnet" => Ok(Self::SetChainTestnet),
+            "ethereum" | "eth" => Ok(Self::Ethereum),
+            "base" => Ok(Self::Base),
+            "arbitrum" | "arb" => Ok(Self::Arbitrum),
+            "near" => Ok(Self::Near),
+            "cosmos" | "atom" => Ok(Self::Cosmos),
+            _ => Err(format!("Unknown blockchain network: {}", s)),
+        }
+    }
+}
+
+/// Stablecoin token type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StablecoinType {
+    /// USD Coin
+    #[default]
+    Usdc,
+    /// Tether
+    Usdt,
+    /// StateSet USD (native yield-bearing stablecoin)
+    SsUsd,
+    /// Wrapped StateSet USD (ERC4626)
+    WssUsd,
+    /// DAI
+    Dai,
+}
+
+impl std::fmt::Display for StablecoinType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usdc => write!(f, "USDC"),
+            Self::Usdt => write!(f, "USDT"),
+            Self::SsUsd => write!(f, "ssUSD"),
+            Self::WssUsd => write!(f, "wssUSD"),
+            Self::Dai => write!(f, "DAI"),
+        }
+    }
+}
+
+impl std::str::FromStr for StablecoinType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "USDC" => Ok(Self::Usdc),
+            "USDT" | "TETHER" => Ok(Self::Usdt),
+            "SSUSD" | "SS_USD" => Ok(Self::SsUsd),
+            "WSSUSD" | "WSS_USD" => Ok(Self::WssUsd),
+            "DAI" => Ok(Self::Dai),
+            _ => Err(format!("Unknown stablecoin: {}", s)),
+        }
+    }
+}
+
 impl std::fmt::Display for PaymentMethodType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -108,6 +214,7 @@ impl std::fmt::Display for PaymentMethodType {
             Self::ApplePay => write!(f, "apple_pay"),
             Self::GooglePay => write!(f, "google_pay"),
             Self::Crypto => write!(f, "crypto"),
+            Self::Stablecoin => write!(f, "stablecoin"),
             Self::StoreCredit => write!(f, "store_credit"),
             Self::GiftCard => write!(f, "gift_card"),
             Self::CashOnDelivery => write!(f, "cash_on_delivery"),
@@ -129,6 +236,7 @@ impl std::str::FromStr for PaymentMethodType {
             "apple_pay" => Ok(Self::ApplePay),
             "google_pay" => Ok(Self::GooglePay),
             "crypto" | "cryptocurrency" => Ok(Self::Crypto),
+            "stablecoin" | "usdc" | "usdt" | "ssusd" => Ok(Self::Stablecoin),
             "store_credit" => Ok(Self::StoreCredit),
             "gift_card" => Ok(Self::GiftCard),
             "cash_on_delivery" | "cod" => Ok(Self::CashOnDelivery),
@@ -266,6 +374,28 @@ pub struct Payment {
     pub card_exp_month: Option<i32>,
     /// Card expiry year (if card payment)
     pub card_exp_year: Option<i32>,
+    // =========================================================================
+    // Blockchain/Stablecoin Payment Fields
+    // =========================================================================
+    /// Blockchain network (for crypto/stablecoin payments)
+    pub blockchain_network: Option<BlockchainNetwork>,
+    /// Stablecoin type (USDC, USDT, ssUSD, etc.)
+    pub stablecoin_type: Option<StablecoinType>,
+    /// Sender wallet address
+    pub from_wallet_address: Option<String>,
+    /// Recipient wallet address
+    pub to_wallet_address: Option<String>,
+    /// On-chain transaction hash/signature
+    pub tx_hash: Option<String>,
+    /// Block number where transaction was confirmed
+    pub block_number: Option<i64>,
+    /// Number of on-chain confirmations
+    pub confirmations: Option<i32>,
+    /// Token contract/mint address (for token transfers)
+    pub token_address: Option<String>,
+    /// VES payment intent ID (for audit trail)
+    pub ves_intent_id: Option<String>,
+    // =========================================================================
     /// Billing email
     pub billing_email: Option<String>,
     /// Billing name
@@ -317,6 +447,20 @@ pub struct CreatePayment {
     pub card_exp_month: Option<i32>,
     /// Card expiry year
     pub card_exp_year: Option<i32>,
+    // =========================================================================
+    // Blockchain/Stablecoin Payment Fields
+    // =========================================================================
+    /// Blockchain network (solana, set_chain, base, etc.)
+    pub blockchain_network: Option<BlockchainNetwork>,
+    /// Stablecoin type (USDC, USDT, ssUSD)
+    pub stablecoin_type: Option<StablecoinType>,
+    /// Sender wallet address
+    pub from_wallet_address: Option<String>,
+    /// Recipient wallet address
+    pub to_wallet_address: Option<String>,
+    /// Token contract/mint address
+    pub token_address: Option<String>,
+    // =========================================================================
     /// Billing email
     pub billing_email: Option<String>,
     /// Billing name
@@ -342,6 +486,17 @@ pub struct UpdatePayment {
     pub failure_code: Option<String>,
     /// Update metadata
     pub metadata: Option<String>,
+    // =========================================================================
+    // Blockchain/Stablecoin Update Fields
+    // =========================================================================
+    /// On-chain transaction hash (set after broadcast)
+    pub tx_hash: Option<String>,
+    /// Block number (set after confirmation)
+    pub block_number: Option<i64>,
+    /// Number of confirmations
+    pub confirmations: Option<i32>,
+    /// VES payment intent ID
+    pub ves_intent_id: Option<String>,
 }
 
 /// Filter for listing payments
@@ -446,6 +601,16 @@ pub struct PaymentMethod {
     pub bank_name: Option<String>,
     /// Last 4 of account (if bank)
     pub account_last4: Option<String>,
+    // =========================================================================
+    // Blockchain/Wallet Fields (for Stablecoin/Crypto payment methods)
+    // =========================================================================
+    /// Wallet address (for crypto/stablecoin payments)
+    pub wallet_address: Option<String>,
+    /// Preferred blockchain network
+    pub blockchain_network: Option<BlockchainNetwork>,
+    /// Preferred stablecoin type
+    pub stablecoin_type: Option<StablecoinType>,
+    // =========================================================================
     /// External ID from payment processor
     pub external_id: Option<String>,
     /// Billing address
@@ -479,6 +644,16 @@ pub struct CreatePaymentMethod {
     pub bank_name: Option<String>,
     /// Account last 4
     pub account_last4: Option<String>,
+    // =========================================================================
+    // Blockchain/Wallet Fields (for Stablecoin/Crypto payment methods)
+    // =========================================================================
+    /// Wallet address (for receiving payments)
+    pub wallet_address: Option<String>,
+    /// Preferred blockchain network
+    pub blockchain_network: Option<BlockchainNetwork>,
+    /// Preferred stablecoin type
+    pub stablecoin_type: Option<StablecoinType>,
+    // =========================================================================
     /// External ID
     pub external_id: Option<String>,
     /// Billing address

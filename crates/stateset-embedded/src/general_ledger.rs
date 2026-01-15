@@ -36,17 +36,18 @@ use stateset_core::{
     JournalEntry, JournalEntryFilter, JournalEntryLine, Result, TrialBalance,
     UpdateGlAccount,
 };
-use stateset_db::sqlite::SqliteGeneralLedgerRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// General Ledger interface.
 pub struct GeneralLedger {
-    repo: SqliteGeneralLedgerRepository,
+    db: Arc<dyn Database>,
 }
 
 impl GeneralLedger {
-    pub(crate) fn new(repo: SqliteGeneralLedgerRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -75,37 +76,37 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_account(&self, input: CreateGlAccount) -> Result<GlAccount> {
-        self.repo.create_account(input)
+        self.db.general_ledger().create_account(input)
     }
 
     /// Get a GL account by ID.
     pub fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
-        self.repo.get_account(id)
+        self.db.general_ledger().get_account(id)
     }
 
     /// Get a GL account by account number.
     pub fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>> {
-        self.repo.get_account_by_number(account_number)
+        self.db.general_ledger().get_account_by_number(account_number)
     }
 
     /// Update a GL account.
     pub fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
-        self.repo.update_account(id, input)
+        self.db.general_ledger().update_account(id, input)
     }
 
     /// List GL accounts with filtering.
     pub fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
-        self.repo.list_accounts(filter)
+        self.db.general_ledger().list_accounts(filter)
     }
 
     /// Get the full account hierarchy.
     pub fn get_account_hierarchy(&self) -> Result<Vec<GlAccount>> {
-        self.repo.get_account_hierarchy()
+        self.db.general_ledger().get_account_hierarchy()
     }
 
     /// Delete a GL account (only if no transactions).
     pub fn delete_account(&self, id: Uuid) -> Result<()> {
-        self.repo.delete_account(id)
+        self.db.general_ledger().delete_account(id)
     }
 
     /// Initialize the standard chart of accounts.
@@ -125,7 +126,7 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>> {
-        self.repo.initialize_chart_of_accounts()
+        self.db.general_ledger().initialize_chart_of_accounts()
     }
 
     // ========================================================================
@@ -152,47 +153,47 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod> {
-        self.repo.create_period(input)
+        self.db.general_ledger().create_period(input)
     }
 
     /// Get a period by ID.
     pub fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
-        self.repo.get_period(id)
+        self.db.general_ledger().get_period(id)
     }
 
     /// Get the current open period.
     pub fn get_current_period(&self) -> Result<Option<GlPeriod>> {
-        self.repo.get_current_period()
+        self.db.general_ledger().get_current_period()
     }
 
     /// Get the period for a specific date.
     pub fn get_period_for_date(&self, date: NaiveDate) -> Result<Option<GlPeriod>> {
-        self.repo.get_period_for_date(date)
+        self.db.general_ledger().get_period_for_date(date)
     }
 
     /// List periods with filtering.
     pub fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
-        self.repo.list_periods(filter)
+        self.db.general_ledger().list_periods(filter)
     }
 
     /// Open a period (transition from future to open).
     pub fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
-        self.repo.open_period(id)
+        self.db.general_ledger().open_period(id)
     }
 
     /// Close a period (no more postings allowed except adjustments).
     pub fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        self.repo.close_period(id, closed_by)
+        self.db.general_ledger().close_period(id, closed_by)
     }
 
     /// Lock a period (permanently closed, no changes allowed).
     pub fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        self.repo.lock_period(id, locked_by)
+        self.db.general_ledger().lock_period(id, locked_by)
     }
 
     /// Reopen a closed period (for adjustments).
     pub fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
-        self.repo.reopen_period(id)
+        self.db.general_ledger().reopen_period(id)
     }
 
     // ========================================================================
@@ -225,42 +226,42 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
-        self.repo.create_journal_entry(input)
+        self.db.general_ledger().create_journal_entry(input)
     }
 
     /// Get a journal entry by ID.
     pub fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
-        self.repo.get_journal_entry(id)
+        self.db.general_ledger().get_journal_entry(id)
     }
 
     /// Get a journal entry by entry number.
     pub fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>> {
-        self.repo.get_journal_entry_by_number(number)
+        self.db.general_ledger().get_journal_entry_by_number(number)
     }
 
     /// List journal entries with filtering.
     pub fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>> {
-        self.repo.list_journal_entries(filter)
+        self.db.general_ledger().list_journal_entries(filter)
     }
 
     /// Post a journal entry (update account balances).
     pub fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        self.repo.post_journal_entry(id, posted_by)
+        self.db.general_ledger().post_journal_entry(id, posted_by)
     }
 
     /// Void a posted journal entry.
     pub fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        self.repo.void_journal_entry(id)
+        self.db.general_ledger().void_journal_entry(id)
     }
 
     /// Reverse a journal entry (create an offsetting entry).
     pub fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
-        self.repo.reverse_journal_entry(id, reversal_date)
+        self.db.general_ledger().reverse_journal_entry(id, reversal_date)
     }
 
     /// Get journal entry lines for an entry.
     pub fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
-        self.repo.get_journal_entry_lines(journal_entry_id)
+        self.db.general_ledger().get_journal_entry_lines(journal_entry_id)
     }
 
     // ========================================================================
@@ -269,7 +270,7 @@ impl GeneralLedger {
 
     /// Get the current auto-posting configuration.
     pub fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>> {
-        self.repo.get_auto_posting_config()
+        self.db.general_ledger().get_auto_posting_config()
     }
 
     /// Set up auto-posting configuration.
@@ -296,7 +297,7 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn set_auto_posting_config(&self, input: CreateAutoPostingConfig) -> Result<AutoPostingConfig> {
-        self.repo.set_auto_posting_config(input)
+        self.db.general_ledger().set_auto_posting_config(input)
     }
 
     // ========================================================================
@@ -305,32 +306,32 @@ impl GeneralLedger {
 
     /// Auto-post a customer invoice (debit AR, credit Revenue).
     pub fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_invoice(invoice_id)
+        self.db.general_ledger().auto_post_invoice(invoice_id)
     }
 
     /// Auto-post a payment received (debit Cash, credit AR).
     pub fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_payment_received(payment_id)
+        self.db.general_ledger().auto_post_payment_received(payment_id)
     }
 
     /// Auto-post a supplier bill (debit Inventory/Expense, credit AP).
     pub fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_bill(bill_id)
+        self.db.general_ledger().auto_post_bill(bill_id)
     }
 
     /// Auto-post a bill payment (debit AP, credit Cash).
     pub fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_bill_payment(payment_id)
+        self.db.general_ledger().auto_post_bill_payment(payment_id)
     }
 
     /// Auto-post inventory cost (COGS on sale).
     pub fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_inventory_cost(cost_transaction_id)
+        self.db.general_ledger().auto_post_inventory_cost(cost_transaction_id)
     }
 
     /// Auto-post a write-off (debit Bad Debt Expense, credit AR).
     pub fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
-        self.repo.auto_post_write_off(write_off_id)
+        self.db.general_ledger().auto_post_write_off(write_off_id)
     }
 
     // ========================================================================
@@ -358,7 +359,7 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_trial_balance(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {
-        self.repo.get_trial_balance(as_of_date)
+        self.db.general_ledger().get_trial_balance(as_of_date)
     }
 
     /// Generate a balance sheet.
@@ -382,7 +383,7 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        self.repo.get_balance_sheet(as_of_date)
+        self.db.general_ledger().get_balance_sheet(as_of_date)
     }
 
     /// Generate an income statement.
@@ -407,17 +408,17 @@ impl GeneralLedger {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement> {
-        self.repo.get_income_statement(start_date, end_date)
+        self.db.general_ledger().get_income_statement(start_date, end_date)
     }
 
     /// Get the current balance of an account.
     pub fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Decimal> {
-        self.repo.get_account_balance(account_id, as_of_date)
+        self.db.general_ledger().get_account_balance(account_id, as_of_date)
     }
 
     /// Get all transactions for an account.
     pub fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>> {
-        self.repo.get_account_transactions(account_id, filter)
+        self.db.general_ledger().get_account_transactions(account_id, filter)
     }
 
     // ========================================================================
@@ -432,7 +433,7 @@ impl GeneralLedger {
     /// 3. Transfer net income to retained earnings
     /// 4. Close the period
     pub fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        self.repo.run_period_close(period_id, closed_by)
+        self.db.general_ledger().run_period_close(period_id, closed_by)
     }
 
     // ========================================================================
@@ -441,11 +442,11 @@ impl GeneralLedger {
 
     /// Create multiple accounts in batch.
     pub fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>> {
-        self.repo.create_accounts_batch(inputs)
+        self.db.general_ledger().create_accounts_batch(inputs)
     }
 
     /// Get multiple accounts by IDs.
     pub fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
-        self.repo.get_accounts_batch(ids)
+        self.db.general_ledger().get_accounts_batch(ids)
     }
 }

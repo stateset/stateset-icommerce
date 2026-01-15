@@ -37,10 +37,13 @@ pub use postgres::PostgresDatabase;
 
 
 use stateset_core::{
-    AnalyticsRepository, BomRepository, CartRepository, CurrencyRepository,
-    CustomerRepository, InventoryRepository, InvoiceRepository, OrderRepository, PaymentRepository,
-    ProductRepository, PurchaseOrderRepository, Result, ReturnRepository, ShipmentRepository,
-    WarrantyRepository, WorkOrderRepository,
+    AccountsPayableRepository, AccountsReceivableRepository, AnalyticsRepository, BackorderRepository,
+    BomRepository, CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
+    CustomerRepository, FulfillmentRepository, GeneralLedgerRepository, InventoryRepository,
+    InvoiceRepository, LotRepository, OrderRepository, PaymentRepository, ProductRepository,
+    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
+    ReturnRepository, SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
+    WarehouseRepository, WarrantyRepository, WorkOrderRepository,
 };
 
 /// Unified database trait that both SQLite and PostgreSQL implement.
@@ -76,6 +79,36 @@ pub trait Database: Send + Sync {
     fn analytics(&self) -> Box<dyn AnalyticsRepository + '_>;
     /// Get the currency repository
     fn currency(&self) -> Box<dyn CurrencyRepository + '_>;
+    /// Get the tax repository
+    fn tax(&self) -> Box<dyn TaxRepository + '_>;
+    /// Get the promotions repository
+    fn promotions(&self) -> Box<dyn PromotionRepository + '_>;
+    /// Get the subscriptions repository
+    fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_>;
+    /// Get the quality repository
+    fn quality(&self) -> Box<dyn QualityRepository + '_>;
+    /// Get the lots repository
+    fn lots(&self) -> Box<dyn LotRepository + '_>;
+    /// Get the serials repository
+    fn serials(&self) -> Box<dyn SerialRepository + '_>;
+    /// Get the warehouse repository
+    fn warehouse(&self) -> Box<dyn WarehouseRepository + '_>;
+    /// Get the receiving repository
+    fn receiving(&self) -> Box<dyn ReceivingRepository + '_>;
+    /// Get the fulfillment repository
+    fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_>;
+    /// Get the accounts payable repository
+    fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_>;
+    /// Get the cost accounting repository
+    fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_>;
+    /// Get the credit repository
+    fn credit(&self) -> Box<dyn CreditRepository + '_>;
+    /// Get the backorder repository
+    fn backorder(&self) -> Box<dyn BackorderRepository + '_>;
+    /// Get the accounts receivable repository
+    fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_>;
+    /// Get the general ledger repository
+    fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -169,6 +202,66 @@ impl Database for SqliteDatabase {
     fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
         Box::new(self.currency())
     }
+
+    fn tax(&self) -> Box<dyn TaxRepository + '_> {
+        Box::new(self.tax())
+    }
+
+    fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
+        Box::new(self.promotions())
+    }
+
+    fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
+        Box::new(self.subscriptions())
+    }
+
+    fn quality(&self) -> Box<dyn QualityRepository + '_> {
+        Box::new(self.quality())
+    }
+
+    fn lots(&self) -> Box<dyn LotRepository + '_> {
+        Box::new(self.lots())
+    }
+
+    fn serials(&self) -> Box<dyn SerialRepository + '_> {
+        Box::new(self.serials())
+    }
+
+    fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
+        Box::new(self.warehouse())
+    }
+
+    fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
+        Box::new(self.receiving())
+    }
+
+    fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
+        Box::new(self.fulfillment())
+    }
+
+    fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
+        Box::new(self.accounts_payable())
+    }
+
+    fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
+        Box::new(self.cost_accounting())
+    }
+
+    fn credit(&self) -> Box<dyn CreditRepository + '_> {
+        Box::new(self.credit())
+    }
+
+    fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
+        Box::new(self.backorder())
+    }
+
+    fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
+        Box::new(self.accounts_receivable())
+    }
+
+    fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
+        Box::new(self.general_ledger())
+    }
 }
 
 #[cfg(feature = "postgres")]
@@ -231,6 +324,66 @@ impl Database for PostgresDatabase {
 
     fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
         Box::new(self.currency())
+    }
+
+    fn tax(&self) -> Box<dyn TaxRepository + '_> {
+        Box::new(self.tax())
+    }
+
+    fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
+        Box::new(self.promotions())
+    }
+
+    fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
+        Box::new(self.subscriptions())
+    }
+
+    fn quality(&self) -> Box<dyn QualityRepository + '_> {
+        Box::new(self.quality())
+    }
+
+    fn lots(&self) -> Box<dyn LotRepository + '_> {
+        Box::new(self.lots())
+    }
+
+    fn serials(&self) -> Box<dyn SerialRepository + '_> {
+        Box::new(self.serials())
+    }
+
+    fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
+        Box::new(self.warehouse())
+    }
+
+    fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
+        Box::new(self.receiving())
+    }
+
+    fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
+        Box::new(self.fulfillment())
+    }
+
+    fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
+        Box::new(self.accounts_payable())
+    }
+
+    fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
+        Box::new(self.cost_accounting())
+    }
+
+    fn credit(&self) -> Box<dyn CreditRepository + '_> {
+        Box::new(self.credit())
+    }
+
+    fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
+        Box::new(self.backorder())
+    }
+
+    fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
+        Box::new(self.accounts_receivable())
+    }
+
+    fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
+        Box::new(self.general_ledger())
     }
 }
 

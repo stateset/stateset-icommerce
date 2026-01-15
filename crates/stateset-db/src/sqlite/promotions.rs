@@ -9,9 +9,9 @@ use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, ConditionOperator,
     ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion,
     CreatePromotionCondition, DiscountTier, Promotion, PromotionCondition,
-    PromotionFilter, PromotionStatus, PromotionTarget, PromotionTrigger, PromotionType,
-    PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior, UpdatePromotion,
-    generate_promotion_code,
+    PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget, PromotionTrigger,
+    PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior,
+    UpdatePromotion, generate_promotion_code,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -945,6 +945,82 @@ impl SqlitePromotionRepository {
 // ============================================================================
 // Parsing Helpers
 // ============================================================================
+
+impl PromotionRepository for SqlitePromotionRepository {
+    fn create(&self, input: CreatePromotion) -> Result<Promotion> {
+        SqlitePromotionRepository::create(self, input)
+    }
+
+    fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
+        SqlitePromotionRepository::get(self, id)
+    }
+
+    fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
+        SqlitePromotionRepository::get_by_code(self, code)
+    }
+
+    fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>> {
+        SqlitePromotionRepository::list(self, filter)
+    }
+
+    fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
+        SqlitePromotionRepository::update(self, id, input)
+    }
+
+    fn delete(&self, id: Uuid) -> Result<()> {
+        SqlitePromotionRepository::delete(self, id)
+    }
+
+    fn activate(&self, id: Uuid) -> Result<Promotion> {
+        SqlitePromotionRepository::activate(self, id)
+    }
+
+    fn deactivate(&self, id: Uuid) -> Result<Promotion> {
+        SqlitePromotionRepository::deactivate(self, id)
+    }
+
+    fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
+        SqlitePromotionRepository::create_coupon(self, input)
+    }
+
+    fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>> {
+        SqlitePromotionRepository::get_coupon(self, id)
+    }
+
+    fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>> {
+        SqlitePromotionRepository::get_coupon_by_code(self, code)
+    }
+
+    fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>> {
+        SqlitePromotionRepository::list_coupons(self, filter)
+    }
+
+    fn apply_promotions(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult> {
+        SqlitePromotionRepository::apply_promotions(self, request)
+    }
+
+    fn record_usage(
+        &self,
+        promotion_id: Uuid,
+        coupon_id: Option<Uuid>,
+        customer_id: Option<Uuid>,
+        order_id: Option<Uuid>,
+        cart_id: Option<Uuid>,
+        discount_amount: Decimal,
+        currency: &str,
+    ) -> Result<PromotionUsage> {
+        SqlitePromotionRepository::record_usage(
+            self,
+            promotion_id,
+            coupon_id,
+            customer_id,
+            order_id,
+            cart_id,
+            discount_amount,
+            currency,
+        )
+    }
+}
 
 fn parse_promotion_type(s: &str) -> PromotionType {
     match s {

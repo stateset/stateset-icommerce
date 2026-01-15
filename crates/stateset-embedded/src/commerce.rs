@@ -14,50 +14,6 @@ use stateset_db::PostgresDatabase;
 #[cfg(feature = "events")]
 use crate::events::{EventSystem, EventConfig, EventSubscription, Webhook};
 
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteTaxRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqlitePromotionRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteSubscriptionRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteQualityRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteLotRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteSerialRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteWarehouseRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteReceivingRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteFulfillmentRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteAccountsPayableRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteCostAccountingRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteCreditRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteBackorderRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteAccountsReceivableRepository;
-
-#[cfg(feature = "sqlite")]
-use stateset_db::sqlite::SqliteGeneralLedgerRepository;
 
 /// The main commerce interface.
 ///
@@ -82,8 +38,6 @@ use stateset_db::sqlite::SqliteGeneralLedgerRepository;
 /// ```
 pub struct Commerce {
     db: Arc<dyn Database>,
-    #[cfg(feature = "sqlite")]
-    sqlite_db: Option<Arc<SqliteDatabase>>,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
@@ -119,7 +73,6 @@ impl Commerce {
 
         Ok(Self {
             db: db.clone(),
-            sqlite_db: Some(db),
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -151,8 +104,6 @@ impl Commerce {
 
         Ok(Self {
             db: Arc::new(db),
-            #[cfg(feature = "sqlite")]
-            sqlite_db: None,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -195,8 +146,6 @@ impl Commerce {
 
         Ok(Self {
             db: Arc::new(db),
-            #[cfg(feature = "sqlite")]
-            sqlite_db: None,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -209,8 +158,6 @@ impl Commerce {
     pub fn with_database(db: Arc<dyn Database>) -> Self {
         Self {
             db,
-            #[cfg(feature = "sqlite")]
-            sqlite_db: None,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         }
@@ -740,13 +687,8 @@ impl Commerce {
     /// println!("Texas tax rate: {}%", rate * dec!(100));
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn tax(&self) -> Tax {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteTaxRepository::new(db.pool().clone()))
-            .expect("Tax operations require SQLite database");
-        Tax::new(repo)
+        Tax::new(self.db.clone())
     }
 
     /// Access promotions and discount operations.
@@ -804,13 +746,8 @@ impl Commerce {
     /// println!("Final total: ${}", result.grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn promotions(&self) -> Promotions {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqlitePromotionRepository::new(db.pool().clone()))
-            .expect("Promotion operations require SQLite database");
-        Promotions::new(repo)
+        Promotions::new(self.db.clone())
     }
 
     /// Access subscription management operations.
@@ -846,13 +783,8 @@ impl Commerce {
     /// println!("Subscription #{} created", subscription.subscription_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn subscriptions(&self) -> Subscriptions {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteSubscriptionRepository::new(db.pool().clone()))
-            .expect("Subscription operations require SQLite database");
-        Subscriptions::new(repo)
+        Subscriptions::new(self.db.clone())
     }
 
     /// Access quality control operations.
@@ -875,13 +807,8 @@ impl Commerce {
     /// println!("Created inspection #{}", inspection.inspection_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn quality(&self) -> Quality {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteQualityRepository::new(db.pool().clone()))
-            .expect("Quality operations require SQLite database");
-        Quality::new(repo)
+        Quality::new(self.db.clone())
     }
 
     /// Access lot/batch tracking operations.
@@ -906,13 +833,8 @@ impl Commerce {
     /// println!("Created lot {}", lot.lot_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn lots(&self) -> Lots {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteLotRepository::new(db.pool().clone()))
-            .expect("Lot operations require SQLite database");
-        Lots::new(repo)
+        Lots::new(self.db.clone())
     }
 
     /// Access serial number management operations.
@@ -933,13 +855,8 @@ impl Commerce {
     /// println!("Created serial {}", serial.serial);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn serials(&self) -> Serials {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteSerialRepository::new(db.pool().clone()))
-            .expect("Serial operations require SQLite database");
-        Serials::new(repo)
+        Serials::new(self.db.clone())
     }
 
     /// Access warehouse and location management operations.
@@ -971,13 +888,8 @@ impl Commerce {
     /// println!("Created location {} in {}", location.code, warehouse.name);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn warehouse(&self) -> WarehouseOps {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteWarehouseRepository::new(db.pool().clone()))
-            .expect("Warehouse operations require SQLite database");
-        WarehouseOps::new(repo)
+        WarehouseOps::new(self.db.clone())
     }
 
     /// Access receiving and goods receipt operations.
@@ -1005,13 +917,8 @@ impl Commerce {
     /// println!("Created receipt {}", receipt.receipt_number);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn receiving(&self) -> Receiving {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteReceivingRepository::new(db.pool().clone()))
-            .expect("Receiving operations require SQLite database");
-        Receiving::new(repo)
+        Receiving::new(self.db.clone())
     }
 
     /// Access fulfillment (pick/pack/ship) operations.
@@ -1035,13 +942,8 @@ impl Commerce {
     /// let picks = commerce.fulfillment().get_picks_for_wave(wave.id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn fulfillment(&self) -> Fulfillment {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteFulfillmentRepository::new(db.pool().clone()))
-            .expect("Fulfillment operations require SQLite database");
-        Fulfillment::new(repo)
+        Fulfillment::new(self.db.clone())
     }
 
     /// Access accounts payable (bills and supplier payments) operations.
@@ -1074,13 +976,8 @@ impl Commerce {
     /// println!("Total AP: ${}", aging.total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn accounts_payable(&self) -> AccountsPayable {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteAccountsPayableRepository::new(db.pool().clone()))
-            .expect("Accounts Payable operations require SQLite database");
-        AccountsPayable::new(repo)
+        AccountsPayable::new(self.db.clone())
     }
 
     /// Access cost accounting operations.
@@ -1106,13 +1003,8 @@ impl Commerce {
     /// println!("Total inventory value: ${}", valuation.total_value);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn cost_accounting(&self) -> CostAccounting {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteCostAccountingRepository::new(db.pool().clone()))
-            .expect("Cost Accounting operations require SQLite database");
-        CostAccounting::new(repo)
+        CostAccounting::new(self.db.clone())
     }
 
     /// Access credit management operations.
@@ -1139,13 +1031,8 @@ impl Commerce {
     /// println!("Credit approved: {}", result.approved);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn credit(&self) -> Credit {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteCreditRepository::new(db.pool().clone()))
-            .expect("Credit operations require SQLite database");
-        Credit::new(repo)
+        Credit::new(self.db.clone())
     }
 
     /// Access backorder management operations.
@@ -1174,13 +1061,8 @@ impl Commerce {
     /// println!("Overdue backorders: {}", overdue.len());
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn backorder(&self) -> Backorders {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteBackorderRepository::new(db.pool().clone()))
-            .expect("Backorder operations require SQLite database");
-        Backorders::new(repo)
+        Backorders::new(self.db.clone())
     }
 
     /// Access accounts receivable operations.
@@ -1208,13 +1090,8 @@ impl Commerce {
     /// println!("DSO (30 day): {}", dso);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn accounts_receivable(&self) -> AccountsReceivable {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteAccountsReceivableRepository::new(db.pool().clone()))
-            .expect("Accounts Receivable operations require SQLite database");
-        AccountsReceivable::new(repo)
+        AccountsReceivable::new(self.db.clone())
     }
 
     /// Access general ledger operations.
@@ -1251,13 +1128,8 @@ impl Commerce {
     /// println!("Net Income: ${}", income.net_income);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn general_ledger(&self) -> GeneralLedger {
-        let repo = self.sqlite_db
-            .as_ref()
-            .map(|db| SqliteGeneralLedgerRepository::new(db.pool().clone()))
-            .expect("General Ledger operations require SQLite database");
-        GeneralLedger::new(repo)
+        GeneralLedger::new(self.db.clone())
     }
 
     /// Calculate and apply tax to a cart based on its shipping address.
@@ -1310,7 +1182,6 @@ impl Commerce {
     /// println!("Updated cart total: ${}", commerce.carts().get(cart.id)?.unwrap().grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn calculate_cart_tax(&self, cart_id: uuid::Uuid) -> stateset_core::Result<stateset_core::TaxCalculationResult> {
         use stateset_core::{TaxAddress, TaxCalculationRequest, TaxLineItem, ProductTaxCategory};
         use rust_decimal::Decimal;
@@ -1411,9 +1282,8 @@ impl Commerce {
     /// println!("New total: ${}", updated_cart.grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    #[cfg(feature = "sqlite")]
     pub fn apply_cart_promotions(&self, cart_id: uuid::Uuid) -> stateset_core::Result<stateset_core::ApplyPromotionsResult> {
-        use stateset_core::{ApplyPromotionsRequest, PromotionLineItem};
+        use stateset_core::{ApplyPromotionsRequest, PromotionLineItem, UpdateCart, UpdateCartItem};
 
         // Get the cart
         let cart = self.carts().get(cart_id)?
@@ -1454,38 +1324,36 @@ impl Commerce {
         // Apply promotions
         let result = self.promotions().apply(request)?;
 
-        // Update cart discount amount
-        let conn = self.sqlite_db
-            .as_ref()
-            .expect("Promotion operations require SQLite database")
-            .conn()?;
-
         let discount_description = result.applied_promotions.iter()
             .map(|p| p.promotion_name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
 
-        conn.execute(
-            "UPDATE carts SET discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
-            [
-                &result.total_discount.to_string(),
-                &discount_description,
-                &chrono::Utc::now().to_rfc3339(),
-                &cart_id.to_string(),
-            ],
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let discount_description = if discount_description.is_empty() {
+            None
+        } else {
+            Some(discount_description)
+        };
+
+        self.carts().update(
+            cart_id,
+            UpdateCart {
+                discount_amount: Some(result.total_discount),
+                discount_description,
+                ..Default::default()
+            },
+        )?;
 
         // Update individual item discounts if there are line item discounts
         for line_discount in &result.line_item_discounts {
             if let Ok(item_id) = line_discount.line_item_id.parse::<uuid::Uuid>() {
-                conn.execute(
-                    "UPDATE cart_items SET discount_amount = ?, updated_at = ? WHERE id = ?",
-                    [
-                        &line_discount.discount_amount.to_string(),
-                        &chrono::Utc::now().to_rfc3339(),
-                        &item_id.to_string(),
-                    ],
-                ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                self.carts().update_item(
+                    item_id,
+                    UpdateCartItem {
+                        discount_amount: Some(line_discount.discount_amount),
+                        ..Default::default()
+                    },
+                )?;
             }
         }
 
@@ -1728,8 +1596,6 @@ impl CommerceBuilder {
 
             return Ok(Commerce {
                 db: Arc::new(db),
-                #[cfg(feature = "sqlite")]
-                sqlite_db: None,
                 #[cfg(feature = "events")]
                 event_system,
             });
@@ -1753,7 +1619,6 @@ impl CommerceBuilder {
             let db = Arc::new(SqliteDatabase::new(&config)?);
             Ok(Commerce {
                 db: db.clone(),
-                sqlite_db: Some(db),
                 #[cfg(feature = "events")]
                 event_system,
             })

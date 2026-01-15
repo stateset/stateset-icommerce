@@ -34,17 +34,18 @@ use stateset_core::{
     BackorderRepository, BackorderSummary, CreateBackorder, FulfillBackorder, Result,
     SkuBackorderSummary, UpdateBackorder,
 };
-use stateset_db::sqlite::SqliteBackorderRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Backorder Management interface.
 pub struct Backorders {
-    repo: SqliteBackorderRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Backorders {
-    pub(crate) fn new(repo: SqliteBackorderRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -77,22 +78,22 @@ impl Backorders {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder> {
-        self.repo.create_backorder(input)
+        self.db.backorder().create_backorder(input)
     }
 
     /// Get a backorder by ID.
     pub fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
-        self.repo.get_backorder(id)
+        self.db.backorder().get_backorder(id)
     }
 
     /// Get a backorder by backorder number.
     pub fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>> {
-        self.repo.get_backorder_by_number(number)
+        self.db.backorder().get_backorder_by_number(number)
     }
 
     /// Update a backorder.
     pub fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
-        self.repo.update_backorder(id, input)
+        self.db.backorder().update_backorder(id, input)
     }
 
     /// List backorders with optional filtering.
@@ -114,27 +115,27 @@ impl Backorders {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
-        self.repo.list_backorders(filter)
+        self.db.backorder().list_backorders(filter)
     }
 
     /// Cancel a backorder.
     pub fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
-        self.repo.cancel_backorder(id)
+        self.db.backorder().cancel_backorder(id)
     }
 
     /// Get all backorders for an order.
     pub fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        self.repo.get_backorders_for_order(order_id)
+        self.db.backorder().get_backorders_for_order(order_id)
     }
 
     /// Get all backorders for a customer.
     pub fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
-        self.repo.get_backorders_for_customer(customer_id)
+        self.db.backorder().get_backorders_for_customer(customer_id)
     }
 
     /// Get all backorders for a SKU.
     pub fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>> {
-        self.repo.get_backorders_for_sku(sku)
+        self.db.backorder().get_backorders_for_sku(sku)
     }
 
     // ========================================================================
@@ -166,12 +167,12 @@ impl Backorders {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn fulfill_backorder(&self, input: FulfillBackorder) -> Result<Backorder> {
-        self.repo.fulfill_backorder(input)
+        self.db.backorder().fulfill_backorder(input)
     }
 
     /// Get fulfillment history for a backorder.
     pub fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>> {
-        self.repo.get_fulfillment_history(backorder_id)
+        self.db.backorder().get_fulfillment_history(backorder_id)
     }
 
     // ========================================================================
@@ -182,34 +183,34 @@ impl Backorders {
     ///
     /// Reserves inventory for the backorder until it can be fulfilled.
     pub fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation> {
-        self.repo.allocate_backorder(input)
+        self.db.backorder().allocate_backorder(input)
     }
 
     /// Get allocations for a backorder.
     pub fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
-        self.repo.get_allocations(backorder_id)
+        self.db.backorder().get_allocations(backorder_id)
     }
 
     /// Release an allocation.
     pub fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.repo.release_allocation(allocation_id)
+        self.db.backorder().release_allocation(allocation_id)
     }
 
     /// Confirm an allocation.
     pub fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.repo.confirm_allocation(allocation_id)
+        self.db.backorder().confirm_allocation(allocation_id)
     }
 
     /// Expire old allocations past their expiration date.
     pub fn expire_allocations(&self) -> Result<u32> {
-        self.repo.expire_allocations()
+        self.db.backorder().expire_allocations()
     }
 
     /// Automatically allocate available inventory to pending backorders.
     ///
     /// Allocates in priority order (critical first, then by oldest date).
     pub fn auto_allocate_inventory(&self, sku: &str) -> Result<Vec<BackorderAllocation>> {
-        self.repo.auto_allocate_inventory(sku)
+        self.db.backorder().auto_allocate_inventory(sku)
     }
 
     // ========================================================================
@@ -232,21 +233,21 @@ impl Backorders {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_summary(&self) -> Result<BackorderSummary> {
-        self.repo.get_summary()
+        self.db.backorder().get_summary()
     }
 
     /// Get backorder summary for a specific SKU.
     pub fn get_sku_summary(&self, sku: &str) -> Result<Option<SkuBackorderSummary>> {
-        self.repo.get_sku_summary(sku)
+        self.db.backorder().get_sku_summary(sku)
     }
 
     /// Get overdue backorders.
     pub fn get_overdue_backorders(&self) -> Result<Vec<Backorder>> {
-        self.repo.get_overdue_backorders()
+        self.db.backorder().get_overdue_backorders()
     }
 
     /// Count pending backorders.
     pub fn count_pending(&self) -> Result<u64> {
-        self.repo.count_pending()
+        self.db.backorder().count_pending()
     }
 }

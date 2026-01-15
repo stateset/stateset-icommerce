@@ -39,17 +39,18 @@ use stateset_core::{
     CreatePromotion, CreatePromotionCondition, Promotion, PromotionFilter,
     PromotionUsage, Result, UpdatePromotion,
 };
-use stateset_db::sqlite::SqlitePromotionRepository;
+use stateset_db::Database;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Promotions and discounts management interface.
 pub struct Promotions {
-    repo: SqlitePromotionRepository,
+    db: Arc<dyn Database>,
 }
 
 impl Promotions {
-    pub(crate) fn new(repo: SqlitePromotionRepository) -> Self {
-        Self { repo }
+    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
+        Self { db }
     }
 
     // ========================================================================
@@ -76,17 +77,17 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreatePromotion) -> Result<Promotion> {
-        self.repo.create(input)
+        self.db.promotions().create(input)
     }
 
     /// Get a promotion by ID.
     pub fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
-        self.repo.get(id)
+        self.db.promotions().get(id)
     }
 
     /// Get a promotion by its internal code.
     pub fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
-        self.repo.get_by_code(code)
+        self.db.promotions().get_by_code(code)
     }
 
     /// List promotions with optional filtering.
@@ -106,17 +107,17 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>> {
-        self.repo.list(filter)
+        self.db.promotions().list(filter)
     }
 
     /// Update a promotion.
     pub fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
-        self.repo.update(id, input)
+        self.db.promotions().update(id, input)
     }
 
     /// Delete a promotion.
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        self.repo.delete(id)
+        self.db.promotions().delete(id)
     }
 
     /// Activate a promotion (make it available for use).
@@ -132,12 +133,12 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn activate(&self, id: Uuid) -> Result<Promotion> {
-        self.repo.activate(id)
+        self.db.promotions().activate(id)
     }
 
     /// Deactivate (pause) a promotion.
     pub fn deactivate(&self, id: Uuid) -> Result<Promotion> {
-        self.repo.deactivate(id)
+        self.db.promotions().deactivate(id)
     }
 
     // ========================================================================
@@ -163,22 +164,22 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
-        self.repo.create_coupon(input)
+        self.db.promotions().create_coupon(input)
     }
 
     /// Get a coupon by ID.
     pub fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>> {
-        self.repo.get_coupon(id)
+        self.db.promotions().get_coupon(id)
     }
 
     /// Get a coupon by its code (the code customers enter).
     pub fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>> {
-        self.repo.get_coupon_by_code(code)
+        self.db.promotions().get_coupon_by_code(code)
     }
 
     /// List coupons with optional filtering.
     pub fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>> {
-        self.repo.list_coupons(filter)
+        self.db.promotions().list_coupons(filter)
     }
 
     /// Validate a coupon code (check if it's valid and can be used).
@@ -197,7 +198,7 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn validate_coupon(&self, code: &str) -> Result<Option<CouponCode>> {
-        let coupon = self.repo.get_coupon_by_code(code)?;
+        let coupon = self.db.promotions().get_coupon_by_code(code)?;
 
         if let Some(c) = coupon {
             // Check if coupon is active
@@ -271,7 +272,7 @@ impl Promotions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn apply(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult> {
-        self.repo.apply_promotions(request)
+        self.db.promotions().apply_promotions(request)
     }
 
     /// Record promotion usage (called after order completion).
@@ -287,7 +288,7 @@ impl Promotions {
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
-        self.repo.record_usage(
+        self.db.promotions().record_usage(
             promotion_id,
             coupon_id,
             customer_id,

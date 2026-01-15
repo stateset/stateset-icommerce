@@ -7,12 +7,13 @@ use rust_decimal::Decimal;
 use rusqlite::OptionalExtension;
 use stateset_core::{
     BillingCycle, BillingCycleFilter, BillingCycleStatus, BillingInterval,
-    CancelSubscription, CreateSubscription, CreateSubscriptionItem,
+    CancelSubscription, CreateBillingCycle, CreateSubscription, CreateSubscriptionItem,
     CreateSubscriptionPlan, CreateSubscriptionPlanItem,
     PauseSubscription, PlanStatus, Result, SkipBillingCycle, Subscription,
     SubscriptionEvent, SubscriptionEventType, SubscriptionFilter, SubscriptionItem,
-    SubscriptionPlan, SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionStatus,
-    UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code, generate_subscription_number,
+    SubscriptionPlan, SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository,
+    SubscriptionStatus, UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code,
+    generate_subscription_number,
 };
 use uuid::Uuid;
 
@@ -925,7 +926,13 @@ impl SqliteSubscriptionRepository {
     // Billing Cycles
     // ========================================================================
 
-    pub fn create_billing_cycle(&self, subscription_id: Uuid, cycle_number: i32, period_start: DateTime<Utc>, period_end: DateTime<Utc>) -> Result<BillingCycle> {
+    pub fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
+        let CreateBillingCycle {
+            subscription_id,
+            cycle_number,
+            period_start,
+            period_end,
+        } = input;
         // Get subscription first (uses its own connection)
         let sub = self.get_subscription(subscription_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
@@ -1231,6 +1238,101 @@ impl SqliteSubscriptionRepository {
 // ============================================================================
 // Parsing Helpers
 // ============================================================================
+
+impl SubscriptionRepository for SqliteSubscriptionRepository {
+    fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
+        SqliteSubscriptionRepository::create_plan(self, input)
+    }
+
+    fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>> {
+        SqliteSubscriptionRepository::get_plan(self, id)
+    }
+
+    fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>> {
+        SqliteSubscriptionRepository::get_plan_by_code(self, code)
+    }
+
+    fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>> {
+        SqliteSubscriptionRepository::list_plans(self, filter)
+    }
+
+    fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan> {
+        SqliteSubscriptionRepository::update_plan(self, id, input)
+    }
+
+    fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
+        SqliteSubscriptionRepository::activate_plan(self, id)
+    }
+
+    fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
+        SqliteSubscriptionRepository::archive_plan(self, id)
+    }
+
+    fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
+        SqliteSubscriptionRepository::create_subscription(self, input)
+    }
+
+    fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
+        SqliteSubscriptionRepository::get_subscription(self, id)
+    }
+
+    fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
+        SqliteSubscriptionRepository::get_subscription_by_number(self, number)
+    }
+
+    fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>> {
+        SqliteSubscriptionRepository::list_subscriptions(self, filter)
+    }
+
+    fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription> {
+        SqliteSubscriptionRepository::update_subscription(self, id, input)
+    }
+
+    fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
+        SqliteSubscriptionRepository::cancel_subscription(self, id, input)
+    }
+
+    fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
+        SqliteSubscriptionRepository::pause_subscription(self, id, input)
+    }
+
+    fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
+        SqliteSubscriptionRepository::resume_subscription(self, id)
+    }
+
+    fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
+        SqliteSubscriptionRepository::create_billing_cycle(self, input)
+    }
+
+    fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
+        SqliteSubscriptionRepository::get_billing_cycle(self, id)
+    }
+
+    fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
+        SqliteSubscriptionRepository::list_billing_cycles(self, filter)
+    }
+
+    fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle> {
+        SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status)
+    }
+
+    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<BillingCycle> {
+        SqliteSubscriptionRepository::skip_billing_cycle(self, id, input)
+    }
+
+    fn record_event(
+        &self,
+        subscription_id: Uuid,
+        event_type: SubscriptionEventType,
+        notes: Option<String>,
+    ) -> Result<SubscriptionEvent> {
+        SqliteSubscriptionRepository::record_event(self, subscription_id, event_type, notes)
+    }
+
+    fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
+        SqliteSubscriptionRepository::get_subscription_events(self, subscription_id)
+    }
+}
 
 fn parse_plan_status(s: &str) -> PlanStatus {
     match s {

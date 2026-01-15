@@ -1187,6 +1187,117 @@ pub trait CurrencyRepository {
     fn get_rates_batch(&self, pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>>;
 }
 
+// Tax repository trait
+pub trait TaxRepository {
+    // Jurisdiction operations
+    fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction>;
+    fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>>;
+    fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>>;
+    fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>>;
+
+    // Rate operations
+    fn create_rate(&self, input: CreateTaxRate) -> Result<TaxRate>;
+    fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>>;
+    fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>>;
+    fn get_rates_for_address(
+        &self,
+        address: &TaxAddress,
+        category: ProductTaxCategory,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<TaxRate>>;
+
+    // Exemption operations
+    fn create_exemption(&self, input: CreateTaxExemption) -> Result<TaxExemption>;
+    fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>>;
+    fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>>;
+
+    // Settings
+    fn get_settings(&self) -> Result<TaxSettings>;
+    fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings>;
+
+    // Calculations
+    fn calculate_tax(&self, request: TaxCalculationRequest) -> Result<TaxCalculationResult>;
+    fn save_calculation(
+        &self,
+        result: &TaxCalculationResult,
+        order_id: Option<Uuid>,
+        cart_id: Option<Uuid>,
+        customer_id: Option<Uuid>,
+        address: &TaxAddress,
+        currency: &str,
+    ) -> Result<()>;
+}
+
+// Promotions repository trait
+pub trait PromotionRepository {
+    // Promotion CRUD
+    fn create(&self, input: CreatePromotion) -> Result<Promotion>;
+    fn get(&self, id: Uuid) -> Result<Option<Promotion>>;
+    fn get_by_code(&self, code: &str) -> Result<Option<Promotion>>;
+    fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>>;
+    fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion>;
+    fn delete(&self, id: Uuid) -> Result<()>;
+    fn activate(&self, id: Uuid) -> Result<Promotion>;
+    fn deactivate(&self, id: Uuid) -> Result<Promotion>;
+
+    // Coupon operations
+    fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode>;
+    fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>>;
+    fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>>;
+    fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>>;
+
+    // Evaluation + usage
+    fn apply_promotions(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult>;
+    fn record_usage(
+        &self,
+        promotion_id: Uuid,
+        coupon_id: Option<Uuid>,
+        customer_id: Option<Uuid>,
+        order_id: Option<Uuid>,
+        cart_id: Option<Uuid>,
+        discount_amount: rust_decimal::Decimal,
+        currency: &str,
+    ) -> Result<PromotionUsage>;
+}
+
+// Subscriptions repository trait
+pub trait SubscriptionRepository {
+    // Plan operations
+    fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan>;
+    fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>>;
+    fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>>;
+    fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>>;
+    fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan>;
+    fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan>;
+    fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan>;
+
+    // Subscription operations
+    fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription>;
+    fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>>;
+    fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>>;
+    fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>>;
+    fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription>;
+    fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription>;
+    fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription>;
+    fn resume_subscription(&self, id: Uuid) -> Result<Subscription>;
+
+    // Billing cycles
+    fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle>;
+    fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>>;
+    fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>>;
+    fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle>;
+    fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<BillingCycle>;
+
+    // Events
+    fn record_event(
+        &self,
+        subscription_id: Uuid,
+        event_type: SubscriptionEventType,
+        notes: Option<String>,
+    ) -> Result<SubscriptionEvent>;
+    fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>>;
+}
+
 /// Optional: Transaction support trait
 pub trait Transactional {
     /// Begin a transaction

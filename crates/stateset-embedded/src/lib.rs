@@ -479,6 +479,7 @@ pub use stateset_core::{
     BillingCycleStatus,
     BillingInterval,
     CancelSubscription,
+    CreateBillingCycle,
     CreateSubscription,
     CreateSubscriptionItem,
     CreateSubscriptionPlan,
