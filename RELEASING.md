@@ -50,11 +50,11 @@ Add these secrets to your GitHub repository settings:
 
 # 2. Commit the changes
 git add -A
-git commit -m "chore: bump ruby gem to v0.1.5"
+git commit -m "chore: bump ruby gem to v0.2.0"
 
 # 3. Create and push tag
-git tag ruby-v0.1.5
-git push origin ruby-v0.1.5
+git tag ruby-v0.2.0
+git push origin ruby-v0.2.0
 
 # GitHub Actions will automatically:
 # - Build native gems for all platforms
@@ -71,11 +71,11 @@ git push origin ruby-v0.1.5
 
 # 2. Commit the changes
 git add -A
-git commit -m "chore: bump php package to v0.1.5"
+git commit -m "chore: bump php package to v0.2.0"
 
 # 3. Create and push tag
-git tag php-v0.1.5
-git push origin php-v0.1.5
+git tag php-v0.2.0
+git push origin php-v0.2.0
 
 # GitHub Actions will automatically:
 # - Build native extensions for all platforms
@@ -90,12 +90,12 @@ For releasing both at once:
 ```bash
 # Update all version numbers
 git add -A
-git commit -m "chore: release v0.1.5"
+git commit -m "chore: release v0.2.0"
 
 # Tag both
-git tag ruby-v0.1.5
-git tag php-v0.1.5
-git push origin ruby-v0.1.5 php-v0.1.5
+git tag ruby-v0.2.0
+git tag php-v0.2.0
+git push origin ruby-v0.2.0 php-v0.2.0
 ```
 
 ## Manual Publishing
@@ -113,11 +113,11 @@ bundle install
 bundle exec rake native gem
 
 # Publish
-gem push stateset_embedded-0.1.5.gem
+gem push stateset_embedded-0.2.0.gem
 
 # Or publish pre-built native gems
-gem push pkg/stateset_embedded-0.1.5-x86_64-linux.gem
-gem push pkg/stateset_embedded-0.1.5-arm64-darwin.gem
+gem push pkg/stateset_embedded-0.2.0-x86_64-linux.gem
+gem push pkg/stateset_embedded-0.2.0-arm64-darwin.gem
 ```
 
 ### PHP (Manual)

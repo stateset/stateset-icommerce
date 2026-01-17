@@ -516,7 +516,7 @@ MCP tools for sync operations (enables AI agent to manage sync).
 ```json
 {
   "name": "@stateset/cli",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "bin": {
     "stateset": "./bin/stateset.js",
     "stateset-sync": "./bin/stateset-sync.js",
@@ -524,7 +524,7 @@ MCP tools for sync operations (enables AI agent to manage sync).
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
-    "@stateset/embedded": "^0.1.5",
+    "@stateset/embedded": "^0.2.0",
     "@grpc/grpc-js": "^1.9.0",
     "@grpc/proto-loader": "^0.7.0",
     "zod": "^3.25.76"

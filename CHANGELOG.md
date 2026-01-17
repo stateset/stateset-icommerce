@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-01-16
+
+### Added
+- PostgreSQL migration coverage test and CI target for the postgres feature.
+- CLI test job in CI.
+- Supply-chain checks via cargo-deny, Dependabot, and SBOM generation.
+- Benchmarks for core, db, and embedded crates in CI.
+
+### Changed
+- Version alignment across bindings, CLI templates, and installers.
+- Security policy now supports the 0.2.x line.
+
 ## [0.1.9] - 2025-01-09
 
 ### Fixed

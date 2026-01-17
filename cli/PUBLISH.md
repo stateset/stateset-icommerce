@@ -40,7 +40,7 @@ npm publish --access public
 cd cli
 
 # Update dependency to use npm package (already done)
-# "@stateset/embedded": "^0.1.0"
+# "@stateset/embedded": "^0.2.0"
 
 # Install and test
 npm install
@@ -91,8 +91,8 @@ cp cli/install.sh ../stateset-website/public/install.sh
 
 ```bash
 # Tag a new CLI release
-git tag cli-v0.1.0
-git push origin cli-v0.1.0
+git tag cli-v0.2.0
+git push origin cli-v0.2.0
 ```
 
 This triggers `.github/workflows/publish-cli.yml` which:
@@ -115,8 +115,8 @@ npm version patch
 
 # Commit and tag
 git add -A
-git commit -m "Release cli-v0.1.1"
-git tag cli-v0.1.1
+git commit -m "Release cli-v0.2.1"
+git tag cli-v0.2.1
 git push && git push --tags
 ```
 

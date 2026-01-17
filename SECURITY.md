@@ -6,7 +6,8 @@ We release patches for security vulnerabilities in the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
+| < 0.2.0 | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -132,4 +133,3 @@ No security vulnerabilities have been reported to date.
 ---
 
 Thank you for helping keep StateSet iCommerce and its users safe!
-

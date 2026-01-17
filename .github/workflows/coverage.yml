@@ -89,4 +89,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run benchmarks
-        run: cargo bench --package stateset-core -- --noplot
+        run: cargo bench -p stateset-core -p stateset-db -p stateset-embedded -- --noplot
