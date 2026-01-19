@@ -208,7 +208,7 @@ impl PgSerialRepository {
         .bind(performed_by)
         .bind(notes)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -276,7 +276,7 @@ impl PgSerialRepository {
             .bind(input.location_id)
             .bind(input.manufactured_at)
             .bind(now)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -508,7 +508,7 @@ impl PgSerialRepository {
         .bind(&input.owner_type)
         .bind(now)
         .bind(input.serial_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -592,7 +592,7 @@ impl PgSerialRepository {
         .bind(&input.reserved_by)
         .bind(now)
         .bind(expires_at)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -600,7 +600,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Reserved.to_string())
             .bind(now)
             .bind(input.serial_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -659,7 +659,7 @@ impl PgSerialRepository {
         sqlx::query("UPDATE serial_reservations SET released_at = $1 WHERE id = $2")
             .bind(now)
             .bind(reservation_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -667,7 +667,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Available.to_string())
             .bind(now)
             .bind(reservation.serial_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -740,7 +740,7 @@ impl PgSerialRepository {
             .bind(input.to_location_id)
             .bind(now)
             .bind(input.serial_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -793,7 +793,7 @@ impl PgSerialRepository {
         .bind(SerialStatus::Transferred.to_string())
         .bind(now)
         .bind(input.serial_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -846,7 +846,7 @@ impl PgSerialRepository {
         .bind(customer_id)
         .bind(now)
         .bind(id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -888,7 +888,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Shipped.to_string())
             .bind(now)
             .bind(id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -930,7 +930,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Returned.to_string())
             .bind(now)
             .bind(id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1009,7 +1009,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Quarantined.to_string())
             .bind(now)
             .bind(id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1057,7 +1057,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Available.to_string())
             .bind(now)
             .bind(id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1105,7 +1105,7 @@ impl PgSerialRepository {
             .bind(SerialStatus::Scrapped.to_string())
             .bind(now)
             .bind(id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

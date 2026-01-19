@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use std::str::FromStr;
 use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, ConditionOperator,
     ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion,

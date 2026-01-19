@@ -508,7 +508,7 @@ impl PgAccountsReceivableRepository {
 
         Ok(CustomerArAging {
             customer_id: row.customer_id,
-            customer_name: row.customer_name.unwrap_or_default(),
+            customer_name: row.customer_name,
             customer_email: row.customer_email,
             current: row.current_amount,
             days_1_30: row.days_1_30,
@@ -607,7 +607,7 @@ impl PgAccountsReceivableRepository {
             .into_iter()
             .map(|row| CustomerArAging {
                 customer_id: row.customer_id,
-                customer_name: row.customer_name.unwrap_or_default(),
+                customer_name: row.customer_name,
                 customer_email: row.customer_email,
                 current: row.current_amount,
                 days_1_30: row.days_1_30,

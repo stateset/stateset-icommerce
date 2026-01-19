@@ -377,7 +377,7 @@ impl PgCostAccountingRepository {
         .bind(reference_id)
         .bind(notes.map(|s| s.to_string()))
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 

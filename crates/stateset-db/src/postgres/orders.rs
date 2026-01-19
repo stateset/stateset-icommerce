@@ -236,7 +236,7 @@ impl PgOrderRepository {
             "SELECT version FROM orders WHERE id = $1 FOR UPDATE",
         )
         .bind(order_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::OrderNotFound(order_id))?;
@@ -245,7 +245,7 @@ impl PgOrderRepository {
             "SELECT COALESCE(SUM(total), 0) FROM order_items WHERE order_id = $1",
         )
         .bind(order_id)
-        .fetch_one(&mut **tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -256,7 +256,7 @@ impl PgOrderRepository {
         .bind(Utc::now())
         .bind(order_id)
         .bind(current_version)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -460,8 +460,14 @@ impl PgOrderRepository {
         let new_fulfillment_status = input.fulfillment_status.unwrap_or(existing.fulfillment_status);
         let new_tracking = input.tracking_number.or(existing.tracking_number);
         let new_notes = input.notes.or(existing.notes);
-        let new_shipping = input.shipping_address.or(existing.shipping_address);
-        let new_billing = input.billing_address.or(existing.billing_address);
+        let new_shipping = input
+            .shipping_address
+            .clone()
+            .or(existing.shipping_address);
+        let new_billing = input
+            .billing_address
+            .clone()
+            .or(existing.billing_address);
 
         if !existing.status.can_transition_to(new_status) {
             if new_status == OrderStatus::Cancelled {
@@ -596,7 +602,7 @@ impl PgOrderRepository {
         .bind(tax)
         .bind(total)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -624,7 +630,7 @@ impl PgOrderRepository {
         sqlx::query("DELETE FROM order_items WHERE id = $1 AND order_id = $2")
             .bind(item_id)
             .bind(order_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -848,8 +854,14 @@ impl PgOrderRepository {
             let new_fulfillment_status = input.fulfillment_status.unwrap_or(existing.fulfillment_status);
             let new_tracking = input.tracking_number.or(existing.tracking_number);
             let new_notes = input.notes.or(existing.notes);
-            let new_shipping = input.shipping_address.or(existing.shipping_address);
-            let new_billing = input.billing_address.or(existing.billing_address);
+            let new_shipping = input
+                .shipping_address
+                .clone()
+                .or(existing.shipping_address);
+            let new_billing = input
+                .billing_address
+                .clone()
+                .or(existing.billing_address);
 
             if !existing.status.can_transition_to(new_status) {
                 if new_status == OrderStatus::Cancelled {

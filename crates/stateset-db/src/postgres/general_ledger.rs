@@ -344,7 +344,7 @@ impl PgGeneralLedgerRepository {
              FROM gl_accounts WHERE id = $1",
         )
         .bind(account_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -355,7 +355,7 @@ impl PgGeneralLedgerRepository {
         sqlx::query("UPDATE gl_accounts SET current_balance = $1 WHERE id = $2")
             .bind(new_balance)
             .bind(account_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -485,9 +485,9 @@ impl PgGeneralLedgerRepository {
             let term = format!("%{}%", search);
             builder
                 .push(" AND (name ILIKE ")
-                .push_bind(term.as_str())
+                .push_bind(term.clone())
                 .push(" OR account_number ILIKE ")
-                .push_bind(term.as_str())
+                .push_bind(term)
                 .push(")");
         }
 
@@ -896,9 +896,9 @@ impl PgGeneralLedgerRepository {
             let term = format!("%{}%", search);
             builder
                 .push(" AND (je.entry_number ILIKE ")
-                .push_bind(term.as_str())
+                .push_bind(term.clone())
                 .push(" OR je.description ILIKE ")
-                .push_bind(term.as_str())
+                .push_bind(term)
                 .push(")");
         }
 

@@ -221,7 +221,7 @@ impl PgLotRepository {
         .bind(reason)
         .bind(performed_by)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -279,7 +279,7 @@ impl PgLotRepository {
         .bind(&input.notes)
         .bind(now)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -323,7 +323,7 @@ impl PgLotRepository {
             .bind(location_id)
             .bind(input.quantity)
             .bind(now)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -492,7 +492,7 @@ impl PgLotRepository {
         .bind(new_remaining)
         .bind(Utc::now())
         .bind(input.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -549,7 +549,7 @@ impl PgLotRepository {
         .bind(new_status.to_string())
         .bind(Utc::now())
         .bind(input.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -612,7 +612,7 @@ impl PgLotRepository {
         .bind(input.reference_id)
         .bind(now)
         .bind(expires_at)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -623,7 +623,7 @@ impl PgLotRepository {
         .bind(new_reserved)
         .bind(now)
         .bind(input.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -668,7 +668,7 @@ impl PgLotRepository {
         )
         .bind(now)
         .bind(reservation_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -678,7 +678,7 @@ impl PgLotRepository {
         .bind(row.quantity)
         .bind(now)
         .bind(row.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -723,7 +723,7 @@ impl PgLotRepository {
         )
         .bind(now)
         .bind(reservation_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -733,7 +733,7 @@ impl PgLotRepository {
         .bind(row.quantity)
         .bind(now)
         .bind(row.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -768,7 +768,7 @@ impl PgLotRepository {
         .bind(now)
         .bind(input.lot_id)
         .bind(input.from_location_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -785,7 +785,7 @@ impl PgLotRepository {
         .bind(input.to_location_id)
         .bind(input.quantity)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -852,7 +852,7 @@ impl PgLotRepository {
         .bind(input.reason.as_ref().map(|r| format!("Split from {}: {}", original.lot_number, r)))
         .bind(now)
         .bind(input.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -863,7 +863,7 @@ impl PgLotRepository {
         .bind(new_remaining)
         .bind(now)
         .bind(input.lot_id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -974,7 +974,7 @@ impl PgLotRepository {
         .bind(template.cost_per_unit)
         .bind(input.reason.as_ref().map(|r| format!("Merged lots: {}", r)))
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -984,7 +984,7 @@ impl PgLotRepository {
             )
             .bind(now)
             .bind(lot_id)
-            .execute(&mut **tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1045,7 +1045,7 @@ impl PgLotRepository {
         .bind(available)
         .bind(now)
         .bind(id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1086,7 +1086,7 @@ impl PgLotRepository {
         )
         .bind(now)
         .bind(id)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 

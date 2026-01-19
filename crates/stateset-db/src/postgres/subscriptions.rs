@@ -195,7 +195,7 @@ impl PgSubscriptionRepository {
             price,
             setup_fee,
             currency,
-            trial_days: trial_days as u32,
+            trial_days,
             trial_requires_payment_method,
             min_cycles,
             max_cycles,
@@ -371,6 +371,7 @@ impl PgSubscriptionRepository {
                 e
             ))
         })?;
+        let payment_id = payment_id.map(|id| id.to_string());
 
         Ok(BillingCycle {
             id,
@@ -504,6 +505,7 @@ impl PgSubscriptionRepository {
     ) -> Result<SubscriptionEvent> {
         let id = Uuid::new_v4();
         let now = Utc::now();
+        let event_data = data.clone();
 
         sqlx::query(
             "INSERT INTO subscription_events (id, subscription_id, event_type, description, data, triggered_by, created_at)
@@ -525,7 +527,7 @@ impl PgSubscriptionRepository {
             subscription_id,
             event_type,
             description: description.to_string(),
-            data,
+            data: event_data,
             triggered_by: None,
             created_at: now,
         })
@@ -1002,20 +1004,19 @@ impl PgSubscriptionRepository {
             sql.push_str(&format!(" AND status = ${}", param_idx));
             param_idx += 1;
         }
-        if filter.billing_interval.is_some() {
-            sql.push_str(&format!(" AND billing_interval = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.created_after.is_some() {
+        if filter.from_date.is_some() {
             sql.push_str(&format!(" AND created_at >= ${}", param_idx));
             param_idx += 1;
         }
-        if filter.created_before.is_some() {
+        if filter.to_date.is_some() {
             sql.push_str(&format!(" AND created_at <= ${}", param_idx));
             param_idx += 1;
         }
-        if filter.next_billing_before.is_some() {
-            sql.push_str(&format!(" AND next_billing_date <= ${}", param_idx));
+        if filter.search.is_some() {
+            sql.push_str(&format!(
+                " AND (subscription_number ILIKE ${0} OR plan_name ILIKE ${0})",
+                param_idx
+            ));
             param_idx += 1;
         }
 
@@ -1039,17 +1040,14 @@ impl PgSubscriptionRepository {
         if let Some(status) = filter.status {
             q = q.bind(subscription_status_str(status));
         }
-        if let Some(interval) = filter.billing_interval {
-            q = q.bind(interval.to_string());
+        if let Some(from_date) = filter.from_date {
+            q = q.bind(from_date);
         }
-        if let Some(created_after) = filter.created_after {
-            q = q.bind(created_after);
+        if let Some(to_date) = filter.to_date {
+            q = q.bind(to_date);
         }
-        if let Some(created_before) = filter.created_before {
-            q = q.bind(created_before);
-        }
-        if let Some(next_billing_before) = filter.next_billing_before {
-            q = q.bind(next_billing_before);
+        if let Some(search) = filter.search {
+            q = q.bind(format!("%{}%", search));
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;

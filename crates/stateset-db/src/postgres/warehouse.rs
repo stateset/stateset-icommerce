@@ -516,7 +516,10 @@ impl PgWarehouseRepository {
 
     pub async fn create_location_async(&self, input: CreateLocation) -> Result<Location> {
         let now = Utc::now();
-        let code = input.code.unwrap_or_else(|| Self::generate_location_code(&input));
+        let code = input
+            .code
+            .clone()
+            .unwrap_or_else(|| Self::generate_location_code(&input));
         let is_pickable = input.is_pickable.unwrap_or(true);
         let is_receivable = input.is_receivable.unwrap_or(true);
 
@@ -928,7 +931,7 @@ impl PgWarehouseRepository {
         .bind(input.from_location_id)
         .bind(&input.sku)
         .bind(lot_key)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -946,7 +949,7 @@ impl PgWarehouseRepository {
         .bind(lot_key)
         .bind(input.quantity)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -966,10 +969,10 @@ impl PgWarehouseRepository {
         .bind(&input.sku)
         .bind(input.lot_id)
         .bind(input.quantity)
-        .bind(input.reason)
-        .bind(input.performed_by)
+        .bind(input.reason.clone())
+        .bind(input.performed_by.clone())
         .bind(now)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 

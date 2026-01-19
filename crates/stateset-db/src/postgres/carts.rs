@@ -424,7 +424,7 @@ impl PgCartRepository {
         .bind(&metadata_json)
         .bind(now)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 

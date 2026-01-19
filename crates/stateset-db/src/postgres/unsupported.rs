@@ -3,6 +3,7 @@
 //! The PostgreSQL backend is still under development. These implementations prevent runtime panics
 //! by returning a structured `CommerceError` when a domain repository is not yet supported.
 
+use chrono::{DateTime, NaiveDate, Utc};
 use stateset_core::*;
 use uuid::Uuid;
 
@@ -94,6 +95,28 @@ impl ShipmentRepository for UnsupportedPostgresRepository {
     fn count(&self, _filter: ShipmentFilter) -> Result<u64> {
         self.not_supported()
     }
+
+    fn create_batch(&self, _inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
+        self.not_supported()
+    }
+    fn update_batch(&self, _updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(&self, _updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
+        self.not_supported()
+    }
 }
 
 impl PaymentRepository for UnsupportedPostgresRepository {
@@ -161,6 +184,28 @@ impl PaymentRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
     fn count(&self, _filter: PaymentFilter) -> Result<u64> {
+        self.not_supported()
+    }
+
+    fn create_batch(&self, _inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreatePayment>) -> Result<Vec<Payment>> {
+        self.not_supported()
+    }
+    fn update_batch(&self, _updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(&self, _updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<Payment>> {
         self.not_supported()
     }
 }
@@ -233,6 +278,28 @@ impl WarrantyRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
     fn count_claims(&self, _filter: WarrantyClaimFilter) -> Result<u64> {
+        self.not_supported()
+    }
+
+    fn create_batch(&self, _inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>> {
+        self.not_supported()
+    }
+    fn update_batch(&self, _updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(&self, _updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<Warranty>> {
         self.not_supported()
     }
 }
@@ -319,6 +386,34 @@ impl PurchaseOrderRepository for UnsupportedPostgresRepository {
     fn count_suppliers(&self, _filter: SupplierFilter) -> Result<u64> {
         self.not_supported()
     }
+
+    fn create_batch(&self, _inputs: Vec<CreatePurchaseOrder>) -> Result<BatchResult<PurchaseOrder>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreatePurchaseOrder>) -> Result<Vec<PurchaseOrder>> {
+        self.not_supported()
+    }
+    fn update_batch(
+        &self,
+        _updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<BatchResult<PurchaseOrder>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(
+        &self,
+        _updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<Vec<PurchaseOrder>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>> {
+        self.not_supported()
+    }
 }
 
 impl InvoiceRepository for UnsupportedPostgresRepository {
@@ -383,6 +478,28 @@ impl InvoiceRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
     fn count(&self, _filter: InvoiceFilter) -> Result<u64> {
+        self.not_supported()
+    }
+
+    fn create_batch(&self, _inputs: Vec<CreateInvoice>) -> Result<BatchResult<Invoice>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateInvoice>) -> Result<Vec<Invoice>> {
+        self.not_supported()
+    }
+    fn update_batch(&self, _updates: Vec<(Uuid, UpdateInvoice)>) -> Result<BatchResult<Invoice>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(&self, _updates: Vec<(Uuid, UpdateInvoice)>) -> Result<Vec<Invoice>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
         self.not_supported()
     }
 }
@@ -484,10 +601,35 @@ impl CartRepository for UnsupportedPostgresRepository {
     fn count(&self, _filter: CartFilter) -> Result<u64> {
         self.not_supported()
     }
+
+    fn create_batch(&self, _inputs: Vec<CreateCart>) -> Result<BatchResult<Cart>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateCart>) -> Result<Vec<Cart>> {
+        self.not_supported()
+    }
+    fn update_batch(&self, _updates: Vec<(Uuid, UpdateCart)>) -> Result<BatchResult<Cart>> {
+        self.not_supported()
+    }
+    fn update_batch_atomic(&self, _updates: Vec<(Uuid, UpdateCart)>) -> Result<Vec<Cart>> {
+        self.not_supported()
+    }
+    fn delete_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_batch_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<Cart>> {
+        self.not_supported()
+    }
 }
 
 impl AnalyticsRepository for UnsupportedPostgresRepository {
     fn get_sales_summary(&self, _query: AnalyticsQuery) -> Result<SalesSummary> {
+        self.not_supported()
+    }
+    fn get_sales_summary_batch(&self, _queries: Vec<AnalyticsQuery>) -> Result<Vec<SalesSummary>> {
         self.not_supported()
     }
     fn get_revenue_by_period(&self, _query: AnalyticsQuery) -> Result<Vec<RevenueByPeriod>> {
@@ -568,6 +710,19 @@ impl CurrencyRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
     fn update_settings(&self, _settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
+        self.not_supported()
+    }
+
+    fn set_rates_atomic(&self, _rates: Vec<SetExchangeRate>) -> Result<Vec<ExchangeRate>> {
+        self.not_supported()
+    }
+    fn delete_rates_batch(&self, _ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.not_supported()
+    }
+    fn delete_rates_atomic(&self, _ids: Vec<Uuid>) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_rates_batch(&self, _pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>> {
         self.not_supported()
     }
 }

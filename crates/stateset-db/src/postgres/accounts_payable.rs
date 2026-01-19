@@ -699,7 +699,7 @@ impl PgAccountsPayableRepository {
         .bind(&memo)
         .bind(PaymentStatusAP::Pending.to_string())
         .bind(now)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -713,7 +713,7 @@ impl PgAccountsPayableRepository {
             .bind(alloc.bill_id)
             .bind(alloc.amount)
             .bind(now)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
         }

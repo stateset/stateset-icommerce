@@ -498,7 +498,7 @@ impl PgTaxRepository {
         .bind(&input.name)
         .bind(&input.description)
         .bind(input.is_compound)
-        .bind(input.priority.unwrap_or(0))
+        .bind(input.priority)
         .bind(input.threshold_min)
         .bind(input.threshold_max)
         .bind(input.fixed_amount)

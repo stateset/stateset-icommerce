@@ -1188,4 +1188,32 @@ impl ShipmentRepository for PgShipmentRepository {
     fn count(&self, filter: ShipmentFilter) -> Result<u64> {
         super::block_on(self.count_async(filter))
     }
+
+    fn create_batch(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
+        self.create_batch(inputs)
+    }
+
+    fn create_batch_atomic(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
+        self.create_batch_atomic(inputs)
+    }
+
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+        self.update_batch(updates)
+    }
+
+    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
+        self.update_batch_atomic(updates)
+    }
+
+    fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
+        self.delete_batch(ids)
+    }
+
+    fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
+        self.delete_batch_atomic(ids)
+    }
+
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Shipment>> {
+        self.get_batch(ids)
+    }
 }

@@ -1036,10 +1036,6 @@ impl PgQualityRepository {
             sql.push_str(&format!(" AND lot_number = ${}", param_idx));
             param_idx += 1;
         }
-        if filter.serial_number.is_some() {
-            sql.push_str(&format!(" AND serial_number = ${}", param_idx));
-            param_idx += 1;
-        }
         if filter.hold_type.is_some() {
             sql.push_str(&format!(" AND hold_type = ${}", param_idx));
             param_idx += 1;
@@ -1064,9 +1060,6 @@ impl PgQualityRepository {
         }
         if let Some(lot_number) = filter.lot_number {
             q = q.bind(lot_number);
-        }
-        if let Some(serial_number) = filter.serial_number {
-            q = q.bind(serial_number);
         }
         if let Some(hold_type) = filter.hold_type {
             q = q.bind(hold_type.to_string());

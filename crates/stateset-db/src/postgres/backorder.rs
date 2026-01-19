@@ -431,6 +431,12 @@ impl PgBackorderRepository {
     ) -> Result<BackorderAllocation> {
         let id = Uuid::new_v4();
         let now = Utc::now();
+        let sku = sqlx::query_scalar::<_, String>("SELECT sku FROM backorders WHERE id = $1")
+            .bind(input.backorder_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
 
         sqlx::query(
             "INSERT INTO backorder_allocations (id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at)
@@ -438,7 +444,7 @@ impl PgBackorderRepository {
         )
         .bind(id)
         .bind(input.backorder_id)
-        .bind(&input.sku)
+        .bind(&sku)
         .bind(input.quantity)
         .bind(input.location_id)
         .bind(input.lot_id)
