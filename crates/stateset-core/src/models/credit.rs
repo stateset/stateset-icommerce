@@ -130,15 +130,15 @@ impl std::fmt::Display for CreditAccountStatus {
 }
 
 impl FromStr for CreditAccountStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "active" => Ok(CreditAccountStatus::Active),
             "suspended" => Ok(CreditAccountStatus::Suspended),
-            "on_hold" => Ok(CreditAccountStatus::OnHold),
+            "on_hold" | "onhold" => Ok(CreditAccountStatus::OnHold),
             "closed" => Ok(CreditAccountStatus::Closed),
-            "pending_review" => Ok(CreditAccountStatus::PendingReview),
-            _ => Ok(CreditAccountStatus::Active),
+            "pending_review" | "pendingreview" => Ok(CreditAccountStatus::PendingReview),
+            _ => Err(format!("Unknown credit account status: {}", s)),
         }
     }
 }
@@ -166,14 +166,14 @@ impl std::fmt::Display for RiskRating {
 }
 
 impl FromStr for RiskRating {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "low" => Ok(RiskRating::Low),
             "medium" => Ok(RiskRating::Medium),
             "high" => Ok(RiskRating::High),
             "critical" => Ok(RiskRating::Critical),
-            _ => Ok(RiskRating::Medium),
+            _ => Err(format!("Unknown risk rating: {}", s)),
         }
     }
 }
@@ -203,15 +203,15 @@ impl std::fmt::Display for CreditHoldType {
 }
 
 impl FromStr for CreditHoldType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "over_limit" => Ok(CreditHoldType::OverLimit),
-            "past_due" => Ok(CreditHoldType::PastDue),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "over_limit" | "overlimit" => Ok(CreditHoldType::OverLimit),
+            "past_due" | "pastdue" => Ok(CreditHoldType::PastDue),
             "manual" => Ok(CreditHoldType::Manual),
-            "new_customer" => Ok(CreditHoldType::NewCustomer),
-            "high_risk" => Ok(CreditHoldType::HighRisk),
-            _ => Ok(CreditHoldType::Manual),
+            "new_customer" | "newcustomer" => Ok(CreditHoldType::NewCustomer),
+            "high_risk" | "highrisk" => Ok(CreditHoldType::HighRisk),
+            _ => Err(format!("Unknown credit hold type: {}", s)),
         }
     }
 }
@@ -237,13 +237,13 @@ impl std::fmt::Display for CreditHoldStatus {
 }
 
 impl FromStr for CreditHoldStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "active" => Ok(CreditHoldStatus::Active),
             "released" => Ok(CreditHoldStatus::Released),
             "expired" => Ok(CreditHoldStatus::Expired),
-            _ => Ok(CreditHoldStatus::Active),
+            _ => Err(format!("Unknown credit hold status: {}", s)),
         }
     }
 }
@@ -275,16 +275,18 @@ impl std::fmt::Display for CreditApplicationStatus {
 }
 
 impl FromStr for CreditApplicationStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(CreditApplicationStatus::Pending),
-            "under_review" => Ok(CreditApplicationStatus::UnderReview),
+            "under_review" | "underreview" => Ok(CreditApplicationStatus::UnderReview),
             "approved" => Ok(CreditApplicationStatus::Approved),
-            "denied" => Ok(CreditApplicationStatus::Denied),
-            "more_info_needed" => Ok(CreditApplicationStatus::MoreInfoNeeded),
+            "denied" | "rejected" => Ok(CreditApplicationStatus::Denied),
+            "more_info_needed" | "moreinfoneeded" | "info_needed" => {
+                Ok(CreditApplicationStatus::MoreInfoNeeded)
+            }
             "withdrawn" => Ok(CreditApplicationStatus::Withdrawn),
-            _ => Ok(CreditApplicationStatus::Pending),
+            _ => Err(format!("Unknown credit application status: {}", s)),
         }
     }
 }
@@ -316,16 +318,16 @@ impl std::fmt::Display for CreditTransactionType {
 }
 
 impl FromStr for CreditTransactionType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "charge" => Ok(CreditTransactionType::Charge),
             "payment" => Ok(CreditTransactionType::Payment),
-            "credit_memo" => Ok(CreditTransactionType::CreditMemo),
+            "credit_memo" | "creditmemo" => Ok(CreditTransactionType::CreditMemo),
             "adjustment" => Ok(CreditTransactionType::Adjustment),
-            "write_off" => Ok(CreditTransactionType::WriteOff),
-            "limit_change" => Ok(CreditTransactionType::LimitChange),
-            _ => Ok(CreditTransactionType::Charge),
+            "write_off" | "writeoff" => Ok(CreditTransactionType::WriteOff),
+            "limit_change" | "limitchange" => Ok(CreditTransactionType::LimitChange),
+            _ => Err(format!("Unknown credit transaction type: {}", s)),
         }
     }
 }
@@ -492,4 +494,62 @@ pub fn generate_credit_application_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
     format!("CAPP-{}-{}", timestamp, random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_credit_account_status_from_str() {
+        assert_eq!(CreditAccountStatus::from_str("active").unwrap(), CreditAccountStatus::Active);
+        assert_eq!(CreditAccountStatus::from_str("OnHold").unwrap(), CreditAccountStatus::OnHold);
+        assert!(CreditAccountStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_risk_rating_from_str() {
+        assert_eq!(RiskRating::from_str("low").unwrap(), RiskRating::Low);
+        assert_eq!(RiskRating::from_str("CRITICAL").unwrap(), RiskRating::Critical);
+        assert!(RiskRating::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_credit_hold_type_from_str() {
+        assert_eq!(CreditHoldType::from_str("overlimit").unwrap(), CreditHoldType::OverLimit);
+        assert_eq!(CreditHoldType::from_str("past_due").unwrap(), CreditHoldType::PastDue);
+        assert!(CreditHoldType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_credit_hold_status_from_str() {
+        assert_eq!(CreditHoldStatus::from_str("released").unwrap(), CreditHoldStatus::Released);
+        assert!(CreditHoldStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_credit_application_status_from_str() {
+        assert_eq!(
+            CreditApplicationStatus::from_str("under_review").unwrap(),
+            CreditApplicationStatus::UnderReview
+        );
+        assert_eq!(
+            CreditApplicationStatus::from_str("info_needed").unwrap(),
+            CreditApplicationStatus::MoreInfoNeeded
+        );
+        assert!(CreditApplicationStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_credit_transaction_type_from_str() {
+        assert_eq!(
+            CreditTransactionType::from_str("creditmemo").unwrap(),
+            CreditTransactionType::CreditMemo
+        );
+        assert_eq!(
+            CreditTransactionType::from_str("limit_change").unwrap(),
+            CreditTransactionType::LimitChange
+        );
+        assert!(CreditTransactionType::from_str("nope").is_err());
+    }
 }

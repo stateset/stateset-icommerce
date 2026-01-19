@@ -33,6 +33,7 @@ fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Uuid {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,

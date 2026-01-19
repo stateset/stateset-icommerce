@@ -74,77 +74,88 @@ impl PgShipmentRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+    fn row_to_shipment(
+        row: ShipmentRow,
+        items: Vec<ShipmentItem>,
+        events: Vec<ShipmentEvent>,
+    ) -> Result<Shipment> {
+        let ShipmentRow {
+            id,
+            shipment_number,
+            order_id,
+            status,
+            carrier,
+            shipping_method,
+            tracking_number,
+            tracking_url,
+            recipient_name,
+            recipient_email,
+            recipient_phone,
+            shipping_address,
+            weight_kg,
+            dimensions,
+            shipping_cost,
+            insurance_amount,
+            signature_required,
+            shipped_at,
+            estimated_delivery,
+            delivered_at,
+            notes,
+            version,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn parse_status(s: &str) -> ShipmentStatus {
-        match s {
-            "processing" => ShipmentStatus::Processing,
-            "ready_to_ship" => ShipmentStatus::ReadyToShip,
-            "shipped" => ShipmentStatus::Shipped,
-            "in_transit" => ShipmentStatus::InTransit,
-            "out_for_delivery" => ShipmentStatus::OutForDelivery,
-            "delivered" => ShipmentStatus::Delivered,
-            "failed" => ShipmentStatus::Failed,
-            "returned" => ShipmentStatus::Returned,
-            "cancelled" => ShipmentStatus::Cancelled,
-            "on_hold" => ShipmentStatus::OnHold,
-            _ => ShipmentStatus::Pending,
-        }
-    }
+        let status: ShipmentStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid shipment.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+        let carrier: ShippingCarrier = carrier.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid shipment.carrier '{}': {}",
+                carrier.as_str(),
+                e
+            ))
+        })?;
+        let shipping_method: ShippingMethod = shipping_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid shipment.shipping_method '{}': {}",
+                shipping_method.as_str(),
+                e
+            ))
+        })?;
 
-    fn parse_carrier(s: &str) -> ShippingCarrier {
-        match s {
-            "ups" => ShippingCarrier::Ups,
-            "fedex" => ShippingCarrier::FedEx,
-            "usps" => ShippingCarrier::Usps,
-            "dhl" => ShippingCarrier::Dhl,
-            "ontrac" => ShippingCarrier::OnTrac,
-            "lasership" => ShippingCarrier::LaserShip,
-            _ => ShippingCarrier::Other,
-        }
-    }
-
-    fn parse_method(s: &str) -> ShippingMethod {
-        match s {
-            "express" => ShippingMethod::Express,
-            "overnight" => ShippingMethod::Overnight,
-            "two_day" => ShippingMethod::TwoDay,
-            "ground" => ShippingMethod::Ground,
-            "international" => ShippingMethod::International,
-            "same_day" => ShippingMethod::SameDay,
-            "freight" => ShippingMethod::Freight,
-            _ => ShippingMethod::Standard,
-        }
-    }
-
-    fn row_to_shipment(row: ShipmentRow, items: Vec<ShipmentItem>, events: Vec<ShipmentEvent>) -> Shipment {
-        Shipment {
-            id: row.id,
-            shipment_number: row.shipment_number,
-            order_id: row.order_id,
-            status: Self::parse_status(&row.status),
-            carrier: Self::parse_carrier(&row.carrier),
-            shipping_method: Self::parse_method(&row.shipping_method),
-            tracking_number: row.tracking_number,
-            tracking_url: row.tracking_url,
-            recipient_name: row.recipient_name,
-            recipient_email: row.recipient_email,
-            recipient_phone: row.recipient_phone,
-            shipping_address: row.shipping_address,
-            weight_kg: row.weight_kg,
-            dimensions: row.dimensions,
-            shipping_cost: row.shipping_cost,
-            insurance_amount: row.insurance_amount,
-            signature_required: row.signature_required,
-            shipped_at: row.shipped_at,
-            estimated_delivery: row.estimated_delivery,
-            delivered_at: row.delivered_at,
-            notes: row.notes,
+        Ok(Shipment {
+            id,
+            shipment_number,
+            order_id,
+            status,
+            carrier,
+            shipping_method,
+            tracking_number,
+            tracking_url,
+            recipient_name,
+            recipient_email,
+            recipient_phone,
+            shipping_address,
+            weight_kg,
+            dimensions,
+            shipping_cost,
+            insurance_amount,
+            signature_required,
+            shipped_at,
+            estimated_delivery,
+            delivered_at,
+            notes,
             items,
             events,
-            version: row.version,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            version,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_item(row: ShipmentItemRow) -> ShipmentItem {
@@ -345,7 +356,7 @@ impl PgShipmentRepository {
             Some(row) => {
                 let items = self.load_items_async(row.id).await?;
                 let events = self.load_events_async(row.id).await?;
-                Ok(Some(Self::row_to_shipment(row, items, events)))
+                Ok(Some(Self::row_to_shipment(row, items, events)?))
             }
             None => Ok(None),
         }
@@ -875,8 +886,23 @@ impl PgShipmentRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
 
-            let new_status = input.status.unwrap_or(Self::parse_status(&existing_row.status));
-            let new_carrier = input.carrier.unwrap_or(Self::parse_carrier(&existing_row.carrier));
+            let existing_status: ShipmentStatus = existing_row.status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid shipment.status '{}': {}",
+                    existing_row.status.as_str(),
+                    e
+                ))
+            })?;
+            let existing_carrier: ShippingCarrier = existing_row.carrier.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid shipment.carrier '{}': {}",
+                    existing_row.carrier.as_str(),
+                    e
+                ))
+            })?;
+
+            let new_status = input.status.unwrap_or(existing_status);
+            let new_carrier = input.carrier.unwrap_or(existing_carrier);
             let new_tracking = input.tracking_number.or(existing_row.tracking_number.clone());
             let new_tracking_url = new_tracking
                 .as_ref()
@@ -952,7 +978,7 @@ impl PgShipmentRepository {
             let items: Vec<ShipmentItem> = item_rows.into_iter().map(Self::row_to_item).collect();
             let events: Vec<ShipmentEvent> = event_rows.into_iter().map(Self::row_to_event).collect();
 
-            shipments.push(Self::row_to_shipment(updated_row, items, events));
+            shipments.push(Self::row_to_shipment(updated_row, items, events)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -1026,7 +1052,7 @@ impl PgShipmentRepository {
         for row in rows {
             let items = self.load_items_async(row.id).await?;
             let events = self.load_events_async(row.id).await?;
-            shipments.push(Self::row_to_shipment(row, items, events));
+            shipments.push(Self::row_to_shipment(row, items, events)?);
         }
 
         Ok(shipments)

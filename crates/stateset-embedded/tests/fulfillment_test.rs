@@ -9,9 +9,10 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddCarton, AddCartonItem, Commerce, CreateCustomer, CreateLocation, CreateOrder,
-    CreateOrderItem, CreatePackTask, CreatePickTask, CreateShipTask, CreateWarehouse, CreateWave,
-    LocationType, PackStatus, PackTaskFilter, PackageType, PickStatus, PickTaskFilter, ShipStatus,
-    ShipTaskFilter, Wave, WaveFilter, WaveStatus, WarehouseType,
+    CreateOrderItem, CreatePackTask, CreatePickTask, CreateProduct, CreateShipTask,
+    CreateWarehouse, CreateWave, LocationType, PackStatus, PackTaskFilter, PackageType,
+    PickStatus, PickTaskFilter, ShipStatus, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
+    WarehouseType,
 };
 use uuid::Uuid;
 
@@ -29,6 +30,7 @@ struct TestContext {
     warehouse_id: i32,
     location_id: i32,
     customer_id: Uuid,
+    product_id: Uuid,
 }
 
 impl TestContext {
@@ -71,11 +73,21 @@ impl TestContext {
             })
             .expect("Failed to create test customer");
 
+        // Create product
+        let product = commerce
+            .products()
+            .create(CreateProduct {
+                name: "Test Product".into(),
+                ..Default::default()
+            })
+            .expect("Failed to create test product");
+
         Self {
             commerce,
             warehouse_id: warehouse.id,
             location_id: location.id,
             customer_id: customer.id,
+            product_id: product.id,
         }
     }
 
@@ -85,6 +97,7 @@ impl TestContext {
             .create(CreateOrder {
                 customer_id: self.customer_id,
                 items: vec![CreateOrderItem {
+                    product_id: self.product_id,
                     sku: "TEST-SKU-001".into(),
                     name: "Test Product".into(),
                     quantity: 2,
@@ -99,6 +112,16 @@ impl TestContext {
 
     #[allow(dead_code)]
     fn create_order_with_items(&self, items: Vec<CreateOrderItem>) -> Uuid {
+        let items = items
+            .into_iter()
+            .map(|mut item| {
+                if item.product_id.is_nil() {
+                    item.product_id = self.product_id;
+                }
+                item
+            })
+            .collect();
+
         self.commerce
             .orders()
             .create(CreateOrder {

@@ -52,14 +52,24 @@ struct InvoiceRow {
 }
 
 impl InvoiceRow {
-    fn into_invoice(self, items: Vec<InvoiceItem>) -> Invoice {
-        Invoice {
+    fn into_invoice(self, items: Vec<InvoiceItem>) -> Result<Invoice> {
+        let status: InvoiceStatus = self.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", self.status, e))
+        })?;
+        let invoice_type: InvoiceType = self.invoice_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid invoice.invoice_type '{}': {}",
+                self.invoice_type, e
+            ))
+        })?;
+
+        Ok(Invoice {
             id: self.id,
             invoice_number: self.invoice_number,
             customer_id: self.customer_id,
             order_id: self.order_id,
-            status: self.status.parse().unwrap_or_default(),
-            invoice_type: self.invoice_type.parse().unwrap_or_default(),
+            status,
+            invoice_type,
             invoice_date: self.invoice_date,
             due_date: self.due_date,
             payment_terms: self.payment_terms,
@@ -91,7 +101,7 @@ impl InvoiceRow {
             items,
             created_at: self.created_at,
             updated_at: self.updated_at,
-        }
+        })
     }
 }
 
@@ -168,7 +178,7 @@ impl PgInvoiceRepository {
         match row {
             Some(invoice_row) => {
                 let items = self.get_invoice_items_async(id).await?;
-                Ok(Some(invoice_row.into_invoice(items)))
+                Ok(Some(invoice_row.into_invoice(items)?))
             }
             None => Ok(None),
         }
@@ -356,7 +366,7 @@ impl PgInvoiceRepository {
         match row {
             Some(invoice_row) => {
                 let items = self.get_invoice_items_async(invoice_row.id).await?;
-                Ok(Some(invoice_row.into_invoice(items)))
+                Ok(Some(invoice_row.into_invoice(items)?))
             }
             None => Ok(None),
         }
@@ -526,7 +536,7 @@ impl PgInvoiceRepository {
         let mut invoices = Vec::new();
         for row in rows {
             let items = self.get_invoice_items_async(row.id).await?;
-            invoices.push(row.into_invoice(items));
+            invoices.push(row.into_invoice(items)?);
         }
 
         Ok(invoices)
@@ -557,7 +567,10 @@ impl PgInvoiceRepository {
                 .await
                 .map_err(map_db_error)?;
 
-        if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+        let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
+        })?;
+        if parsed_status != InvoiceStatus::Draft {
             return Err(CommerceError::ValidationError(
                 "Can only delete draft invoices".to_string(),
             ));
@@ -1220,7 +1233,7 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-            invoices.push(updated_row.into_invoice(items.into_iter().map(|r| r.into()).collect()));
+            invoices.push(updated_row.into_invoice(items.into_iter().map(|r| r.into()).collect())?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -1242,7 +1255,10 @@ impl PgInvoiceRepository {
         .map_err(map_db_error)?;
 
         for (id, status) in &statuses {
-            if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+            let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
+            })?;
+            if parsed_status != InvoiceStatus::Draft {
                 return Err(CommerceError::ValidationError(format!(
                     "Invoice {} is not in draft status and cannot be deleted",
                     id
@@ -1282,7 +1298,7 @@ impl PgInvoiceRepository {
         let mut invoices = Vec::with_capacity(rows.len());
         for row in rows {
             let items = self.get_invoice_items_async(row.id).await?;
-            invoices.push(row.into_invoice(items));
+            invoices.push(row.into_invoice(items)?);
         }
 
         Ok(invoices)

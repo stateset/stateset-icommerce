@@ -92,6 +92,24 @@ impl std::fmt::Display for TransactionType {
     }
 }
 
+impl std::str::FromStr for TransactionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "receipt" => Ok(Self::Receipt),
+            "shipment" => Ok(Self::Shipment),
+            "adjustment" => Ok(Self::Adjustment),
+            "transfer" => Ok(Self::Transfer),
+            "return" => Ok(Self::Return),
+            "allocation" => Ok(Self::Allocation),
+            "deallocation" => Ok(Self::Deallocation),
+            "cycle_count" => Ok(Self::CycleCount),
+            _ => Err(format!("Unknown inventory transaction type: {}", s)),
+        }
+    }
+}
+
 /// Reservation status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +137,22 @@ impl std::fmt::Display for ReservationStatus {
             Self::Cancelled => write!(f, "cancelled"),
             Self::Released => write!(f, "released"),
             Self::Expired => write!(f, "expired"),
+        }
+    }
+}
+
+impl std::str::FromStr for ReservationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "confirmed" => Ok(Self::Confirmed),
+            "allocated" => Ok(Self::Allocated),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "released" => Ok(Self::Released),
+            "expired" => Ok(Self::Expired),
+            _ => Err(format!("Unknown reservation status: {}", s)),
         }
     }
 }
@@ -210,5 +244,26 @@ impl InventoryBalance {
     /// Check if requested quantity can be allocated
     pub fn can_allocate(&self, quantity: Decimal) -> bool {
         self.quantity_available >= quantity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn transaction_type_from_str() {
+        assert_eq!(TransactionType::from_str("receipt").unwrap(), TransactionType::Receipt);
+        assert!(TransactionType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn reservation_status_from_str() {
+        assert_eq!(
+            ReservationStatus::from_str("allocated").unwrap(),
+            ReservationStatus::Allocated
+        );
+        assert!(ReservationStatus::from_str("unknown").is_err());
     }
 }

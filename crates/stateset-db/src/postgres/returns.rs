@@ -53,37 +53,79 @@ impl PgReturnRepository {
         Self { pool }
     }
 
-    fn row_to_return(row: ReturnRow, items: Vec<ReturnItem>) -> Return {
-        Return {
-            id: row.id,
-            order_id: row.order_id,
-            customer_id: row.customer_id,
-            status: parse_return_status(&row.status),
-            reason: parse_return_reason(&row.reason),
-            reason_details: row.reason_details,
-            idempotency_key: row.idempotency_key,
-            refund_amount: row.refund_amount,
-            refund_method: row.refund_method,
-            tracking_number: row.tracking_number,
+    fn row_to_return(row: ReturnRow, items: Vec<ReturnItem>) -> Result<Return> {
+        let ReturnRow {
+            id,
+            order_id,
+            customer_id,
+            status,
+            reason,
+            reason_details,
+            idempotency_key,
+            refund_amount,
+            refund_method,
+            tracking_number,
+            notes,
+            version,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: ReturnStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid return.status '{}': {}", status, e))
+        })?;
+        let reason: ReturnReason = reason.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid return.reason '{}': {}", reason, e))
+        })?;
+
+        Ok(Return {
+            id,
+            order_id,
+            customer_id,
+            status,
+            reason,
+            reason_details,
+            idempotency_key,
+            refund_amount,
+            refund_method,
+            tracking_number,
             items,
-            notes: row.notes,
-            version: row.version,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            notes,
+            version,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_item(row: ReturnItemRow) -> ReturnItem {
-        ReturnItem {
-            id: row.id,
-            return_id: row.return_id,
-            order_item_id: row.order_item_id,
-            sku: row.sku,
-            name: row.name,
-            quantity: row.quantity,
-            condition: parse_item_condition(&row.condition),
-            refund_amount: row.refund_amount,
-        }
+    fn row_to_item(row: ReturnItemRow) -> Result<ReturnItem> {
+        let ReturnItemRow {
+            id,
+            return_id,
+            order_item_id,
+            sku,
+            name,
+            quantity,
+            condition,
+            refund_amount,
+        } = row;
+
+        let condition: ItemCondition = condition.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid return_item.condition '{}': {}",
+                condition, e
+            ))
+        })?;
+
+        Ok(ReturnItem {
+            id,
+            return_id,
+            order_item_id,
+            sku,
+            name,
+            quantity,
+            condition,
+            refund_amount,
+        })
     }
 
     /// Create a return (async)
@@ -182,7 +224,7 @@ impl PgReturnRepository {
         .bind(&item_info.0)
         .bind(&item_info.1)
         .bind(input.quantity)
-        .bind(format!("{:?}", condition).to_lowercase())
+        .bind(condition.to_string())
         .bind(refund)
         .execute(&self.pool)
         .await
@@ -212,7 +254,7 @@ impl PgReturnRepository {
         };
 
         let items = self.get_items_async(row.id).await?;
-        Ok(Some(Self::row_to_return(row, items)))
+        Ok(Some(Self::row_to_return(row, items)?))
     }
 
     /// Get a return by ID (async)
@@ -226,7 +268,7 @@ impl PgReturnRepository {
         match row {
             Some(return_row) => {
                 let items = self.get_items_async(id).await?;
-                Ok(Some(Self::row_to_return(return_row, items)))
+                Ok(Some(Self::row_to_return(return_row, items)?))
             }
             None => Ok(None),
         }
@@ -242,7 +284,11 @@ impl PgReturnRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_item).collect())
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            items.push(Self::row_to_item(row)?);
+        }
+        Ok(items)
     }
 
     /// Update a return (async)
@@ -296,7 +342,7 @@ impl PgReturnRepository {
         let mut returns = Vec::new();
         for row in rows {
             let items = self.get_items_async(row.id).await?;
-            returns.push(Self::row_to_return(row, items));
+            returns.push(Self::row_to_return(row, items)?);
         }
 
         Ok(returns)
@@ -468,7 +514,7 @@ impl PgReturnRepository {
                 .bind(&item_info.0)
                 .bind(&item_info.1)
                 .bind(item_input.quantity)
-                .bind(format!("{:?}", condition).to_lowercase())
+                .bind(condition.to_string())
                 .bind(refund)
                 .execute(&mut *tx)
                 .await
@@ -550,8 +596,11 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-            let existing_items: Vec<ReturnItem> = items.into_iter().map(Self::row_to_item).collect();
-            let existing = Self::row_to_return(existing_row, existing_items.clone());
+            let mut existing_items = Vec::with_capacity(items.len());
+            for item in items {
+                existing_items.push(Self::row_to_item(item)?);
+            }
+            let existing = Self::row_to_return(existing_row, existing_items.clone())?;
 
             let new_status = input.status.unwrap_or(existing.status);
             let new_tracking = input.tracking_number.or(existing.tracking_number);
@@ -585,7 +634,7 @@ impl PgReturnRepository {
                 .await
                 .map_err(map_db_error)?;
 
-            returns.push(Self::row_to_return(updated_row, existing_items));
+            returns.push(Self::row_to_return(updated_row, existing_items)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -650,7 +699,7 @@ impl PgReturnRepository {
         let mut returns = Vec::new();
         for row in rows {
             let items = self.get_items_async(row.id).await?;
-            returns.push(Self::row_to_return(row, items));
+            returns.push(Self::row_to_return(row, items)?);
         }
 
         Ok(returns)
@@ -724,44 +773,5 @@ impl ReturnRepository for PgReturnRepository {
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Return>> {
         super::block_on(self.get_batch_async(ids))
-    }
-}
-
-fn parse_return_status(s: &str) -> ReturnStatus {
-    match s {
-        "requested" => ReturnStatus::Requested,
-        "approved" => ReturnStatus::Approved,
-        "rejected" => ReturnStatus::Rejected,
-        "in_transit" => ReturnStatus::InTransit,
-        "received" => ReturnStatus::Received,
-        "inspecting" => ReturnStatus::Inspecting,
-        "completed" => ReturnStatus::Completed,
-        "cancelled" => ReturnStatus::Cancelled,
-        _ => ReturnStatus::Requested,
-    }
-}
-
-fn parse_return_reason(s: &str) -> ReturnReason {
-    match s {
-        "defective" => ReturnReason::Defective,
-        "wrong_item" => ReturnReason::WrongItem,
-        "not_as_described" => ReturnReason::NotAsDescribed,
-        "changed_mind" => ReturnReason::ChangedMind,
-        "better_price_found" => ReturnReason::BetterPriceFound,
-        "no_longer_needed" => ReturnReason::NoLongerNeeded,
-        "damaged" => ReturnReason::Damaged,
-        "other" => ReturnReason::Other,
-        _ => ReturnReason::Other,
-    }
-}
-
-fn parse_item_condition(s: &str) -> ItemCondition {
-    match s {
-        "new" => ItemCondition::New,
-        "opened" => ItemCondition::Opened,
-        "used" => ItemCondition::Used,
-        "damaged" => ItemCondition::Damaged,
-        "defective" => ItemCondition::Defective,
-        _ => ItemCondition::New,
     }
 }

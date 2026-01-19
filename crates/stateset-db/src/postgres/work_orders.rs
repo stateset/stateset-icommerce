@@ -77,77 +77,108 @@ impl PgWorkOrderRepository {
         Self { pool }
     }
 
-    fn parse_status(s: &str) -> WorkOrderStatus {
-        match s {
-            "in_progress" => WorkOrderStatus::InProgress,
-            "completed" => WorkOrderStatus::Completed,
-            "partially_completed" => WorkOrderStatus::PartiallyCompleted,
-            "cancelled" => WorkOrderStatus::Cancelled,
-            "on_hold" => WorkOrderStatus::OnHold,
-            _ => WorkOrderStatus::Planned,
-        }
-    }
+    fn row_to_work_order(
+        row: WorkOrderRow,
+        tasks: Vec<WorkOrderTask>,
+        materials: Vec<WorkOrderMaterial>,
+    ) -> Result<WorkOrder> {
+        let WorkOrderRow {
+            id,
+            work_order_number,
+            product_id,
+            bom_id,
+            work_center_id,
+            assigned_to,
+            status,
+            priority,
+            quantity_to_build,
+            quantity_completed,
+            scheduled_start,
+            scheduled_end,
+            actual_start,
+            actual_end,
+            notes,
+            version,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn parse_priority(s: &str) -> WorkOrderPriority {
-        match s {
-            "low" => WorkOrderPriority::Low,
-            "high" => WorkOrderPriority::High,
-            "urgent" => WorkOrderPriority::Urgent,
-            _ => WorkOrderPriority::Normal,
-        }
-    }
+        let status: WorkOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid work_order.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let priority: WorkOrderPriority = priority.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid work_order.priority '{}': {}",
+                priority, e
+            ))
+        })?;
 
-    fn parse_task_status(s: &str) -> TaskStatus {
-        match s {
-            "in_progress" => TaskStatus::InProgress,
-            "completed" => TaskStatus::Completed,
-            "skipped" => TaskStatus::Skipped,
-            "cancelled" => TaskStatus::Cancelled,
-            _ => TaskStatus::Pending,
-        }
-    }
-
-    fn row_to_work_order(row: WorkOrderRow, tasks: Vec<WorkOrderTask>, materials: Vec<WorkOrderMaterial>) -> WorkOrder {
-        WorkOrder {
-            id: row.id,
-            work_order_number: row.work_order_number,
-            product_id: row.product_id,
-            bom_id: row.bom_id,
-            work_center_id: row.work_center_id,
-            assigned_to: row.assigned_to,
-            status: Self::parse_status(&row.status),
-            priority: Self::parse_priority(&row.priority),
-            quantity_to_build: row.quantity_to_build,
-            quantity_completed: row.quantity_completed,
-            scheduled_start: row.scheduled_start,
-            scheduled_end: row.scheduled_end,
-            actual_start: row.actual_start,
-            actual_end: row.actual_end,
-            notes: row.notes,
+        Ok(WorkOrder {
+            id,
+            work_order_number,
+            product_id,
+            bom_id,
+            work_center_id,
+            assigned_to,
+            status,
+            priority,
+            quantity_to_build,
+            quantity_completed,
+            scheduled_start,
+            scheduled_end,
+            actual_start,
+            actual_end,
+            notes,
             tasks,
             materials,
-            version: row.version,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            version,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_task(row: WorkOrderTaskRow) -> WorkOrderTask {
-        WorkOrderTask {
-            id: row.id,
-            work_order_id: row.work_order_id,
-            sequence: row.sequence,
-            task_name: row.task_name,
-            status: Self::parse_task_status(&row.status),
-            estimated_hours: row.estimated_hours,
-            actual_hours: row.actual_hours,
-            assigned_to: row.assigned_to,
-            started_at: row.started_at,
-            completed_at: row.completed_at,
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_task(row: WorkOrderTaskRow) -> Result<WorkOrderTask> {
+        let WorkOrderTaskRow {
+            id,
+            work_order_id,
+            sequence,
+            task_name,
+            status,
+            estimated_hours,
+            actual_hours,
+            assigned_to,
+            started_at,
+            completed_at,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: TaskStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid work_order_task.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(WorkOrderTask {
+            id,
+            work_order_id,
+            sequence,
+            task_name,
+            status,
+            estimated_hours,
+            actual_hours,
+            assigned_to,
+            started_at,
+            completed_at,
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_material(row: WorkOrderMaterialRow) -> WorkOrderMaterial {
@@ -174,7 +205,11 @@ impl PgWorkOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_task).collect())
+        let mut tasks = Vec::with_capacity(rows.len());
+        for row in rows {
+            tasks.push(Self::row_to_task(row)?);
+        }
+        Ok(tasks)
     }
 
     async fn get_materials_async_internal(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderMaterial>> {
@@ -198,7 +233,7 @@ impl PgWorkOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_task(row))
+        Self::row_to_task(row)
     }
 
     async fn get_material_by_id(&self, material_id: Uuid) -> Result<WorkOrderMaterial> {
@@ -290,7 +325,7 @@ impl PgWorkOrderRepository {
             Some(row) => {
                 let tasks = self.get_tasks_async(row.id).await?;
                 let materials = self.get_materials_async_internal(row.id).await?;
-                Ok(Some(Self::row_to_work_order(row, tasks, materials)))
+                Ok(Some(Self::row_to_work_order(row, tasks, materials)?))
             }
             None => Ok(None),
         }
@@ -310,7 +345,7 @@ impl PgWorkOrderRepository {
             Some(row) => {
                 let tasks = self.get_tasks_async(row.id).await?;
                 let materials = self.get_materials_async_internal(row.id).await?;
-                Ok(Some(Self::row_to_work_order(row, tasks, materials)))
+                Ok(Some(Self::row_to_work_order(row, tasks, materials)?))
             }
             None => Ok(None),
         }
@@ -364,7 +399,7 @@ impl PgWorkOrderRepository {
         for row in rows {
             let tasks = self.get_tasks_async(row.id).await?;
             let materials = self.get_materials_async_internal(row.id).await?;
-            work_orders.push(Self::row_to_work_order(row, tasks, materials));
+            work_orders.push(Self::row_to_work_order(row, tasks, materials)?);
         }
 
         Ok(work_orders)
@@ -787,8 +822,22 @@ impl PgWorkOrderRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
 
-            let new_status = input.status.unwrap_or(Self::parse_status(&existing_row.status));
-            let new_priority = input.priority.unwrap_or(Self::parse_priority(&existing_row.priority));
+            let status_str = existing_row.status.clone();
+            let priority_str = existing_row.priority.clone();
+            let existing_status: WorkOrderStatus = status_str.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid work_order.status '{}': {}",
+                    status_str, e
+                ))
+            })?;
+            let existing_priority: WorkOrderPriority = priority_str.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid work_order.priority '{}': {}",
+                    priority_str, e
+                ))
+            })?;
+            let new_status = input.status.unwrap_or(existing_status);
+            let new_priority = input.priority.unwrap_or(existing_priority);
             let new_assigned_to = input.assigned_to.or(existing_row.assigned_to);
             let new_notes = input.notes.or(existing_row.notes.clone());
             let new_work_center_id = input.work_center_id.or(existing_row.work_center_id.clone());
@@ -834,11 +883,19 @@ impl PgWorkOrderRepository {
             .await
             .map_err(map_db_error)?;
 
+            let mut task_models = Vec::with_capacity(tasks.len());
+            for task in tasks {
+                task_models.push(Self::row_to_task(task)?);
+            }
+            let material_models = materials
+                .into_iter()
+                .map(Self::row_to_material)
+                .collect();
             work_orders.push(Self::row_to_work_order(
                 updated_row,
-                tasks.into_iter().map(Self::row_to_task).collect(),
-                materials.into_iter().map(Self::row_to_material).collect(),
-            ));
+                task_models,
+                material_models,
+            )?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -906,7 +963,7 @@ impl PgWorkOrderRepository {
         for row in rows {
             let tasks = self.get_tasks_async(row.id).await?;
             let materials = self.get_materials_async_internal(row.id).await?;
-            work_orders.push(Self::row_to_work_order(row, tasks, materials));
+            work_orders.push(Self::row_to_work_order(row, tasks, materials)?);
         }
 
         Ok(work_orders)

@@ -111,6 +111,7 @@ fn test_create_cart() {
 fn test_create_cart_for_customer() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_id = create_test_customer(&commerce);
+    let product_id = Uuid::new_v4();
 
     let cart = commerce
         .carts()
@@ -904,6 +905,7 @@ fn test_cart_begin_checkout() {
 fn test_cart_checkout_creates_order() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_id = create_test_customer(&commerce);
+    let product_id = Uuid::new_v4();
 
     // Create cart for customer
     let cart = commerce
@@ -922,6 +924,7 @@ fn test_cart_checkout_creates_order() {
         .add_item(
             cart.id,
             AddCartItem {
+                product_id: Some(product_id),
                 sku: "SKU-001".into(),
                 name: "Checkout Widget".into(),
                 quantity: 2,
@@ -1302,6 +1305,8 @@ fn test_full_checkout_flow() {
             ..Default::default()
         })
         .expect("Failed to create cart");
+    let product_id_a = Uuid::new_v4();
+    let product_id_b = Uuid::new_v4();
 
     assert_eq!(cart.status, CartStatus::Active);
 
@@ -1311,6 +1316,7 @@ fn test_full_checkout_flow() {
         .add_item(
             cart.id,
             AddCartItem {
+                product_id: Some(product_id_a),
                 sku: "SKU-001".into(),
                 name: "Widget A".into(),
                 quantity: 2,
@@ -1325,6 +1331,7 @@ fn test_full_checkout_flow() {
         .add_item(
             cart.id,
             AddCartItem {
+                product_id: Some(product_id_b),
                 sku: "SKU-002".into(),
                 name: "Widget B".into(),
                 quantity: 1,

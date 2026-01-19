@@ -13,7 +13,6 @@ use stateset_core::{
     PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior, UpdatePromotion,
     generate_promotion_code, CommerceError,
 };
-use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL promotions repository
@@ -93,63 +92,228 @@ impl PgPromotionRepository {
         Self { pool }
     }
 
-    fn row_to_promotion(&self, row: PromotionRow) -> Promotion {
-        Promotion {
-            id: row.id,
-            code: row.code,
-            name: row.name,
-            description: row.description,
-            internal_notes: row.internal_notes,
-            promotion_type: parse_promotion_type(&row.promotion_type),
-            trigger: parse_trigger(&row.trigger),
-            target: parse_target(&row.target),
-            stacking: parse_stacking(&row.stacking),
-            status: parse_status(&row.status),
-            percentage_off: row.percentage_off,
-            fixed_amount_off: row.fixed_amount_off,
-            max_discount_amount: row.max_discount_amount,
-            buy_quantity: row.buy_quantity,
-            get_quantity: row.get_quantity,
-            get_discount_percent: row.get_discount_percent,
-            tiers: row.tiers.and_then(|v| serde_json::from_value(v).ok()),
-            bundle_product_ids: row.bundle_product_ids.and_then(|v| serde_json::from_value(v).ok()),
-            bundle_discount: row.bundle_discount,
-            starts_at: row.starts_at,
-            ends_at: row.ends_at,
-            total_usage_limit: row.total_usage_limit,
-            per_customer_limit: row.per_customer_limit,
-            usage_count: row.usage_count,
-            applicable_product_ids: serde_json::from_value(row.applicable_product_ids).unwrap_or_default(),
-            applicable_category_ids: serde_json::from_value(row.applicable_category_ids).unwrap_or_default(),
-            applicable_skus: serde_json::from_value(row.applicable_skus).unwrap_or_default(),
-            excluded_product_ids: serde_json::from_value(row.excluded_product_ids).unwrap_or_default(),
-            excluded_category_ids: serde_json::from_value(row.excluded_category_ids).unwrap_or_default(),
-            eligible_customer_ids: serde_json::from_value(row.eligible_customer_ids).unwrap_or_default(),
-            eligible_customer_groups: serde_json::from_value(row.eligible_customer_groups).unwrap_or_default(),
-            currency: row.currency,
-            priority: row.priority,
-            metadata: row.metadata.and_then(|v| serde_json::from_value(v).ok()),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
+    fn row_to_promotion(&self, row: PromotionRow) -> Result<Promotion> {
+        let PromotionRow {
+            id,
+            code,
+            name,
+            description,
+            internal_notes,
+            promotion_type,
+            trigger,
+            target,
+            stacking,
+            status,
+            percentage_off,
+            fixed_amount_off,
+            max_discount_amount,
+            buy_quantity,
+            get_quantity,
+            get_discount_percent,
+            tiers,
+            bundle_product_ids,
+            bundle_discount,
+            starts_at,
+            ends_at,
+            total_usage_limit,
+            per_customer_limit,
+            usage_count,
+            applicable_product_ids,
+            applicable_category_ids,
+            applicable_skus,
+            excluded_product_ids,
+            excluded_category_ids,
+            eligible_customer_ids,
+            eligible_customer_groups,
+            currency,
+            priority,
+            metadata,
+            created_at,
+            updated_at,
+        } = row;
+
+        let promotion_type: PromotionType = promotion_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion.promotion_type '{}': {}",
+                promotion_type.as_str(),
+                e
+            ))
+        })?;
+        let trigger: PromotionTrigger = trigger.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion.trigger '{}': {}",
+                trigger.as_str(),
+                e
+            ))
+        })?;
+        let target: PromotionTarget = target.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion.target '{}': {}",
+                target.as_str(),
+                e
+            ))
+        })?;
+        let stacking: StackingBehavior = stacking.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion.stacking '{}': {}",
+                stacking.as_str(),
+                e
+            ))
+        })?;
+        let status: PromotionStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+        let tiers = tiers.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for promotion.tiers: {}", e))
+        })?;
+        let bundle_product_ids =
+            bundle_product_ids
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid JSON for promotion.bundle_product_ids: {}",
+                        e
+                    ))
+                })?;
+        let applicable_product_ids =
+            serde_json::from_value(applicable_product_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.applicable_product_ids: {}",
+                    e
+                ))
+            })?;
+        let applicable_category_ids =
+            serde_json::from_value(applicable_category_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.applicable_category_ids: {}",
+                    e
+                ))
+            })?;
+        let applicable_skus = serde_json::from_value(applicable_skus).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid JSON for promotion.applicable_skus: {}",
+                e
+            ))
+        })?;
+        let excluded_product_ids =
+            serde_json::from_value(excluded_product_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.excluded_product_ids: {}",
+                    e
+                ))
+            })?;
+        let excluded_category_ids =
+            serde_json::from_value(excluded_category_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.excluded_category_ids: {}",
+                    e
+                ))
+            })?;
+        let eligible_customer_ids =
+            serde_json::from_value(eligible_customer_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.eligible_customer_ids: {}",
+                    e
+                ))
+            })?;
+        let eligible_customer_groups =
+            serde_json::from_value(eligible_customer_groups).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for promotion.eligible_customer_groups: {}",
+                    e
+                ))
+            })?;
+        let metadata = metadata.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for promotion.metadata: {}", e))
+        })?;
+
+        Ok(Promotion {
+            id,
+            code,
+            name,
+            description,
+            internal_notes,
+            promotion_type,
+            trigger,
+            target,
+            stacking,
+            status,
+            percentage_off,
+            fixed_amount_off,
+            max_discount_amount,
+            buy_quantity,
+            get_quantity,
+            get_discount_percent,
+            tiers,
+            bundle_product_ids,
+            bundle_discount,
+            starts_at,
+            ends_at,
+            total_usage_limit,
+            per_customer_limit,
+            usage_count,
+            applicable_product_ids,
+            applicable_category_ids,
+            applicable_skus,
+            excluded_product_ids,
+            excluded_category_ids,
+            eligible_customer_ids,
+            eligible_customer_groups,
+            currency,
+            priority,
+            metadata,
+            created_at,
+            updated_at,
             conditions: Vec::new(),
-        }
+        })
     }
 
-    fn row_to_coupon(&self, row: CouponRow) -> CouponCode {
-        CouponCode {
-            id: row.id,
-            promotion_id: row.promotion_id,
-            code: row.code,
-            status: parse_coupon_status(&row.status),
-            usage_limit: row.usage_limit,
-            per_customer_limit: row.per_customer_limit,
-            usage_count: row.usage_count,
-            starts_at: row.starts_at,
-            ends_at: row.ends_at,
-            metadata: row.metadata.and_then(|v| serde_json::from_value(v).ok()),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_coupon(&self, row: CouponRow) -> Result<CouponCode> {
+        let CouponRow {
+            id,
+            promotion_id,
+            code,
+            status,
+            usage_limit,
+            per_customer_limit,
+            usage_count,
+            starts_at,
+            ends_at,
+            metadata,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: CouponStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid coupon_code.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+        let metadata = metadata.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for coupon_code.metadata: {}", e))
+        })?;
+
+        Ok(CouponCode {
+            id,
+            promotion_id,
+            code,
+            status,
+            usage_limit,
+            per_customer_limit,
+            usage_count,
+            starts_at,
+            ends_at,
+            metadata,
+            created_at,
+            updated_at,
+        })
     }
 
     async fn get_conditions_async(&self, promotion_id: Uuid) -> Result<Vec<PromotionCondition>> {
@@ -162,17 +326,32 @@ impl PgPromotionRepository {
         .await
         .map_err(map_db_error)?;
 
-        let conditions = rows
-            .into_iter()
-            .map(|row| PromotionCondition {
+        let mut conditions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let condition_type: ConditionType = row.condition_type.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid promotion_condition.condition_type '{}': {}",
+                    row.condition_type.as_str(),
+                    e
+                ))
+            })?;
+            let operator: ConditionOperator = row.operator.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid promotion_condition.operator '{}': {}",
+                    row.operator.as_str(),
+                    e
+                ))
+            })?;
+
+            conditions.push(PromotionCondition {
                 id: row.id,
                 promotion_id: row.promotion_id,
-                condition_type: parse_condition_type(&row.condition_type),
-                operator: parse_operator(&row.operator),
+                condition_type,
+                operator,
                 value: row.value,
                 is_required: row.is_required,
-            })
-            .collect();
+            });
+        }
 
         Ok(conditions)
     }
@@ -217,10 +396,10 @@ impl PgPromotionRepository {
         .bind(&input.name)
         .bind(&input.description)
         .bind(&input.internal_notes)
-        .bind(format!("{:?}", input.promotion_type).to_lowercase())
-        .bind(format!("{:?}", input.trigger).to_lowercase())
-        .bind(format!("{:?}", input.target).to_lowercase())
-        .bind(format!("{:?}", input.stacking).to_lowercase())
+        .bind(input.promotion_type.to_string())
+        .bind(input.trigger.to_string())
+        .bind(input.target.to_string())
+        .bind(input.stacking.to_string())
         .bind("draft")
         .bind(input.percentage_off)
         .bind(input.fixed_amount_off)
@@ -260,8 +439,8 @@ impl PgPromotionRepository {
                 )
                 .bind(cond_id)
                 .bind(id)
-                .bind(format!("{:?}", cond.condition_type).to_lowercase())
-                .bind(format!("{:?}", cond.operator).to_lowercase())
+                .bind(cond.condition_type.to_string())
+                .bind(cond.operator.to_string())
                 .bind(cond.value)
                 .bind(cond.is_required)
                 .execute(&self.pool)
@@ -292,7 +471,7 @@ impl PgPromotionRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let mut promo = self.row_to_promotion(row);
+            let mut promo = self.row_to_promotion(row)?;
             promo.conditions = self.get_conditions_async(id).await?;
             Ok(Some(promo))
         } else {
@@ -317,7 +496,7 @@ impl PgPromotionRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let mut promo = self.row_to_promotion(row);
+            let mut promo = self.row_to_promotion(row)?;
             promo.conditions = self.get_conditions_async(promo.id).await?;
             Ok(Some(promo))
         } else {
@@ -370,13 +549,13 @@ impl PgPromotionRepository {
         let mut q = sqlx::query_as::<_, PromotionRow>(&sql);
 
         if let Some(status) = &filter.status {
-            q = q.bind(format!("{:?}", status).to_lowercase());
+            q = q.bind(status.to_string());
         }
         if let Some(promo_type) = &filter.promotion_type {
-            q = q.bind(format!("{:?}", promo_type).to_lowercase());
+            q = q.bind(promo_type.to_string());
         }
         if let Some(trigger) = &filter.trigger {
-            q = q.bind(format!("{:?}", trigger).to_lowercase());
+            q = q.bind(trigger.to_string());
         }
         if let Some(search) = &filter.search {
             let pattern = format!("%{}%", search);
@@ -386,7 +565,7 @@ impl PgPromotionRepository {
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
         let mut promotions = Vec::new();
         for row in rows {
-            let mut promo = self.row_to_promotion(row);
+            let mut promo = self.row_to_promotion(row)?;
             promo.conditions = self.get_conditions_async(promo.id).await?;
             promotions.push(promo);
         }
@@ -419,7 +598,7 @@ impl PgPromotionRepository {
         .bind(input.name)
         .bind(input.description)
         .bind(input.internal_notes)
-        .bind(input.status.map(|s| format!("{:?}", s).to_lowercase()))
+        .bind(input.status.map(|s| s.to_string()))
         .bind(input.percentage_off)
         .bind(input.fixed_amount_off)
         .bind(input.max_discount_amount)
@@ -509,7 +688,7 @@ impl PgPromotionRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(|r| self.row_to_coupon(r)))
+        row.map(|r| self.row_to_coupon(r)).transpose()
     }
 
     pub async fn get_coupon_by_code_async(&self, code: &str) -> Result<Option<CouponCode>> {
@@ -523,7 +702,7 @@ impl PgPromotionRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(|r| self.row_to_coupon(r)))
+        row.map(|r| self.row_to_coupon(r)).transpose()
     }
 
     pub async fn list_coupons_async(&self, filter: CouponFilter) -> Result<Vec<CouponCode>> {
@@ -560,14 +739,18 @@ impl PgPromotionRepository {
             q = q.bind(promotion_id);
         }
         if let Some(status) = &filter.status {
-            q = q.bind(format!("{:?}", status).to_lowercase());
+            q = q.bind(status.to_string());
         }
         if let Some(search) = &filter.search {
             q = q.bind(format!("%{}%", search.to_uppercase()));
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(|r| self.row_to_coupon(r)).collect())
+        let mut coupons = Vec::with_capacity(rows.len());
+        for row in rows {
+            coupons.push(self.row_to_coupon(row)?);
+        }
+        Ok(coupons)
     }
 
     pub async fn apply_promotions_async(
@@ -779,9 +962,13 @@ impl PgPromotionRepository {
         }
 
         if !optional_conditions.is_empty() {
-            let any_met = optional_conditions
-                .iter()
-                .any(|c| self.evaluate_condition(c, request).unwrap_or(false));
+            let mut any_met = false;
+            for cond in &optional_conditions {
+                if self.evaluate_condition(cond, request)? {
+                    any_met = true;
+                    break;
+                }
+            }
             if !any_met {
                 return Ok(false);
             }
@@ -797,11 +984,11 @@ impl PgPromotionRepository {
     ) -> Result<bool> {
         match cond.condition_type {
             ConditionType::MinimumSubtotal => {
-                let min = Decimal::from_str(&cond.value).unwrap_or(Decimal::ZERO);
+                let min = self.parse_condition_decimal(cond)?;
                 Ok(self.compare_decimal(request.subtotal, cond.operator, min))
             }
             ConditionType::MinimumQuantity => {
-                let min: i32 = cond.value.parse().unwrap_or(0);
+                let min = self.parse_condition_i32(cond)?;
                 let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
                 Ok(self.compare_i32(total_qty, cond.operator, min))
             }
@@ -821,12 +1008,30 @@ impl PgPromotionRepository {
                 }
             }
             ConditionType::CartItemCount => {
-                let required: i32 = cond.value.parse().unwrap_or(0);
+                let required = self.parse_condition_i32(cond)?;
                 let count = request.line_items.len() as i32;
                 Ok(self.compare_i32(count, cond.operator, required))
             }
             _ => Ok(true),
         }
+    }
+
+    fn parse_condition_decimal(&self, cond: &PromotionCondition) -> Result<Decimal> {
+        Decimal::from_str(&cond.value).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion condition value for {:?}: '{}' - {}",
+                cond.condition_type, cond.value, e
+            ))
+        })
+    }
+
+    fn parse_condition_i32(&self, cond: &PromotionCondition) -> Result<i32> {
+        cond.value.parse::<i32>().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion condition value for {:?}: '{}' - {}",
+                cond.condition_type, cond.value, e
+            ))
+        })
     }
 
     fn compare_decimal(&self, actual: Decimal, op: ConditionOperator, expected: Decimal) -> bool {
@@ -1021,106 +1226,5 @@ impl PromotionRepository for PgPromotionRepository {
             discount_amount,
             currency,
         ))
-    }
-}
-
-fn parse_promotion_type(s: &str) -> PromotionType {
-    match s {
-        "percentage_off" => PromotionType::PercentageOff,
-        "fixed_amount_off" => PromotionType::FixedAmountOff,
-        "buy_x_get_y" => PromotionType::BuyXGetY,
-        "free_shipping" => PromotionType::FreeShipping,
-        "tiered_discount" => PromotionType::TieredDiscount,
-        "bundle_discount" => PromotionType::BundleDiscount,
-        "first_order_discount" => PromotionType::FirstOrderDiscount,
-        "gift_with_purchase" => PromotionType::GiftWithPurchase,
-        _ => PromotionType::PercentageOff,
-    }
-}
-
-fn parse_trigger(s: &str) -> PromotionTrigger {
-    match s {
-        "automatic" => PromotionTrigger::Automatic,
-        "coupon_code" => PromotionTrigger::CouponCode,
-        "both" => PromotionTrigger::Both,
-        _ => PromotionTrigger::Automatic,
-    }
-}
-
-fn parse_target(s: &str) -> PromotionTarget {
-    match s {
-        "order" => PromotionTarget::Order,
-        "product" => PromotionTarget::Product,
-        "category" => PromotionTarget::Category,
-        "shipping" => PromotionTarget::Shipping,
-        "line_item" => PromotionTarget::LineItem,
-        _ => PromotionTarget::Order,
-    }
-}
-
-fn parse_stacking(s: &str) -> StackingBehavior {
-    match s {
-        "stackable" => StackingBehavior::Stackable,
-        "exclusive" => StackingBehavior::Exclusive,
-        "selective_stack" => StackingBehavior::SelectiveStack,
-        _ => StackingBehavior::Stackable,
-    }
-}
-
-fn parse_status(s: &str) -> PromotionStatus {
-    match s {
-        "draft" => PromotionStatus::Draft,
-        "scheduled" => PromotionStatus::Scheduled,
-        "active" => PromotionStatus::Active,
-        "paused" => PromotionStatus::Paused,
-        "expired" => PromotionStatus::Expired,
-        "exhausted" => PromotionStatus::Exhausted,
-        "archived" => PromotionStatus::Archived,
-        _ => PromotionStatus::Draft,
-    }
-}
-
-fn parse_coupon_status(s: &str) -> CouponStatus {
-    match s {
-        "active" => CouponStatus::Active,
-        "disabled" => CouponStatus::Disabled,
-        "exhausted" => CouponStatus::Exhausted,
-        "expired" => CouponStatus::Expired,
-        _ => CouponStatus::Active,
-    }
-}
-
-fn parse_condition_type(s: &str) -> ConditionType {
-    match s {
-        "minimum_subtotal" => ConditionType::MinimumSubtotal,
-        "minimum_quantity" => ConditionType::MinimumQuantity,
-        "product_in_cart" => ConditionType::ProductInCart,
-        "category_in_cart" => ConditionType::CategoryInCart,
-        "sku_in_cart" => ConditionType::SkuInCart,
-        "customer_group" => ConditionType::CustomerGroup,
-        "first_order" => ConditionType::FirstOrder,
-        "customer_email_domain" => ConditionType::CustomerEmailDomain,
-        "shipping_country" => ConditionType::ShippingCountry,
-        "shipping_state" => ConditionType::ShippingState,
-        "payment_method" => ConditionType::PaymentMethod,
-        "cart_item_count" => ConditionType::CartItemCount,
-        "customer_id" => ConditionType::CustomerId,
-        _ => ConditionType::MinimumSubtotal,
-    }
-}
-
-fn parse_operator(s: &str) -> ConditionOperator {
-    match s {
-        "equals" => ConditionOperator::Equals,
-        "not_equals" => ConditionOperator::NotEquals,
-        "greater_than" => ConditionOperator::GreaterThan,
-        "greater_than_or_equal" => ConditionOperator::GreaterThanOrEqual,
-        "less_than" => ConditionOperator::LessThan,
-        "less_than_or_equal" => ConditionOperator::LessThanOrEqual,
-        "contains" => ConditionOperator::Contains,
-        "not_contains" => ConditionOperator::NotContains,
-        "in" => ConditionOperator::In,
-        "not_in" => ConditionOperator::NotIn,
-        _ => ConditionOperator::Equals,
     }
 }

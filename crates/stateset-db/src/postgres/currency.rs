@@ -44,15 +44,20 @@ impl PgCurrencyRepository {
         Self { pool }
     }
 
-    fn parse_currency(s: &str) -> Result<Currency> {
-        Currency::from_str(s).map_err(CommerceError::ValidationError)
+    fn parse_currency(s: &str, entity: &str, field: &str) -> Result<Currency> {
+        Currency::from_str(s).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid {}.{} '{}': {}",
+                entity, field, s, e
+            ))
+        })
     }
 
     fn row_to_exchange_rate(row: ExchangeRateRow) -> Result<ExchangeRate> {
         Ok(ExchangeRate {
             id: row.id,
-            base_currency: Self::parse_currency(&row.base_currency)?,
-            quote_currency: Self::parse_currency(&row.quote_currency)?,
+            base_currency: Self::parse_currency(&row.base_currency, "exchange_rate", "base_currency")?,
+            quote_currency: Self::parse_currency(&row.quote_currency, "exchange_rate", "quote_currency")?,
             rate: row.rate,
             source: row.source,
             rate_at: row.rate_at,
@@ -293,17 +298,22 @@ impl PgCurrencyRepository {
 
         match row {
             Some(row) => {
-                let base_currency = Self::parse_currency(&row.base_currency)?;
+                let base_currency =
+                    Self::parse_currency(&row.base_currency, "store_currency_settings", "base_currency")?;
                 let enabled_currencies: Vec<Currency> =
-                    serde_json::from_value(row.enabled_currencies)
-                        .unwrap_or_else(|_| vec![Currency::USD, Currency::EUR, Currency::GBP]);
-                let rounding_mode = match row.rounding_mode.as_str() {
-                    "half_down" => RoundingMode::HalfDown,
-                    "up" => RoundingMode::Up,
-                    "down" => RoundingMode::Down,
-                    "half_even" => RoundingMode::HalfEven,
-                    _ => RoundingMode::HalfUp,
-                };
+                    serde_json::from_value(row.enabled_currencies).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid JSON for store_currency_settings.enabled_currencies: {}",
+                            e
+                        ))
+                    })?;
+                let rounding_mode_str = row.rounding_mode;
+                let rounding_mode: RoundingMode = rounding_mode_str.parse().map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid store_currency_settings.rounding_mode '{}': {}",
+                        rounding_mode_str, e
+                    ))
+                })?;
 
                 Ok(StoreCurrencySettings {
                     base_currency,
@@ -324,13 +334,7 @@ impl PgCurrencyRepository {
         let enabled_json = serde_json::to_value(&settings.enabled_currencies)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let rounding_str = match settings.rounding_mode {
-            RoundingMode::HalfUp => "half_up",
-            RoundingMode::HalfDown => "half_down",
-            RoundingMode::Up => "up",
-            RoundingMode::Down => "down",
-            RoundingMode::HalfEven => "half_even",
-        };
+        let rounding_str = settings.rounding_mode.to_string();
 
         sqlx::query(
             "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)

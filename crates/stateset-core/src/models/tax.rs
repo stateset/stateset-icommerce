@@ -54,6 +54,30 @@ impl TaxType {
     }
 }
 
+impl std::fmt::Display for TaxType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TaxType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "sales_tax" => Ok(Self::SalesTax),
+            "vat" => Ok(Self::Vat),
+            "gst" => Ok(Self::Gst),
+            "hst" => Ok(Self::Hst),
+            "pst" => Ok(Self::Pst),
+            "qst" => Ok(Self::Qst),
+            "consumption_tax" => Ok(Self::ConsumptionTax),
+            "custom" => Ok(Self::Custom),
+            _ => Err(format!("Unknown tax type: {}", s)),
+        }
+    }
+}
+
 /// Tax calculation method
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +87,27 @@ pub enum TaxCalculationMethod {
     Exclusive,
     /// Tax is included in the price (EU VAT style)
     Inclusive,
+}
+
+impl std::fmt::Display for TaxCalculationMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exclusive => f.write_str("exclusive"),
+            Self::Inclusive => f.write_str("inclusive"),
+        }
+    }
+}
+
+impl std::str::FromStr for TaxCalculationMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "exclusive" => Ok(Self::Exclusive),
+            "inclusive" => Ok(Self::Inclusive),
+            _ => Err(format!("Unknown tax calculation method: {}", s)),
+        }
+    }
 }
 
 /// How to apply multiple tax rates
@@ -76,6 +121,29 @@ pub enum TaxCompoundMethod {
     Compound,
     /// Apply taxes separately to subtotal
     Separate,
+}
+
+impl std::fmt::Display for TaxCompoundMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Combined => f.write_str("combined"),
+            Self::Compound => f.write_str("compound"),
+            Self::Separate => f.write_str("separate"),
+        }
+    }
+}
+
+impl std::str::FromStr for TaxCompoundMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "combined" => Ok(Self::Combined),
+            "compound" => Ok(Self::Compound),
+            "separate" => Ok(Self::Separate),
+            _ => Err(format!("Unknown tax compound method: {}", s)),
+        }
+    }
 }
 
 /// Product tax category
@@ -128,6 +196,34 @@ impl ProductTaxCategory {
     }
 }
 
+impl std::fmt::Display for ProductTaxCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProductTaxCategory {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "standard" => Ok(Self::Standard),
+            "reduced" => Ok(Self::Reduced),
+            "super_reduced" => Ok(Self::SuperReduced),
+            "zero_rated" => Ok(Self::ZeroRated),
+            "exempt" => Ok(Self::Exempt),
+            "digital" => Ok(Self::Digital),
+            "clothing" => Ok(Self::Clothing),
+            "food" => Ok(Self::Food),
+            "prepared_food" => Ok(Self::PreparedFood),
+            "medical" => Ok(Self::Medical),
+            "educational" => Ok(Self::Educational),
+            "luxury" => Ok(Self::Luxury),
+            _ => Err(format!("Unknown product tax category: {}", s)),
+        }
+    }
+}
+
 /// Customer exemption type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -154,6 +250,45 @@ pub enum ExemptionType {
     Diplomatic,
     /// Other documented exemption
     Other,
+}
+
+impl std::fmt::Display for ExemptionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Resale => f.write_str("resale"),
+            Self::NonProfit => f.write_str("non_profit"),
+            Self::Government => f.write_str("government"),
+            Self::Educational => f.write_str("educational"),
+            Self::Religious => f.write_str("religious"),
+            Self::Medical => f.write_str("medical"),
+            Self::Manufacturing => f.write_str("manufacturing"),
+            Self::Agricultural => f.write_str("agricultural"),
+            Self::Export => f.write_str("export"),
+            Self::Diplomatic => f.write_str("diplomatic"),
+            Self::Other => f.write_str("other"),
+        }
+    }
+}
+
+impl std::str::FromStr for ExemptionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "resale" => Ok(Self::Resale),
+            "non_profit" | "nonprofit" | "non-profit" => Ok(Self::NonProfit),
+            "government" => Ok(Self::Government),
+            "educational" => Ok(Self::Educational),
+            "religious" => Ok(Self::Religious),
+            "medical" => Ok(Self::Medical),
+            "manufacturing" => Ok(Self::Manufacturing),
+            "agricultural" => Ok(Self::Agricultural),
+            "export" => Ok(Self::Export),
+            "diplomatic" => Ok(Self::Diplomatic),
+            "other" => Ok(Self::Other),
+            _ => Err(format!("Unknown exemption type: {}", s)),
+        }
+    }
 }
 
 // ============================================================================
@@ -199,6 +334,35 @@ pub enum JurisdictionLevel {
     City,
     District,
     Special,
+}
+
+impl std::fmt::Display for JurisdictionLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Country => f.write_str("country"),
+            Self::State => f.write_str("state"),
+            Self::County => f.write_str("county"),
+            Self::City => f.write_str("city"),
+            Self::District => f.write_str("district"),
+            Self::Special => f.write_str("special"),
+        }
+    }
+}
+
+impl std::str::FromStr for JurisdictionLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "country" => Ok(Self::Country),
+            "state" => Ok(Self::State),
+            "county" => Ok(Self::County),
+            "city" => Ok(Self::City),
+            "district" => Ok(Self::District),
+            "special" => Ok(Self::Special),
+            _ => Err(format!("Unknown jurisdiction level: {}", s)),
+        }
+    }
 }
 
 /// A tax rate for a specific jurisdiction and category
@@ -980,5 +1144,62 @@ pub fn get_canadian_tax_info(province_code: &str) -> Option<CanadianTaxInfo> {
             total_rate: Decimal::new(15, 2),
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn tax_type_from_str() {
+        assert_eq!(TaxType::from_str("sales_tax").unwrap(), TaxType::SalesTax);
+        assert!(TaxType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn tax_calculation_method_from_str() {
+        assert_eq!(
+            TaxCalculationMethod::from_str("inclusive").unwrap(),
+            TaxCalculationMethod::Inclusive
+        );
+        assert!(TaxCalculationMethod::from_str("other").is_err());
+    }
+
+    #[test]
+    fn tax_compound_method_from_str() {
+        assert_eq!(
+            TaxCompoundMethod::from_str("combined").unwrap(),
+            TaxCompoundMethod::Combined
+        );
+        assert!(TaxCompoundMethod::from_str("other").is_err());
+    }
+
+    #[test]
+    fn product_tax_category_from_str() {
+        assert_eq!(
+            ProductTaxCategory::from_str("super_reduced").unwrap(),
+            ProductTaxCategory::SuperReduced
+        );
+        assert!(ProductTaxCategory::from_str("other").is_err());
+    }
+
+    #[test]
+    fn exemption_type_from_str() {
+        assert_eq!(
+            ExemptionType::from_str("non_profit").unwrap(),
+            ExemptionType::NonProfit
+        );
+        assert!(ExemptionType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn jurisdiction_level_from_str() {
+        assert_eq!(
+            JurisdictionLevel::from_str("state").unwrap(),
+            JurisdictionLevel::State
+        );
+        assert!(JurisdictionLevel::from_str("unknown").is_err());
     }
 }

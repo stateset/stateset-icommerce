@@ -73,6 +73,24 @@ impl std::fmt::Display for BillingInterval {
     }
 }
 
+impl std::str::FromStr for BillingInterval {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "weekly" => Ok(Self::Weekly),
+            "biweekly" | "bi_weekly" | "bi-weekly" => Ok(Self::Biweekly),
+            "monthly" => Ok(Self::Monthly),
+            "bimonthly" | "bi_monthly" | "bi-monthly" => Ok(Self::Bimonthly),
+            "quarterly" => Ok(Self::Quarterly),
+            "semiannual" | "semi_annual" | "semi-annual" => Ok(Self::Semiannual),
+            "annual" | "yearly" => Ok(Self::Annual),
+            "custom" => Ok(Self::Custom),
+            _ => Err(format!("Unknown billing interval: {}", s)),
+        }
+    }
+}
+
 /// Status of a subscription
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +126,23 @@ impl std::fmt::Display for SubscriptionStatus {
     }
 }
 
+impl std::str::FromStr for SubscriptionStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "trial" => Ok(Self::Trial),
+            "active" => Ok(Self::Active),
+            "paused" => Ok(Self::Paused),
+            "past_due" | "pastdue" => Ok(Self::PastDue),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "expired" => Ok(Self::Expired),
+            "pending" => Ok(Self::Pending),
+            _ => Err(format!("Unknown subscription status: {}", s)),
+        }
+    }
+}
+
 /// Status of a subscription plan
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +154,29 @@ pub enum PlanStatus {
     Active,
     /// Archived - no new subscriptions, existing continue
     Archived,
+}
+
+impl std::fmt::Display for PlanStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Draft => write!(f, "draft"),
+            Self::Active => write!(f, "active"),
+            Self::Archived => write!(f, "archived"),
+        }
+    }
+}
+
+impl std::str::FromStr for PlanStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "draft" => Ok(Self::Draft),
+            "active" => Ok(Self::Active),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("Unknown plan status: {}", s)),
+        }
+    }
 }
 
 /// Status of a billing cycle
@@ -140,6 +198,37 @@ pub enum BillingCycleStatus {
     Refunded,
     /// Voided/cancelled
     Voided,
+}
+
+impl std::fmt::Display for BillingCycleStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Scheduled => write!(f, "scheduled"),
+            Self::Processing => write!(f, "processing"),
+            Self::Paid => write!(f, "paid"),
+            Self::Failed => write!(f, "failed"),
+            Self::Skipped => write!(f, "skipped"),
+            Self::Refunded => write!(f, "refunded"),
+            Self::Voided => write!(f, "voided"),
+        }
+    }
+}
+
+impl std::str::FromStr for BillingCycleStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "scheduled" => Ok(Self::Scheduled),
+            "processing" => Ok(Self::Processing),
+            "paid" => Ok(Self::Paid),
+            "failed" => Ok(Self::Failed),
+            "skipped" => Ok(Self::Skipped),
+            "refunded" => Ok(Self::Refunded),
+            "voided" => Ok(Self::Voided),
+            _ => Err(format!("Unknown billing cycle status: {}", s)),
+        }
+    }
 }
 
 /// Type of subscription event
@@ -186,6 +275,63 @@ pub enum SubscriptionEventType {
     DiscountRemoved,
     /// Refund issued
     Refunded,
+}
+
+impl std::fmt::Display for SubscriptionEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Created => write!(f, "created"),
+            Self::Activated => write!(f, "activated"),
+            Self::TrialStarted => write!(f, "trial_started"),
+            Self::TrialEnded => write!(f, "trial_ended"),
+            Self::Renewed => write!(f, "renewed"),
+            Self::PaymentFailed => write!(f, "payment_failed"),
+            Self::PaymentRetrySucceeded => write!(f, "payment_retry_succeeded"),
+            Self::Paused => write!(f, "paused"),
+            Self::Resumed => write!(f, "resumed"),
+            Self::Skipped => write!(f, "skipped"),
+            Self::Cancelled => write!(f, "cancelled"),
+            Self::Expired => write!(f, "expired"),
+            Self::PlanChanged => write!(f, "plan_changed"),
+            Self::ItemsModified => write!(f, "items_modified"),
+            Self::QuantityChanged => write!(f, "quantity_changed"),
+            Self::AddressUpdated => write!(f, "address_updated"),
+            Self::PaymentMethodUpdated => write!(f, "payment_method_updated"),
+            Self::DiscountApplied => write!(f, "discount_applied"),
+            Self::DiscountRemoved => write!(f, "discount_removed"),
+            Self::Refunded => write!(f, "refunded"),
+        }
+    }
+}
+
+impl std::str::FromStr for SubscriptionEventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "created" => Ok(Self::Created),
+            "activated" => Ok(Self::Activated),
+            "trial_started" | "trialstarted" => Ok(Self::TrialStarted),
+            "trial_ended" | "trialended" => Ok(Self::TrialEnded),
+            "renewed" => Ok(Self::Renewed),
+            "payment_failed" | "paymentfailed" => Ok(Self::PaymentFailed),
+            "payment_retry_succeeded" | "paymentretrysucceeded" => Ok(Self::PaymentRetrySucceeded),
+            "paused" => Ok(Self::Paused),
+            "resumed" => Ok(Self::Resumed),
+            "skipped" => Ok(Self::Skipped),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "expired" => Ok(Self::Expired),
+            "plan_changed" | "planchanged" => Ok(Self::PlanChanged),
+            "items_modified" | "itemsmodified" => Ok(Self::ItemsModified),
+            "quantity_changed" | "quantitychanged" => Ok(Self::QuantityChanged),
+            "address_updated" | "addressupdated" => Ok(Self::AddressUpdated),
+            "payment_method_updated" | "paymentmethodupdated" => Ok(Self::PaymentMethodUpdated),
+            "discount_applied" | "discountapplied" => Ok(Self::DiscountApplied),
+            "discount_removed" | "discountremoved" => Ok(Self::DiscountRemoved),
+            "refunded" => Ok(Self::Refunded),
+            _ => Err(format!("Unknown subscription event type: {}", s)),
+        }
+    }
 }
 
 // ============================================================================
@@ -614,6 +760,77 @@ pub struct SubscriptionFilter {
     pub search: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_billing_interval_from_str() {
+        assert_eq!(
+            BillingInterval::from_str("biweekly").unwrap(),
+            BillingInterval::Biweekly
+        );
+        assert_eq!(
+            BillingInterval::from_str("semi-annual").unwrap(),
+            BillingInterval::Semiannual
+        );
+    }
+
+    #[test]
+    fn test_subscription_status_from_str() {
+        assert_eq!(
+            SubscriptionStatus::from_str("past_due").unwrap(),
+            SubscriptionStatus::PastDue
+        );
+        assert_eq!(
+            SubscriptionStatus::from_str("pastdue").unwrap(),
+            SubscriptionStatus::PastDue
+        );
+        assert_eq!(
+            SubscriptionStatus::from_str("canceled").unwrap(),
+            SubscriptionStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_plan_status_from_str() {
+        assert_eq!(PlanStatus::from_str("draft").unwrap(), PlanStatus::Draft);
+        assert_eq!(
+            PlanStatus::from_str("archived").unwrap(),
+            PlanStatus::Archived
+        );
+    }
+
+    #[test]
+    fn test_billing_cycle_status_from_str() {
+        assert_eq!(
+            BillingCycleStatus::from_str("processing").unwrap(),
+            BillingCycleStatus::Processing
+        );
+        assert_eq!(
+            BillingCycleStatus::from_str("voided").unwrap(),
+            BillingCycleStatus::Voided
+        );
+    }
+
+    #[test]
+    fn test_subscription_event_type_from_str() {
+        assert_eq!(
+            SubscriptionEventType::from_str("trial_started").unwrap(),
+            SubscriptionEventType::TrialStarted
+        );
+        assert_eq!(
+            SubscriptionEventType::from_str("trialstarted").unwrap(),
+            SubscriptionEventType::TrialStarted
+        );
+        assert_eq!(
+            SubscriptionEventType::from_str("payment_retry_succeeded").unwrap(),
+            SubscriptionEventType::PaymentRetrySucceeded
+        );
+    }
 }
 
 /// Filter for listing billing cycles

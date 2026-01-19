@@ -2,15 +2,17 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_json_row,
-    parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    parse_enum, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_batch_size, validate_email, AddressType, BatchResult, CommerceError, CreateCustomer,
-    CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter, CustomerRepository,
-    CustomerStatus, Result, UpdateCustomer,
+    validate_batch_size, validate_email, validate_phone, validate_postal_code,
+    validate_required_text, validate_required_uuid, AddressType, BatchResult, CommerceError,
+    CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
+    CustomerRepository, CustomerStatus, Result, UpdateCustomer,
 };
 use uuid::Uuid;
 
@@ -40,7 +42,7 @@ impl SqliteCustomerRepository {
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
             phone: row.get("phone")?,
-            status: parse_customer_status(&row.get::<_, String>("status")?),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "customer", "status")?,
             accepts_marketing: row.get::<_, i32>("accepts_marketing")? != 0,
             email_verified: row.get::<_, i32>("email_verified")? != 0,
             tags: parse_json_row(&tags_json, "customer", "tags")?,
@@ -78,7 +80,7 @@ impl SqliteCustomerRepository {
                 "customer_address",
                 "customer_id",
             )?,
-            address_type: parse_address_type(&row.get::<_, String>("address_type")?),
+            address_type: parse_enum_row(&row.get::<_, String>("address_type")?, "customer_address", "address_type")?,
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
             company: row.get("company")?,
@@ -102,12 +104,39 @@ impl SqliteCustomerRepository {
             )?,
         })
     }
+
+    fn validate_address_input(input: &CreateCustomerAddress) -> Result<()> {
+        validate_required_uuid("customer_address.customer_id", input.customer_id)?;
+        validate_required_text("customer_address.first_name", &input.first_name, 100)?;
+        validate_required_text("customer_address.last_name", &input.last_name, 100)?;
+        validate_required_text("customer_address.line1", &input.line1, 255)?;
+        validate_required_text("customer_address.city", &input.city, 255)?;
+        validate_postal_code(&input.postal_code)?;
+        validate_required_text("customer_address.country", &input.country, 64)?;
+
+        if let Some(line2) = &input.line2 {
+            validate_required_text("customer_address.line2", line2, 255)?;
+        }
+        if let Some(state) = &input.state {
+            validate_required_text("customer_address.state", state, 64)?;
+        }
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl CustomerRepository for SqliteCustomerRepository {
     fn create(&self, input: CreateCustomer) -> Result<Customer> {
         // Validate email format
         validate_email(&input.email)?;
+        validate_required_text("customer.first_name", &input.first_name, 100)?;
+        validate_required_text("customer.last_name", &input.last_name, 100)?;
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -231,18 +260,34 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         if let Some(email) = &input.email {
             validate_email(email)?;
+            let existing_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM customers WHERE email = ?",
+                    [email],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_db_error)?;
+            if let Some(existing_id) = existing_id {
+                if existing_id != id.to_string() {
+                    return Err(CommerceError::EmailAlreadyExists(email.clone()));
+                }
+            }
             updates.push("email = ?");
             params.push(Box::new(email.clone()));
         }
         if let Some(first_name) = &input.first_name {
+            validate_required_text("customer.first_name", first_name, 100)?;
             updates.push("first_name = ?");
             params.push(Box::new(first_name.clone()));
         }
         if let Some(last_name) = &input.last_name {
+            validate_required_text("customer.last_name", last_name, 100)?;
             updates.push("last_name = ?");
             params.push(Box::new(last_name.clone()));
         }
         if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
             updates.push("phone = ?");
             params.push(Box::new(phone.clone()));
         }
@@ -332,11 +377,17 @@ impl CustomerRepository for SqliteCustomerRepository {
     }
 
     fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {
-        let conn = self.conn()?;
+        Self::validate_address_input(&input)?;
+
+        let mut conn = self.conn()?;
         let id = Uuid::new_v4();
         let now = Utc::now();
+        let address_type = input.address_type.unwrap_or_default();
+        let is_default = input.is_default.unwrap_or(false);
 
-        conn.execute(
+        let tx = conn.transaction().map_err(map_db_error)?;
+
+        tx.execute(
             "INSERT INTO customer_addresses (id, customer_id, address_type, first_name, last_name,
                                              company, line1, line2, city, state, postal_code,
                                              country, phone, is_default, created_at, updated_at)
@@ -344,7 +395,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             rusqlite::params![
                 id.to_string(),
                 input.customer_id.to_string(),
-                input.address_type.unwrap_or_default().to_string(),
+                address_type.to_string(),
                 input.first_name,
                 input.last_name,
                 input.company,
@@ -355,14 +406,63 @@ impl CustomerRepository for SqliteCustomerRepository {
                 input.postal_code,
                 input.country,
                 input.phone,
-                input.is_default.unwrap_or(false) as i32,
+                is_default as i32,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
         )
         .map_err(map_db_error)?;
 
-        let addr = conn
+        if is_default {
+            let clear_sql = match address_type {
+                AddressType::Shipping => {
+                    "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ? AND (address_type = 'shipping' OR address_type = 'both')"
+                }
+                AddressType::Billing => {
+                    "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ? AND (address_type = 'billing' OR address_type = 'both')"
+                }
+                AddressType::Both => {
+                    "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
+                }
+            };
+
+            // Clear defaults for the relevant address types.
+            tx.execute(clear_sql, [input.customer_id.to_string()])
+                .map_err(map_db_error)?;
+
+            // Set new default
+            tx.execute(
+                "UPDATE customer_addresses SET is_default = 1 WHERE id = ?",
+                [id.to_string()],
+            )
+            .map_err(map_db_error)?;
+
+            match address_type {
+                AddressType::Shipping => {
+                    tx.execute(
+                        "UPDATE customers SET default_shipping_address_id = ?, updated_at = ? WHERE id = ?",
+                        rusqlite::params![id.to_string(), now.to_rfc3339(), input.customer_id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Billing => {
+                    tx.execute(
+                        "UPDATE customers SET default_billing_address_id = ?, updated_at = ? WHERE id = ?",
+                        rusqlite::params![id.to_string(), now.to_rfc3339(), input.customer_id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Both => {
+                    tx.execute(
+                        "UPDATE customers SET default_shipping_address_id = ?, default_billing_address_id = ?, updated_at = ? WHERE id = ?",
+                        rusqlite::params![id.to_string(), id.to_string(), now.to_rfc3339(), input.customer_id.to_string()],
+                    )
+                    .map_err(map_db_error)?;
+                }
+            }
+        }
+
+        let addr = tx
             .query_row(
                 "SELECT * FROM customer_addresses WHERE id = ?",
                 [id.to_string()],
@@ -370,6 +470,7 @@ impl CustomerRepository for SqliteCustomerRepository {
             )
             .map_err(map_db_error)?;
 
+        tx.commit().map_err(map_db_error)?;
         Ok(addr)
     }
 
@@ -389,8 +490,23 @@ impl CustomerRepository for SqliteCustomerRepository {
     }
 
     fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+        Self::validate_address_input(&input)?;
+
         let conn = self.conn()?;
         let now = Utc::now();
+
+        let exists: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM customer_addresses WHERE id = ? AND customer_id = ?",
+                rusqlite::params![address_id.to_string(), input.customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        if exists == 0 {
+            return Err(CommerceError::ValidationError(
+                "Address does not belong to customer".into(),
+            ));
+        }
 
         conn.execute(
             "UPDATE customer_addresses SET first_name = ?, last_name = ?, company = ?,
@@ -425,12 +541,58 @@ impl CustomerRepository for SqliteCustomerRepository {
     }
 
     fn delete_address(&self, address_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let row: Option<(String, String, i32)> = tx
+            .query_row(
+                "SELECT customer_id, address_type, is_default FROM customer_addresses WHERE id = ?",
+                [address_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+
+        let (customer_id, address_type, is_default) = match row {
+            Some(values) => values,
+            None => return Err(CommerceError::NotFound),
+        };
+
+        if is_default != 0 {
+            let parsed_type: AddressType =
+                parse_enum(&address_type, "customer_address", "address_type")?;
+            match parsed_type {
+                AddressType::Shipping => {
+                    tx.execute(
+                        "UPDATE customers SET default_shipping_address_id = NULL, updated_at = ? WHERE id = ?",
+                        rusqlite::params![now.to_rfc3339(), customer_id],
+                    )
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Billing => {
+                    tx.execute(
+                        "UPDATE customers SET default_billing_address_id = NULL, updated_at = ? WHERE id = ?",
+                        rusqlite::params![now.to_rfc3339(), customer_id],
+                    )
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Both => {
+                    tx.execute(
+                        "UPDATE customers SET default_shipping_address_id = NULL, default_billing_address_id = NULL, updated_at = ? WHERE id = ?",
+                        rusqlite::params![now.to_rfc3339(), customer_id],
+                    )
+                    .map_err(map_db_error)?;
+                }
+            }
+        }
+
+        tx.execute(
             "DELETE FROM customer_addresses WHERE id = ?",
             [address_id.to_string()],
         )
         .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -439,12 +601,40 @@ impl CustomerRepository for SqliteCustomerRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
 
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT customer_id FROM customer_addresses WHERE id = ?",
+                [address_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+        match owner {
+            Some(owner_id) if owner_id != customer_id.to_string() => {
+                return Err(CommerceError::ValidationError(
+                    "Address does not belong to customer".into(),
+                ));
+            }
+            None => {
+                return Err(CommerceError::NotFound);
+            }
+            _ => {}
+        }
+
         // Clear other defaults
-        tx.execute(
-            "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?",
-            [customer_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        let clear_sql = match address_type {
+            AddressType::Shipping => {
+                "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ? AND (address_type = 'shipping' OR address_type = 'both')"
+            }
+            AddressType::Billing => {
+                "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ? AND (address_type = 'billing' OR address_type = 'both')"
+            }
+            AddressType::Both => {
+                "UPDATE customer_addresses SET is_default = 0 WHERE customer_id = ?"
+            }
+        };
+        tx.execute(clear_sql, [customer_id.to_string()])
+            .map_err(map_db_error)?;
 
         // Set new default
         tx.execute(
@@ -774,24 +964,5 @@ impl CustomerRepository for SqliteCustomerRepository {
             .map_err(map_db_error)?;
 
         Ok(customers)
-    }
-}
-
-fn parse_customer_status(s: &str) -> CustomerStatus {
-    match s {
-        "active" => CustomerStatus::Active,
-        "inactive" => CustomerStatus::Inactive,
-        "suspended" => CustomerStatus::Suspended,
-        "deleted" => CustomerStatus::Deleted,
-        _ => CustomerStatus::Active,
-    }
-}
-
-fn parse_address_type(s: &str) -> AddressType {
-    match s {
-        "shipping" => AddressType::Shipping,
-        "billing" => AddressType::Billing,
-        "both" => AddressType::Both,
-        _ => AddressType::Both,
     }
 }

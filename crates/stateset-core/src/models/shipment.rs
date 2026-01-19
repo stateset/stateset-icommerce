@@ -53,6 +53,23 @@ impl std::fmt::Display for ShippingCarrier {
     }
 }
 
+impl std::str::FromStr for ShippingCarrier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ups" => Ok(Self::Ups),
+            "fedex" | "fed_ex" => Ok(Self::FedEx),
+            "usps" => Ok(Self::Usps),
+            "dhl" => Ok(Self::Dhl),
+            "ontrac" | "on_trac" => Ok(Self::OnTrac),
+            "lasership" | "laser_ship" => Ok(Self::LaserShip),
+            "other" => Ok(Self::Other),
+            _ => Err(format!("Unknown shipping carrier: {}", s)),
+        }
+    }
+}
+
 /// Shipping method/speed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -79,6 +96,24 @@ impl std::fmt::Display for ShippingMethod {
             ShippingMethod::International => write!(f, "international"),
             ShippingMethod::SameDay => write!(f, "same_day"),
             ShippingMethod::Freight => write!(f, "freight"),
+        }
+    }
+}
+
+impl std::str::FromStr for ShippingMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "standard" => Ok(Self::Standard),
+            "express" => Ok(Self::Express),
+            "overnight" => Ok(Self::Overnight),
+            "two_day" | "twoday" => Ok(Self::TwoDay),
+            "ground" => Ok(Self::Ground),
+            "international" => Ok(Self::International),
+            "same_day" | "sameday" => Ok(Self::SameDay),
+            "freight" => Ok(Self::Freight),
+            _ => Err(format!("Unknown shipping method: {}", s)),
         }
     }
 }
@@ -162,6 +197,27 @@ impl std::fmt::Display for ShipmentStatus {
             ShipmentStatus::Returned => write!(f, "returned"),
             ShipmentStatus::Cancelled => write!(f, "cancelled"),
             ShipmentStatus::OnHold => write!(f, "on_hold"),
+        }
+    }
+}
+
+impl std::str::FromStr for ShipmentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "processing" => Ok(Self::Processing),
+            "ready_to_ship" | "readytoship" => Ok(Self::ReadyToShip),
+            "shipped" => Ok(Self::Shipped),
+            "in_transit" | "intransit" => Ok(Self::InTransit),
+            "out_for_delivery" | "outfordelivery" => Ok(Self::OutForDelivery),
+            "delivered" => Ok(Self::Delivered),
+            "failed" => Ok(Self::Failed),
+            "returned" => Ok(Self::Returned),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "on_hold" | "onhold" => Ok(Self::OnHold),
+            _ => Err(format!("Unknown shipment status: {}", s)),
         }
     }
 }
@@ -358,4 +414,60 @@ pub struct ShipmentFilter {
     pub tracking_number: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_shipment_status_from_str() {
+        assert_eq!(ShipmentStatus::from_str("pending").unwrap(), ShipmentStatus::Pending);
+        assert_eq!(
+            ShipmentStatus::from_str("ready_to_ship").unwrap(),
+            ShipmentStatus::ReadyToShip
+        );
+        assert_eq!(
+            ShipmentStatus::from_str("outfordelivery").unwrap(),
+            ShipmentStatus::OutForDelivery
+        );
+        assert_eq!(
+            ShipmentStatus::from_str("canceled").unwrap(),
+            ShipmentStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_shipping_carrier_from_str() {
+        assert_eq!(ShippingCarrier::from_str("ups").unwrap(), ShippingCarrier::Ups);
+        assert_eq!(
+            ShippingCarrier::from_str("fed_ex").unwrap(),
+            ShippingCarrier::FedEx
+        );
+        assert_eq!(
+            ShippingCarrier::from_str("on_trac").unwrap(),
+            ShippingCarrier::OnTrac
+        );
+        assert_eq!(
+            ShippingCarrier::from_str("other").unwrap(),
+            ShippingCarrier::Other
+        );
+    }
+
+    #[test]
+    fn test_shipping_method_from_str() {
+        assert_eq!(
+            ShippingMethod::from_str("standard").unwrap(),
+            ShippingMethod::Standard
+        );
+        assert_eq!(
+            ShippingMethod::from_str("two_day").unwrap(),
+            ShippingMethod::TwoDay
+        );
+        assert_eq!(
+            ShippingMethod::from_str("sameday").unwrap(),
+            ShippingMethod::SameDay
+        );
+    }
 }

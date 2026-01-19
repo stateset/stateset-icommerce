@@ -1,6 +1,10 @@
 //! SQLite implementation of Lot repository
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_json_row, parse_uuid,
+    parse_uuid_opt_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -36,101 +40,132 @@ impl SqliteLotRepository {
 
     fn row_to_lot(row: &rusqlite::Row) -> rusqlite::Result<Lot> {
         let attributes_str: String = row.get("attributes")?;
-        let attributes: serde_json::Value =
-            serde_json::from_str(&attributes_str).unwrap_or(serde_json::json!({}));
+        let attributes: serde_json::Value = parse_json_row(&attributes_str, "lot", "attributes")?;
 
         Ok(Lot {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "lot", "id")?,
             lot_number: row.get("lot_number")?,
             sku: row.get("sku")?,
-            status: row
-                .get::<_, String>("status")?
-                .parse()
-                .unwrap_or_default(),
-            quantity_produced: parse_decimal(&row.get::<_, String>("quantity_produced")?),
-            quantity_remaining: parse_decimal(&row.get::<_, String>("quantity_remaining")?),
-            quantity_reserved: parse_decimal(&row.get::<_, String>("quantity_reserved")?),
-            quantity_quarantined: parse_decimal(&row.get::<_, String>("quantity_quarantined")?),
-            production_date: row
-                .get::<_, String>("production_date")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            expiration_date: row
-                .get::<_, Option<String>>("expiration_date")?
-                .and_then(|s| s.parse().ok()),
-            best_before_date: row
-                .get::<_, Option<String>>("best_before_date")?
-                .and_then(|s| s.parse().ok()),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "lot", "status")?,
+            quantity_produced: parse_decimal_row(
+                &row.get::<_, String>("quantity_produced")?,
+                "lot",
+                "quantity_produced",
+            )?,
+            quantity_remaining: parse_decimal_row(
+                &row.get::<_, String>("quantity_remaining")?,
+                "lot",
+                "quantity_remaining",
+            )?,
+            quantity_reserved: parse_decimal_row(
+                &row.get::<_, String>("quantity_reserved")?,
+                "lot",
+                "quantity_reserved",
+            )?,
+            quantity_quarantined: parse_decimal_row(
+                &row.get::<_, String>("quantity_quarantined")?,
+                "lot",
+                "quantity_quarantined",
+            )?,
+            production_date: parse_datetime_row(
+                &row.get::<_, String>("production_date")?,
+                "lot",
+                "production_date",
+            )?,
+            expiration_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expiration_date")?,
+                "lot",
+                "expiration_date",
+            )?,
+            best_before_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("best_before_date")?,
+                "lot",
+                "best_before_date",
+            )?,
             supplier_lot: row.get("supplier_lot")?,
-            supplier_id: row
-                .get::<_, Option<String>>("supplier_id")?
-                .and_then(|s| s.parse().ok()),
-            work_order_id: row
-                .get::<_, Option<String>>("work_order_id")?
-                .and_then(|s| s.parse().ok()),
-            purchase_order_id: row
-                .get::<_, Option<String>>("purchase_order_id")?
-                .and_then(|s| s.parse().ok()),
-            cost_per_unit: row
-                .get::<_, Option<String>>("cost_per_unit")?
-                .map(|s| parse_decimal(&s)),
+            supplier_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("supplier_id")?,
+                "lot",
+                "supplier_id",
+            )?,
+            work_order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("work_order_id")?,
+                "lot",
+                "work_order_id",
+            )?,
+            purchase_order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("purchase_order_id")?,
+                "lot",
+                "purchase_order_id",
+            )?,
+            cost_per_unit: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("cost_per_unit")?,
+                "lot",
+                "cost_per_unit",
+            )?,
             attributes,
             notes: row.get("notes")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "lot", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "lot", "updated_at")?,
         })
     }
 
     fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<LotTransaction> {
         Ok(LotTransaction {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            lot_id: row.get::<_, String>("lot_id")?.parse().unwrap_or_default(),
-            transaction_type: row
-                .get::<_, String>("transaction_type")?
-                .parse()
-                .unwrap_or_default(),
-            quantity: parse_decimal(&row.get::<_, String>("quantity")?),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_transaction", "id")?,
+            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_transaction", "lot_id")?,
+            transaction_type: parse_enum_row(
+                &row.get::<_, String>("transaction_type")?,
+                "lot_transaction",
+                "transaction_type",
+            )?,
+            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "lot_transaction", "quantity")?,
             reference_type: row.get("reference_type")?,
-            reference_id: row.get::<_, String>("reference_id")?.parse().unwrap_or_default(),
+            reference_id: parse_uuid_row(
+                &row.get::<_, String>("reference_id")?,
+                "lot_transaction",
+                "reference_id",
+            )?,
             from_location_id: row.get("from_location_id")?,
             to_location_id: row.get("to_location_id")?,
             reason: row.get("reason")?,
             performed_by: row.get("performed_by")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "lot_transaction",
+                "created_at",
+            )?,
         })
     }
 
     fn row_to_certificate(row: &rusqlite::Row) -> rusqlite::Result<LotCertificate> {
         Ok(LotCertificate {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            lot_id: row.get::<_, String>("lot_id")?.parse().unwrap_or_default(),
-            certificate_type: row
-                .get::<_, String>("certificate_type")?
-                .parse()
-                .unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_certificate", "id")?,
+            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_certificate", "lot_id")?,
+            certificate_type: parse_enum_row(
+                &row.get::<_, String>("certificate_type")?,
+                "lot_certificate",
+                "certificate_type",
+            )?,
             certificate_number: row.get("certificate_number")?,
             document_url: row.get("document_url")?,
             issued_by: row.get("issued_by")?,
-            issued_at: row
-                .get::<_, Option<String>>("issued_at")?
-                .and_then(|s| s.parse().ok()),
-            expires_at: row
-                .get::<_, Option<String>>("expires_at")?
-                .and_then(|s| s.parse().ok()),
+            issued_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("issued_at")?,
+                "lot_certificate",
+                "issued_at",
+            )?,
+            expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expires_at")?,
+                "lot_certificate",
+                "expires_at",
+            )?,
             notes: row.get("notes")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "lot_certificate",
+                "created_at",
+            )?,
         })
     }
 
@@ -199,7 +234,9 @@ impl LotRepository for SqliteLotRepository {
         let attributes_json = input
             .attributes
             .as_ref()
-            .map(|a| serde_json::to_string(a).unwrap_or_default())
+            .map(|a| serde_json::to_string(a))
+            .transpose()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
             .unwrap_or_else(|| "{}".to_string());
 
         tx.execute(
@@ -356,7 +393,9 @@ impl LotRepository for SqliteLotRepository {
         }
         if let Some(attributes) = &input.attributes {
             updates.push("attributes = ?");
-            params.push(Box::new(serde_json::to_string(attributes).unwrap_or_default()));
+            let attributes_json = serde_json::to_string(attributes)
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            params.push(Box::new(attributes_json));
         }
         if let Some(notes) = &input.notes {
             updates.push("notes = ?");
@@ -658,9 +697,9 @@ impl LotRepository for SqliteLotRepository {
             )
             .map_err(map_db_error)?;
 
-        let lot_id: Uuid = lot_id.parse().unwrap_or_default();
-        let quantity = parse_decimal(&quantity);
-        let reference_id: Uuid = reference_id.parse().unwrap_or_default();
+        let lot_id = parse_uuid(&lot_id, "lot_reservation", "lot_id")?;
+        let quantity = parse_decimal_strict(&quantity, "lot_reservation", "quantity")?;
+        let reference_id = parse_uuid(&reference_id, "lot_reservation", "reference_id")?;
         let now = Utc::now();
 
         // Mark reservation as released
@@ -709,9 +748,9 @@ impl LotRepository for SqliteLotRepository {
             )
             .map_err(map_db_error)?;
 
-        let lot_id: Uuid = lot_id.parse().unwrap_or_default();
-        let quantity = parse_decimal(&quantity);
-        let reference_id: Uuid = reference_id.parse().unwrap_or_default();
+        let lot_id = parse_uuid(&lot_id, "lot_reservation", "lot_id")?;
+        let quantity = parse_decimal_strict(&quantity, "lot_reservation", "quantity")?;
+        let reference_id = parse_uuid(&reference_id, "lot_reservation", "reference_id")?;
         let now = Utc::now();
 
         // Mark reservation as confirmed
@@ -1086,7 +1125,7 @@ impl LotRepository for SqliteLotRepository {
             )
             .map_err(map_db_error)?;
 
-        let quarantined = parse_decimal(&quarantined);
+        let quarantined = parse_decimal_strict(&quarantined, "lot", "quantity_quarantined")?;
 
         // Update lot
         tx.execute(
@@ -1145,7 +1184,7 @@ impl LotRepository for SqliteLotRepository {
         );
 
         match result {
-            Ok(qty) => Ok(parse_decimal(&qty)),
+            Ok(qty) => Ok(parse_decimal_strict(&qty, "lot_location", "quantity")?),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Decimal::ZERO),
             Err(e) => Err(map_db_error(e)),
         }
@@ -1161,13 +1200,14 @@ impl LotRepository for SqliteLotRepository {
         let locations = stmt
             .query_map([lot_id.to_string()], |row| {
                 Ok(LotLocation {
-                    lot_id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                    lot_id: parse_uuid_row(&row.get::<_, String>(0)?, "lot_location", "lot_id")?,
                     location_id: row.get(1)?,
-                    quantity: parse_decimal(&row.get::<_, String>(2)?),
-                    updated_at: row
-                        .get::<_, String>(3)?
-                        .parse()
-                        .unwrap_or_else(|_| Utc::now()),
+                    quantity: parse_decimal_row(&row.get::<_, String>(2)?, "lot_location", "quantity")?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(3)?,
+                        "lot_location",
+                        "updated_at",
+                    )?,
                 })
             })
             .map_err(map_db_error)?
@@ -1343,15 +1383,24 @@ impl LotRepository for SqliteLotRepository {
 
                 Ok(TraceNode {
                     node_type,
-                    node_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
+                    node_id: parse_uuid_row(
+                        &row.get::<_, String>(2)?,
+                        "lot_transaction",
+                        "reference_id",
+                    )?,
                     reference_number: None,
                     lot_number: Some(lot.lot_number.clone()),
                     serial_number: None,
-                    quantity: parse_decimal(&row.get::<_, String>(3)?),
-                    timestamp: row
-                        .get::<_, String>(4)?
-                        .parse()
-                        .unwrap_or_else(|_| Utc::now()),
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>(3)?,
+                        "lot_transaction",
+                        "quantity",
+                    )?,
+                    timestamp: parse_datetime_row(
+                        &row.get::<_, String>(4)?,
+                        "lot_transaction",
+                        "created_at",
+                    )?,
                     entity_name: None,
                 })
             })

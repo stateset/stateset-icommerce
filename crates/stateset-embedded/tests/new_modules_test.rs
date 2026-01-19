@@ -310,6 +310,7 @@ fn test_backorder_create_and_list() {
         customer_id: customer.id,
         items: vec![
             stateset_embedded::CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "BO-SKU-001".into(),
                 quantity: 10,
                 unit_price: dec!(25.00),
@@ -471,6 +472,7 @@ fn test_shipment_tracking_flow() {
         customer_id: customer.id,
         items: vec![
             stateset_embedded::CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SHIP-SKU-001".into(),
                 name: "Shipment Item".into(),
                 quantity: 1,

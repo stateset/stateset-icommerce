@@ -2,13 +2,15 @@
 //!
 //! Provides full warehouse, zone, location, and inventory movement functionality.
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict,
+    parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
-use std::str::FromStr;
 use uuid::Uuid;
 
 use stateset_core::{
@@ -37,112 +39,134 @@ impl SqliteWarehouseRepository {
 
     // Helper to parse warehouse from row
     fn row_to_warehouse(row: &rusqlite::Row) -> rusqlite::Result<Warehouse> {
-        let address_json: String = row.get("address_json")?;
-        let address: WarehouseAddress = serde_json::from_str(&address_json).unwrap_or_default();
-        let wh_type_str: String = row.get("warehouse_type")?;
-
         Ok(Warehouse {
             id: row.get("id")?,
             code: row.get("code")?,
             name: row.get("name")?,
-            warehouse_type: WarehouseType::from_str(&wh_type_str).unwrap_or_default(),
-            address,
+            warehouse_type: parse_enum_row(
+                &row.get::<_, String>("warehouse_type")?,
+                "warehouse",
+                "warehouse_type",
+            )?,
+            address: parse_json_row(&row.get::<_, String>("address_json")?, "warehouse", "address_json")?,
             timezone: row.get("timezone")?,
             is_active: row.get::<_, i32>("is_active")? == 1,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "warehouse", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "warehouse", "updated_at")?,
         })
     }
 
     // Helper to parse location from row
     fn row_to_location(row: &rusqlite::Row) -> rusqlite::Result<Location> {
-        let loc_type_str: String = row.get("location_type")?;
-        let max_weight: Option<String> = row.get("max_weight_kg")?;
-        let max_volume: Option<String> = row.get("max_volume_m3")?;
-        let cur_weight: Option<String> = row.get("current_weight_kg")?;
-        let cur_volume: Option<String> = row.get("current_volume_m3")?;
-
         Ok(Location {
             id: row.get("id")?,
             warehouse_id: row.get("warehouse_id")?,
             code: row.get("code")?,
-            location_type: LocationType::from_str(&loc_type_str).unwrap_or_default(),
+            location_type: parse_enum_row(
+                &row.get::<_, String>("location_type")?,
+                "location",
+                "location_type",
+            )?,
             zone: row.get("zone")?,
             aisle: row.get("aisle")?,
             rack: row.get("rack")?,
             level: row.get("level")?,
             bin: row.get("bin")?,
-            max_weight_kg: max_weight.map(|s| parse_decimal(&s)),
-            max_volume_m3: max_volume.map(|s| parse_decimal(&s)),
-            current_weight_kg: cur_weight.map(|s| parse_decimal(&s)),
-            current_volume_m3: cur_volume.map(|s| parse_decimal(&s)),
+            max_weight_kg: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("max_weight_kg")?,
+                "location",
+                "max_weight_kg",
+            )?,
+            max_volume_m3: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("max_volume_m3")?,
+                "location",
+                "max_volume_m3",
+            )?,
+            current_weight_kg: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("current_weight_kg")?,
+                "location",
+                "current_weight_kg",
+            )?,
+            current_volume_m3: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("current_volume_m3")?,
+                "location",
+                "current_volume_m3",
+            )?,
             is_pickable: row.get::<_, i32>("is_pickable")? == 1,
             is_receivable: row.get::<_, i32>("is_receivable")? == 1,
             is_active: row.get::<_, i32>("is_active")? == 1,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "location", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "location", "updated_at")?,
         })
     }
 
     // Helper to parse location inventory from row
     fn row_to_location_inventory(row: &rusqlite::Row) -> rusqlite::Result<LocationInventory> {
-        let qty_on_hand: String = row.get("quantity_on_hand")?;
-        let qty_reserved: String = row.get("quantity_reserved")?;
-        let lot_id_str: Option<String> = row.get("lot_id")?;
-
-        let on_hand = parse_decimal(&qty_on_hand);
-        let reserved = parse_decimal(&qty_reserved);
+        let on_hand = parse_decimal_row(
+            &row.get::<_, String>("quantity_on_hand")?,
+            "location_inventory",
+            "quantity_on_hand",
+        )?;
+        let reserved = parse_decimal_row(
+            &row.get::<_, String>("quantity_reserved")?,
+            "location_inventory",
+            "quantity_reserved",
+        )?;
 
         Ok(LocationInventory {
             location_id: row.get("location_id")?,
             sku: row.get("sku")?,
-            lot_id: lot_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            lot_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("lot_id")?,
+                "location_inventory",
+                "lot_id",
+            )?,
             quantity_on_hand: on_hand,
             quantity_reserved: reserved,
             quantity_available: on_hand - reserved,
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "location_inventory",
+                "updated_at",
+            )?,
         })
     }
 
     // Helper to parse inventory movement from row
     fn row_to_movement(row: &rusqlite::Row) -> rusqlite::Result<LocationMovement> {
-        let id_str: String = row.get("id")?;
-        let type_str: String = row.get("movement_type")?;
-        let qty_str: String = row.get("quantity")?;
-        let lot_id_str: Option<String> = row.get("lot_id")?;
-        let ref_id_str: Option<String> = row.get("reference_id")?;
-
         Ok(LocationMovement {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            movement_type: MovementType::from_str(&type_str).unwrap_or(MovementType::Adjustment),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "inventory_movement", "id")?,
+            movement_type: parse_enum_row(
+                &row.get::<_, String>("movement_type")?,
+                "inventory_movement",
+                "movement_type",
+            )?,
             from_location_id: row.get("from_location_id")?,
             to_location_id: row.get("to_location_id")?,
             sku: row.get("sku")?,
-            lot_id: lot_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            quantity: parse_decimal(&qty_str),
+            lot_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("lot_id")?,
+                "inventory_movement",
+                "lot_id",
+            )?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>("quantity")?,
+                "inventory_movement",
+                "quantity",
+            )?,
             reference_type: row.get("reference_type")?,
-            reference_id: ref_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("reference_id")?,
+                "inventory_movement",
+                "reference_id",
+            )?,
             reason: row.get("reason")?,
             performed_by: row.get("performed_by")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "inventory_movement",
+                "created_at",
+            )?,
         })
     }
 
@@ -155,10 +179,11 @@ impl SqliteWarehouseRepository {
             name: row.get("name")?,
             description: row.get("description")?,
             is_active: row.get::<_, i32>("is_active")? == 1,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "warehouse_zone",
+                "created_at",
+            )?,
         })
     }
 
@@ -802,8 +827,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             .ok();
 
         let (new_on_hand, reserved) = if let Some((oh_str, res_str)) = existing {
-            let on_hand = parse_decimal(&oh_str);
-            let reserved = parse_decimal(&res_str);
+            let on_hand =
+                parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")?;
+            let reserved =
+                parse_decimal_strict(&res_str, "location_inventory", "quantity_reserved")?;
             let new_qty = on_hand + input.quantity;
 
             if new_qty < Decimal::ZERO {
@@ -893,8 +920,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(|_| CommerceError::NotFound)?;
 
-        let on_hand = parse_decimal(&source_on_hand);
-        let reserved = parse_decimal(&source_reserved);
+        let on_hand = parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")?;
+        let reserved = parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")?;
         let available = on_hand - reserved;
 
         if input.quantity > available {

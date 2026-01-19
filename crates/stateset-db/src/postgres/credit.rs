@@ -97,79 +97,183 @@ impl PgCreditRepository {
         Self { pool }
     }
 
-    fn row_to_credit_account(row: CreditAccountRow) -> CreditAccount {
-        CreditAccount {
-            id: row.id,
-            customer_id: row.customer_id,
-            credit_limit: row.credit_limit,
-            available_credit: row.available_credit,
-            current_balance: row.current_balance,
-            hold_amount: row.hold_amount,
-            currency: row.currency,
-            status: row.status.parse().unwrap_or_default(),
-            payment_terms: row.payment_terms,
-            risk_rating: row.risk_rating.and_then(|s| s.parse().ok()),
-            last_review_date: row.last_review_date.map(from_date),
-            next_review_date: row.next_review_date.map(from_date),
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_credit_account(row: CreditAccountRow) -> Result<CreditAccount> {
+        let CreditAccountRow {
+            id,
+            customer_id,
+            credit_limit,
+            available_credit,
+            current_balance,
+            hold_amount,
+            currency,
+            status,
+            payment_terms,
+            risk_rating,
+            last_review_date,
+            next_review_date,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: CreditAccountStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid credit_account.status '{}': {}", status, e))
+        })?;
+        let risk_rating = match risk_rating {
+            Some(value) if !value.trim().is_empty() => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid credit_account.risk_rating '{}': {}",
+                    value, e
+                ))
+            })?),
+            _ => None,
+        };
+
+        Ok(CreditAccount {
+            id,
+            customer_id,
+            credit_limit,
+            available_credit,
+            current_balance,
+            hold_amount,
+            currency,
+            status,
+            payment_terms,
+            risk_rating,
+            last_review_date: last_review_date.map(from_date),
+            next_review_date: next_review_date.map(from_date),
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_credit_hold(row: CreditHoldRow) -> CreditHold {
-        CreditHold {
-            id: row.id,
-            customer_id: row.customer_id,
-            order_id: row.order_id,
-            hold_type: row.hold_type.parse().unwrap_or_default(),
-            hold_amount: row.hold_amount,
-            reason: row.reason,
-            status: row.status.parse().unwrap_or_default(),
-            placed_by: row.placed_by,
-            placed_at: row.placed_at,
-            released_by: row.released_by,
-            released_at: row.released_at,
-            release_notes: row.release_notes,
-            created_at: row.created_at,
-        }
+    fn row_to_credit_hold(row: CreditHoldRow) -> Result<CreditHold> {
+        let CreditHoldRow {
+            id,
+            customer_id,
+            order_id,
+            hold_type,
+            hold_amount,
+            reason,
+            status,
+            placed_by,
+            placed_at,
+            released_by,
+            released_at,
+            release_notes,
+            created_at,
+        } = row;
+
+        let hold_type: CreditHoldType = hold_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_hold.hold_type '{}': {}",
+                hold_type, e
+            ))
+        })?;
+        let status: CreditHoldStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid credit_hold.status '{}': {}", status, e))
+        })?;
+
+        Ok(CreditHold {
+            id,
+            customer_id,
+            order_id,
+            hold_type,
+            hold_amount,
+            reason,
+            status,
+            placed_by,
+            placed_at,
+            released_by,
+            released_at,
+            release_notes,
+            created_at,
+        })
     }
 
-    fn row_to_credit_application(row: CreditApplicationRow) -> CreditApplication {
-        CreditApplication {
-            id: row.id,
-            application_number: row.application_number,
-            customer_id: row.customer_id,
-            requested_limit: row.requested_limit,
-            approved_limit: row.approved_limit,
-            status: row.status.parse().unwrap_or_default(),
-            business_name: row.business_name,
-            tax_id: row.tax_id,
-            years_in_business: row.years_in_business,
-            annual_revenue: row.annual_revenue,
-            bank_reference: row.bank_reference,
-            trade_references: row.trade_references,
-            submitted_at: row.submitted_at,
-            reviewed_by: row.reviewed_by,
-            reviewed_at: row.reviewed_at,
-            decision_notes: row.decision_notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_credit_application(row: CreditApplicationRow) -> Result<CreditApplication> {
+        let CreditApplicationRow {
+            id,
+            application_number,
+            customer_id,
+            requested_limit,
+            approved_limit,
+            status,
+            business_name,
+            tax_id,
+            years_in_business,
+            annual_revenue,
+            bank_reference,
+            trade_references,
+            submitted_at,
+            reviewed_by,
+            reviewed_at,
+            decision_notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: CreditApplicationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_application.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(CreditApplication {
+            id,
+            application_number,
+            customer_id,
+            requested_limit,
+            approved_limit,
+            status,
+            business_name,
+            tax_id,
+            years_in_business,
+            annual_revenue,
+            bank_reference,
+            trade_references,
+            submitted_at,
+            reviewed_by,
+            reviewed_at,
+            decision_notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_credit_transaction(row: CreditTransactionRow) -> CreditTransaction {
-        CreditTransaction {
-            id: row.id,
-            customer_id: row.customer_id,
-            transaction_type: row.transaction_type.parse().unwrap_or_default(),
-            amount: row.amount,
-            running_balance: row.running_balance,
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            notes: row.notes,
-            created_at: row.created_at,
-        }
+    fn row_to_credit_transaction(row: CreditTransactionRow) -> Result<CreditTransaction> {
+        let CreditTransactionRow {
+            id,
+            customer_id,
+            transaction_type,
+            amount,
+            running_balance,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        } = row;
+
+        let transaction_type: CreditTransactionType = transaction_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_transaction.transaction_type '{}': {}",
+                transaction_type, e
+            ))
+        })?;
+
+        Ok(CreditTransaction {
+            id,
+            customer_id,
+            transaction_type,
+            amount,
+            running_balance,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        })
     }
 
     async fn recalculate_available_credit_async(&self, customer_id: Uuid) -> Result<()> {
@@ -230,7 +334,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_account))
+        Ok(row.map(Self::row_to_credit_account).transpose()?)
     }
 
     pub async fn get_credit_account_by_customer_async(
@@ -248,7 +352,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_account))
+        Ok(row.map(Self::row_to_credit_account).transpose()?)
     }
 
     pub async fn update_credit_account_async(
@@ -327,7 +431,10 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_credit_account).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_credit_account)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn adjust_credit_limit_async(
@@ -625,7 +732,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_hold))
+        Ok(row.map(Self::row_to_credit_hold).transpose()?)
     }
 
     pub async fn list_holds_async(&self, filter: CreditHoldFilter) -> Result<Vec<CreditHold>> {
@@ -663,7 +770,10 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_credit_hold).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_credit_hold)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn release_hold_async(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
@@ -753,7 +863,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_application))
+        Ok(row.map(Self::row_to_credit_application).transpose()?)
     }
 
     pub async fn list_applications_async(
@@ -799,7 +909,7 @@ impl PgCreditRepository {
         Ok(rows
             .into_iter()
             .map(Self::row_to_credit_application)
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn review_application_async(
@@ -962,7 +1072,7 @@ impl PgCreditRepository {
         Ok(rows
             .into_iter()
             .map(Self::row_to_credit_transaction)
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn apply_payment_async(

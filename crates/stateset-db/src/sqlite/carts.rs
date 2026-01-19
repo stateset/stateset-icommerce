@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row,
+    parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row, parse_enum_row,
     SqliteCustomerRepository, SqliteOrderRepository,
 };
 use super::parse_helpers::{parse_uuid, parse_decimal as parse_decimal_err};
@@ -51,7 +51,7 @@ impl SqliteCartRepository {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "cart", "id")?,
             cart_number: row.get("cart_number")?,
             customer_id: parse_uuid_opt_row(row.get::<_, Option<String>>("customer_id")?, "cart", "customer_id")?,
-            status: parse_cart_status(&row.get::<_, String>("status")?),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "cart", "status")?,
             currency: row.get("currency")?,
 
             items: vec![], // Loaded separately
@@ -70,16 +70,17 @@ impl SqliteCartRepository {
             billing_address: parse_json_opt_row(billing_addr, "cart", "billing_address")?,
             billing_same_as_shipping: row.get::<_, i32>("billing_same_as_shipping")? == 1,
 
-            fulfillment_type: row
-                .get::<_, Option<String>>("fulfillment_type")?
-                .map(|s| parse_fulfillment_type(&s)),
+            fulfillment_type: match row.get::<_, Option<String>>("fulfillment_type")? {
+                Some(value) => Some(parse_enum_row(&value, "cart", "fulfillment_type")?),
+                None => None,
+            },
             shipping_method: row.get("shipping_method")?,
             shipping_carrier: row.get("shipping_carrier")?,
             estimated_delivery: parse_datetime_opt_row(row.get::<_, Option<String>>("estimated_delivery")?, "cart", "estimated_delivery")?,
 
             payment_method: row.get("payment_method")?,
             payment_token: row.get("payment_token")?,
-            payment_status: parse_payment_status(&row.get::<_, String>("payment_status")?),
+            payment_status: parse_enum_row(&row.get::<_, String>("payment_status")?, "cart", "payment_status")?,
 
             coupon_code: row.get("coupon_code")?,
             discount_description: row.get("discount_description")?,
@@ -1524,39 +1525,5 @@ fn split_customer_name(name: Option<&str>) -> (String, String) {
         (first_name.to_string(), "Customer".to_string())
     } else {
         (first_name.to_string(), last_name)
-    }
-}
-
-fn parse_cart_status(s: &str) -> CartStatus {
-    match s {
-        "active" => CartStatus::Active,
-        "ready_for_payment" => CartStatus::ReadyForPayment,
-        "payment_pending" => CartStatus::PaymentPending,
-        "completed" => CartStatus::Completed,
-        "abandoned" => CartStatus::Abandoned,
-        "cancelled" => CartStatus::Cancelled,
-        "expired" => CartStatus::Expired,
-        _ => CartStatus::Active,
-    }
-}
-
-fn parse_payment_status(s: &str) -> CartPaymentStatus {
-    match s {
-        "none" => CartPaymentStatus::None,
-        "method_selected" => CartPaymentStatus::MethodSelected,
-        "authorized" => CartPaymentStatus::Authorized,
-        "captured" => CartPaymentStatus::Captured,
-        "failed" => CartPaymentStatus::Failed,
-        "refunded" => CartPaymentStatus::Refunded,
-        _ => CartPaymentStatus::None,
-    }
-}
-
-fn parse_fulfillment_type(s: &str) -> FulfillmentType {
-    match s {
-        "shipping" => FulfillmentType::Shipping,
-        "pickup" => FulfillmentType::Pickup,
-        "digital" => FulfillmentType::Digital,
-        _ => FulfillmentType::Shipping,
     }
 }

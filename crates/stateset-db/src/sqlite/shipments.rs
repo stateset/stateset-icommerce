@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_datetime_row,
-    parse_uuid, parse_datetime, parse_datetime_opt, parse_decimal_opt,
+    parse_enum, parse_uuid, parse_datetime, parse_datetime_opt, parse_decimal_opt,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -23,47 +23,6 @@ pub struct SqliteShipmentRepository {
 impl SqliteShipmentRepository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
-    }
-
-    fn parse_status(s: &str) -> ShipmentStatus {
-        match s {
-            "processing" => ShipmentStatus::Processing,
-            "ready_to_ship" => ShipmentStatus::ReadyToShip,
-            "shipped" => ShipmentStatus::Shipped,
-            "in_transit" => ShipmentStatus::InTransit,
-            "out_for_delivery" => ShipmentStatus::OutForDelivery,
-            "delivered" => ShipmentStatus::Delivered,
-            "failed" => ShipmentStatus::Failed,
-            "returned" => ShipmentStatus::Returned,
-            "cancelled" => ShipmentStatus::Cancelled,
-            "on_hold" => ShipmentStatus::OnHold,
-            _ => ShipmentStatus::Pending,
-        }
-    }
-
-    fn parse_carrier(s: &str) -> ShippingCarrier {
-        match s {
-            "ups" => ShippingCarrier::Ups,
-            "fedex" => ShippingCarrier::FedEx,
-            "usps" => ShippingCarrier::Usps,
-            "dhl" => ShippingCarrier::Dhl,
-            "ontrac" => ShippingCarrier::OnTrac,
-            "lasership" => ShippingCarrier::LaserShip,
-            _ => ShippingCarrier::Other,
-        }
-    }
-
-    fn parse_method(s: &str) -> ShippingMethod {
-        match s {
-            "express" => ShippingMethod::Express,
-            "overnight" => ShippingMethod::Overnight,
-            "two_day" => ShippingMethod::TwoDay,
-            "ground" => ShippingMethod::Ground,
-            "international" => ShippingMethod::International,
-            "same_day" => ShippingMethod::SameDay,
-            "freight" => ShippingMethod::Freight,
-            _ => ShippingMethod::Standard,
-        }
     }
 
     fn load_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
@@ -371,9 +330,9 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     id: shipment_id,
                     shipment_number,
                     order_id: parse_uuid(&order_id, "shipment", "order_id")?,
-                    status: Self::parse_status(&status),
-                    carrier: Self::parse_carrier(&carrier),
-                    shipping_method: Self::parse_method(&shipping_method),
+                    status: parse_enum(&status, "shipment", "status")?,
+                    carrier: parse_enum(&carrier, "shipment", "carrier")?,
+                    shipping_method: parse_enum(&shipping_method, "shipment", "shipping_method")?,
                     tracking_number,
                     tracking_url,
                     recipient_name,
@@ -998,7 +957,8 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     e => map_db_error(e),
                 })?;
 
-            let existing_carrier = Self::parse_carrier(&existing_data.0);
+            let existing_carrier: ShippingCarrier =
+                parse_enum(&existing_data.0, "shipment", "carrier")?;
             let new_status = input.status.map(|s| s.to_string());
             let new_carrier = input.carrier.unwrap_or(existing_carrier);
             let new_tracking = input.tracking_number.or(existing_data.2);
@@ -1231,9 +1191,9 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 id: shipment_id,
                 shipment_number,
                 order_id: parse_uuid(&order_id, "shipment", "order_id")?,
-                status: Self::parse_status(&status),
-                carrier: Self::parse_carrier(&carrier),
-                shipping_method: Self::parse_method(&shipping_method),
+                status: parse_enum(&status, "shipment", "status")?,
+                carrier: parse_enum(&carrier, "shipment", "carrier")?,
+                shipping_method: parse_enum(&shipping_method, "shipment", "shipping_method")?,
                 tracking_number,
                 tracking_url,
                 recipient_name,

@@ -123,92 +123,211 @@ impl PgCostAccountingRepository {
         Self { pool }
     }
 
-    fn row_to_item_cost(row: ItemCostRow) -> ItemCost {
-        ItemCost {
-            id: row.id,
-            sku: row.sku,
-            cost_method: row.cost_method.parse().unwrap_or_default(),
-            standard_cost: row.standard_cost,
-            average_cost: row.average_cost,
-            last_cost: row.last_cost,
-            material_cost: row.material_cost,
-            labor_cost: row.labor_cost,
-            overhead_cost: row.overhead_cost,
-            currency: row.currency,
-            effective_date: from_date(row.effective_date),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_item_cost(row: ItemCostRow) -> Result<ItemCost> {
+        let ItemCostRow {
+            id,
+            sku,
+            cost_method,
+            standard_cost,
+            average_cost,
+            last_cost,
+            material_cost,
+            labor_cost,
+            overhead_cost,
+            currency,
+            effective_date,
+            created_at,
+            updated_at,
+        } = row;
+
+        let cost_method: CostMethod = cost_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid item_cost.cost_method '{}': {}",
+                cost_method, e
+            ))
+        })?;
+
+        Ok(ItemCost {
+            id,
+            sku,
+            cost_method,
+            standard_cost,
+            average_cost,
+            last_cost,
+            material_cost,
+            labor_cost,
+            overhead_cost,
+            currency,
+            effective_date: from_date(effective_date),
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_cost_layer(row: CostLayerRow) -> CostLayer {
-        CostLayer {
-            id: row.id,
-            sku: row.sku,
-            layer_date: from_date(row.layer_date),
-            quantity: row.quantity,
-            remaining_quantity: row.remaining_quantity,
-            unit_cost: row.unit_cost,
-            total_cost: row.total_cost,
-            source_type: row.source_type.parse().unwrap_or_default(),
-            source_id: row.source_id,
-            lot_id: row.lot_id,
-            location_id: row.location_id,
-            created_at: row.created_at,
-        }
+    fn row_to_cost_layer(row: CostLayerRow) -> Result<CostLayer> {
+        let CostLayerRow {
+            id,
+            sku,
+            layer_date,
+            quantity,
+            remaining_quantity,
+            unit_cost,
+            total_cost,
+            source_type,
+            source_id,
+            lot_id,
+            location_id,
+            created_at,
+        } = row;
+
+        let source_type: CostLayerSource = source_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cost_layer.source_type '{}': {}",
+                source_type, e
+            ))
+        })?;
+
+        Ok(CostLayer {
+            id,
+            sku,
+            layer_date: from_date(layer_date),
+            quantity,
+            remaining_quantity,
+            unit_cost,
+            total_cost,
+            source_type,
+            source_id,
+            lot_id,
+            location_id,
+            created_at,
+        })
     }
 
-    fn row_to_cost_transaction(row: CostTransactionRow) -> CostTransaction {
-        CostTransaction {
-            id: row.id,
-            sku: row.sku,
-            transaction_type: row.transaction_type.parse().unwrap_or_default(),
-            quantity: row.quantity,
-            unit_cost: row.unit_cost,
-            total_cost: row.total_cost,
-            layer_id: row.layer_id,
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            notes: row.notes,
-            created_at: row.created_at,
-        }
+    fn row_to_cost_transaction(row: CostTransactionRow) -> Result<CostTransaction> {
+        let CostTransactionRow {
+            id,
+            sku,
+            transaction_type,
+            quantity,
+            unit_cost,
+            total_cost,
+            layer_id,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        } = row;
+
+        let transaction_type: CostTransactionType = transaction_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cost_transaction.transaction_type '{}': {}",
+                transaction_type, e
+            ))
+        })?;
+
+        Ok(CostTransaction {
+            id,
+            sku,
+            transaction_type,
+            quantity,
+            unit_cost,
+            total_cost,
+            layer_id,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        })
     }
 
-    fn row_to_cost_variance(row: CostVarianceRow) -> CostVariance {
-        CostVariance {
-            id: row.id,
-            sku: row.sku,
-            variance_type: row.variance_type.parse().unwrap_or_default(),
-            variance_date: from_date(row.variance_date),
-            standard_cost: row.standard_cost,
-            actual_cost: row.actual_cost,
-            variance_amount: row.variance_amount,
-            variance_percent: row.variance_percent,
-            quantity: row.quantity,
-            total_variance: row.total_variance,
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            notes: row.notes,
-            created_at: row.created_at,
-        }
+    fn row_to_cost_variance(row: CostVarianceRow) -> Result<CostVariance> {
+        let CostVarianceRow {
+            id,
+            sku,
+            variance_type,
+            variance_date,
+            standard_cost,
+            actual_cost,
+            variance_amount,
+            variance_percent,
+            quantity,
+            total_variance,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        } = row;
+
+        let variance_type: VarianceType = variance_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cost_variance.variance_type '{}': {}",
+                variance_type, e
+            ))
+        })?;
+
+        Ok(CostVariance {
+            id,
+            sku,
+            variance_type,
+            variance_date: from_date(variance_date),
+            standard_cost,
+            actual_cost,
+            variance_amount,
+            variance_percent,
+            quantity,
+            total_variance,
+            reference_type,
+            reference_id,
+            notes,
+            created_at,
+        })
     }
 
-    fn row_to_cost_adjustment(row: CostAdjustmentRow) -> CostAdjustment {
-        CostAdjustment {
-            id: row.id,
-            adjustment_number: row.adjustment_number,
-            sku: row.sku,
-            adjustment_type: row.adjustment_type.parse().unwrap_or_default(),
-            previous_cost: row.previous_cost,
-            new_cost: row.new_cost,
-            adjustment_amount: row.adjustment_amount,
-            reason: row.reason,
-            approved_by: row.approved_by,
-            approved_at: row.approved_at,
-            status: row.status.parse().unwrap_or_default(),
-            created_by: row.created_by,
-            created_at: row.created_at,
-        }
+    fn row_to_cost_adjustment(row: CostAdjustmentRow) -> Result<CostAdjustment> {
+        let CostAdjustmentRow {
+            id,
+            adjustment_number,
+            sku,
+            adjustment_type,
+            previous_cost,
+            new_cost,
+            adjustment_amount,
+            reason,
+            approved_by,
+            approved_at,
+            status,
+            created_by,
+            created_at,
+        } = row;
+
+        let adjustment_type: CostAdjustmentType = adjustment_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cost_adjustment.adjustment_type '{}': {}",
+                adjustment_type, e
+            ))
+        })?;
+        let status: CostAdjustmentStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cost_adjustment.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(CostAdjustment {
+            id,
+            adjustment_number,
+            sku,
+            adjustment_type,
+            previous_cost,
+            new_cost,
+            adjustment_amount,
+            reason,
+            approved_by,
+            approved_at,
+            status,
+            created_by,
+            created_at,
+        })
     }
 
     fn row_to_cost_rollup(row: CostRollupRow) -> CostRollup {
@@ -289,7 +408,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_item_cost))
+        Ok(row.map(Self::row_to_item_cost).transpose()?)
     }
 
     pub async fn set_item_cost_async(&self, input: SetItemCost) -> Result<ItemCost> {
@@ -388,7 +507,10 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_item_cost).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_item_cost)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn update_average_cost_async(
@@ -494,7 +616,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_cost_layer))
+        Ok(row.map(Self::row_to_cost_layer).transpose()?)
     }
 
     pub async fn list_cost_layers_async(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>> {
@@ -539,7 +661,10 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_cost_layer).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_cost_layer)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn issue_fifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
@@ -746,7 +871,10 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_cost_transaction).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_cost_transaction)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn record_variance_async(&self, input: RecordCostVariance) -> Result<CostVariance> {
@@ -839,7 +967,10 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_cost_variance).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_cost_variance)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_variance_summary_async(
@@ -910,7 +1041,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_cost_adjustment))
+        Ok(row.map(Self::row_to_cost_adjustment).transpose()?)
     }
 
     pub async fn list_adjustments_async(
@@ -954,7 +1085,10 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_cost_adjustment).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_cost_adjustment)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn approve_adjustment_async(

@@ -57,39 +57,91 @@ impl PgProductRepository {
         Self { pool }
     }
 
-    fn row_to_product(row: ProductRow) -> Product {
-        Product {
-            id: row.id,
-            name: row.name,
-            slug: row.slug,
-            description: row.description,
-            status: parse_product_status(&row.status),
-            product_type: parse_product_type(&row.product_type),
-            attributes: serde_json::from_value(row.attributes).unwrap_or_default(),
-            seo: row.seo.and_then(|v| serde_json::from_value(v).ok()),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_product(row: ProductRow) -> Result<Product> {
+        let ProductRow {
+            id,
+            name,
+            slug,
+            description,
+            status,
+            product_type,
+            attributes,
+            seo,
+            created_at,
+            updated_at,
+            version: _,
+        } = row;
+
+        let status: ProductStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid product.status '{}': {}", status, e))
+        })?;
+        let product_type: ProductType = product_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid product.product_type '{}': {}",
+                product_type, e
+            ))
+        })?;
+        let attributes = serde_json::from_value(attributes).map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for product.attributes: {}", e))
+        })?;
+        let seo = seo.map(serde_json::from_value).transpose().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for product.seo: {}", e))
+        })?;
+
+        Ok(Product {
+            id,
+            name,
+            slug,
+            description,
+            status,
+            product_type,
+            attributes,
+            seo,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_variant(row: VariantRow) -> ProductVariant {
-        ProductVariant {
-            id: row.id,
-            product_id: row.product_id,
-            sku: row.sku,
-            name: row.name,
-            price: row.price,
-            compare_at_price: row.compare_at_price,
-            cost: row.cost,
-            barcode: row.barcode,
-            weight: row.weight,
-            weight_unit: row.weight_unit,
-            options: serde_json::from_value(row.options).unwrap_or_default(),
-            is_default: row.is_default,
-            is_active: row.is_active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_variant(row: VariantRow) -> Result<ProductVariant> {
+        let VariantRow {
+            id,
+            product_id,
+            sku,
+            name,
+            price,
+            compare_at_price,
+            cost,
+            barcode,
+            weight,
+            weight_unit,
+            options,
+            is_default,
+            is_active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let options = serde_json::from_value(options).map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid JSON for product_variant.options: {}", e))
+        })?;
+
+        Ok(ProductVariant {
+            id,
+            product_id,
+            sku,
+            name,
+            price,
+            compare_at_price,
+            cost,
+            barcode,
+            weight,
+            weight_unit,
+            options,
+            is_default,
+            is_active,
+            created_at,
+            updated_at,
+        })
     }
 
     /// Create a product (async)
@@ -114,8 +166,8 @@ impl PgProductRepository {
         .bind(&input.name)
         .bind(&slug)
         .bind(&description)
-        .bind("draft")
-        .bind(format!("{:?}", product_type).to_lowercase())
+        .bind(ProductStatus::Draft.to_string())
+        .bind(product_type.to_string())
         .bind(&attributes_json)
         .bind(&seo_json)
         .bind(now)
@@ -153,7 +205,7 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_product))
+        row.map(Self::row_to_product).transpose()
     }
 
     /// Get product by slug (async)
@@ -164,7 +216,7 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_product))
+        row.map(Self::row_to_product).transpose()
     }
 
     /// Update a product (async)
@@ -178,7 +230,7 @@ impl PgProductRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::ProductNotFound(id))?;
         let current_version = existing_row.version;
-        let existing = Self::row_to_product(existing_row);
+        let existing = Self::row_to_product(existing_row)?;
 
         let new_name = input.name.unwrap_or(existing.name);
         let new_slug = input.slug.unwrap_or(existing.slug);
@@ -235,7 +287,11 @@ impl PgProductRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_product).collect())
+        let mut products = Vec::with_capacity(rows.len());
+        for row in rows {
+            products.push(Self::row_to_product(row)?);
+        }
+        Ok(products)
     }
 
     /// Delete a product (async)
@@ -325,7 +381,7 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_variant))
+        row.map(Self::row_to_variant).transpose()
     }
 
     /// Get variant by SKU (async)
@@ -336,7 +392,7 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_variant))
+        row.map(Self::row_to_variant).transpose()
     }
 
     /// Update variant (async)
@@ -412,7 +468,11 @@ impl PgProductRepository {
                 .await
                 .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_variant).collect())
+        let mut variants = Vec::with_capacity(rows.len());
+        for row in rows {
+            variants.push(Self::row_to_variant(row)?);
+        }
+        Ok(variants)
     }
 
     /// Count products (async)
@@ -469,8 +529,8 @@ impl PgProductRepository {
             .bind(&input.name)
             .bind(&slug)
             .bind(&description)
-            .bind("draft")
-            .bind(format!("{:?}", product_type).to_lowercase())
+            .bind(ProductStatus::Draft.to_string())
+            .bind(product_type.to_string())
             .bind(&attributes_json)
             .bind(&seo_json)
             .bind(now)
@@ -564,7 +624,7 @@ impl PgProductRepository {
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::ProductNotFound(id))?;
             let current_version = existing_row.version;
-            let existing = Self::row_to_product(existing_row);
+            let existing = Self::row_to_product(existing_row)?;
 
             let new_name = input.name.unwrap_or(existing.name);
             let new_slug = input.slug.unwrap_or(existing.slug);
@@ -672,7 +732,11 @@ impl PgProductRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_product).collect())
+        let mut products = Vec::with_capacity(rows.len());
+        for row in rows {
+            products.push(Self::row_to_product(row)?);
+        }
+        Ok(products)
     }
 }
 
@@ -757,24 +821,5 @@ impl ProductRepository for PgProductRepository {
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Product>> {
         super::block_on(self.get_batch_async(ids))
-    }
-}
-
-fn parse_product_status(s: &str) -> ProductStatus {
-    match s {
-        "draft" => ProductStatus::Draft,
-        "active" => ProductStatus::Active,
-        "archived" => ProductStatus::Archived,
-        _ => ProductStatus::Draft,
-    }
-}
-
-fn parse_product_type(s: &str) -> ProductType {
-    match s {
-        "simple" => ProductType::Simple,
-        "variable" => ProductType::Variable,
-        "bundle" => ProductType::Bundle,
-        "digital" => ProductType::Digital,
-        _ => ProductType::Simple,
     }
 }

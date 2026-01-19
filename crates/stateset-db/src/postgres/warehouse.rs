@@ -96,19 +96,43 @@ impl PgWarehouseRepository {
         Self { pool }
     }
 
-    fn row_to_warehouse(row: WarehouseRow) -> Warehouse {
-        let address = serde_json::from_value(row.address_json).unwrap_or_default();
-        Warehouse {
-            id: row.id,
-            code: row.code,
-            name: row.name,
-            warehouse_type: row.warehouse_type.parse().unwrap_or_default(),
+    fn row_to_warehouse(row: WarehouseRow) -> Result<Warehouse> {
+        let WarehouseRow {
+            id,
+            code,
+            name,
+            warehouse_type,
+            address_json,
+            timezone,
+            is_active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let warehouse_type: WarehouseType = warehouse_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid warehouse.warehouse_type '{}': {}",
+                warehouse_type, e
+            ))
+        })?;
+        let address: WarehouseAddress = serde_json::from_value(address_json).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid warehouse.address_json: {}",
+                e
+            ))
+        })?;
+
+        Ok(Warehouse {
+            id,
+            code,
+            name,
+            warehouse_type,
             address,
-            timezone: row.timezone,
-            is_active: row.is_active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            timezone,
+            is_active,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_zone(row: ZoneRow) -> Zone {
@@ -123,27 +147,55 @@ impl PgWarehouseRepository {
         }
     }
 
-    fn row_to_location(row: LocationRow) -> Location {
-        Location {
-            id: row.id,
-            warehouse_id: row.warehouse_id,
-            code: row.code,
-            location_type: row.location_type.parse().unwrap_or_default(),
-            zone: row.zone,
-            aisle: row.aisle,
-            rack: row.rack,
-            level: row.level,
-            bin: row.bin,
-            max_weight_kg: row.max_weight_kg,
-            max_volume_m3: row.max_volume_m3,
-            current_weight_kg: row.current_weight_kg,
-            current_volume_m3: row.current_volume_m3,
-            is_pickable: row.is_pickable,
-            is_receivable: row.is_receivable,
-            is_active: row.is_active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_location(row: LocationRow) -> Result<Location> {
+        let LocationRow {
+            id,
+            warehouse_id,
+            code,
+            location_type,
+            zone,
+            aisle,
+            rack,
+            level,
+            bin,
+            max_weight_kg,
+            max_volume_m3,
+            current_weight_kg,
+            current_volume_m3,
+            is_pickable,
+            is_receivable,
+            is_active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let location_type: LocationType = location_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid location.location_type '{}': {}",
+                location_type, e
+            ))
+        })?;
+
+        Ok(Location {
+            id,
+            warehouse_id,
+            code,
+            location_type,
+            zone,
+            aisle,
+            rack,
+            level,
+            bin,
+            max_weight_kg,
+            max_volume_m3,
+            current_weight_kg,
+            current_volume_m3,
+            is_pickable,
+            is_receivable,
+            is_active,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_location_inventory(row: LocationInventoryRow) -> LocationInventory {
@@ -160,21 +212,43 @@ impl PgWarehouseRepository {
         }
     }
 
-    fn row_to_movement(row: LocationMovementRow) -> LocationMovement {
-        LocationMovement {
-            id: row.id,
-            movement_type: row.movement_type.parse().unwrap_or(MovementType::Adjustment),
-            from_location_id: row.from_location_id,
-            to_location_id: row.to_location_id,
-            sku: row.sku,
-            lot_id: row.lot_id,
-            quantity: row.quantity,
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            reason: row.reason,
-            performed_by: row.performed_by,
-            created_at: row.created_at,
-        }
+    fn row_to_movement(row: LocationMovementRow) -> Result<LocationMovement> {
+        let LocationMovementRow {
+            id,
+            movement_type,
+            from_location_id,
+            to_location_id,
+            sku,
+            lot_id,
+            quantity,
+            reference_type,
+            reference_id,
+            reason,
+            performed_by,
+            created_at,
+        } = row;
+
+        let movement_type: MovementType = movement_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_movement.movement_type '{}': {}",
+                movement_type, e
+            ))
+        })?;
+
+        Ok(LocationMovement {
+            id,
+            movement_type,
+            from_location_id,
+            to_location_id,
+            sku,
+            lot_id,
+            quantity,
+            reference_type,
+            reference_id,
+            reason,
+            performed_by,
+            created_at,
+        })
     }
 
     fn generate_location_code(input: &CreateLocation) -> String {
@@ -241,7 +315,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warehouse))
+        Ok(row.map(Self::row_to_warehouse).transpose()?)
     }
 
     pub async fn get_warehouse_by_code_async(&self, code: &str) -> Result<Option<Warehouse>> {
@@ -251,7 +325,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warehouse))
+        Ok(row.map(Self::row_to_warehouse).transpose()?)
     }
 
     pub async fn update_warehouse_async(&self, id: i32, input: UpdateWarehouse) -> Result<Warehouse> {
@@ -314,7 +388,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_warehouse).collect())
+        Ok(rows.into_iter().map(Self::row_to_warehouse).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_warehouse_async(&self, id: i32) -> Result<()> {
@@ -502,7 +576,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_location))
+        Ok(row.map(Self::row_to_location).transpose()?)
     }
 
     pub async fn get_location_by_code_async(&self, warehouse_id: i32, code: &str) -> Result<Option<Location>> {
@@ -515,7 +589,7 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_location))
+        Ok(row.map(Self::row_to_location).transpose()?)
     }
 
     pub async fn update_location_async(&self, id: i32, input: UpdateLocation) -> Result<Location> {
@@ -599,7 +673,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect())
+        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
@@ -685,7 +759,7 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect())
+        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_receivable_locations_async(&self, warehouse_id: i32) -> Result<Vec<Location>> {
@@ -1011,7 +1085,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_movement).collect())
+        Ok(rows.into_iter().map(Self::row_to_movement).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_movements_async(&self, filter: MovementFilter) -> Result<u64> {
@@ -1080,7 +1154,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect())
+        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
     }
 }
 

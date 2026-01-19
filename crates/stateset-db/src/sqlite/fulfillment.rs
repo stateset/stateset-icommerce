@@ -1,14 +1,13 @@
 //! SQLite implementation for fulfillment (pick/pack/ship) management
 
 use crate::sqlite::{
-    map_db_error, parse_decimal, parse_uuid, parse_uuid_row, parse_uuid_opt_row,
-    parse_datetime_row, parse_datetime_opt_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_uuid, parse_uuid_opt_row, parse_uuid_row,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
-use std::str::FromStr;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -46,7 +45,7 @@ impl SqliteFulfillmentRepository {
             id: parse_uuid_row(&id_str, "wave", "id")?,
             wave_number: row.get("wave_number")?,
             warehouse_id: row.get("warehouse_id")?,
-            status: WaveStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&status_str, "wave", "status")?,
             order_count: row.get("order_count")?,
             pick_count: row.get("pick_count")?,
             completed_pick_count: row.get("completed_pick_count")?,
@@ -79,14 +78,14 @@ impl SqliteFulfillmentRepository {
             order_id: parse_uuid_row(&order_id_str, "pick_task", "order_id")?,
             order_item_id: parse_uuid_row(&order_item_id_str, "pick_task", "order_item_id")?,
             warehouse_id: row.get("warehouse_id")?,
-            status: PickStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&status_str, "pick_task", "status")?,
             sku: row.get("sku")?,
             product_name: row.get("product_name")?,
             source_location_id: row.get("source_location_id")?,
             source_location_code: row.get("source_location_code")?,
-            quantity_requested: parse_decimal(&qty_req),
-            quantity_picked: parse_decimal(&qty_pick),
-            quantity_short: parse_decimal(&qty_short),
+            quantity_requested: parse_decimal_row(&qty_req, "pick_task", "quantity_requested")?,
+            quantity_picked: parse_decimal_row(&qty_pick, "pick_task", "quantity_picked")?,
+            quantity_short: parse_decimal_row(&qty_short, "pick_task", "quantity_short")?,
             lot_id: parse_uuid_opt_row(lot_id_str, "pick_task", "lot_id")?,
             serial_number: row.get("serial_number")?,
             assigned_to: row.get("assigned_to")?,
@@ -113,9 +112,9 @@ impl SqliteFulfillmentRepository {
             id: parse_uuid_row(&id_str, "pack_task", "id")?,
             order_id: parse_uuid_row(&order_id_str, "pack_task", "order_id")?,
             shipment_id: parse_uuid_opt_row(shipment_id_str, "pack_task", "shipment_id")?,
-            status: PackStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&status_str, "pack_task", "status")?,
             carton_count: row.get("carton_count")?,
-            total_weight_kg: weight_str.map(|s| parse_decimal(&s)),
+            total_weight_kg: parse_decimal_opt_row(weight_str, "pack_task", "total_weight_kg")?,
             assigned_to: row.get("assigned_to")?,
             packing_station: row.get("packing_station")?,
             started_at: parse_datetime_opt_row(started_str, "pack_task", "started_at")?,
@@ -139,11 +138,11 @@ impl SqliteFulfillmentRepository {
             id: parse_uuid_row(&id_str, "carton", "id")?,
             pack_task_id: parse_uuid_row(&pack_task_id_str, "carton", "pack_task_id")?,
             carton_number: row.get("carton_number")?,
-            package_type: PackageType::from_str(&pkg_type_str).unwrap_or_default(),
-            weight_kg: weight_str.map(|s| parse_decimal(&s)),
-            length_cm: length_str.map(|s| parse_decimal(&s)),
-            width_cm: width_str.map(|s| parse_decimal(&s)),
-            height_cm: height_str.map(|s| parse_decimal(&s)),
+            package_type: parse_enum_row(&pkg_type_str, "carton", "package_type")?,
+            weight_kg: parse_decimal_opt_row(weight_str, "carton", "weight_kg")?,
+            length_cm: parse_decimal_opt_row(length_str, "carton", "length_cm")?,
+            width_cm: parse_decimal_opt_row(width_str, "carton", "width_cm")?,
+            height_cm: parse_decimal_opt_row(height_str, "carton", "height_cm")?,
             tracking_number: row.get("tracking_number")?,
             label_printed: row.get::<_, i32>("label_printed")? != 0,
             created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "carton", "created_at")?,
@@ -160,7 +159,7 @@ impl SqliteFulfillmentRepository {
             id: parse_uuid_row(&id_str, "carton_item", "id")?,
             carton_id: parse_uuid_row(&carton_id_str, "carton_item", "carton_id")?,
             sku: row.get("sku")?,
-            quantity: parse_decimal(&qty_str),
+            quantity: parse_decimal_row(&qty_str, "carton_item", "quantity")?,
             lot_id: parse_uuid_opt_row(lot_id_str, "carton_item", "lot_id")?,
             serial_number: row.get("serial_number")?,
         })
@@ -180,12 +179,12 @@ impl SqliteFulfillmentRepository {
             order_id: parse_uuid_row(&order_id_str, "ship_task", "order_id")?,
             shipment_id: parse_uuid_row(&shipment_id_str, "ship_task", "shipment_id")?,
             pack_task_id: parse_uuid_row(&pack_task_id_str, "ship_task", "pack_task_id")?,
-            status: ShipStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&status_str, "ship_task", "status")?,
             carrier: row.get("carrier")?,
             service_level: row.get("service_level")?,
             tracking_number: row.get("tracking_number")?,
             label_url: row.get("label_url")?,
-            shipping_cost: cost_str.map(|s| parse_decimal(&s)),
+            shipping_cost: parse_decimal_opt_row(cost_str, "ship_task", "shipping_cost")?,
             assigned_to: row.get("assigned_to")?,
             shipped_at: parse_datetime_opt_row(shipped_str, "ship_task", "shipped_at")?,
             notes: row.get("notes")?,

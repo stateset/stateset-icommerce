@@ -92,16 +92,16 @@ impl std::fmt::Display for BackorderStatus {
 }
 
 impl FromStr for BackorderStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(BackorderStatus::Pending),
-            "partially_fulfilled" => Ok(BackorderStatus::PartiallyFulfilled),
+            "partially_fulfilled" | "partiallyfulfilled" => Ok(BackorderStatus::PartiallyFulfilled),
             "allocated" => Ok(BackorderStatus::Allocated),
-            "ready_to_ship" => Ok(BackorderStatus::ReadyToShip),
+            "ready_to_ship" | "readytoship" => Ok(BackorderStatus::ReadyToShip),
             "fulfilled" => Ok(BackorderStatus::Fulfilled),
-            "cancelled" => Ok(BackorderStatus::Cancelled),
-            _ => Ok(BackorderStatus::Pending),
+            "cancelled" | "canceled" => Ok(BackorderStatus::Cancelled),
+            _ => Err(format!("Unknown backorder status: {}", s)),
         }
     }
 }
@@ -129,14 +129,14 @@ impl std::fmt::Display for BackorderPriority {
 }
 
 impl FromStr for BackorderPriority {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "low" => Ok(BackorderPriority::Low),
             "normal" => Ok(BackorderPriority::Normal),
             "high" => Ok(BackorderPriority::High),
             "critical" => Ok(BackorderPriority::Critical),
-            _ => Ok(BackorderPriority::Normal),
+            _ => Err(format!("Unknown backorder priority: {}", s)),
         }
     }
 }
@@ -164,14 +164,14 @@ impl std::fmt::Display for FulfillmentSourceType {
 }
 
 impl FromStr for FulfillmentSourceType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "inventory" => Ok(FulfillmentSourceType::Inventory),
-            "purchase_order" => Ok(FulfillmentSourceType::PurchaseOrder),
+            "purchase_order" | "purchaseorder" | "po" => Ok(FulfillmentSourceType::PurchaseOrder),
             "transfer" => Ok(FulfillmentSourceType::Transfer),
             "production" => Ok(FulfillmentSourceType::Production),
-            _ => Ok(FulfillmentSourceType::Inventory),
+            _ => Err(format!("Unknown fulfillment source type: {}", s)),
         }
     }
 }
@@ -199,14 +199,14 @@ impl std::fmt::Display for AllocationStatus {
 }
 
 impl FromStr for AllocationStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "reserved" => Ok(AllocationStatus::Reserved),
             "confirmed" => Ok(AllocationStatus::Confirmed),
             "released" => Ok(AllocationStatus::Released),
             "expired" => Ok(AllocationStatus::Expired),
-            _ => Ok(AllocationStatus::Reserved),
+            _ => Err(format!("Unknown allocation status: {}", s)),
         }
     }
 }
@@ -312,4 +312,51 @@ pub fn generate_backorder_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
     format!("BO-{}-{}", timestamp, random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backorder_status_from_str() {
+        assert_eq!(BackorderStatus::from_str("pending").unwrap(), BackorderStatus::Pending);
+        assert_eq!(
+            BackorderStatus::from_str("partiallyfulfilled").unwrap(),
+            BackorderStatus::PartiallyFulfilled
+        );
+        assert!(BackorderStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_backorder_priority_from_str() {
+        assert_eq!(BackorderPriority::from_str("low").unwrap(), BackorderPriority::Low);
+        assert_eq!(
+            BackorderPriority::from_str("critical").unwrap(),
+            BackorderPriority::Critical
+        );
+        assert!(BackorderPriority::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_fulfillment_source_type_from_str() {
+        assert_eq!(
+            FulfillmentSourceType::from_str("purchaseorder").unwrap(),
+            FulfillmentSourceType::PurchaseOrder
+        );
+        assert_eq!(
+            FulfillmentSourceType::from_str("transfer").unwrap(),
+            FulfillmentSourceType::Transfer
+        );
+        assert!(FulfillmentSourceType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_allocation_status_from_str() {
+        assert_eq!(
+            AllocationStatus::from_str("confirmed").unwrap(),
+            AllocationStatus::Confirmed
+        );
+        assert!(AllocationStatus::from_str("nope").is_err());
+    }
 }

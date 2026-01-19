@@ -153,15 +153,15 @@ impl std::fmt::Display for WaveStatus {
 }
 
 impl FromStr for WaveStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "draft" => Ok(WaveStatus::Draft),
             "released" => Ok(WaveStatus::Released),
-            "in_progress" => Ok(WaveStatus::InProgress),
+            "in_progress" | "inprogress" => Ok(WaveStatus::InProgress),
             "completed" => Ok(WaveStatus::Completed),
-            "cancelled" => Ok(WaveStatus::Cancelled),
-            _ => Ok(WaveStatus::Draft),
+            "cancelled" | "canceled" => Ok(WaveStatus::Cancelled),
+            _ => Err(format!("Unknown wave status: {}", s)),
         }
     }
 }
@@ -193,16 +193,16 @@ impl std::fmt::Display for PickStatus {
 }
 
 impl FromStr for PickStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(PickStatus::Pending),
             "assigned" => Ok(PickStatus::Assigned),
-            "in_progress" => Ok(PickStatus::InProgress),
+            "in_progress" | "inprogress" => Ok(PickStatus::InProgress),
             "completed" => Ok(PickStatus::Completed),
             "short" => Ok(PickStatus::Short),
-            "cancelled" => Ok(PickStatus::Cancelled),
-            _ => Ok(PickStatus::Pending),
+            "cancelled" | "canceled" => Ok(PickStatus::Cancelled),
+            _ => Err(format!("Unknown pick status: {}", s)),
         }
     }
 }
@@ -213,6 +213,7 @@ impl FromStr for PickStatus {
 pub enum PackStatus {
     #[default]
     Pending,
+    Assigned,
     ReadyToPack,
     InProgress,
     Completed,
@@ -223,6 +224,7 @@ impl std::fmt::Display for PackStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PackStatus::Pending => write!(f, "pending"),
+            PackStatus::Assigned => write!(f, "assigned"),
             PackStatus::ReadyToPack => write!(f, "ready_to_pack"),
             PackStatus::InProgress => write!(f, "in_progress"),
             PackStatus::Completed => write!(f, "completed"),
@@ -232,15 +234,16 @@ impl std::fmt::Display for PackStatus {
 }
 
 impl FromStr for PackStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(PackStatus::Pending),
-            "ready_to_pack" => Ok(PackStatus::ReadyToPack),
-            "in_progress" => Ok(PackStatus::InProgress),
+            "assigned" => Ok(PackStatus::Assigned),
+            "ready_to_pack" | "readytopack" => Ok(PackStatus::ReadyToPack),
+            "in_progress" | "inprogress" => Ok(PackStatus::InProgress),
             "completed" => Ok(PackStatus::Completed),
-            "cancelled" => Ok(PackStatus::Cancelled),
-            _ => Ok(PackStatus::Pending),
+            "cancelled" | "canceled" => Ok(PackStatus::Cancelled),
+            _ => Err(format!("Unknown pack status: {}", s)),
         }
     }
 }
@@ -270,15 +273,15 @@ impl std::fmt::Display for ShipStatus {
 }
 
 impl FromStr for ShipStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(ShipStatus::Pending),
-            "ready_to_ship" => Ok(ShipStatus::ReadyToShip),
-            "label_printed" => Ok(ShipStatus::LabelPrinted),
+            "ready_to_ship" | "readytoship" => Ok(ShipStatus::ReadyToShip),
+            "label_printed" | "labelprinted" => Ok(ShipStatus::LabelPrinted),
             "shipped" => Ok(ShipStatus::Shipped),
-            "cancelled" => Ok(ShipStatus::Cancelled),
-            _ => Ok(ShipStatus::Pending),
+            "cancelled" | "canceled" => Ok(ShipStatus::Cancelled),
+            _ => Err(format!("Unknown ship status: {}", s)),
         }
     }
 }
@@ -308,15 +311,15 @@ impl std::fmt::Display for PackageType {
 }
 
 impl FromStr for PackageType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "box" => Ok(PackageType::Box),
             "envelope" => Ok(PackageType::Envelope),
             "tube" => Ok(PackageType::Tube),
             "pallet" => Ok(PackageType::Pallet),
             "custom" => Ok(PackageType::Custom),
-            _ => Ok(PackageType::Box),
+            _ => Err(format!("Unknown package type: {}", s)),
         }
     }
 }
@@ -348,14 +351,14 @@ impl std::fmt::Display for WaveType {
 }
 
 impl FromStr for WaveType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "batch" => Ok(WaveType::Batch),
             "priority" => Ok(WaveType::Priority),
             "zone" => Ok(WaveType::Zone),
-            "single" => Ok(WaveType::Single),
-            _ => Ok(WaveType::Batch),
+            "single" | "single_order" | "singleorder" => Ok(WaveType::Single),
+            _ => Err(format!("Unknown wave type: {}", s)),
         }
     }
 }
@@ -514,4 +517,49 @@ pub fn generate_carton_number() -> String {
     let timestamp = chrono::Utc::now().format("%H%M%S").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
     format!("CTN-{}-{}", timestamp, random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wave_status_from_str() {
+        assert_eq!(WaveStatus::from_str("released").unwrap(), WaveStatus::Released);
+        assert_eq!(WaveStatus::from_str("InProgress").unwrap(), WaveStatus::InProgress);
+        assert!(WaveStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_pick_status_from_str() {
+        assert_eq!(PickStatus::from_str("assigned").unwrap(), PickStatus::Assigned);
+        assert_eq!(PickStatus::from_str("canceled").unwrap(), PickStatus::Cancelled);
+        assert!(PickStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_pack_status_from_str() {
+        assert_eq!(PackStatus::from_str("assigned").unwrap(), PackStatus::Assigned);
+        assert_eq!(PackStatus::from_str("readytopack").unwrap(), PackStatus::ReadyToPack);
+        assert!(PackStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_ship_status_from_str() {
+        assert_eq!(ShipStatus::from_str("labelprinted").unwrap(), ShipStatus::LabelPrinted);
+        assert_eq!(ShipStatus::from_str("ready_to_ship").unwrap(), ShipStatus::ReadyToShip);
+        assert!(ShipStatus::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_package_type_from_str() {
+        assert_eq!(PackageType::from_str("box").unwrap(), PackageType::Box);
+        assert!(PackageType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_wave_type_from_str() {
+        assert_eq!(WaveType::from_str("single_order").unwrap(), WaveType::Single);
+        assert!(WaveType::from_str("nope").is_err());
+    }
 }

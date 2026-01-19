@@ -7,9 +7,9 @@ use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
-    BackorderFulfillment, BackorderRepository, BackorderStatus, BackorderSummary, CommerceError,
-    CreateBackorder, FulfillBackorder, Result, SkuBackorderSummary, UpdateBackorder,
-    generate_backorder_number,
+    BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
+    BackorderSummary, CommerceError, CreateBackorder, FulfillBackorder, FulfillmentSourceType,
+    Result, SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
 };
 use uuid::Uuid;
 
@@ -69,53 +69,120 @@ impl PgBackorderRepository {
         Self { pool }
     }
 
-    fn row_to_backorder(row: BackorderRow) -> Backorder {
-        Backorder {
-            id: row.id,
-            backorder_number: row.backorder_number,
-            order_id: row.order_id,
-            order_line_id: row.order_line_id,
-            customer_id: row.customer_id,
-            sku: row.sku,
-            quantity_ordered: row.quantity_ordered,
-            quantity_fulfilled: row.quantity_fulfilled,
-            quantity_remaining: row.quantity_remaining,
-            status: row.status.parse().unwrap_or_default(),
-            priority: row.priority.parse().unwrap_or_default(),
-            expected_date: row.expected_date,
-            promised_date: row.promised_date,
-            source_location_id: row.source_location_id,
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_backorder(row: BackorderRow) -> Result<Backorder> {
+        let BackorderRow {
+            id,
+            backorder_number,
+            order_id,
+            order_line_id,
+            customer_id,
+            sku,
+            quantity_ordered,
+            quantity_fulfilled,
+            quantity_remaining,
+            status,
+            priority,
+            expected_date,
+            promised_date,
+            source_location_id,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: BackorderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid backorder.status '{}': {}", status, e))
+        })?;
+        let priority: BackorderPriority = priority.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid backorder.priority '{}': {}",
+                priority, e
+            ))
+        })?;
+
+        Ok(Backorder {
+            id,
+            backorder_number,
+            order_id,
+            order_line_id,
+            customer_id,
+            sku,
+            quantity_ordered,
+            quantity_fulfilled,
+            quantity_remaining,
+            status,
+            priority,
+            expected_date,
+            promised_date,
+            source_location_id,
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_fulfillment(row: FulfillmentRow) -> BackorderFulfillment {
-        BackorderFulfillment {
-            id: row.id,
-            backorder_id: row.backorder_id,
-            quantity: row.quantity,
-            source_type: row.source_type.parse().unwrap_or_default(),
-            source_id: row.source_id,
-            notes: row.notes,
-            fulfilled_at: row.fulfilled_at,
-            fulfilled_by: row.fulfilled_by,
-        }
+    fn row_to_fulfillment(row: FulfillmentRow) -> Result<BackorderFulfillment> {
+        let FulfillmentRow {
+            id,
+            backorder_id,
+            quantity,
+            source_type,
+            source_id,
+            notes,
+            fulfilled_at,
+            fulfilled_by,
+        } = row;
+
+        let source_type: FulfillmentSourceType = source_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid backorder_fulfillment.source_type '{}': {}",
+                source_type, e
+            ))
+        })?;
+
+        Ok(BackorderFulfillment {
+            id,
+            backorder_id,
+            quantity,
+            source_type,
+            source_id,
+            notes,
+            fulfilled_at,
+            fulfilled_by,
+        })
     }
 
-    fn row_to_allocation(row: AllocationRow) -> BackorderAllocation {
-        BackorderAllocation {
-            id: row.id,
-            backorder_id: row.backorder_id,
-            sku: row.sku,
-            quantity: row.quantity,
-            location_id: row.location_id,
-            lot_id: row.lot_id,
-            status: row.status.parse().unwrap_or_default(),
-            allocated_at: row.allocated_at,
-            expires_at: row.expires_at,
-        }
+    fn row_to_allocation(row: AllocationRow) -> Result<BackorderAllocation> {
+        let AllocationRow {
+            id,
+            backorder_id,
+            sku,
+            quantity,
+            location_id,
+            lot_id,
+            status,
+            allocated_at,
+            expires_at,
+        } = row;
+
+        let status: AllocationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid backorder_allocation.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(BackorderAllocation {
+            id,
+            backorder_id,
+            sku,
+            quantity,
+            location_id,
+            lot_id,
+            status,
+            allocated_at,
+            expires_at,
+        })
     }
 
     pub async fn create_backorder_async(&self, input: CreateBackorder) -> Result<Backorder> {
@@ -164,7 +231,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_backorder))
+        Ok(row.map(Self::row_to_backorder).transpose()?)
     }
 
     pub async fn get_backorder_by_number_async(&self, number: &str) -> Result<Option<Backorder>> {
@@ -179,7 +246,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_backorder))
+        Ok(row.map(Self::row_to_backorder).transpose()?)
     }
 
     pub async fn update_backorder_async(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
@@ -257,7 +324,10 @@ impl PgBackorderRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_backorder).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_backorder)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn cancel_backorder_async(&self, id: Uuid) -> Result<Backorder> {
@@ -349,7 +419,10 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_fulfillment).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_fulfillment)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn allocate_backorder_async(
@@ -384,7 +457,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row))
+        Ok(Self::row_to_allocation(row)?)
     }
 
     pub async fn get_allocations_async(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
@@ -397,7 +470,10 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_allocation).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_allocation)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn release_allocation_async(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
@@ -416,7 +492,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row))
+        Ok(Self::row_to_allocation(row)?)
     }
 
     pub async fn confirm_allocation_async(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
@@ -435,7 +511,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row))
+        Ok(Self::row_to_allocation(row)?)
     }
 
     pub async fn expire_allocations_async(&self) -> Result<u32> {
@@ -469,7 +545,7 @@ impl PgBackorderRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or((0, Decimal::ZERO, 0, 0, 0));
+        .map_err(map_db_error)?;
 
         let overdue: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled') AND expected_date IS NOT NULL AND expected_date < $1",
@@ -477,7 +553,7 @@ impl PgBackorderRepository {
         .bind(now)
         .fetch_one(&self.pool)
         .await
-        .unwrap_or(0);
+        .map_err(map_db_error)?;
 
         Ok(BackorderSummary {
             total_backorders: row.0 as i32,
@@ -528,7 +604,10 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_backorder).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_backorder)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_pending_async(&self) -> Result<u64> {

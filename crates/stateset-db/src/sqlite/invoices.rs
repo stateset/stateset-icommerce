@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_opt_row, parse_enum, parse_enum_row,
 };
 use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use r2d2::Pool;
@@ -38,8 +38,8 @@ impl SqliteInvoiceRepository {
             invoice_number: row.get("invoice_number")?,
             customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "invoice", "customer_id")?,
             order_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_id")?, "invoice", "order_id")?,
-            status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
-            invoice_type: row.get::<_, String>("invoice_type")?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "invoice", "status")?,
+            invoice_type: parse_enum_row(&row.get::<_, String>("invoice_type")?, "invoice", "invoice_type")?,
             invoice_date: parse_datetime_row(&row.get::<_, String>("invoice_date")?, "invoice", "invoice_date")?,
             due_date: parse_datetime_row(&row.get::<_, String>("due_date")?, "invoice", "due_date")?,
             payment_terms: row.get("payment_terms")?,
@@ -147,7 +147,12 @@ impl SqliteInvoiceRepository {
             )
             .map_err(map_db_error)?;
 
-        let subtotal_dec = Decimal::from_f64_retain(subtotal).unwrap_or_default();
+        let subtotal_dec = Decimal::from_f64_retain(subtotal).ok_or_else(|| {
+            CommerceError::DatabaseError(format!(
+                "Invalid invoice subtotal sum for {}: {}",
+                id, subtotal
+            ))
+        })?;
         let total = subtotal_dec - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
             + parse_decimal_with_context(&tax_amount, "invoice", "tax_amount")?
             + parse_decimal_with_context(&shipping_amount, "invoice", "shipping_amount")?;
@@ -410,7 +415,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             )
             .map_err(map_db_error)?;
 
-        if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+        if parse_enum::<InvoiceStatus>(&status, "invoice", "status")? != InvoiceStatus::Draft {
             return Err(CommerceError::ValidationError("Can only delete draft invoices".to_string()));
         }
 
@@ -961,7 +966,9 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
             for row in rows {
                 let (id_str, status) = row.map_err(map_db_error)?;
-                if status.parse::<InvoiceStatus>().unwrap_or_default() != InvoiceStatus::Draft {
+                if parse_enum::<InvoiceStatus>(&status, "invoice", "status")?
+                    != InvoiceStatus::Draft
+                {
                     return Err(CommerceError::ValidationError(format!(
                         "Can only delete draft invoices. Invoice {} has status {}",
                         id_str, status

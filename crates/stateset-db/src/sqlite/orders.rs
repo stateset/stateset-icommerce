@@ -2,16 +2,18 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_datetime_row, parse_decimal_row,
+    parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
+    parse_json_opt_row, parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, validate_currency_code, validate_price, BatchResult, CommerceError,
-    CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderItem,
-    OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
+    validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
+    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
+    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -41,30 +43,123 @@ impl SqliteOrderRepository {
     }
 
     fn row_to_order(row: &rusqlite::Row) -> rusqlite::Result<Order> {
-        let shipping_addr: Option<String> = row.get("shipping_address")?;
-        let billing_addr: Option<String> = row.get("billing_address")?;
+        let shipping_addr: Option<Address> = parse_json_opt_row(
+            row.get::<_, Option<String>>("shipping_address")?,
+            "order",
+            "shipping_address",
+        )?;
+        let billing_addr: Option<Address> = parse_json_opt_row(
+            row.get::<_, Option<String>>("billing_address")?,
+            "order",
+            "billing_address",
+        )?;
 
         Ok(Order {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
             order_number: row.get("order_number")?,
             customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "order", "customer_id")?,
-            status: parse_order_status(&row.get::<_, String>("status")?),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
             order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "order", "order_date")?,
             total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "order", "total_amount")?,
             currency: row.get("currency")?,
-            payment_status: parse_payment_status(&row.get::<_, String>("payment_status")?),
-            fulfillment_status: parse_fulfillment_status(&row.get::<_, String>("fulfillment_status")?),
+            payment_status: parse_enum_row(&row.get::<_, String>("payment_status")?, "order", "payment_status")?,
+            fulfillment_status: parse_enum_row(&row.get::<_, String>("fulfillment_status")?, "order", "fulfillment_status")?,
             payment_method: row.get("payment_method")?,
             shipping_method: row.get("shipping_method")?,
             tracking_number: row.get("tracking_number")?,
             notes: row.get("notes")?,
-            shipping_address: shipping_addr.and_then(|s| serde_json::from_str(&s).ok()),
-            billing_address: billing_addr.and_then(|s| serde_json::from_str(&s).ok()),
+            shipping_address: shipping_addr,
+            billing_address: billing_addr,
             items: vec![], // Loaded separately
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
             created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "order", "created_at")?,
             updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "order", "updated_at")?,
         })
+    }
+
+    fn validate_order_item_input(item: &CreateOrderItem) -> Result<()> {
+        validate_required_uuid("order_item.product_id", item.product_id)?;
+        if let Some(variant_id) = item.variant_id {
+            validate_required_uuid("order_item.variant_id", variant_id)?;
+        }
+        validate_sku(&item.sku)?;
+        validate_required_text("order_item.name", &item.name, 255)?;
+
+        if item.quantity <= 0 {
+            return Err(CommerceError::InvalidInput {
+                field: "order_item.quantity".to_string(),
+                message: "must be greater than zero".into(),
+            });
+        }
+
+        validate_price(item.unit_price)?;
+        if let Some(discount) = item.discount {
+            validate_price(discount)?;
+        }
+        if let Some(tax) = item.tax_amount {
+            validate_price(tax)?;
+        }
+
+        let subtotal = item.unit_price * Decimal::from(item.quantity);
+        let discount = item.discount.unwrap_or_default();
+        let tax = item.tax_amount.unwrap_or_default();
+        if discount > subtotal {
+            return Err(CommerceError::ValidationError(
+                "Order item discount cannot exceed subtotal".into(),
+            ));
+        }
+
+        let total = subtotal - discount + tax;
+        if total < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Order item total cannot be negative".into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_address_input(address: &Address, field_prefix: &str) -> Result<()> {
+        validate_required_text(&format!("{field_prefix}.line1"), &address.line1, 255)?;
+        validate_required_text(&format!("{field_prefix}.city"), &address.city, 255)?;
+        validate_postal_code(&address.postal_code)?;
+        validate_required_text(&format!("{field_prefix}.country"), &address.country, 64)?;
+
+        if let Some(line2) = &address.line2 {
+            validate_required_text(&format!("{field_prefix}.line2"), line2, 255)?;
+        }
+        if let Some(state) = &address.state {
+            validate_required_text(&format!("{field_prefix}.state"), state, 64)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_order_input(input: &CreateOrder) -> Result<()> {
+        validate_required_uuid("order.customer_id", input.customer_id)?;
+
+        if let Some(ref currency) = input.currency {
+            validate_currency_code(currency)?;
+        }
+
+        if input.items.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Order must have at least one item".into(),
+            ));
+        }
+
+        for item in &input.items {
+            Self::validate_order_item_input(item)?;
+        }
+
+        if let Some(address) = &input.shipping_address {
+            Self::validate_address_input(address, "order.shipping_address")?;
+        }
+        if let Some(address) = &input.billing_address {
+            Self::validate_address_input(address, "order.billing_address")?;
+        }
+
+        Ok(())
     }
 
     fn load_order_items_with_conn(
@@ -107,30 +202,7 @@ impl SqliteOrderRepository {
 
 impl OrderRepository for SqliteOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
-        // Validate currency if provided
-        if let Some(ref currency) = input.currency {
-            validate_currency_code(currency)?;
-        }
-
-        // Validate items
-        if input.items.is_empty() {
-            return Err(CommerceError::ValidationError("Order must have at least one item".into()));
-        }
-
-        for item in &input.items {
-            // Validate quantity (must be positive)
-            if item.quantity <= 0 {
-                return Err(CommerceError::ValidationError(format!(
-                    "Item quantity must be positive, got {} for '{}'",
-                    item.quantity, item.name
-                )));
-            }
-            // Validate price
-            validate_price(item.unit_price)?;
-            if let Some(discount) = item.discount {
-                validate_price(discount)?;
-            }
-        }
+        Self::validate_order_input(&input)?;
 
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
@@ -297,22 +369,55 @@ impl OrderRepository for SqliteOrderRepository {
     fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
         let conn = self.conn()?;
         let now = Utc::now();
-        let current_version: i32 = conn
+        let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = conn
             .query_row(
-                "SELECT version FROM orders WHERE id = ?",
+                "SELECT version, status, payment_status FROM orders WHERE id = ?",
                 [id.to_string()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
                 e => map_db_error(e),
             })?;
+        let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
+        let current_payment_status: PaymentStatus =
+            parse_enum(&current_payment_status_raw, "order", "payment_status")?;
 
         // Build dynamic update
         let mut updates = vec!["updated_at = ?"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
         if let Some(status) = &input.status {
+            let next_status = *status;
+            if !current_status.can_transition_to(next_status) {
+                if next_status == OrderStatus::Cancelled {
+                    return Err(CommerceError::OrderCannotBeCancelled(
+                        current_status.to_string(),
+                    ));
+                }
+
+                return Err(CommerceError::InvalidOrderStatusTransition {
+                    from: current_status.to_string(),
+                    to: next_status.to_string(),
+                });
+            }
+
+            if next_status == OrderStatus::Refunded {
+                let effective_payment_status =
+                    input.payment_status.unwrap_or(current_payment_status);
+                if !matches!(
+                    effective_payment_status,
+                    PaymentStatus::Paid
+                        | PaymentStatus::PartiallyPaid
+                        | PaymentStatus::Refunded
+                        | PaymentStatus::PartiallyRefunded
+                ) {
+                    return Err(CommerceError::OrderCannotBeRefunded(
+                        effective_payment_status.to_string(),
+                    ));
+                }
+            }
+
             updates.push("status = ?");
             params.push(Box::new(status.to_string()));
         }
@@ -333,10 +438,12 @@ impl OrderRepository for SqliteOrderRepository {
             params.push(Box::new(notes.clone()));
         }
         if let Some(addr) = &input.shipping_address {
+            Self::validate_address_input(addr, "order.shipping_address")?;
             updates.push("shipping_address = ?");
             params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
         }
         if let Some(addr) = &input.billing_address {
+            Self::validate_address_input(addr, "order.billing_address")?;
             updates.push("billing_address = ?");
             params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
         }
@@ -440,6 +547,9 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
+        validate_required_uuid("order.id", order_id)?;
+        Self::validate_order_item_input(&item)?;
+
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let item_id = Uuid::new_v4();
@@ -552,6 +662,8 @@ impl OrderRepository for SqliteOrderRepository {
         let mut results = Vec::with_capacity(inputs.len());
 
         for input in inputs {
+            Self::validate_order_input(&input)?;
+
             let id = Uuid::new_v4();
             let order_number = Self::generate_order_number();
             let now = Utc::now();
@@ -911,57 +1023,21 @@ impl SqliteOrderRepository {
     }
 }
 
-fn parse_order_status(s: &str) -> OrderStatus {
-    match s {
-        "pending" => OrderStatus::Pending,
-        "confirmed" => OrderStatus::Confirmed,
-        "processing" => OrderStatus::Processing,
-        "shipped" => OrderStatus::Shipped,
-        "delivered" => OrderStatus::Delivered,
-        "cancelled" => OrderStatus::Cancelled,
-        "refunded" => OrderStatus::Refunded,
-        _ => OrderStatus::Pending,
-    }
-}
-
-fn parse_payment_status(s: &str) -> PaymentStatus {
-    match s {
-        "pending" => PaymentStatus::Pending,
-        "authorized" => PaymentStatus::Authorized,
-        "paid" => PaymentStatus::Paid,
-        "partially_paid" | "partiallypaid" => PaymentStatus::PartiallyPaid,
-        "refunded" => PaymentStatus::Refunded,
-        "partially_refunded" | "partiallyrefunded" => PaymentStatus::PartiallyRefunded,
-        "failed" => PaymentStatus::Failed,
-        _ => PaymentStatus::Pending,
-    }
-}
-
-fn parse_fulfillment_status(s: &str) -> FulfillmentStatus {
-    match s {
-        "unfulfilled" => FulfillmentStatus::Unfulfilled,
-        "partially_fulfilled" | "partiallyfulfilled" => FulfillmentStatus::PartiallyFulfilled,
-        "fulfilled" => FulfillmentStatus::Fulfilled,
-        "shipped" => FulfillmentStatus::Shipped,
-        "delivered" => FulfillmentStatus::Delivered,
-        _ => FulfillmentStatus::Unfulfilled,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn parses_payment_status_snake_case_and_legacy() {
-        assert_eq!(parse_payment_status("partially_paid"), PaymentStatus::PartiallyPaid);
-        assert_eq!(parse_payment_status("partiallypaid"), PaymentStatus::PartiallyPaid);
+        assert_eq!(PaymentStatus::from_str("partially_paid").unwrap(), PaymentStatus::PartiallyPaid);
+        assert_eq!(PaymentStatus::from_str("partiallypaid").unwrap(), PaymentStatus::PartiallyPaid);
         assert_eq!(
-            parse_payment_status("partially_refunded"),
+            PaymentStatus::from_str("partially_refunded").unwrap(),
             PaymentStatus::PartiallyRefunded
         );
         assert_eq!(
-            parse_payment_status("partiallyrefunded"),
+            PaymentStatus::from_str("partiallyrefunded").unwrap(),
             PaymentStatus::PartiallyRefunded
         );
     }
@@ -969,11 +1045,11 @@ mod tests {
     #[test]
     fn parses_fulfillment_status_snake_case_and_legacy() {
         assert_eq!(
-            parse_fulfillment_status("partially_fulfilled"),
+            FulfillmentStatus::from_str("partially_fulfilled").unwrap(),
             FulfillmentStatus::PartiallyFulfilled
         );
         assert_eq!(
-            parse_fulfillment_status("partiallyfulfilled"),
+            FulfillmentStatus::from_str("partiallyfulfilled").unwrap(),
             FulfillmentStatus::PartiallyFulfilled
         );
     }

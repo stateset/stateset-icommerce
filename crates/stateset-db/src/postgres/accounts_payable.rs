@@ -111,30 +111,61 @@ impl PgAccountsPayableRepository {
         Self { pool }
     }
 
-    fn row_to_bill(row: BillRow) -> Bill {
-        Bill {
-            id: row.id,
-            bill_number: row.bill_number,
-            supplier_id: row.supplier_id,
-            supplier_name: row.supplier_name,
-            purchase_order_id: row.purchase_order_id,
-            status: row.status.parse().unwrap_or_default(),
-            bill_date: from_date(row.bill_date),
-            due_date: from_date(row.due_date),
-            payment_terms: row.payment_terms,
-            subtotal: row.subtotal,
-            tax_amount: row.tax_amount,
-            shipping_amount: row.shipping_amount,
-            discount_amount: row.discount_amount,
-            total_amount: row.total_amount,
-            amount_paid: row.amount_paid,
-            amount_due: row.amount_due,
-            currency: row.currency,
-            reference_number: row.reference_number,
-            memo: row.memo,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_bill(row: BillRow) -> Result<Bill> {
+        let BillRow {
+            id,
+            bill_number,
+            supplier_id,
+            supplier_name,
+            purchase_order_id,
+            status,
+            bill_date,
+            due_date,
+            payment_terms,
+            subtotal,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
+            total_amount,
+            amount_paid,
+            amount_due,
+            currency,
+            reference_number,
+            memo,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: BillStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid bill.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(Bill {
+            id,
+            bill_number,
+            supplier_id,
+            supplier_name,
+            purchase_order_id,
+            status,
+            bill_date: from_date(bill_date),
+            due_date: from_date(due_date),
+            payment_terms,
+            subtotal,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
+            total_amount,
+            amount_paid,
+            amount_due,
+            currency,
+            reference_number,
+            memo,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_bill_item(row: BillItemRow) -> BillItem {
@@ -154,23 +185,53 @@ impl PgAccountsPayableRepository {
         }
     }
 
-    fn row_to_payment(row: PaymentRow) -> BillPayment {
-        BillPayment {
-            id: row.id,
-            payment_number: row.payment_number,
-            supplier_id: row.supplier_id,
-            payment_date: from_date(row.payment_date),
-            payment_method: row.payment_method.parse().unwrap_or_default(),
-            amount: row.amount,
-            currency: row.currency,
-            reference_number: row.reference_number,
-            bank_account: row.bank_account,
-            check_number: row.check_number,
-            memo: row.memo,
-            status: row.status.parse().unwrap_or_default(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_payment(row: PaymentRow) -> Result<BillPayment> {
+        let PaymentRow {
+            id,
+            payment_number,
+            supplier_id,
+            payment_date,
+            payment_method,
+            amount,
+            currency,
+            reference_number,
+            bank_account,
+            check_number,
+            memo,
+            status,
+            created_at,
+            updated_at,
+        } = row;
+
+        let payment_method: PaymentMethodAP = payment_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid bill_payment.payment_method '{}': {}",
+                payment_method, e
+            ))
+        })?;
+        let status: PaymentStatusAP = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid bill_payment.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(BillPayment {
+            id,
+            payment_number,
+            supplier_id,
+            payment_date: from_date(payment_date),
+            payment_method,
+            amount,
+            currency,
+            reference_number,
+            bank_account,
+            check_number,
+            memo,
+            status,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_payment_allocation(row: PaymentAllocationRow) -> PaymentAllocation {
@@ -183,23 +244,53 @@ impl PgAccountsPayableRepository {
         }
     }
 
-    fn row_to_payment_run(row: PaymentRunRow) -> PaymentRun {
-        PaymentRun {
-            id: row.id,
-            run_number: row.run_number,
-            status: row.status.parse().unwrap_or_default(),
-            payment_date: from_date(row.payment_date),
-            payment_method: row.payment_method.parse().unwrap_or_default(),
-            total_amount: row.total_amount,
-            payment_count: row.payment_count,
-            notes: row.notes,
-            created_by: row.created_by,
-            approved_by: row.approved_by,
-            approved_at: row.approved_at,
-            processed_at: row.processed_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_payment_run(row: PaymentRunRow) -> Result<PaymentRun> {
+        let PaymentRunRow {
+            id,
+            run_number,
+            status,
+            payment_date,
+            payment_method,
+            total_amount,
+            payment_count,
+            notes,
+            created_by,
+            approved_by,
+            approved_at,
+            processed_at,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: PaymentRunStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid payment_run.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let payment_method: PaymentMethodAP = payment_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid payment_run.payment_method '{}': {}",
+                payment_method, e
+            ))
+        })?;
+
+        Ok(PaymentRun {
+            id,
+            run_number,
+            status,
+            payment_date: from_date(payment_date),
+            payment_method,
+            total_amount,
+            payment_count,
+            notes,
+            created_by,
+            approved_by,
+            approved_at,
+            processed_at,
+            created_at,
+            updated_at,
+        })
     }
 
     async fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
@@ -295,7 +386,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_bill))
+        Ok(row.map(Self::row_to_bill).transpose()?)
     }
 
     pub async fn get_bill_by_number_async(&self, number: &str) -> Result<Option<Bill>> {
@@ -305,7 +396,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_bill))
+        Ok(row.map(Self::row_to_bill).transpose()?)
     }
 
     pub async fn update_bill_async(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
@@ -378,7 +469,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect())
+        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_bill_async(&self, id: Uuid) -> Result<()> {
@@ -564,7 +655,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect())
+        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn create_payment_async(&self, input: CreateBillPayment) -> Result<BillPayment> {
@@ -661,7 +752,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        Ok(row.map(Self::row_to_payment).transpose()?)
     }
 
     pub async fn get_payment_by_number_async(&self, number: &str) -> Result<Option<BillPayment>> {
@@ -673,7 +764,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        Ok(row.map(Self::row_to_payment).transpose()?)
     }
 
     pub async fn list_payments_async(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>> {
@@ -710,7 +801,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment).collect())
+        Ok(rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
@@ -760,7 +851,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment).collect())
+        Ok(rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_payments_async(&self, filter: BillPaymentFilter) -> Result<u64> {
@@ -839,7 +930,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment_run))
+        Ok(row.map(Self::row_to_payment_run).transpose()?)
     }
 
     pub async fn list_payment_runs_async(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
@@ -870,7 +961,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment_run).collect())
+        Ok(rows.into_iter().map(Self::row_to_payment_run).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn approve_payment_run_async(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
@@ -930,7 +1021,7 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect())
+        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_aging_summary_async(&self) -> Result<ApAgingSummary> {
@@ -1043,7 +1134,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect())
+        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
     }
 }
 

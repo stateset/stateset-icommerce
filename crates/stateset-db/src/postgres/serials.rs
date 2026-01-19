@@ -77,12 +77,16 @@ impl PgSerialRepository {
         Self { pool }
     }
 
-    fn row_to_serial(row: SerialRow) -> SerialNumber {
-        SerialNumber {
+    fn row_to_serial(row: SerialRow) -> Result<SerialNumber> {
+        let status: SerialStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid serial.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(SerialNumber {
             id: row.id,
             serial: row.serial,
             sku: row.sku,
-            status: parse_serial_status(&row.status),
+            status,
             lot_id: row.lot_id,
             lot_number: row.lot_number,
             current_location_id: row.current_location_id,
@@ -98,18 +102,37 @@ impl PgSerialRepository {
             attributes: row.attributes,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_history(row: SerialHistoryRow) -> SerialHistory {
-        SerialHistory {
+    fn row_to_history(row: SerialHistoryRow) -> Result<SerialHistory> {
+        let event_type: SerialEventType = row.event_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid serial_history.event_type '{}': {}",
+                row.event_type, e
+            ))
+        })?;
+        let from_status: SerialStatus = row.from_status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid serial_history.from_status '{}': {}",
+                row.from_status, e
+            ))
+        })?;
+        let to_status: SerialStatus = row.to_status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid serial_history.to_status '{}': {}",
+                row.to_status, e
+            ))
+        })?;
+
+        Ok(SerialHistory {
             id: row.id,
             serial_id: row.serial_id,
-            event_type: parse_serial_event_type(&row.event_type),
+            event_type,
             reference_type: row.reference_type,
             reference_id: row.reference_id,
-            from_status: parse_serial_status(&row.from_status),
-            to_status: parse_serial_status(&row.to_status),
+            from_status,
+            to_status,
             from_location_id: row.from_location_id,
             to_location_id: row.to_location_id,
             from_owner_id: row.from_owner_id,
@@ -117,7 +140,7 @@ impl PgSerialRepository {
             performed_by: row.performed_by,
             notes: row.notes,
             created_at: row.created_at,
-        }
+        })
     }
 
     fn row_to_reservation(row: SerialReservationRow) -> SerialReservation {
@@ -292,7 +315,7 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_serial))
+        row.map(Self::row_to_serial).transpose()
     }
 
     pub async fn get_by_serial_async(&self, serial: &str) -> Result<Option<SerialNumber>> {
@@ -302,7 +325,7 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_serial))
+        row.map(Self::row_to_serial).transpose()
     }
 
     pub async fn update_async(&self, id: Uuid, input: UpdateSerialNumber) -> Result<SerialNumber> {
@@ -413,7 +436,11 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -462,7 +489,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
             r#"
@@ -517,7 +544,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         if serial.status != SerialStatus::Available {
             return Err(CommerceError::ValidationError(format!(
@@ -707,7 +734,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET current_location_id = $1, updated_at = $2 WHERE id = $3")
             .bind(input.to_location_id)
@@ -749,7 +776,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
             r#"
@@ -802,7 +829,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
             r#"
@@ -855,7 +882,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(SerialStatus::Shipped.to_string())
@@ -897,7 +924,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(SerialStatus::Returned.to_string())
@@ -976,7 +1003,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(SerialStatus::Quarantined.to_string())
@@ -1018,7 +1045,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         if serial.status != SerialStatus::Quarantined {
             return Err(CommerceError::ValidationError(
@@ -1066,7 +1093,7 @@ impl PgSerialRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let serial = Self::row_to_serial(serial_row);
+        let serial = Self::row_to_serial(serial_row)?;
 
         if !serial.can_scrap() {
             return Err(CommerceError::ValidationError(
@@ -1134,7 +1161,11 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_history).collect())
+        let mut history = Vec::with_capacity(rows.len());
+        for row in rows {
+            history.push(Self::row_to_history(row)?);
+        }
+        Ok(history)
     }
 
     pub async fn lookup_async(&self, serial: &str) -> Result<Option<SerialLookupResult>> {
@@ -1200,7 +1231,11 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 
     pub async fn get_for_lot_async(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>> {
@@ -1210,7 +1245,11 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 
     pub async fn get_for_customer_async(&self, customer_id: Uuid) -> Result<Vec<SerialNumber>> {
@@ -1222,7 +1261,11 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 
     pub async fn count_async(&self, filter: SerialFilter) -> Result<u64> {
@@ -1334,7 +1377,11 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 
     pub async fn get_batch_by_serial_async(&self, serials: Vec<String>) -> Result<Vec<SerialNumber>> {
@@ -1357,7 +1404,11 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_serial).collect())
+        let mut serials = Vec::with_capacity(rows.len());
+        for row in rows {
+            serials.push(Self::row_to_serial(row)?);
+        }
+        Ok(serials)
     }
 }
 
@@ -1481,12 +1532,4 @@ impl SerialRepository for PgSerialRepository {
     fn get_batch_by_serial(&self, serials: Vec<String>) -> Result<Vec<SerialNumber>> {
         block_on(self.get_batch_by_serial_async(serials))
     }
-}
-
-fn parse_serial_status(s: &str) -> SerialStatus {
-    s.parse().unwrap_or_default()
-}
-
-fn parse_serial_event_type(s: &str) -> SerialEventType {
-    s.parse().unwrap_or_default()
 }

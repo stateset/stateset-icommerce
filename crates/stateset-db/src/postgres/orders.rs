@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    validate_batch_size, Address, BatchResult, CommerceError, CreateOrder, CreateOrderItem,
-    FulfillmentStatus, Order, OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus,
-    Result, UpdateOrder,
+    validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
+    validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
+    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
+    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -61,28 +62,153 @@ impl PgOrderRepository {
         Self { pool }
     }
 
-    fn row_to_order(row: OrderRow, items: Vec<OrderItem>) -> Order {
-        Order {
+    fn validate_order_item_input(item: &CreateOrderItem) -> Result<()> {
+        validate_required_uuid("order_item.product_id", item.product_id)?;
+        if let Some(variant_id) = item.variant_id {
+            validate_required_uuid("order_item.variant_id", variant_id)?;
+        }
+        validate_sku(&item.sku)?;
+        validate_required_text("order_item.name", &item.name, 255)?;
+
+        if item.quantity <= 0 {
+            return Err(CommerceError::InvalidInput {
+                field: "order_item.quantity".to_string(),
+                message: "must be greater than zero".into(),
+            });
+        }
+
+        validate_price(item.unit_price)?;
+        if let Some(discount) = item.discount {
+            validate_price(discount)?;
+        }
+        if let Some(tax) = item.tax_amount {
+            validate_price(tax)?;
+        }
+
+        let subtotal = item.unit_price * Decimal::from(item.quantity);
+        let discount = item.discount.unwrap_or_default();
+        let tax = item.tax_amount.unwrap_or_default();
+        if discount > subtotal {
+            return Err(CommerceError::ValidationError(
+                "Order item discount cannot exceed subtotal".into(),
+            ));
+        }
+
+        let total = subtotal - discount + tax;
+        if total < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Order item total cannot be negative".into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_address_input(address: &Address, field_prefix: &str) -> Result<()> {
+        validate_required_text(&format!("{field_prefix}.line1"), &address.line1, 255)?;
+        validate_required_text(&format!("{field_prefix}.city"), &address.city, 255)?;
+        validate_postal_code(&address.postal_code)?;
+        validate_required_text(&format!("{field_prefix}.country"), &address.country, 64)?;
+
+        if let Some(line2) = &address.line2 {
+            validate_required_text(&format!("{field_prefix}.line2"), line2, 255)?;
+        }
+        if let Some(state) = &address.state {
+            validate_required_text(&format!("{field_prefix}.state"), state, 64)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_order_input(input: &CreateOrder) -> Result<()> {
+        validate_required_uuid("order.customer_id", input.customer_id)?;
+
+        if let Some(ref currency) = input.currency {
+            validate_currency_code(currency)?;
+        }
+
+        if input.items.is_empty() {
+            return Err(CommerceError::ValidationError(
+                "Order must have at least one item".into(),
+            ));
+        }
+
+        for item in &input.items {
+            Self::validate_order_item_input(item)?;
+        }
+
+        if let Some(address) = &input.shipping_address {
+            Self::validate_address_input(address, "order.shipping_address")?;
+        }
+        if let Some(address) = &input.billing_address {
+            Self::validate_address_input(address, "order.billing_address")?;
+        }
+
+        Ok(())
+    }
+
+    fn row_to_order(row: OrderRow, items: Vec<OrderItem>) -> Result<Order> {
+        let status: OrderStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.status '{}': {}",
+                row.status, e
+            ))
+        })?;
+        let payment_status: PaymentStatus = row.payment_status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.payment_status '{}': {}",
+                row.payment_status, e
+            ))
+        })?;
+        let fulfillment_status: FulfillmentStatus = row.fulfillment_status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.fulfillment_status '{}': {}",
+                row.fulfillment_status, e
+            ))
+        })?;
+
+        let shipping_address = row
+            .shipping_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for order.shipping_address: {}",
+                    e
+                ))
+            })?;
+        let billing_address = row
+            .billing_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for order.billing_address: {}",
+                    e
+                ))
+            })?;
+
+        Ok(Order {
             id: row.id,
             order_number: row.order_number,
             customer_id: row.customer_id,
-            status: parse_order_status(&row.status),
+            status,
             order_date: row.order_date,
             total_amount: row.total_amount,
             currency: row.currency,
-            payment_status: parse_payment_status(&row.payment_status),
-            fulfillment_status: parse_fulfillment_status(&row.fulfillment_status),
+            payment_status,
+            fulfillment_status,
             payment_method: row.payment_method,
             shipping_method: row.shipping_method,
             tracking_number: row.tracking_number,
             notes: row.notes,
-            shipping_address: row.shipping_address.and_then(|v| serde_json::from_value(v).ok()),
-            billing_address: row.billing_address.and_then(|v| serde_json::from_value(v).ok()),
+            shipping_address,
+            billing_address,
             items,
             version: row.version,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
     fn row_to_item(row: OrderItemRow) -> OrderItem {
@@ -147,6 +273,8 @@ impl PgOrderRepository {
 
     /// Create an order (async)
     pub async fn create_async(&self, input: CreateOrder) -> Result<Order> {
+        Self::validate_order_input(&input)?;
+
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -286,7 +414,7 @@ impl PgOrderRepository {
         match row {
             Some(order_row) => {
                 let items = self.get_items_async(id).await?;
-                Ok(Some(Self::row_to_order(order_row, items)))
+                Ok(Some(Self::row_to_order(order_row, items)?))
             }
             None => Ok(None),
         }
@@ -303,7 +431,7 @@ impl PgOrderRepository {
         match row {
             Some(order_row) => {
                 let items = self.get_items_async(order_row.id).await?;
-                Ok(Some(Self::row_to_order(order_row, items)))
+                Ok(Some(Self::row_to_order(order_row, items)?))
             }
             None => Ok(None),
         }
@@ -334,6 +462,38 @@ impl PgOrderRepository {
         let new_notes = input.notes.or(existing.notes);
         let new_shipping = input.shipping_address.or(existing.shipping_address);
         let new_billing = input.billing_address.or(existing.billing_address);
+
+        if !existing.status.can_transition_to(new_status) {
+            if new_status == OrderStatus::Cancelled {
+                return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
+            }
+
+            return Err(CommerceError::InvalidOrderStatusTransition {
+                from: existing.status.to_string(),
+                to: new_status.to_string(),
+            });
+        }
+
+        if new_status == OrderStatus::Refunded
+            && !matches!(
+                new_payment_status,
+                PaymentStatus::Paid
+                    | PaymentStatus::PartiallyPaid
+                    | PaymentStatus::Refunded
+                    | PaymentStatus::PartiallyRefunded
+            )
+        {
+            return Err(CommerceError::OrderCannotBeRefunded(
+                new_payment_status.to_string(),
+            ));
+        }
+
+        if let Some(address) = &input.shipping_address {
+            Self::validate_address_input(address, "order.shipping_address")?;
+        }
+        if let Some(address) = &input.billing_address {
+            Self::validate_address_input(address, "order.billing_address")?;
+        }
 
         let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
         let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
@@ -388,7 +548,7 @@ impl PgOrderRepository {
         let mut orders = Vec::new();
         for row in rows {
             let items = self.get_items_async(row.id).await?;
-            orders.push(Self::row_to_order(row, items));
+            orders.push(Self::row_to_order(row, items)?);
         }
 
         Ok(orders)
@@ -407,6 +567,9 @@ impl PgOrderRepository {
 
     /// Add item to order (async)
     pub async fn add_item_async(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
+        validate_required_uuid("order.id", order_id)?;
+        Self::validate_order_item_input(&item)?;
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -503,6 +666,8 @@ impl PgOrderRepository {
         let mut orders = Vec::with_capacity(inputs.len());
 
         for input in inputs {
+            Self::validate_order_input(&input)?;
+
             let id = Uuid::new_v4();
             let now = Utc::now();
 
@@ -672,7 +837,10 @@ impl PgOrderRepository {
                 .await
                 .map_err(map_db_error)?;
 
-            let existing = Self::row_to_order(existing_row, existing_items.into_iter().map(Self::row_to_item).collect());
+            let existing = Self::row_to_order(
+                existing_row,
+                existing_items.into_iter().map(Self::row_to_item).collect(),
+            )?;
             let expected_version = existing.version;
 
             let new_status = input.status.unwrap_or(existing.status);
@@ -682,6 +850,38 @@ impl PgOrderRepository {
             let new_notes = input.notes.or(existing.notes);
             let new_shipping = input.shipping_address.or(existing.shipping_address);
             let new_billing = input.billing_address.or(existing.billing_address);
+
+            if !existing.status.can_transition_to(new_status) {
+                if new_status == OrderStatus::Cancelled {
+                    return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
+                }
+
+                return Err(CommerceError::InvalidOrderStatusTransition {
+                    from: existing.status.to_string(),
+                    to: new_status.to_string(),
+                });
+            }
+
+            if new_status == OrderStatus::Refunded
+                && !matches!(
+                    new_payment_status,
+                    PaymentStatus::Paid
+                        | PaymentStatus::PartiallyPaid
+                        | PaymentStatus::Refunded
+                        | PaymentStatus::PartiallyRefunded
+                )
+            {
+                return Err(CommerceError::OrderCannotBeRefunded(
+                    new_payment_status.to_string(),
+                ));
+            }
+
+            if let Some(address) = &input.shipping_address {
+                Self::validate_address_input(address, "order.shipping_address")?;
+            }
+            if let Some(address) = &input.billing_address {
+                Self::validate_address_input(address, "order.billing_address")?;
+            }
 
             let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
             let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
@@ -730,7 +930,10 @@ impl PgOrderRepository {
                 .await
                 .map_err(map_db_error)?;
 
-            orders.push(Self::row_to_order(updated_row, items.into_iter().map(Self::row_to_item).collect()));
+            orders.push(Self::row_to_order(
+                updated_row,
+                items.into_iter().map(Self::row_to_item).collect(),
+            )?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -788,7 +991,7 @@ impl PgOrderRepository {
         let mut orders = Vec::with_capacity(rows.len());
         for row in rows {
             let items = self.get_items_async(row.id).await?;
-            orders.push(Self::row_to_order(row, items));
+            orders.push(Self::row_to_order(row, items)?);
         }
 
         Ok(orders)
@@ -858,42 +1061,5 @@ impl OrderRepository for PgOrderRepository {
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Order>> {
         super::block_on(self.get_batch_async(ids))
-    }
-}
-
-fn parse_order_status(s: &str) -> OrderStatus {
-    match s {
-        "pending" => OrderStatus::Pending,
-        "confirmed" => OrderStatus::Confirmed,
-        "processing" => OrderStatus::Processing,
-        "shipped" => OrderStatus::Shipped,
-        "delivered" => OrderStatus::Delivered,
-        "cancelled" => OrderStatus::Cancelled,
-        "refunded" => OrderStatus::Refunded,
-        _ => OrderStatus::Pending,
-    }
-}
-
-fn parse_payment_status(s: &str) -> PaymentStatus {
-    match s {
-        "pending" => PaymentStatus::Pending,
-        "authorized" => PaymentStatus::Authorized,
-        "paid" => PaymentStatus::Paid,
-        "partially_paid" => PaymentStatus::PartiallyPaid,
-        "refunded" => PaymentStatus::Refunded,
-        "partially_refunded" => PaymentStatus::PartiallyRefunded,
-        "failed" => PaymentStatus::Failed,
-        _ => PaymentStatus::Pending,
-    }
-}
-
-fn parse_fulfillment_status(s: &str) -> FulfillmentStatus {
-    match s {
-        "unfulfilled" => FulfillmentStatus::Unfulfilled,
-        "partially_fulfilled" => FulfillmentStatus::PartiallyFulfilled,
-        "fulfilled" => FulfillmentStatus::Fulfilled,
-        "shipped" => FulfillmentStatus::Shipped,
-        "delivered" => FulfillmentStatus::Delivered,
-        _ => FulfillmentStatus::Unfulfilled,
     }
 }

@@ -1,18 +1,20 @@
 //! SQLite implementation of currency repository
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
 use stateset_core::{
     CommerceError, ConversionResult, ConvertCurrency, Currency, ExchangeRate, ExchangeRateFilter,
-    Result, RoundingMode, SetExchangeRate, StoreCurrencySettings,
+    Result, SetExchangeRate, StoreCurrencySettings,
 };
-use std::str::FromStr;
 use uuid::Uuid;
 
-use super::{build_in_clause, map_db_error, params_refs, uuid_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_row,
+    parse_enum_row, parse_json_row, parse_uuid_row, uuid_params,
+};
 use stateset_core::{validate_batch_size, BatchResult};
 
 /// SQLite currency repository
@@ -25,22 +27,33 @@ impl SqliteCurrencyRepository {
         Self { pool }
     }
 
-    fn parse_currency(s: &str) -> Result<Currency> {
-        Currency::from_str(s).map_err(CommerceError::ValidationError)
-    }
-
-    fn parse_datetime(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                    .map(|dt| dt.and_utc())
-                    .unwrap_or_else(|_| Utc::now())
-            })
-    }
-
-    fn parse_decimal(s: &str) -> Decimal {
-        s.parse().unwrap_or_default()
+    fn row_to_exchange_rate(row: &rusqlite::Row) -> rusqlite::Result<ExchangeRate> {
+        Ok(ExchangeRate {
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "exchange_rate", "id")?,
+            base_currency: parse_enum_row(
+                &row.get::<_, String>("base_currency")?,
+                "exchange_rate",
+                "base_currency",
+            )?,
+            quote_currency: parse_enum_row(
+                &row.get::<_, String>("quote_currency")?,
+                "exchange_rate",
+                "quote_currency",
+            )?,
+            rate: parse_decimal_row(&row.get::<_, String>("rate")?, "exchange_rate", "rate")?,
+            source: row.get("source")?,
+            rate_at: parse_datetime_row(&row.get::<_, String>("rate_at")?, "exchange_rate", "rate_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "exchange_rate",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "exchange_rate",
+                "updated_at",
+            )?,
+        })
     }
 }
 
@@ -67,18 +80,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
              FROM exchange_rates
              WHERE base_currency = ? AND quote_currency = ?",
             params![from.code(), to.code()],
-            |row| {
-                Ok(ExchangeRate {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    base_currency: Self::parse_currency(&row.get::<_, String>(1)?).unwrap_or_default(),
-                    quote_currency: Self::parse_currency(&row.get::<_, String>(2)?).unwrap_or_default(),
-                    rate: Self::parse_decimal(&row.get::<_, String>(3)?),
-                    source: row.get(4)?,
-                    rate_at: Self::parse_datetime(&row.get::<_, String>(5)?),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
-            },
+            Self::row_to_exchange_rate,
         );
 
         match result {
@@ -91,7 +93,8 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                      WHERE base_currency = ? AND quote_currency = ?",
                     params![to.code(), from.code()],
                     |row| {
-                        let inverse_rate = Self::parse_decimal(&row.get::<_, String>(3)?);
+                        let direct = Self::row_to_exchange_rate(row)?;
+                        let inverse_rate = direct.rate;
                         let rate = if inverse_rate.is_zero() {
                             Decimal::ZERO
                         } else {
@@ -103,8 +106,8 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                             base_currency: from,
                             quote_currency: to,
                             rate,
-                            source: format!("inverse:{}", row.get::<_, String>(4)?),
-                            rate_at: Self::parse_datetime(&row.get::<_, String>(5)?),
+                            source: format!("inverse:{}", direct.source),
+                            rate_at: direct.rate_at,
                             created_at: Utc::now(),
                             updated_at: Utc::now(),
                         })
@@ -135,16 +138,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
 
         let rows = stmt
             .query_map(params![base.code()], |row| {
-                Ok(ExchangeRate {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    base_currency: Self::parse_currency(&row.get::<_, String>(1)?).unwrap_or_default(),
-                    quote_currency: Self::parse_currency(&row.get::<_, String>(2)?).unwrap_or_default(),
-                    rate: Self::parse_decimal(&row.get::<_, String>(3)?),
-                    source: row.get(4)?,
-                    rate_at: Self::parse_datetime(&row.get::<_, String>(5)?),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
+                Self::row_to_exchange_rate(row)
             })
             .map_err(map_db_error)?;
 
@@ -184,16 +178,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
 
         let rows = stmt
             .query_map(params.as_slice(), |row| {
-                Ok(ExchangeRate {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    base_currency: Self::parse_currency(&row.get::<_, String>(1)?).unwrap_or_default(),
-                    quote_currency: Self::parse_currency(&row.get::<_, String>(2)?).unwrap_or_default(),
-                    rate: Self::parse_decimal(&row.get::<_, String>(3)?),
-                    source: row.get(4)?,
-                    rate_at: Self::parse_datetime(&row.get::<_, String>(5)?),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
+                Self::row_to_exchange_rate(row)
             })
             .map_err(map_db_error)?;
 
@@ -318,19 +303,22 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
              WHERE id = 'default'",
             [],
             |row| {
-                let base_currency = Self::parse_currency(&row.get::<_, String>(0)?).unwrap_or_default();
-                let enabled_json: String = row.get(1)?;
-                let enabled_currencies: Vec<Currency> = serde_json::from_str(&enabled_json)
-                    .unwrap_or_else(|_| vec![Currency::USD, Currency::EUR, Currency::GBP]);
+                let base_currency = parse_enum_row(
+                    &row.get::<_, String>(0)?,
+                    "store_currency_settings",
+                    "base_currency",
+                )?;
+                let enabled_currencies: Vec<Currency> = parse_json_row(
+                    &row.get::<_, String>(1)?,
+                    "store_currency_settings",
+                    "enabled_currencies",
+                )?;
                 let auto_convert: bool = row.get::<_, i32>(2)? != 0;
-                let rounding_str: String = row.get(3)?;
-                let rounding_mode = match rounding_str.as_str() {
-                    "half_down" => RoundingMode::HalfDown,
-                    "up" => RoundingMode::Up,
-                    "down" => RoundingMode::Down,
-                    "half_even" => RoundingMode::HalfEven,
-                    _ => RoundingMode::HalfUp,
-                };
+                let rounding_mode = parse_enum_row(
+                    &row.get::<_, String>(3)?,
+                    "store_currency_settings",
+                    "rounding_mode",
+                )?;
 
                 Ok(StoreCurrencySettings {
                     base_currency,
@@ -352,13 +340,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let enabled_json = serde_json::to_string(&settings.enabled_currencies)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let rounding_str = match settings.rounding_mode {
-            RoundingMode::HalfUp => "half_up",
-            RoundingMode::HalfDown => "half_down",
-            RoundingMode::Up => "up",
-            RoundingMode::Down => "down",
-            RoundingMode::HalfEven => "half_even",
-        };
+        let rounding_str = settings.rounding_mode.to_string();
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;

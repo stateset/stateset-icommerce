@@ -138,18 +138,18 @@ impl std::fmt::Display for BillStatus {
 }
 
 impl FromStr for BillStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "draft" => Ok(BillStatus::Draft),
             "pending" => Ok(BillStatus::Pending),
             "approved" => Ok(BillStatus::Approved),
-            "partially_paid" => Ok(BillStatus::PartiallyPaid),
+            "partially_paid" | "partiallypaid" => Ok(BillStatus::PartiallyPaid),
             "paid" => Ok(BillStatus::Paid),
             "overdue" => Ok(BillStatus::Overdue),
-            "cancelled" => Ok(BillStatus::Cancelled),
+            "cancelled" | "canceled" => Ok(BillStatus::Cancelled),
             "disputed" => Ok(BillStatus::Disputed),
-            _ => Ok(BillStatus::Draft),
+            _ => Err(format!("Unknown bill status: {}", s)),
         }
     }
 }
@@ -181,15 +181,16 @@ impl std::fmt::Display for PaymentMethodAP {
 }
 
 impl FromStr for PaymentMethodAP {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "check" => Ok(PaymentMethodAP::Check),
             "ach" => Ok(PaymentMethodAP::Ach),
             "wire" => Ok(PaymentMethodAP::Wire),
-            "credit_card" => Ok(PaymentMethodAP::CreditCard),
+            "credit_card" | "creditcard" => Ok(PaymentMethodAP::CreditCard),
             "cash" => Ok(PaymentMethodAP::Cash),
-            _ => Ok(PaymentMethodAP::Other),
+            "other" => Ok(PaymentMethodAP::Other),
+            _ => Err(format!("Unknown payment method: {}", s)),
         }
     }
 }
@@ -219,15 +220,15 @@ impl std::fmt::Display for PaymentStatusAP {
 }
 
 impl FromStr for PaymentStatusAP {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(PaymentStatusAP::Pending),
             "processed" => Ok(PaymentStatusAP::Processed),
             "cleared" => Ok(PaymentStatusAP::Cleared),
             "voided" => Ok(PaymentStatusAP::Voided),
             "failed" => Ok(PaymentStatusAP::Failed),
-            _ => Ok(PaymentStatusAP::Pending),
+            _ => Err(format!("Unknown payment status: {}", s)),
         }
     }
 }
@@ -259,17 +260,50 @@ impl std::fmt::Display for PaymentRunStatus {
 }
 
 impl FromStr for PaymentRunStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "draft" => Ok(PaymentRunStatus::Draft),
             "pending" => Ok(PaymentRunStatus::Pending),
             "approved" => Ok(PaymentRunStatus::Approved),
-            "processing" => Ok(PaymentRunStatus::Processing),
+            "processing" | "in_progress" | "inprogress" => Ok(PaymentRunStatus::Processing),
             "completed" => Ok(PaymentRunStatus::Completed),
-            "cancelled" => Ok(PaymentRunStatus::Cancelled),
-            _ => Ok(PaymentRunStatus::Draft),
+            "cancelled" | "canceled" => Ok(PaymentRunStatus::Cancelled),
+            _ => Err(format!("Unknown payment run status: {}", s)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn bill_status_from_str() {
+        assert_eq!(BillStatus::from_str("partiallypaid").unwrap(), BillStatus::PartiallyPaid);
+        assert_eq!(BillStatus::from_str("canceled").unwrap(), BillStatus::Cancelled);
+        assert!(BillStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn payment_method_from_str() {
+        assert_eq!(PaymentMethodAP::from_str("creditcard").unwrap(), PaymentMethodAP::CreditCard);
+        assert_eq!(PaymentMethodAP::from_str("other").unwrap(), PaymentMethodAP::Other);
+        assert!(PaymentMethodAP::from_str("wire_transfer").is_err());
+    }
+
+    #[test]
+    fn payment_status_from_str() {
+        assert_eq!(PaymentStatusAP::from_str("processed").unwrap(), PaymentStatusAP::Processed);
+        assert!(PaymentStatusAP::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn payment_run_status_from_str() {
+        assert_eq!(PaymentRunStatus::from_str("in_progress").unwrap(), PaymentRunStatus::Processing);
+        assert_eq!(PaymentRunStatus::from_str("cancelled").unwrap(), PaymentRunStatus::Cancelled);
+        assert!(PaymentRunStatus::from_str("unknown").is_err());
     }
 }
 

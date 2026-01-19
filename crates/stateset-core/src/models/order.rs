@@ -90,6 +90,41 @@ impl std::fmt::Display for OrderStatus {
     }
 }
 
+impl std::str::FromStr for OrderStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "confirmed" => Ok(Self::Confirmed),
+            "processing" => Ok(Self::Processing),
+            "shipped" => Ok(Self::Shipped),
+            "delivered" => Ok(Self::Delivered),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "refunded" => Ok(Self::Refunded),
+            _ => Err(format!("Unknown order status: {}", s)),
+        }
+    }
+}
+
+impl OrderStatus {
+    /// Check if a status transition is allowed.
+    pub fn can_transition_to(self, next: OrderStatus) -> bool {
+        if self == next {
+            return true;
+        }
+
+        match self {
+            Self::Pending => matches!(next, Self::Confirmed | Self::Cancelled),
+            Self::Confirmed => matches!(next, Self::Processing | Self::Cancelled),
+            Self::Processing => matches!(next, Self::Shipped | Self::Cancelled),
+            Self::Shipped => matches!(next, Self::Delivered),
+            Self::Delivered => matches!(next, Self::Refunded),
+            Self::Cancelled | Self::Refunded => false,
+        }
+    }
+}
+
 /// Payment status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +158,23 @@ impl std::fmt::Display for PaymentStatus {
     }
 }
 
+impl std::str::FromStr for PaymentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "authorized" => Ok(Self::Authorized),
+            "paid" => Ok(Self::Paid),
+            "partially_paid" | "partiallypaid" => Ok(Self::PartiallyPaid),
+            "refunded" => Ok(Self::Refunded),
+            "partially_refunded" | "partiallyrefunded" => Ok(Self::PartiallyRefunded),
+            "failed" => Ok(Self::Failed),
+            _ => Err(format!("Unknown payment status: {}", s)),
+        }
+    }
+}
+
 /// Fulfillment status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -148,6 +200,21 @@ impl std::fmt::Display for FulfillmentStatus {
             Self::Fulfilled => write!(f, "fulfilled"),
             Self::Shipped => write!(f, "shipped"),
             Self::Delivered => write!(f, "delivered"),
+        }
+    }
+}
+
+impl std::str::FromStr for FulfillmentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "unfulfilled" => Ok(Self::Unfulfilled),
+            "partially_fulfilled" | "partiallyfulfilled" => Ok(Self::PartiallyFulfilled),
+            "fulfilled" => Ok(Self::Fulfilled),
+            "shipped" => Ok(Self::Shipped),
+            "delivered" => Ok(Self::Delivered),
+            _ => Err(format!("Unknown fulfillment status: {}", s)),
         }
     }
 }
@@ -398,6 +465,51 @@ mod tests {
     fn test_order_can_refund_when_partially_paid() {
         let order = create_test_order(OrderStatus::Delivered, PaymentStatus::PartiallyPaid);
         assert!(order.can_refund());
+    }
+
+    #[test]
+    fn test_order_status_allows_valid_transitions() {
+        assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Confirmed));
+        assert!(OrderStatus::Confirmed.can_transition_to(OrderStatus::Processing));
+        assert!(OrderStatus::Processing.can_transition_to(OrderStatus::Shipped));
+        assert!(OrderStatus::Shipped.can_transition_to(OrderStatus::Delivered));
+        assert!(OrderStatus::Delivered.can_transition_to(OrderStatus::Refunded));
+        assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_order_status_rejects_invalid_transitions() {
+        assert!(!OrderStatus::Pending.can_transition_to(OrderStatus::Delivered));
+        assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Cancelled));
+        assert!(!OrderStatus::Refunded.can_transition_to(OrderStatus::Processing));
+    }
+
+    #[test]
+    fn test_order_status_allows_idempotent_transition() {
+        assert!(OrderStatus::Pending.can_transition_to(OrderStatus::Pending));
+        assert!(OrderStatus::Cancelled.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_status_from_str_accepts_legacy_variants() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            PaymentStatus::from_str("partiallypaid").unwrap(),
+            PaymentStatus::PartiallyPaid
+        );
+        assert_eq!(
+            PaymentStatus::from_str("partiallyrefunded").unwrap(),
+            PaymentStatus::PartiallyRefunded
+        );
+        assert_eq!(
+            FulfillmentStatus::from_str("partiallyfulfilled").unwrap(),
+            FulfillmentStatus::PartiallyFulfilled
+        );
+        assert_eq!(
+            OrderStatus::from_str("canceled").unwrap(),
+            OrderStatus::Cancelled
+        );
     }
 
     #[test]

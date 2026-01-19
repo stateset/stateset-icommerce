@@ -32,6 +32,7 @@ fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Order {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -69,6 +70,7 @@ fn test_create_order_basic() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "TEST-SKU-001".into(),
                 name: "Test Product".into(),
                 quantity: 2,
@@ -100,6 +102,7 @@ fn test_create_order_with_multiple_items() {
             customer_id,
             items: vec![
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-001".into(),
                     name: "Widget".into(),
                     quantity: 2,
@@ -107,6 +110,7 @@ fn test_create_order_with_multiple_items() {
                     ..Default::default()
                 },
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-002".into(),
                     name: "Gadget".into(),
                     quantity: 1,
@@ -114,6 +118,7 @@ fn test_create_order_with_multiple_items() {
                     ..Default::default()
                 },
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-003".into(),
                     name: "Accessory".into(),
                     quantity: 3,
@@ -145,6 +150,7 @@ fn test_order_total_calculation() {
             customer_id,
             items: vec![
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-001".into(),
                     name: "Widget".into(),
                     quantity: 2,
@@ -152,6 +158,7 @@ fn test_order_total_calculation() {
                     ..Default::default()
                 },
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-002".into(),
                     name: "Gadget".into(),
                     quantity: 1,
@@ -190,6 +197,7 @@ fn test_create_order_with_addresses() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -224,6 +232,7 @@ fn test_create_order_with_currency() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -248,6 +257,7 @@ fn test_create_order_with_notes() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -272,6 +282,7 @@ fn test_create_order_with_payment_method() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -296,6 +307,7 @@ fn test_create_order_with_shipping_method() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -631,6 +643,15 @@ fn test_order_ship() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Confirmed)
+        .expect("Failed to confirm order");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Processing)
+        .expect("Failed to process order");
+
     let shipped = commerce
         .orders()
         .ship(order.id, Some("1Z999AA10123456784"))
@@ -646,6 +667,15 @@ fn test_order_ship_without_tracking() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Confirmed)
+        .expect("Failed to confirm order");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Processing)
+        .expect("Failed to process order");
+
     let shipped = commerce
         .orders()
         .ship(order.id, None)
@@ -660,6 +690,15 @@ fn test_order_deliver() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
+
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Confirmed)
+        .expect("Failed to confirm order");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Processing)
+        .expect("Failed to process order");
 
     // Ship first
     commerce
@@ -835,6 +874,11 @@ fn test_update_order_multiple_fields() {
     let customer_id = create_test_customer(&commerce);
     let order = create_test_order(&commerce, customer_id);
 
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Confirmed)
+        .expect("Failed to confirm order");
+
     let updated = commerce
         .orders()
         .update(
@@ -870,6 +914,7 @@ fn test_order_items_included() {
             customer_id,
             items: vec![
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-001".into(),
                     name: "Widget A".into(),
                     quantity: 2,
@@ -877,6 +922,7 @@ fn test_order_items_included() {
                     ..Default::default()
                 },
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-002".into(),
                     name: "Widget B".into(),
                     quantity: 1,
@@ -915,6 +961,7 @@ fn test_add_item_to_order() {
         .add_item(
             order.id,
             CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "NEW-SKU-001".into(),
                 name: "New Product".into(),
                 quantity: 3,
@@ -951,6 +998,7 @@ fn test_remove_item_from_order() {
             customer_id,
             items: vec![
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-001".into(),
                     name: "Widget A".into(),
                     quantity: 2,
@@ -958,6 +1006,7 @@ fn test_remove_item_from_order() {
                     ..Default::default()
                 },
                 CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: "SKU-002".into(),
                     name: "Widget B".into(),
                     quantity: 1,
@@ -997,6 +1046,7 @@ fn test_order_item_with_discount() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 2,
@@ -1022,6 +1072,7 @@ fn test_order_item_with_tax() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 2,
@@ -1074,6 +1125,7 @@ fn test_create_order_default_currency() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
                 quantity: 1,
@@ -1153,6 +1205,7 @@ fn test_order_with_large_quantities() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "BULK-SKU".into(),
                 name: "Bulk Product".into(),
                 quantity: 10000,
@@ -1177,6 +1230,7 @@ fn test_order_with_high_value_items() {
         .create(CreateOrder {
             customer_id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "LUXURY-SKU".into(),
                 name: "Luxury Item".into(),
                 quantity: 1,

@@ -665,6 +665,35 @@ pub enum RoundingMode {
     HalfEven,
 }
 
+impl fmt::Display for RoundingMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RoundingMode::HalfUp => write!(f, "half_up"),
+            RoundingMode::HalfDown => write!(f, "half_down"),
+            RoundingMode::Up => write!(f, "up"),
+            RoundingMode::Down => write!(f, "down"),
+            RoundingMode::HalfEven => write!(f, "half_even"),
+        }
+    }
+}
+
+impl FromStr for RoundingMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "half_up" | "halfup" | "half-up" => Ok(RoundingMode::HalfUp),
+            "half_down" | "halfdown" | "half-down" => Ok(RoundingMode::HalfDown),
+            "up" => Ok(RoundingMode::Up),
+            "down" => Ok(RoundingMode::Down),
+            "half_even" | "halfeven" | "half-even" | "bankers" | "bankers_rounding" => {
+                Ok(RoundingMode::HalfEven)
+            }
+            _ => Err(format!("Unknown rounding mode: {}", s)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +730,13 @@ mod tests {
 
         let result = rate.convert(Decimal::from(100));
         assert_eq!(result, Decimal::from(85));
+    }
+
+    #[test]
+    fn test_rounding_mode_from_str() {
+        assert_eq!(RoundingMode::from_str("half_up").unwrap(), RoundingMode::HalfUp);
+        assert_eq!(RoundingMode::from_str("HalfDown").unwrap(), RoundingMode::HalfDown);
+        assert_eq!(RoundingMode::from_str("half-even").unwrap(), RoundingMode::HalfEven);
+        assert!(RoundingMode::from_str("nope").is_err());
     }
 }

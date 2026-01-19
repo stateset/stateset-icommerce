@@ -321,6 +321,38 @@ pub fn validate_batch_size<T>(items: &[T]) -> Result<()> {
     Ok(())
 }
 
+/// Validate a required text field for non-empty content and length.
+pub fn validate_required_text(field: &str, value: &str, max_len: usize) -> Result<()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CommerceError::InvalidInput {
+            field: field.to_string(),
+            message: "cannot be empty".into(),
+        });
+    }
+
+    if trimmed.len() > max_len {
+        return Err(CommerceError::InvalidInput {
+            field: field.to_string(),
+            message: format!("cannot exceed {} characters", max_len),
+        });
+    }
+
+    Ok(())
+}
+
+/// Validate that a UUID is not the nil (all-zero) value.
+pub fn validate_required_uuid(field: &str, value: Uuid) -> Result<()> {
+    if value.is_nil() {
+        return Err(CommerceError::InvalidInput {
+            field: field.to_string(),
+            message: "cannot be nil".into(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Validate an email address format
 ///
 /// Performs basic email validation checking for:
@@ -600,4 +632,39 @@ pub fn validate_price(price: rust_decimal::Decimal) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_required_text_rejects_empty() {
+        let result = validate_required_text("field", "   ", 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_required_text_rejects_too_long() {
+        let result = validate_required_text("field", "toolong", 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_required_text_accepts_trimmed() {
+        let result = validate_required_text("field", "  ok  ", 10);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_required_uuid_rejects_nil() {
+        let result = validate_required_uuid("id", Uuid::nil());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_required_uuid_accepts_non_nil() {
+        let result = validate_required_uuid("id", Uuid::new_v4());
+        assert!(result.is_ok());
+    }
 }

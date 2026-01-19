@@ -14,7 +14,10 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-use super::{map_db_error, parse_decimal};
+use super::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
+    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+};
 
 pub struct SqliteCostAccountingRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -27,105 +30,153 @@ impl SqliteCostAccountingRepository {
 
     fn row_to_item_cost(&self, row: &rusqlite::Row) -> rusqlite::Result<ItemCost> {
         Ok(ItemCost {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "item_cost", "id")?,
             sku: row.get(1)?,
-            cost_method: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            standard_cost: parse_decimal(&row.get::<_, String>(3)?),
-            average_cost: parse_decimal(&row.get::<_, String>(4)?),
-            last_cost: parse_decimal(&row.get::<_, String>(5)?),
-            material_cost: parse_decimal(&row.get::<_, String>(6)?),
-            labor_cost: parse_decimal(&row.get::<_, String>(7)?),
-            overhead_cost: parse_decimal(&row.get::<_, String>(8)?),
+            cost_method: parse_enum_row(&row.get::<_, String>(2)?, "item_cost", "cost_method")?,
+            standard_cost: parse_decimal_row(&row.get::<_, String>(3)?, "item_cost", "standard_cost")?,
+            average_cost: parse_decimal_row(&row.get::<_, String>(4)?, "item_cost", "average_cost")?,
+            last_cost: parse_decimal_row(&row.get::<_, String>(5)?, "item_cost", "last_cost")?,
+            material_cost: parse_decimal_row(&row.get::<_, String>(6)?, "item_cost", "material_cost")?,
+            labor_cost: parse_decimal_row(&row.get::<_, String>(7)?, "item_cost", "labor_cost")?,
+            overhead_cost: parse_decimal_row(&row.get::<_, String>(8)?, "item_cost", "overhead_cost")?,
             currency: row.get(9)?,
-            effective_date: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
-            created_at: row.get::<_, String>(11)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            effective_date: parse_datetime_row(&row.get::<_, String>(10)?, "item_cost", "effective_date")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(11)?, "item_cost", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(12)?, "item_cost", "updated_at")?,
         })
     }
 
     fn row_to_cost_layer(&self, row: &rusqlite::Row) -> rusqlite::Result<CostLayer> {
         Ok(CostLayer {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_layer", "id")?,
             sku: row.get(1)?,
-            layer_date: row.get::<_, String>(2)?.parse().unwrap_or_else(|_| Utc::now()),
-            quantity: parse_decimal(&row.get::<_, String>(3)?),
-            remaining_quantity: parse_decimal(&row.get::<_, String>(4)?),
-            unit_cost: parse_decimal(&row.get::<_, String>(5)?),
-            total_cost: parse_decimal(&row.get::<_, String>(6)?),
-            source_type: row.get::<_, String>(7)?.parse().unwrap_or_default(),
-            source_id: row.get::<_, Option<String>>(8)?.and_then(|s| s.parse().ok()),
-            lot_id: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
+            layer_date: parse_datetime_row(&row.get::<_, String>(2)?, "cost_layer", "layer_date")?,
+            quantity: parse_decimal_row(&row.get::<_, String>(3)?, "cost_layer", "quantity")?,
+            remaining_quantity: parse_decimal_row(
+                &row.get::<_, String>(4)?,
+                "cost_layer",
+                "remaining_quantity",
+            )?,
+            unit_cost: parse_decimal_row(&row.get::<_, String>(5)?, "cost_layer", "unit_cost")?,
+            total_cost: parse_decimal_row(&row.get::<_, String>(6)?, "cost_layer", "total_cost")?,
+            source_type: parse_enum_row(&row.get::<_, String>(7)?, "cost_layer", "source_type")?,
+            source_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(8)?,
+                "cost_layer",
+                "source_id",
+            )?,
+            lot_id: parse_uuid_opt_row(row.get::<_, Option<String>>(9)?, "cost_layer", "lot_id")?,
             location_id: row.get(10)?,
-            created_at: row.get::<_, String>(11)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(11)?, "cost_layer", "created_at")?,
         })
     }
 
     fn row_to_cost_transaction(&self, row: &rusqlite::Row) -> rusqlite::Result<CostTransaction> {
         Ok(CostTransaction {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_transaction", "id")?,
             sku: row.get(1)?,
-            transaction_type: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            quantity: parse_decimal(&row.get::<_, String>(3)?),
-            unit_cost: parse_decimal(&row.get::<_, String>(4)?),
-            total_cost: parse_decimal(&row.get::<_, String>(5)?),
-            layer_id: row.get::<_, Option<String>>(6)?.and_then(|s| s.parse().ok()),
+            transaction_type: parse_enum_row(
+                &row.get::<_, String>(2)?,
+                "cost_transaction",
+                "transaction_type",
+            )?,
+            quantity: parse_decimal_row(&row.get::<_, String>(3)?, "cost_transaction", "quantity")?,
+            unit_cost: parse_decimal_row(&row.get::<_, String>(4)?, "cost_transaction", "unit_cost")?,
+            total_cost: parse_decimal_row(&row.get::<_, String>(5)?, "cost_transaction", "total_cost")?,
+            layer_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(6)?,
+                "cost_transaction",
+                "layer_id",
+            )?,
             reference_type: row.get(7)?,
-            reference_id: row.get::<_, Option<String>>(8)?.and_then(|s| s.parse().ok()),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(8)?,
+                "cost_transaction",
+                "reference_id",
+            )?,
             notes: row.get(9)?,
-            created_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(10)?, "cost_transaction", "created_at")?,
         })
     }
 
     fn row_to_cost_variance(&self, row: &rusqlite::Row) -> rusqlite::Result<CostVariance> {
         Ok(CostVariance {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_variance", "id")?,
             sku: row.get(1)?,
-            variance_type: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            variance_date: row.get::<_, String>(3)?.parse().unwrap_or_else(|_| Utc::now()),
-            standard_cost: parse_decimal(&row.get::<_, String>(4)?),
-            actual_cost: parse_decimal(&row.get::<_, String>(5)?),
-            variance_amount: parse_decimal(&row.get::<_, String>(6)?),
-            variance_percent: parse_decimal(&row.get::<_, String>(7)?),
-            quantity: parse_decimal(&row.get::<_, String>(8)?),
-            total_variance: parse_decimal(&row.get::<_, String>(9)?),
+            variance_type: parse_enum_row(&row.get::<_, String>(2)?, "cost_variance", "variance_type")?,
+            variance_date: parse_datetime_row(&row.get::<_, String>(3)?, "cost_variance", "variance_date")?,
+            standard_cost: parse_decimal_row(&row.get::<_, String>(4)?, "cost_variance", "standard_cost")?,
+            actual_cost: parse_decimal_row(&row.get::<_, String>(5)?, "cost_variance", "actual_cost")?,
+            variance_amount: parse_decimal_row(
+                &row.get::<_, String>(6)?,
+                "cost_variance",
+                "variance_amount",
+            )?,
+            variance_percent: parse_decimal_row(
+                &row.get::<_, String>(7)?,
+                "cost_variance",
+                "variance_percent",
+            )?,
+            quantity: parse_decimal_row(&row.get::<_, String>(8)?, "cost_variance", "quantity")?,
+            total_variance: parse_decimal_row(
+                &row.get::<_, String>(9)?,
+                "cost_variance",
+                "total_variance",
+            )?,
             reference_type: row.get(10)?,
-            reference_id: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "cost_variance",
+                "reference_id",
+            )?,
             notes: row.get(12)?,
-            created_at: row.get::<_, String>(13)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(13)?, "cost_variance", "created_at")?,
         })
     }
 
     fn row_to_cost_adjustment(&self, row: &rusqlite::Row) -> rusqlite::Result<CostAdjustment> {
         Ok(CostAdjustment {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_adjustment", "id")?,
             adjustment_number: row.get(1)?,
             sku: row.get(2)?,
-            adjustment_type: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            previous_cost: parse_decimal(&row.get::<_, String>(4)?),
-            new_cost: parse_decimal(&row.get::<_, String>(5)?),
-            adjustment_amount: parse_decimal(&row.get::<_, String>(6)?),
+            adjustment_type: parse_enum_row(
+                &row.get::<_, String>(3)?,
+                "cost_adjustment",
+                "adjustment_type",
+            )?,
+            previous_cost: parse_decimal_row(&row.get::<_, String>(4)?, "cost_adjustment", "previous_cost")?,
+            new_cost: parse_decimal_row(&row.get::<_, String>(5)?, "cost_adjustment", "new_cost")?,
+            adjustment_amount: parse_decimal_row(
+                &row.get::<_, String>(6)?,
+                "cost_adjustment",
+                "adjustment_amount",
+            )?,
             reason: row.get(7)?,
             approved_by: row.get(8)?,
-            approved_at: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
-            status: row.get::<_, String>(10)?.parse().unwrap_or_default(),
+            approved_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(9)?,
+                "cost_adjustment",
+                "approved_at",
+            )?,
+            status: parse_enum_row(&row.get::<_, String>(10)?, "cost_adjustment", "status")?,
             created_by: row.get(11)?,
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "cost_adjustment", "created_at")?,
         })
     }
 
     fn row_to_cost_rollup(&self, row: &rusqlite::Row) -> rusqlite::Result<CostRollup> {
         Ok(CostRollup {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "cost_rollup", "id")?,
             sku: row.get(1)?,
-            bom_id: row.get::<_, Option<String>>(2)?.and_then(|s| s.parse().ok()),
-            rollup_date: row.get::<_, String>(3)?.parse().unwrap_or_else(|_| Utc::now()),
-            material_cost: parse_decimal(&row.get::<_, String>(4)?),
-            labor_cost: parse_decimal(&row.get::<_, String>(5)?),
-            overhead_cost: parse_decimal(&row.get::<_, String>(6)?),
-            total_cost: parse_decimal(&row.get::<_, String>(7)?),
-            previous_cost: parse_decimal(&row.get::<_, String>(8)?),
-            cost_change: parse_decimal(&row.get::<_, String>(9)?),
-            created_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            bom_id: parse_uuid_opt_row(row.get::<_, Option<String>>(2)?, "cost_rollup", "bom_id")?,
+            rollup_date: parse_datetime_row(&row.get::<_, String>(3)?, "cost_rollup", "rollup_date")?,
+            material_cost: parse_decimal_row(&row.get::<_, String>(4)?, "cost_rollup", "material_cost")?,
+            labor_cost: parse_decimal_row(&row.get::<_, String>(5)?, "cost_rollup", "labor_cost")?,
+            overhead_cost: parse_decimal_row(&row.get::<_, String>(6)?, "cost_rollup", "overhead_cost")?,
+            total_cost: parse_decimal_row(&row.get::<_, String>(7)?, "cost_rollup", "total_cost")?,
+            previous_cost: parse_decimal_row(&row.get::<_, String>(8)?, "cost_rollup", "previous_cost")?,
+            cost_change: parse_decimal_row(&row.get::<_, String>(9)?, "cost_rollup", "cost_change")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(10)?, "cost_rollup", "created_at")?,
         })
     }
 }
@@ -283,9 +334,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             |row| {
                 let qty_str: String = row.get(0)?;
                 let avg_str: String = row.get(1)?;
-                Ok((parse_decimal(&qty_str), parse_decimal(&avg_str)))
+                let qty = parse_decimal_row(&qty_str, "item_cost", "current_quantity")?;
+                let avg = parse_decimal_row(&avg_str, "item_cost", "average_cost")?;
+                Ok((qty, avg))
             },
-        ).unwrap_or((Decimal::ZERO, Decimal::ZERO));
+        ).map_err(map_db_error)?;
 
         let total_qty = current_qty + quantity;
         let new_avg = if total_qty > Decimal::ZERO {
@@ -503,7 +556,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             |row| row.get(0),
         ).map_err(map_db_error)?;
 
-        Ok(parse_decimal(&result))
+        Ok(parse_decimal_strict(&result, "cost_layers", "remaining_quantity")?)
     }
 
     fn record_cost_transaction(
@@ -692,7 +745,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             |row| row.get(0),
         ).map_err(map_db_error)?;
 
-        Ok(parse_decimal(&result))
+        Ok(parse_decimal_strict(&result, "cost_variances", "total_variance")?)
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
@@ -855,8 +908,10 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                  WHERE bc.bom_id = ?",
                 [bom_id.to_string()],
                 |row| row.get(0),
-            ).unwrap_or_else(|_| "0".to_string());
-            (parse_decimal(&material), Decimal::ZERO, Decimal::ZERO)
+            ).map_err(map_db_error)?;
+            let material_cost =
+                parse_decimal_strict(&material, "bom_components", "material_cost")?;
+            (material_cost, Decimal::ZERO, Decimal::ZERO)
         } else {
             // Get from item cost
             let item = self.get_item_cost(sku)?;
@@ -942,10 +997,11 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             ),
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap_or(("0".to_string(), "0".to_string()));
+        ).map_err(map_db_error)?;
 
-        let total_quantity = parse_decimal(&total_qty);
-        let total_value = parse_decimal(&total_val);
+        let total_quantity =
+            parse_decimal_strict(&total_qty, "inventory_valuation", "total_quantity")?;
+        let total_value = parse_decimal_strict(&total_val, "inventory_valuation", "total_value")?;
         let average_unit_cost = if total_quantity > Decimal::ZERO {
             total_value / total_quantity
         } else {
@@ -978,13 +1034,39 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
              WHERE ii.sku = ?",
             [sku],
             |row| {
+                let quantity_on_hand = parse_decimal_row(
+                    &row.get::<_, String>(1)?,
+                    "sku_cost_summary",
+                    "quantity_on_hand",
+                )?;
+                let standard_cost = parse_decimal_row(
+                    &row.get::<_, String>(2)?,
+                    "sku_cost_summary",
+                    "standard_cost",
+                )?;
+                let average_cost = parse_decimal_row(
+                    &row.get::<_, String>(3)?,
+                    "sku_cost_summary",
+                    "average_cost",
+                )?;
+                let total_value = parse_decimal_row(
+                    &row.get::<_, String>(4)?,
+                    "sku_cost_summary",
+                    "total_value",
+                )?;
+                let variance_ytd = parse_decimal_row(
+                    &row.get::<_, String>(5)?,
+                    "sku_cost_summary",
+                    "variance_ytd",
+                )?;
+
                 Ok(SkuCostSummary {
                     sku: row.get(0)?,
-                    quantity_on_hand: parse_decimal(&row.get::<_, String>(1)?),
-                    standard_cost: parse_decimal(&row.get::<_, String>(2)?),
-                    average_cost: parse_decimal(&row.get::<_, String>(3)?),
-                    total_value: parse_decimal(&row.get::<_, String>(4)?),
-                    variance_ytd: parse_decimal(&row.get::<_, String>(5)?),
+                    quantity_on_hand,
+                    standard_cost,
+                    average_cost,
+                    total_value,
+                    variance_ytd,
                 })
             },
         );

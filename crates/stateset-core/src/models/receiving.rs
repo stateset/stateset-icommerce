@@ -121,15 +121,16 @@ impl std::fmt::Display for ReceiptType {
 }
 
 impl FromStr for ReceiptType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "purchase_order" => Ok(ReceiptType::PurchaseOrder),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "purchase_order" | "purchaseorder" | "po" => Ok(ReceiptType::PurchaseOrder),
             "transfer" => Ok(ReceiptType::Transfer),
-            "return" => Ok(ReceiptType::Return),
+            "return" | "returns" => Ok(ReceiptType::Return),
             "adjustment" => Ok(ReceiptType::Adjustment),
             "production" => Ok(ReceiptType::Production),
-            _ => Ok(ReceiptType::Other),
+            "other" => Ok(ReceiptType::Other),
+            _ => Err(format!("Unknown receipt type: {}", s)),
         }
     }
 }
@@ -170,17 +171,17 @@ impl std::fmt::Display for ReceiptStatus {
 }
 
 impl FromStr for ReceiptStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "expected" => Ok(ReceiptStatus::Expected),
-            "in_progress" => Ok(ReceiptStatus::InProgress),
+            "in_progress" | "inprogress" => Ok(ReceiptStatus::InProgress),
             "received" => Ok(ReceiptStatus::Received),
             "inspecting" => Ok(ReceiptStatus::Inspecting),
-            "putting_away" => Ok(ReceiptStatus::PuttingAway),
+            "putting_away" | "puttingaway" => Ok(ReceiptStatus::PuttingAway),
             "completed" => Ok(ReceiptStatus::Completed),
-            "cancelled" => Ok(ReceiptStatus::Cancelled),
-            _ => Ok(ReceiptStatus::Expected),
+            "cancelled" | "canceled" => Ok(ReceiptStatus::Cancelled),
+            _ => Err(format!("Unknown receipt status: {}", s)),
         }
     }
 }
@@ -212,16 +213,16 @@ impl std::fmt::Display for ReceiptItemStatus {
 }
 
 impl FromStr for ReceiptItemStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(ReceiptItemStatus::Pending),
-            "partially_received" => Ok(ReceiptItemStatus::PartiallyReceived),
+            "partially_received" | "partiallyreceived" => Ok(ReceiptItemStatus::PartiallyReceived),
             "received" => Ok(ReceiptItemStatus::Received),
             "inspecting" => Ok(ReceiptItemStatus::Inspecting),
             "rejected" => Ok(ReceiptItemStatus::Rejected),
-            "put_away" => Ok(ReceiptItemStatus::PutAway),
-            _ => Ok(ReceiptItemStatus::Pending),
+            "put_away" | "putaway" => Ok(ReceiptItemStatus::PutAway),
+            _ => Err(format!("Unknown receipt item status: {}", s)),
         }
     }
 }
@@ -251,15 +252,15 @@ impl std::fmt::Display for PutAwayStatus {
 }
 
 impl FromStr for PutAwayStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(PutAwayStatus::Pending),
             "assigned" => Ok(PutAwayStatus::Assigned),
-            "in_progress" => Ok(PutAwayStatus::InProgress),
+            "in_progress" | "inprogress" => Ok(PutAwayStatus::InProgress),
             "completed" => Ok(PutAwayStatus::Completed),
-            "cancelled" => Ok(PutAwayStatus::Cancelled),
-            _ => Ok(PutAwayStatus::Pending),
+            "cancelled" | "canceled" => Ok(PutAwayStatus::Cancelled),
+            _ => Err(format!("Unknown put-away status: {}", s)),
         }
     }
 }
@@ -397,4 +398,50 @@ pub fn generate_receipt_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
     format!("RCV-{}-{}", timestamp, random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn receipt_type_from_str() {
+        assert_eq!(
+            ReceiptType::from_str("po").unwrap(),
+            ReceiptType::PurchaseOrder
+        );
+        assert!(ReceiptType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn receipt_status_from_str() {
+        assert_eq!(
+            ReceiptStatus::from_str("inprogress").unwrap(),
+            ReceiptStatus::InProgress
+        );
+        assert!(ReceiptStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn receipt_item_status_from_str() {
+        assert_eq!(
+            ReceiptItemStatus::from_str("partiallyreceived").unwrap(),
+            ReceiptItemStatus::PartiallyReceived
+        );
+        assert!(ReceiptItemStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn put_away_status_from_str() {
+        assert_eq!(
+            PutAwayStatus::from_str("inprogress").unwrap(),
+            PutAwayStatus::InProgress
+        );
+        assert_eq!(
+            PutAwayStatus::from_str("canceled").unwrap(),
+            PutAwayStatus::Cancelled
+        );
+        assert!(PutAwayStatus::from_str("unknown").is_err());
+    }
 }

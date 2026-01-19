@@ -130,12 +130,16 @@ impl PgFulfillmentRepository {
         Self { pool }
     }
 
-    fn row_to_wave(row: WaveRow) -> Wave {
-        Wave {
+    fn row_to_wave(row: WaveRow) -> Result<Wave> {
+        let status: WaveStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid wave.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(Wave {
             id: row.id,
             wave_number: row.wave_number,
             warehouse_id: row.warehouse_id,
-            status: row.status.parse().unwrap_or_default(),
+            status,
             order_count: row.order_count,
             pick_count: row.pick_count,
             completed_pick_count: row.completed_pick_count,
@@ -146,17 +150,21 @@ impl PgFulfillmentRepository {
             created_by: row.created_by,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_pick(row: PickRow) -> PickTask {
-        PickTask {
+    fn row_to_pick(row: PickRow) -> Result<PickTask> {
+        let status: PickStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid pick_task.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(PickTask {
             id: row.id,
             wave_id: row.wave_id,
             order_id: row.order_id,
             order_item_id: row.order_item_id,
             warehouse_id: row.warehouse_id,
-            status: row.status.parse().unwrap_or_default(),
+            status,
             sku: row.sku,
             product_name: row.product_name,
             source_location_id: row.source_location_id,
@@ -174,15 +182,19 @@ impl PgFulfillmentRepository {
             notes: row.notes,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_pack(row: PackRow) -> PackTask {
-        PackTask {
+    fn row_to_pack(row: PackRow) -> Result<PackTask> {
+        let status: PackStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid pack_task.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(PackTask {
             id: row.id,
             order_id: row.order_id,
             shipment_id: row.shipment_id,
-            status: row.status.parse().unwrap_or_default(),
+            status,
             carton_count: row.carton_count,
             total_weight_kg: row.total_weight_kg,
             assigned_to: row.assigned_to,
@@ -192,15 +204,22 @@ impl PgFulfillmentRepository {
             notes: row.notes,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_carton(row: CartonRow) -> Carton {
-        Carton {
+    fn row_to_carton(row: CartonRow) -> Result<Carton> {
+        let package_type: PackageType = row.package_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid carton.package_type '{}': {}",
+                row.package_type, e
+            ))
+        })?;
+
+        Ok(Carton {
             id: row.id,
             pack_task_id: row.pack_task_id,
             carton_number: row.carton_number,
-            package_type: row.package_type.parse().unwrap_or_default(),
+            package_type,
             weight_kg: row.weight_kg,
             length_cm: row.length_cm,
             width_cm: row.width_cm,
@@ -208,7 +227,7 @@ impl PgFulfillmentRepository {
             tracking_number: row.tracking_number,
             label_printed: row.label_printed,
             created_at: row.created_at,
-        }
+        })
     }
 
     fn row_to_carton_item(row: CartonItemRow) -> CartonItem {
@@ -222,13 +241,17 @@ impl PgFulfillmentRepository {
         }
     }
 
-    fn row_to_ship(row: ShipRow) -> ShipTask {
-        ShipTask {
+    fn row_to_ship(row: ShipRow) -> Result<ShipTask> {
+        let status: ShipStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid ship_task.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(ShipTask {
             id: row.id,
             order_id: row.order_id,
             shipment_id: row.shipment_id,
             pack_task_id: row.pack_task_id,
-            status: row.status.parse().unwrap_or_default(),
+            status,
             carrier: row.carrier,
             service_level: row.service_level,
             tracking_number: row.tracking_number,
@@ -239,7 +262,7 @@ impl PgFulfillmentRepository {
             notes: row.notes,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
     pub async fn create_wave_async(&self, input: CreateWave) -> Result<Wave> {
@@ -291,7 +314,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_wave))
+        Ok(row.map(Self::row_to_wave).transpose()?)
     }
 
     pub async fn get_wave_by_number_async(&self, number: &str) -> Result<Option<Wave>> {
@@ -301,7 +324,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_wave))
+        Ok(row.map(Self::row_to_wave).transpose()?)
     }
 
     pub async fn list_waves_async(&self, filter: WaveFilter) -> Result<Vec<Wave>> {
@@ -335,7 +358,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_wave).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_wave)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn release_wave_async(&self, id: Uuid) -> Result<Wave> {
@@ -455,7 +481,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_pick))
+        Ok(row.map(Self::row_to_pick).transpose()?)
     }
 
     pub async fn list_picks_async(&self, filter: PickTaskFilter) -> Result<Vec<PickTask>> {
@@ -492,7 +518,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_pick).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_pick)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn assign_pick_async(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
@@ -667,7 +696,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_pack))
+        Ok(row.map(Self::row_to_pack).transpose()?)
     }
 
     pub async fn list_packs_async(&self, filter: PackTaskFilter) -> Result<Vec<PackTask>> {
@@ -698,7 +727,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_pack).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_pack)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn assign_pack_async(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
@@ -789,7 +821,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_carton))
+        Ok(row.map(Self::row_to_carton).transpose()?)
     }
 
     pub async fn add_carton_item_async(&self, input: AddCartonItem) -> Result<CartonItem> {
@@ -830,7 +862,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_carton).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_carton)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_carton_items_async(&self, carton_id: Uuid) -> Result<Vec<CartonItem>> {
@@ -923,7 +958,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_ship))
+        Ok(row.map(Self::row_to_ship).transpose()?)
     }
 
     pub async fn list_ships_async(&self, filter: ShipTaskFilter) -> Result<Vec<ShipTask>> {
@@ -954,7 +989,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_ship).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_ship)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn assign_ship_async(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
@@ -1148,7 +1186,10 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_pick).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_pick)
+            .collect::<Result<Vec<_>>>()?)
     }
 }
 

@@ -15,7 +15,10 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-use super::{map_db_error, parse_decimal};
+use super::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+};
 
 pub struct SqliteCreditRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -28,76 +31,163 @@ impl SqliteCreditRepository {
 
     fn row_to_credit_account(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditAccount> {
         Ok(CreditAccount {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            credit_limit: parse_decimal(&row.get::<_, String>(2)?),
-            available_credit: parse_decimal(&row.get::<_, String>(3)?),
-            current_balance: parse_decimal(&row.get::<_, String>(4)?),
-            hold_amount: parse_decimal(&row.get::<_, String>(5)?),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_account", "id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>(1)?, "credit_account", "customer_id")?,
+            credit_limit: parse_decimal_row(&row.get::<_, String>(2)?, "credit_account", "credit_limit")?,
+            available_credit: parse_decimal_row(
+                &row.get::<_, String>(3)?,
+                "credit_account",
+                "available_credit",
+            )?,
+            current_balance: parse_decimal_row(
+                &row.get::<_, String>(4)?,
+                "credit_account",
+                "current_balance",
+            )?,
+            hold_amount: parse_decimal_row(&row.get::<_, String>(5)?, "credit_account", "hold_amount")?,
             currency: row.get(6)?,
-            status: row.get::<_, String>(7)?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>(7)?, "credit_account", "status")?,
             payment_terms: row.get(8)?,
-            risk_rating: row.get::<_, Option<String>>(9)?.and_then(|s| s.parse().ok()),
-            last_review_date: row.get::<_, Option<String>>(10)?.and_then(|s| s.parse().ok()),
-            next_review_date: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
+            risk_rating: match row.get::<_, Option<String>>(9)? {
+                Some(value) if !value.is_empty() => Some(parse_enum_row(
+                    &value,
+                    "credit_account",
+                    "risk_rating",
+                )?),
+                _ => None,
+            },
+            last_review_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "credit_account",
+                "last_review_date",
+            )?,
+            next_review_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "credit_account",
+                "next_review_date",
+            )?,
             notes: row.get(12)?,
-            created_at: row.get::<_, String>(13)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(14)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(13)?,
+                "credit_account",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(14)?,
+                "credit_account",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_credit_hold(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditHold> {
         Ok(CreditHold {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            order_id: row.get::<_, Option<String>>(2)?.and_then(|s| s.parse().ok()),
-            hold_type: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            hold_amount: parse_decimal(&row.get::<_, String>(4)?),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_hold", "id")?,
+            customer_id: parse_uuid_row(&row.get::<_, String>(1)?, "credit_hold", "customer_id")?,
+            order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(2)?,
+                "credit_hold",
+                "order_id",
+            )?,
+            hold_type: parse_enum_row(&row.get::<_, String>(3)?, "credit_hold", "hold_type")?,
+            hold_amount: parse_decimal_row(&row.get::<_, String>(4)?, "credit_hold", "hold_amount")?,
             reason: row.get(5)?,
-            status: row.get::<_, String>(6)?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>(6)?, "credit_hold", "status")?,
             placed_by: row.get(7)?,
-            placed_at: row.get::<_, String>(8)?.parse().unwrap_or_else(|_| Utc::now()),
+            placed_at: parse_datetime_row(&row.get::<_, String>(8)?, "credit_hold", "placed_at")?,
             released_by: row.get(9)?,
-            released_at: row.get::<_, Option<String>>(10)?.and_then(|s| s.parse().ok()),
+            released_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "credit_hold",
+                "released_at",
+            )?,
             release_notes: row.get(11)?,
-            created_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "credit_hold", "created_at")?,
         })
     }
 
     fn row_to_credit_application(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditApplication> {
         Ok(CreditApplication {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_application", "id")?,
             application_number: row.get(1)?,
-            customer_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            requested_limit: parse_decimal(&row.get::<_, String>(3)?),
-            approved_limit: row.get::<_, Option<String>>(4)?.map(|s| parse_decimal(&s)),
-            status: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "credit_application", "customer_id")?,
+            requested_limit: parse_decimal_row(
+                &row.get::<_, String>(3)?,
+                "credit_application",
+                "requested_limit",
+            )?,
+            approved_limit: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(4)?,
+                "credit_application",
+                "approved_limit",
+            )?,
+            status: parse_enum_row(&row.get::<_, String>(5)?, "credit_application", "status")?,
             business_name: row.get(6)?,
             tax_id: row.get(7)?,
             years_in_business: row.get(8)?,
-            annual_revenue: row.get::<_, Option<String>>(9)?.map(|s| parse_decimal(&s)),
+            annual_revenue: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(9)?,
+                "credit_application",
+                "annual_revenue",
+            )?,
             bank_reference: row.get(10)?,
             trade_references: row.get(11)?,
-            submitted_at: row.get::<_, String>(12)?.parse().unwrap_or_else(|_| Utc::now()),
+            submitted_at: parse_datetime_row(
+                &row.get::<_, String>(12)?,
+                "credit_application",
+                "submitted_at",
+            )?,
             reviewed_by: row.get(13)?,
-            reviewed_at: row.get::<_, Option<String>>(14)?.and_then(|s| s.parse().ok()),
+            reviewed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(14)?,
+                "credit_application",
+                "reviewed_at",
+            )?,
             decision_notes: row.get(15)?,
-            created_at: row.get::<_, String>(16)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(17)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(16)?,
+                "credit_application",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(17)?,
+                "credit_application",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_credit_transaction(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditTransaction> {
         Ok(CreditTransaction {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            customer_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            transaction_type: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            amount: parse_decimal(&row.get::<_, String>(3)?),
-            running_balance: parse_decimal(&row.get::<_, String>(4)?),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_transaction", "id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "credit_transaction",
+                "customer_id",
+            )?,
+            transaction_type: parse_enum_row(
+                &row.get::<_, String>(2)?,
+                "credit_transaction",
+                "transaction_type",
+            )?,
+            amount: parse_decimal_row(&row.get::<_, String>(3)?, "credit_transaction", "amount")?,
+            running_balance: parse_decimal_row(
+                &row.get::<_, String>(4)?,
+                "credit_transaction",
+                "running_balance",
+            )?,
             reference_type: row.get(5)?,
-            reference_id: row.get::<_, Option<String>>(6)?.and_then(|s| s.parse().ok()),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(6)?,
+                "credit_transaction",
+                "reference_id",
+            )?,
             notes: row.get(7)?,
-            created_at: row.get::<_, String>(8)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(8)?,
+                "credit_transaction",
+                "created_at",
+            )?,
         })
     }
 
@@ -387,11 +477,20 @@ impl CreditRepository for SqliteCreditRepository {
         let now = Utc::now();
 
         // Get reservation amount
-        let amount: String = conn.query_row(
+        let amount: Option<String> = match conn.query_row(
             "SELECT amount FROM credit_reservations WHERE customer_id = ? AND order_id = ? AND status = 'active'",
             [customer_id.to_string(), order_id.to_string()],
             |row| row.get(0),
-        ).unwrap_or_else(|_| "0".to_string());
+        ) {
+            Ok(value) => Some(value),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(map_db_error(e)),
+        };
+
+        let amount = match amount {
+            Some(value) => parse_decimal_strict(&value, "credit_reservation", "amount")?,
+            None => Decimal::ZERO,
+        };
 
         // Release reservation
         conn.execute(
@@ -403,7 +502,7 @@ impl CreditRepository for SqliteCreditRepository {
         // Update hold amount
         conn.execute(
             "UPDATE credit_accounts SET hold_amount = MAX(0, CAST(hold_amount AS REAL) - ?) WHERE customer_id = ?",
-            [&amount, &customer_id.to_string()],
+            [&amount.to_string(), &customer_id.to_string()],
         ).map_err(map_db_error)?;
 
         self.recalculate_available_credit(customer_id)?;
@@ -701,9 +800,10 @@ impl CreditRepository for SqliteCreditRepository {
             "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
             [input.customer_id.to_string()],
             |row| row.get(0),
-        ).unwrap_or_else(|_| "0".to_string());
+        ).map_err(map_db_error)?;
 
-        let current_balance = parse_decimal(&balance);
+        let current_balance =
+            parse_decimal_strict(&balance, "credit_account", "current_balance")?;
         let running_balance = match input.transaction_type {
             CreditTransactionType::Payment | CreditTransactionType::CreditMemo => {
                 current_balance - input.amount

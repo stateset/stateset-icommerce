@@ -1,10 +1,8 @@
 //! SQLite implementation of warranty repository
 
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_uuid_opt_row,
-    parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_opt_row,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -36,8 +34,12 @@ impl SqliteWarrantyRepository {
             product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "warranty", "product_id")?,
             sku: row.get("sku")?,
             serial_number: row.get("serial_number")?,
-            status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
-            warranty_type: row.get::<_, String>("warranty_type")?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "warranty", "status")?,
+            warranty_type: parse_enum_row(
+                &row.get::<_, String>("warranty_type")?,
+                "warranty",
+                "warranty_type",
+            )?,
             provider: row.get("provider")?,
             coverage_description: row.get("coverage_description")?,
             purchase_date: parse_datetime_row(&row.get::<_, String>("purchase_date")?, "warranty", "purchase_date")?,
@@ -61,8 +63,12 @@ impl SqliteWarrantyRepository {
             claim_number: row.get("claim_number")?,
             warranty_id: parse_uuid_row(&row.get::<_, String>("warranty_id")?, "warranty_claim", "warranty_id")?,
             customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "warranty_claim", "customer_id")?,
-            status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
-            resolution: row.get::<_, String>("resolution")?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "warranty_claim", "status")?,
+            resolution: parse_enum_row(
+                &row.get::<_, String>("resolution")?,
+                "warranty_claim",
+                "resolution",
+            )?,
             issue_description: row.get("issue_description")?,
             issue_category: row.get("issue_category")?,
             issue_date: parse_datetime_opt_row(row.get::<_, Option<String>>("issue_date")?, "warranty_claim", "issue_date")?,

@@ -1,6 +1,9 @@
 //! SQLite implementation of Quality Control repository
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -41,170 +44,178 @@ impl SqliteQualityRepository {
 
     fn row_to_inspection(row: &rusqlite::Row) -> rusqlite::Result<Inspection> {
         Ok(Inspection {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "inspection", "id")?,
             inspection_number: row.get("inspection_number")?,
-            inspection_type: row
-                .get::<_, String>("inspection_type")?
-                .parse()
-                .unwrap_or_default(),
+            inspection_type: parse_enum_row(
+                &row.get::<_, String>("inspection_type")?,
+                "inspection",
+                "inspection_type",
+            )?,
             reference_type: row.get("reference_type")?,
-            reference_id: row.get::<_, String>("reference_id")?.parse().unwrap_or_default(),
-            status: row
-                .get::<_, String>("status")?
-                .parse()
-                .unwrap_or_default(),
+            reference_id: parse_uuid_row(&row.get::<_, String>("reference_id")?, "inspection", "reference_id")?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "inspection", "status")?,
             inspector_id: row.get("inspector_id")?,
-            scheduled_at: row
-                .get::<_, Option<String>>("scheduled_at")?
-                .and_then(|s| s.parse().ok()),
-            started_at: row
-                .get::<_, Option<String>>("started_at")?
-                .and_then(|s| s.parse().ok()),
-            completed_at: row
-                .get::<_, Option<String>>("completed_at")?
-                .and_then(|s| s.parse().ok()),
+            scheduled_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("scheduled_at")?,
+                "inspection",
+                "scheduled_at",
+            )?,
+            started_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("started_at")?,
+                "inspection",
+                "started_at",
+            )?,
+            completed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("completed_at")?,
+                "inspection",
+                "completed_at",
+            )?,
             notes: row.get("notes")?,
             items: vec![],
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inspection", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inspection", "updated_at")?,
         })
     }
 
     fn row_to_inspection_item(row: &rusqlite::Row) -> rusqlite::Result<InspectionItem> {
-        let defect_codes_str: String = row.get("defect_codes")?;
-        let defect_codes: Vec<String> =
-            serde_json::from_str(&defect_codes_str).unwrap_or_default();
-        let measurements_str: Option<String> = row.get("measurements")?;
-        let measurements = measurements_str.and_then(|s| serde_json::from_str(&s).ok());
-
         Ok(InspectionItem {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            inspection_id: row.get::<_, String>("inspection_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "inspection_item", "id")?,
+            inspection_id: parse_uuid_row(
+                &row.get::<_, String>("inspection_id")?,
+                "inspection_item",
+                "inspection_id",
+            )?,
             sku: row.get("sku")?,
             lot_number: row.get("lot_number")?,
             serial_number: row.get("serial_number")?,
-            quantity_inspected: parse_decimal(&row.get::<_, String>("quantity_inspected")?),
-            quantity_passed: parse_decimal(&row.get::<_, String>("quantity_passed")?),
-            quantity_failed: parse_decimal(&row.get::<_, String>("quantity_failed")?),
-            defect_codes,
-            measurements,
-            result: row
-                .get::<_, String>("result")?
-                .parse()
-                .unwrap_or_default(),
+            quantity_inspected: parse_decimal_row(
+                &row.get::<_, String>("quantity_inspected")?,
+                "inspection_item",
+                "quantity_inspected",
+            )?,
+            quantity_passed: parse_decimal_row(
+                &row.get::<_, String>("quantity_passed")?,
+                "inspection_item",
+                "quantity_passed",
+            )?,
+            quantity_failed: parse_decimal_row(
+                &row.get::<_, String>("quantity_failed")?,
+                "inspection_item",
+                "quantity_failed",
+            )?,
+            defect_codes: parse_json_row(
+                &row.get::<_, String>("defect_codes")?,
+                "inspection_item",
+                "defect_codes",
+            )?,
+            measurements: parse_json_opt_row(
+                row.get::<_, Option<String>>("measurements")?,
+                "inspection_item",
+                "measurements",
+            )?,
+            result: parse_enum_row(&row.get::<_, String>("result")?, "inspection_item", "result")?,
             notes: row.get("notes")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "inspection_item",
+                "created_at",
+            )?,
         })
     }
 
     fn row_to_ncr(row: &rusqlite::Row) -> rusqlite::Result<NonConformance> {
+        let disposition = match row.get::<_, Option<String>>("disposition")? {
+            Some(value) => Some(parse_enum_row(&value, "non_conformance", "disposition")?),
+            None => None,
+        };
+
         Ok(NonConformance {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "non_conformance", "id")?,
             ncr_number: row.get("ncr_number")?,
-            inspection_id: row
-                .get::<_, Option<String>>("inspection_id")?
-                .and_then(|s| s.parse().ok()),
-            source: row
-                .get::<_, String>("source")?
-                .parse()
-                .unwrap_or_default(),
-            severity: row
-                .get::<_, String>("severity")?
-                .parse()
-                .unwrap_or_default(),
-            status: row
-                .get::<_, String>("status")?
-                .parse()
-                .unwrap_or_default(),
+            inspection_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("inspection_id")?,
+                "non_conformance",
+                "inspection_id",
+            )?,
+            source: parse_enum_row(&row.get::<_, String>("source")?, "non_conformance", "source")?,
+            severity: parse_enum_row(&row.get::<_, String>("severity")?, "non_conformance", "severity")?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "non_conformance", "status")?,
             sku: row.get("sku")?,
             lot_number: row.get("lot_number")?,
             serial_number: row.get("serial_number")?,
-            quantity_affected: parse_decimal(&row.get::<_, String>("quantity_affected")?),
+            quantity_affected: parse_decimal_row(
+                &row.get::<_, String>("quantity_affected")?,
+                "non_conformance",
+                "quantity_affected",
+            )?,
             description: row.get("description")?,
             root_cause: row.get("root_cause")?,
             corrective_action: row.get("corrective_action")?,
             preventive_action: row.get("preventive_action")?,
-            disposition: row
-                .get::<_, Option<String>>("disposition")?
-                .and_then(|s| s.parse().ok()),
-            disposition_quantity: row
-                .get::<_, Option<String>>("disposition_quantity")?
-                .map(|s| parse_decimal(&s)),
+            disposition,
+            disposition_quantity: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("disposition_quantity")?,
+                "non_conformance",
+                "disposition_quantity",
+            )?,
             assigned_to: row.get("assigned_to")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            closed_at: row
-                .get::<_, Option<String>>("closed_at")?
-                .and_then(|s| s.parse().ok()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "non_conformance", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "non_conformance", "updated_at")?,
+            closed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("closed_at")?,
+                "non_conformance",
+                "closed_at",
+            )?,
         })
     }
 
     fn row_to_hold(row: &rusqlite::Row) -> rusqlite::Result<QualityHold> {
         Ok(QualityHold {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "quality_hold", "id")?,
             sku: row.get("sku")?,
             lot_number: row.get("lot_number")?,
             serial_number: row.get("serial_number")?,
             location_id: row.get("location_id")?,
-            quantity_held: parse_decimal(&row.get::<_, String>("quantity_held")?),
+            quantity_held: parse_decimal_row(
+                &row.get::<_, String>("quantity_held")?,
+                "quality_hold",
+                "quantity_held",
+            )?,
             reason: row.get("reason")?,
-            hold_type: row
-                .get::<_, String>("hold_type")?
-                .parse()
-                .unwrap_or_default(),
-            ncr_id: row
-                .get::<_, Option<String>>("ncr_id")?
-                .and_then(|s| s.parse().ok()),
-            inspection_id: row
-                .get::<_, Option<String>>("inspection_id")?
-                .and_then(|s| s.parse().ok()),
+            hold_type: parse_enum_row(&row.get::<_, String>("hold_type")?, "quality_hold", "hold_type")?,
+            ncr_id: parse_uuid_opt_row(row.get::<_, Option<String>>("ncr_id")?, "quality_hold", "ncr_id")?,
+            inspection_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("inspection_id")?,
+                "quality_hold",
+                "inspection_id",
+            )?,
             placed_by: row.get("placed_by")?,
             released_by: row.get("released_by")?,
             release_notes: row.get("release_notes")?,
-            placed_at: row
-                .get::<_, String>("placed_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            released_at: row
-                .get::<_, Option<String>>("released_at")?
-                .and_then(|s| s.parse().ok()),
-            expires_at: row
-                .get::<_, Option<String>>("expires_at")?
-                .and_then(|s| s.parse().ok()),
+            placed_at: parse_datetime_row(&row.get::<_, String>("placed_at")?, "quality_hold", "placed_at")?,
+            released_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("released_at")?,
+                "quality_hold",
+                "released_at",
+            )?,
+            expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expires_at")?,
+                "quality_hold",
+                "expires_at",
+            )?,
         })
     }
 
     fn row_to_defect_code(row: &rusqlite::Row) -> rusqlite::Result<DefectCode> {
         Ok(DefectCode {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "defect_code", "id")?,
             code: row.get("code")?,
             name: row.get("name")?,
             description: row.get("description")?,
             category: row.get("category")?,
-            severity: row
-                .get::<_, String>("severity")?
-                .parse()
-                .unwrap_or_default(),
+            severity: parse_enum_row(&row.get::<_, String>("severity")?, "defect_code", "severity")?,
             is_active: row.get::<_, i32>("is_active")? != 0,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "defect_code", "created_at")?,
         })
     }
 

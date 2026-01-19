@@ -1,20 +1,23 @@
 //! SQLite implementation of tax repository
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
 use stateset_core::{
-    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType,
-    JurisdictionLevel, ProductTaxCategory, Result, TaxAddress, TaxBreakdown, TaxCalculationMethod,
-    TaxCalculationRequest, TaxCalculationResult, TaxCompoundMethod, TaxExemption, TaxJurisdiction,
-    TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings, TaxType,
+    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ProductTaxCategory,
+    Result, TaxAddress, TaxBreakdown, TaxCalculationRequest, TaxCalculationResult, TaxExemption,
+    TaxJurisdiction, TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings,
     LineItemTax, TaxDetail, JurisdictionSummary,
 };
 use uuid::Uuid;
 
-use super::map_db_error;
+use super::{
+    map_db_error, parse_date_row, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row,
+    parse_uuid_row,
+};
 
 /// SQLite tax repository
 pub struct SqliteTaxRepository {
@@ -26,124 +29,14 @@ impl SqliteTaxRepository {
         Self { pool }
     }
 
-    fn parse_decimal(s: &str) -> Decimal {
-        s.parse().unwrap_or_default()
-    }
-
-    fn parse_datetime(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                    .map(|dt| dt.and_utc())
-                    .unwrap_or_else(|_| Utc::now())
-            })
-    }
-
-    fn parse_date(s: &str) -> NaiveDate {
-        NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .unwrap_or_else(|_| Utc::now().date_naive())
-    }
-
-    fn parse_tax_type(s: &str) -> TaxType {
-        match s {
-            "sales_tax" => TaxType::SalesTax,
-            "vat" => TaxType::Vat,
-            "gst" => TaxType::Gst,
-            "hst" => TaxType::Hst,
-            "pst" => TaxType::Pst,
-            "qst" => TaxType::Qst,
-            "consumption_tax" => TaxType::ConsumptionTax,
-            "custom" => TaxType::Custom,
-            _ => TaxType::SalesTax,
-        }
-    }
-
-    fn parse_jurisdiction_level(s: &str) -> JurisdictionLevel {
-        match s {
-            "country" => JurisdictionLevel::Country,
-            "state" => JurisdictionLevel::State,
-            "county" => JurisdictionLevel::County,
-            "city" => JurisdictionLevel::City,
-            "district" => JurisdictionLevel::District,
-            "special" => JurisdictionLevel::Special,
-            _ => JurisdictionLevel::Country,
-        }
-    }
-
-    fn parse_product_category(s: &str) -> ProductTaxCategory {
-        match s {
-            "standard" => ProductTaxCategory::Standard,
-            "reduced" => ProductTaxCategory::Reduced,
-            "super_reduced" => ProductTaxCategory::SuperReduced,
-            "zero_rated" => ProductTaxCategory::ZeroRated,
-            "exempt" => ProductTaxCategory::Exempt,
-            "digital" => ProductTaxCategory::Digital,
-            "clothing" => ProductTaxCategory::Clothing,
-            "food" => ProductTaxCategory::Food,
-            "prepared_food" => ProductTaxCategory::PreparedFood,
-            "medical" => ProductTaxCategory::Medical,
-            "educational" => ProductTaxCategory::Educational,
-            "luxury" => ProductTaxCategory::Luxury,
-            _ => ProductTaxCategory::Standard,
-        }
-    }
-
-    fn parse_exemption_type(s: &str) -> ExemptionType {
-        match s {
-            "resale" => ExemptionType::Resale,
-            "non_profit" => ExemptionType::NonProfit,
-            "government" => ExemptionType::Government,
-            "educational" => ExemptionType::Educational,
-            "religious" => ExemptionType::Religious,
-            "medical" => ExemptionType::Medical,
-            "manufacturing" => ExemptionType::Manufacturing,
-            "agricultural" => ExemptionType::Agricultural,
-            "export" => ExemptionType::Export,
-            "diplomatic" => ExemptionType::Diplomatic,
-            _ => ExemptionType::Other,
-        }
-    }
-
-    fn parse_calculation_method(s: &str) -> TaxCalculationMethod {
-        match s {
-            "inclusive" => TaxCalculationMethod::Inclusive,
-            _ => TaxCalculationMethod::Exclusive,
-        }
-    }
-
-    fn parse_compound_method(s: &str) -> TaxCompoundMethod {
-        match s {
-            "compound" => TaxCompoundMethod::Compound,
-            "separate" => TaxCompoundMethod::Separate,
-            _ => TaxCompoundMethod::Combined,
-        }
-    }
-
-    fn jurisdiction_level_str(level: JurisdictionLevel) -> &'static str {
-        match level {
-            JurisdictionLevel::Country => "country",
-            JurisdictionLevel::State => "state",
-            JurisdictionLevel::County => "county",
-            JurisdictionLevel::City => "city",
-            JurisdictionLevel::District => "district",
-            JurisdictionLevel::Special => "special",
-        }
-    }
-
-    fn exemption_type_str(t: ExemptionType) -> &'static str {
-        match t {
-            ExemptionType::Resale => "resale",
-            ExemptionType::NonProfit => "non_profit",
-            ExemptionType::Government => "government",
-            ExemptionType::Educational => "educational",
-            ExemptionType::Religious => "religious",
-            ExemptionType::Medical => "medical",
-            ExemptionType::Manufacturing => "manufacturing",
-            ExemptionType::Agricultural => "agricultural",
-            ExemptionType::Export => "export",
-            ExemptionType::Diplomatic => "diplomatic",
-            ExemptionType::Other => "other",
+    fn parse_date_opt(
+        value: Option<String>,
+        entity: &str,
+        field: &str,
+    ) -> rusqlite::Result<Option<NaiveDate>> {
+        match value {
+            Some(ref val) if !val.is_empty() => Ok(Some(parse_date_row(val, entity, field)?)),
+            _ => Ok(None),
         }
     }
 }
@@ -163,22 +56,35 @@ impl SqliteTaxRepository {
             params![id.to_string()],
             |row| {
                 let postal_codes_json: String = row.get(9)?;
-                let postal_codes: Vec<String> = serde_json::from_str(&postal_codes_json).unwrap_or_default();
+                let postal_codes: Vec<String> =
+                    parse_json_row(&postal_codes_json, "tax_jurisdiction", "postal_codes")?;
 
                 Ok(TaxJurisdiction {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    parent_id: row.get::<_, Option<String>>(1)?.and_then(|s| s.parse().ok()),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_jurisdiction", "id")?,
+                    parent_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(1)?,
+                        "tax_jurisdiction",
+                        "parent_id",
+                    )?,
                     name: row.get(2)?,
                     code: row.get(3)?,
-                    level: Self::parse_jurisdiction_level(&row.get::<_, String>(4)?),
+                    level: parse_enum_row(&row.get::<_, String>(4)?, "tax_jurisdiction", "level")?,
                     country_code: row.get(5)?,
                     state_code: row.get(6)?,
                     county: row.get(7)?,
                     city: row.get(8)?,
                     postal_codes,
                     active: row.get::<_, i32>(10)? != 0,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(11)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(12)?),
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(11)?,
+                        "tax_jurisdiction",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(12)?,
+                        "tax_jurisdiction",
+                        "updated_at",
+                    )?,
                 })
             },
         );
@@ -200,22 +106,35 @@ impl SqliteTaxRepository {
             params![code],
             |row| {
                 let postal_codes_json: String = row.get(9)?;
-                let postal_codes: Vec<String> = serde_json::from_str(&postal_codes_json).unwrap_or_default();
+                let postal_codes: Vec<String> =
+                    parse_json_row(&postal_codes_json, "tax_jurisdiction", "postal_codes")?;
 
                 Ok(TaxJurisdiction {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    parent_id: row.get::<_, Option<String>>(1)?.and_then(|s| s.parse().ok()),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_jurisdiction", "id")?,
+                    parent_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(1)?,
+                        "tax_jurisdiction",
+                        "parent_id",
+                    )?,
                     name: row.get(2)?,
                     code: row.get(3)?,
-                    level: Self::parse_jurisdiction_level(&row.get::<_, String>(4)?),
+                    level: parse_enum_row(&row.get::<_, String>(4)?, "tax_jurisdiction", "level")?,
                     country_code: row.get(5)?,
                     state_code: row.get(6)?,
                     county: row.get(7)?,
                     city: row.get(8)?,
                     postal_codes,
                     active: row.get::<_, i32>(10)? != 0,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(11)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(12)?),
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(11)?,
+                        "tax_jurisdiction",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(12)?,
+                        "tax_jurisdiction",
+                        "updated_at",
+                    )?,
                 })
             },
         );
@@ -249,7 +168,7 @@ impl SqliteTaxRepository {
 
         if let Some(level) = &filter.level {
             query.push_str(" AND level = ?");
-            params_vec.push(Self::jurisdiction_level_str(*level).to_string());
+            params_vec.push(level.to_string());
         }
 
         if filter.active_only {
@@ -263,22 +182,35 @@ impl SqliteTaxRepository {
 
         let rows = stmt.query_map(params.as_slice(), |row| {
             let postal_codes_json: String = row.get(9)?;
-            let postal_codes: Vec<String> = serde_json::from_str(&postal_codes_json).unwrap_or_default();
+            let postal_codes: Vec<String> =
+                parse_json_row(&postal_codes_json, "tax_jurisdiction", "postal_codes")?;
 
             Ok(TaxJurisdiction {
-                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                parent_id: row.get::<_, Option<String>>(1)?.and_then(|s| s.parse().ok()),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_jurisdiction", "id")?,
+                parent_id: parse_uuid_opt_row(
+                    row.get::<_, Option<String>>(1)?,
+                    "tax_jurisdiction",
+                    "parent_id",
+                )?,
                 name: row.get(2)?,
                 code: row.get(3)?,
-                level: Self::parse_jurisdiction_level(&row.get::<_, String>(4)?),
+                level: parse_enum_row(&row.get::<_, String>(4)?, "tax_jurisdiction", "level")?,
                 country_code: row.get(5)?,
                 state_code: row.get(6)?,
                 county: row.get(7)?,
                 city: row.get(8)?,
                 postal_codes,
                 active: row.get::<_, i32>(10)? != 0,
-                created_at: Self::parse_datetime(&row.get::<_, String>(11)?),
-                updated_at: Self::parse_datetime(&row.get::<_, String>(12)?),
+                created_at: parse_datetime_row(
+                    &row.get::<_, String>(11)?,
+                    "tax_jurisdiction",
+                    "created_at",
+                )?,
+                updated_at: parse_datetime_row(
+                    &row.get::<_, String>(12)?,
+                    "tax_jurisdiction",
+                    "updated_at",
+                )?,
             })
         }).map_err(map_db_error)?;
 
@@ -302,7 +234,7 @@ impl SqliteTaxRepository {
                 input.parent_id.map(|id| id.to_string()),
                 input.name,
                 input.code,
-                Self::jurisdiction_level_str(input.level),
+                input.level.to_string(),
                 input.country_code,
                 input.state_code,
                 input.county,
@@ -332,23 +264,51 @@ impl SqliteTaxRepository {
             params![id.to_string()],
             |row| {
                 Ok(TaxRate {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    jurisdiction_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-                    tax_type: Self::parse_tax_type(&row.get::<_, String>(2)?),
-                    product_category: Self::parse_product_category(&row.get::<_, String>(3)?),
-                    rate: Self::parse_decimal(&row.get::<_, String>(4)?),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_rate", "id")?,
+                    jurisdiction_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "tax_rate",
+                        "jurisdiction_id",
+                    )?,
+                    tax_type: parse_enum_row(&row.get::<_, String>(2)?, "tax_rate", "tax_type")?,
+                    product_category: parse_enum_row(
+                        &row.get::<_, String>(3)?,
+                        "tax_rate",
+                        "product_category",
+                    )?,
+                    rate: parse_decimal_row(&row.get::<_, String>(4)?, "tax_rate", "rate")?,
                     name: row.get(5)?,
                     description: row.get(6)?,
                     is_compound: row.get::<_, i32>(7)? != 0,
                     priority: row.get(8)?,
-                    threshold_min: row.get::<_, Option<String>>(9)?.map(|s| Self::parse_decimal(&s)),
-                    threshold_max: row.get::<_, Option<String>>(10)?.map(|s| Self::parse_decimal(&s)),
-                    fixed_amount: row.get::<_, Option<String>>(11)?.map(|s| Self::parse_decimal(&s)),
-                    effective_from: Self::parse_date(&row.get::<_, String>(12)?),
-                    effective_to: row.get::<_, Option<String>>(13)?.map(|s| Self::parse_date(&s)),
+                    threshold_min: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(9)?,
+                        "tax_rate",
+                        "threshold_min",
+                    )?,
+                    threshold_max: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(10)?,
+                        "tax_rate",
+                        "threshold_max",
+                    )?,
+                    fixed_amount: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(11)?,
+                        "tax_rate",
+                        "fixed_amount",
+                    )?,
+                    effective_from: parse_date_row(
+                        &row.get::<_, String>(12)?,
+                        "tax_rate",
+                        "effective_from",
+                    )?,
+                    effective_to: Self::parse_date_opt(
+                        row.get::<_, Option<String>>(13)?,
+                        "tax_rate",
+                        "effective_to",
+                    )?,
                     active: row.get::<_, i32>(14)? != 0,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(15)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(16)?),
+                    created_at: parse_datetime_row(&row.get::<_, String>(15)?, "tax_rate", "created_at")?,
+                    updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "tax_rate", "updated_at")?,
                 })
             },
         );
@@ -377,12 +337,12 @@ impl SqliteTaxRepository {
 
         if let Some(tax_type) = &filter.tax_type {
             query.push_str(" AND tax_type = ?");
-            params_vec.push(tax_type.as_str().to_string());
+            params_vec.push(tax_type.to_string());
         }
 
         if let Some(category) = &filter.product_category {
             query.push_str(" AND product_category = ?");
-            params_vec.push(category.as_str().to_string());
+            params_vec.push(category.to_string());
         }
 
         if filter.active_only {
@@ -402,23 +362,51 @@ impl SqliteTaxRepository {
 
         let rows = stmt.query_map(params.as_slice(), |row| {
             Ok(TaxRate {
-                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                jurisdiction_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-                tax_type: Self::parse_tax_type(&row.get::<_, String>(2)?),
-                product_category: Self::parse_product_category(&row.get::<_, String>(3)?),
-                rate: Self::parse_decimal(&row.get::<_, String>(4)?),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_rate", "id")?,
+                jurisdiction_id: parse_uuid_row(
+                    &row.get::<_, String>(1)?,
+                    "tax_rate",
+                    "jurisdiction_id",
+                )?,
+                tax_type: parse_enum_row(&row.get::<_, String>(2)?, "tax_rate", "tax_type")?,
+                product_category: parse_enum_row(
+                    &row.get::<_, String>(3)?,
+                    "tax_rate",
+                    "product_category",
+                )?,
+                rate: parse_decimal_row(&row.get::<_, String>(4)?, "tax_rate", "rate")?,
                 name: row.get(5)?,
                 description: row.get(6)?,
                 is_compound: row.get::<_, i32>(7)? != 0,
                 priority: row.get(8)?,
-                threshold_min: row.get::<_, Option<String>>(9)?.map(|s| Self::parse_decimal(&s)),
-                threshold_max: row.get::<_, Option<String>>(10)?.map(|s| Self::parse_decimal(&s)),
-                fixed_amount: row.get::<_, Option<String>>(11)?.map(|s| Self::parse_decimal(&s)),
-                effective_from: Self::parse_date(&row.get::<_, String>(12)?),
-                effective_to: row.get::<_, Option<String>>(13)?.map(|s| Self::parse_date(&s)),
+                threshold_min: parse_decimal_opt_row(
+                    row.get::<_, Option<String>>(9)?,
+                    "tax_rate",
+                    "threshold_min",
+                )?,
+                threshold_max: parse_decimal_opt_row(
+                    row.get::<_, Option<String>>(10)?,
+                    "tax_rate",
+                    "threshold_max",
+                )?,
+                fixed_amount: parse_decimal_opt_row(
+                    row.get::<_, Option<String>>(11)?,
+                    "tax_rate",
+                    "fixed_amount",
+                )?,
+                effective_from: parse_date_row(
+                    &row.get::<_, String>(12)?,
+                    "tax_rate",
+                    "effective_from",
+                )?,
+                effective_to: Self::parse_date_opt(
+                    row.get::<_, Option<String>>(13)?,
+                    "tax_rate",
+                    "effective_to",
+                )?,
                 active: row.get::<_, i32>(14)? != 0,
-                created_at: Self::parse_datetime(&row.get::<_, String>(15)?),
-                updated_at: Self::parse_datetime(&row.get::<_, String>(16)?),
+                created_at: parse_datetime_row(&row.get::<_, String>(15)?, "tax_rate", "created_at")?,
+                updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "tax_rate", "updated_at")?,
             })
         }).map_err(map_db_error)?;
 
@@ -479,8 +467,8 @@ impl SqliteTaxRepository {
             params![
                 id.to_string(),
                 input.jurisdiction_id.to_string(),
-                input.tax_type.as_str(),
-                input.product_category.as_str(),
+                input.tax_type.to_string(),
+                input.product_category.to_string(),
                 input.rate.to_string(),
                 input.name,
                 input.description,
@@ -515,35 +503,68 @@ impl SqliteTaxRepository {
             params![id.to_string()],
             |row| {
                 let jurisdiction_ids_json: String = row.get(5)?;
-                let jurisdiction_ids: Vec<Uuid> = serde_json::from_str::<Vec<String>>(&jurisdiction_ids_json)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let raw_jurisdiction_ids: Vec<String> = parse_json_row(
+                    &jurisdiction_ids_json,
+                    "tax_exemption",
+                    "jurisdiction_ids",
+                )?;
+                let jurisdiction_ids = raw_jurisdiction_ids
+                    .into_iter()
+                    .map(|value| parse_uuid_row(&value, "tax_exemption", "jurisdiction_ids"))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
 
                 let categories_json: String = row.get(6)?;
-                let exempt_categories: Vec<ProductTaxCategory> = serde_json::from_str::<Vec<String>>(&categories_json)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|s| Self::parse_product_category(s))
-                    .collect();
+                let raw_categories: Vec<String> =
+                    parse_json_row(&categories_json, "tax_exemption", "exempt_categories")?;
+                let exempt_categories = raw_categories
+                    .into_iter()
+                    .map(|value| parse_enum_row(&value, "tax_exemption", "exempt_categories"))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
 
                 Ok(TaxExemption {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                    customer_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-                    exemption_type: Self::parse_exemption_type(&row.get::<_, String>(2)?),
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_exemption", "id")?,
+                    customer_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "tax_exemption",
+                        "customer_id",
+                    )?,
+                    exemption_type: parse_enum_row(
+                        &row.get::<_, String>(2)?,
+                        "tax_exemption",
+                        "exemption_type",
+                    )?,
                     certificate_number: row.get(3)?,
                     issuing_authority: row.get(4)?,
                     jurisdiction_ids,
                     exempt_categories,
-                    effective_from: Self::parse_date(&row.get::<_, String>(7)?),
-                    expires_at: row.get::<_, Option<String>>(8)?.map(|s| Self::parse_date(&s)),
+                    effective_from: parse_date_row(
+                        &row.get::<_, String>(7)?,
+                        "tax_exemption",
+                        "effective_from",
+                    )?,
+                    expires_at: Self::parse_date_opt(
+                        row.get::<_, Option<String>>(8)?,
+                        "tax_exemption",
+                        "expires_at",
+                    )?,
                     verified: row.get::<_, i32>(9)? != 0,
-                    verified_at: row.get::<_, Option<String>>(10)?.map(|s| Self::parse_datetime(&s)),
+                    verified_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>(10)?,
+                        "tax_exemption",
+                        "verified_at",
+                    )?,
                     notes: row.get(11)?,
                     active: row.get::<_, i32>(12)? != 0,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(13)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(14)?),
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(13)?,
+                        "tax_exemption",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(14)?,
+                        "tax_exemption",
+                        "updated_at",
+                    )?,
                 })
             },
         );
@@ -568,35 +589,65 @@ impl SqliteTaxRepository {
 
         let rows = stmt.query_map(params![customer_id.to_string(), &today, &today], |row| {
             let jurisdiction_ids_json: String = row.get(5)?;
-            let jurisdiction_ids: Vec<Uuid> = serde_json::from_str::<Vec<String>>(&jurisdiction_ids_json)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let raw_jurisdiction_ids: Vec<String> =
+                parse_json_row(&jurisdiction_ids_json, "tax_exemption", "jurisdiction_ids")?;
+            let jurisdiction_ids = raw_jurisdiction_ids
+                .into_iter()
+                .map(|value| parse_uuid_row(&value, "tax_exemption", "jurisdiction_ids"))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
 
             let categories_json: String = row.get(6)?;
-            let exempt_categories: Vec<ProductTaxCategory> = serde_json::from_str::<Vec<String>>(&categories_json)
-                .unwrap_or_default()
-                .iter()
-                .map(|s| Self::parse_product_category(s))
-                .collect();
+            let raw_categories: Vec<String> =
+                parse_json_row(&categories_json, "tax_exemption", "exempt_categories")?;
+            let exempt_categories = raw_categories
+                .into_iter()
+                .map(|value| parse_enum_row(&value, "tax_exemption", "exempt_categories"))
+                .collect::<rusqlite::Result<Vec<_>>>()?;
 
             Ok(TaxExemption {
-                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-                customer_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-                exemption_type: Self::parse_exemption_type(&row.get::<_, String>(2)?),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_exemption", "id")?,
+                customer_id: parse_uuid_row(
+                    &row.get::<_, String>(1)?,
+                    "tax_exemption",
+                    "customer_id",
+                )?,
+                exemption_type: parse_enum_row(
+                    &row.get::<_, String>(2)?,
+                    "tax_exemption",
+                    "exemption_type",
+                )?,
                 certificate_number: row.get(3)?,
                 issuing_authority: row.get(4)?,
                 jurisdiction_ids,
                 exempt_categories,
-                effective_from: Self::parse_date(&row.get::<_, String>(7)?),
-                expires_at: row.get::<_, Option<String>>(8)?.map(|s| Self::parse_date(&s)),
+                effective_from: parse_date_row(
+                    &row.get::<_, String>(7)?,
+                    "tax_exemption",
+                    "effective_from",
+                )?,
+                expires_at: Self::parse_date_opt(
+                    row.get::<_, Option<String>>(8)?,
+                    "tax_exemption",
+                    "expires_at",
+                )?,
                 verified: row.get::<_, i32>(9)? != 0,
-                verified_at: row.get::<_, Option<String>>(10)?.map(|s| Self::parse_datetime(&s)),
+                verified_at: parse_datetime_opt_row(
+                    row.get::<_, Option<String>>(10)?,
+                    "tax_exemption",
+                    "verified_at",
+                )?,
                 notes: row.get(11)?,
                 active: row.get::<_, i32>(12)? != 0,
-                created_at: Self::parse_datetime(&row.get::<_, String>(13)?),
-                updated_at: Self::parse_datetime(&row.get::<_, String>(14)?),
+                created_at: parse_datetime_row(
+                    &row.get::<_, String>(13)?,
+                    "tax_exemption",
+                    "created_at",
+                )?,
+                updated_at: parse_datetime_row(
+                    &row.get::<_, String>(14)?,
+                    "tax_exemption",
+                    "updated_at",
+                )?,
             })
         }).map_err(map_db_error)?;
 
@@ -613,7 +664,11 @@ impl SqliteTaxRepository {
         ).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let categories_json = serde_json::to_string(
-            &input.exempt_categories.iter().map(|c| c.as_str()).collect::<Vec<_>>()
+            &input
+                .exempt_categories
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
         ).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -624,7 +679,7 @@ impl SqliteTaxRepository {
             params![
                 id.to_string(),
                 input.customer_id.to_string(),
-                Self::exemption_type_str(input.exemption_type),
+                input.exemption_type.to_string(),
                 input.certificate_number,
                 input.issuing_authority,
                 jurisdiction_ids_json,
@@ -655,26 +710,54 @@ impl SqliteTaxRepository {
              FROM tax_settings WHERE id = 'default'",
             [],
             |row| {
-                let origin_address: Option<TaxAddress> = row.get::<_, Option<String>>(7)?
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let origin_address_json: Option<String> = row.get(7)?;
+                let origin_address: Option<TaxAddress> =
+                    parse_json_opt_row(origin_address_json, "tax_settings", "origin_address")?;
+
+                let id_str: String = row.get(0)?;
+                let id = if id_str == "default" {
+                    Uuid::nil()
+                } else {
+                    parse_uuid_row(&id_str, "tax_settings", "id")?
+                };
 
                 Ok(TaxSettings {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                    id,
                     enabled: row.get::<_, i32>(1)? != 0,
-                    calculation_method: Self::parse_calculation_method(&row.get::<_, String>(2)?),
-                    compound_method: Self::parse_compound_method(&row.get::<_, String>(3)?),
+                    calculation_method: parse_enum_row(
+                        &row.get::<_, String>(2)?,
+                        "tax_settings",
+                        "calculation_method",
+                    )?,
+                    compound_method: parse_enum_row(
+                        &row.get::<_, String>(3)?,
+                        "tax_settings",
+                        "compound_method",
+                    )?,
                     tax_shipping: row.get::<_, i32>(4)? != 0,
                     tax_handling: row.get::<_, i32>(5)? != 0,
                     tax_gift_wrap: row.get::<_, i32>(6)? != 0,
                     origin_address,
-                    default_product_category: Self::parse_product_category(&row.get::<_, String>(8)?),
+                    default_product_category: parse_enum_row(
+                        &row.get::<_, String>(8)?,
+                        "tax_settings",
+                        "default_product_category",
+                    )?,
                     rounding_mode: row.get(9)?,
                     decimal_places: row.get(10)?,
                     validate_addresses: row.get::<_, i32>(11)? != 0,
                     tax_provider: row.get(12)?,
                     provider_credentials: row.get(13)?,
-                    created_at: Self::parse_datetime(&row.get::<_, String>(14)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(15)?),
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(14)?,
+                        "tax_settings",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(15)?,
+                        "tax_settings",
+                        "updated_at",
+                    )?,
                 })
             },
         );
@@ -696,16 +779,8 @@ impl SqliteTaxRepository {
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let calc_method = match settings.calculation_method {
-            TaxCalculationMethod::Inclusive => "inclusive",
-            TaxCalculationMethod::Exclusive => "exclusive",
-        };
-
-        let compound_method = match settings.compound_method {
-            TaxCompoundMethod::Combined => "combined",
-            TaxCompoundMethod::Compound => "compound",
-            TaxCompoundMethod::Separate => "separate",
-        };
+        let calc_method = settings.calculation_method.to_string();
+        let compound_method = settings.compound_method.to_string();
 
         conn.execute(
             "INSERT INTO tax_settings (id, enabled, calculation_method, compound_method, tax_shipping, tax_handling, tax_gift_wrap, origin_address, default_product_category, rounding_mode, decimal_places, validate_addresses, tax_provider, provider_credentials, updated_at)
@@ -733,7 +808,7 @@ impl SqliteTaxRepository {
                 settings.tax_handling as i32,
                 settings.tax_gift_wrap as i32,
                 origin_address_json,
-                settings.default_product_category.as_str(),
+                settings.default_product_category.to_string(),
                 settings.rounding_mode,
                 settings.decimal_places,
                 settings.validate_addresses as i32,

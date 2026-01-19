@@ -315,17 +315,12 @@ pub(crate) use parse_helpers::{
     parse_decimal_row, parse_decimal_opt_row,
     parse_json_row, parse_json_opt_row,
     parse_date_row,
+    parse_enum_row,
     // Non-row variants for use outside rusqlite closures
     parse_uuid, parse_uuid_opt, parse_datetime, parse_datetime_opt,
     parse_decimal as parse_decimal_strict, parse_decimal_opt,
+    parse_enum,
 };
-
-/// Legacy helper to parse decimal from string (for backward compatibility during migration)
-/// TODO: Migrate all usages to parse_decimal_row or parse_decimal_strict for proper error handling
-#[allow(dead_code)]
-pub(crate) fn parse_decimal(s: &str) -> rust_decimal::Decimal {
-    s.parse().unwrap_or_default()
-}
 
 // ============================================================================
 // Batch Operation Helpers

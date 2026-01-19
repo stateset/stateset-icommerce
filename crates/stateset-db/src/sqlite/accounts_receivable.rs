@@ -2,7 +2,7 @@
 
 use crate::sqlite::{
     map_db_error, parse_decimal_row, parse_decimal_opt_row, parse_datetime_row,
-    parse_datetime_opt_row, parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_opt_row, parse_enum_row, parse_uuid_row, parse_uuid_opt_row,
 };
 use crate::sqlite::parse_helpers::{
     parse_datetime as parse_datetime_safe, parse_decimal as parse_decimal_safe,
@@ -34,13 +34,18 @@ impl SqliteAccountsReceivableRepository {
     }
 
     fn map_collection_activity_row(row: &rusqlite::Row) -> rusqlite::Result<CollectionActivity> {
+        let dunning_letter_type = match row.get::<_, Option<String>>(5)? {
+            Some(value) => Some(parse_enum_row(&value, "collection_activity", "dunning_letter_type")?),
+            None => None,
+        };
+
         Ok(CollectionActivity {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "collection_activity", "id")?,
             invoice_id: parse_uuid_row(&row.get::<_, String>(1)?, "collection_activity", "invoice_id")?,
             customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "collection_activity", "customer_id")?,
-            activity_type: row.get::<_, String>(3)?.parse().unwrap_or_default(),
+            activity_type: parse_enum_row(&row.get::<_, String>(3)?, "collection_activity", "activity_type")?,
             activity_date: parse_datetime_row(&row.get::<_, String>(4)?, "collection_activity", "activity_date")?,
-            dunning_letter_type: row.get::<_, Option<String>>(5)?.and_then(|s| s.parse().ok()),
+            dunning_letter_type,
             notes: row.get(6)?,
             contact_method: row.get(7)?,
             contact_result: row.get(8)?,
@@ -58,7 +63,7 @@ impl SqliteAccountsReceivableRepository {
             invoice_id: parse_uuid_row(&row.get::<_, String>(2)?, "write_off", "invoice_id")?,
             customer_id: parse_uuid_row(&row.get::<_, String>(3)?, "write_off", "customer_id")?,
             amount: parse_decimal_row(&row.get::<_, String>(4)?, "write_off", "amount")?,
-            reason: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+            reason: parse_enum_row(&row.get::<_, String>(5)?, "write_off", "reason")?,
             notes: row.get(6)?,
             write_off_date: parse_datetime_row(&row.get::<_, String>(7)?, "write_off", "write_off_date")?,
             approved_by: row.get(8)?,
@@ -75,11 +80,11 @@ impl SqliteAccountsReceivableRepository {
             credit_memo_number: row.get(1)?,
             customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "credit_memo", "customer_id")?,
             original_invoice_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "credit_memo", "original_invoice_id")?,
-            reason: row.get::<_, String>(4)?.parse().unwrap_or_default(),
+            reason: parse_enum_row(&row.get::<_, String>(4)?, "credit_memo", "reason")?,
             amount: parse_decimal_row(&row.get::<_, String>(5)?, "credit_memo", "amount")?,
             applied_amount: parse_decimal_row(&row.get::<_, String>(6)?, "credit_memo", "applied_amount")?,
             unapplied_amount: parse_decimal_row(&row.get::<_, String>(7)?, "credit_memo", "unapplied_amount")?,
-            status: row.get::<_, String>(8)?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>(8)?, "credit_memo", "status")?,
             notes: row.get(9)?,
             issue_date: parse_datetime_row(&row.get::<_, String>(10)?, "credit_memo", "issue_date")?,
             gl_journal_entry_id: parse_uuid_opt_row(row.get::<_, Option<String>>(11)?, "credit_memo", "gl_journal_entry_id")?,
@@ -427,7 +432,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 invoice_number: row.get(1)?,
                 order_id: parse_uuid_opt_row(row.get::<_, Option<String>>(2)?, "invoice", "order_id")?,
                 customer_id: parse_uuid_row(&row.get::<_, String>(3)?, "invoice", "customer_id")?,
-                status: row.get::<_, String>(4)?.parse().unwrap_or_default(),
+                status: parse_enum_row(&row.get::<_, String>(4)?, "invoice", "status")?,
                 invoice_type: stateset_core::InvoiceType::Standard,
                 invoice_date: parse_datetime_row(&row.get::<_, String>(5)?, "invoice", "invoice_date")?,
                 due_date: parse_datetime_row(&row.get::<_, String>(6)?, "invoice", "due_date")?,

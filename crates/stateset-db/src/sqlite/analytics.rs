@@ -1,6 +1,7 @@
 //! SQLite analytics repository implementation
 
-use super::{map_db_error, parse_decimal};
+use super::map_db_error;
+use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use chrono::{DateTime, Datelike, Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -86,6 +87,10 @@ impl SqliteAnalyticsRepository {
     }
 }
 
+fn parse_decimal_value(value: &str, field: &str) -> Result<Decimal> {
+    parse_decimal_with_context(value, "analytics", field)
+}
+
 impl AnalyticsRepository for SqliteAnalyticsRepository {
     fn get_sales_summary(&self, query: AnalyticsQuery) -> Result<SalesSummary> {
         let conn = self.conn()?;
@@ -153,8 +158,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or(("0".to_string(), 0));
 
-        let current_revenue = parse_decimal(&revenue);
-        let previous_revenue = parse_decimal(&prev_revenue);
+        let current_revenue = parse_decimal_value(&revenue, "revenue")?;
+        let previous_revenue = parse_decimal_value(&prev_revenue, "previous_revenue")?;
 
         // Calculate percentage changes
         let revenue_change_percent = if previous_revenue != Decimal::ZERO {
@@ -177,7 +182,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         Ok(SalesSummary {
             total_revenue: current_revenue,
             order_count: order_count as u64,
-            average_order_value: parse_decimal(&avg_order),
+            average_order_value: parse_decimal_value(&avg_order, "average_order_value")?,
             items_sold: items_sold as u64,
             unique_customers: unique_customers as u64,
             revenue_change_percent,
@@ -234,9 +239,10 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let mut results = Vec::new();
         for row in rows {
             let (period, revenue, order_count, period_start) = row.map_err(map_db_error)?;
+            let revenue = parse_decimal_value(&revenue, "revenue")?;
             results.push(RevenueByPeriod {
                 period,
-                revenue: parse_decimal(&revenue),
+                revenue,
                 order_count: order_count as u64,
                 period_start: DateTime::parse_from_rfc3339(&period_start)
                     .map(|dt| dt.with_timezone(&Utc))
@@ -293,14 +299,16 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         for row in rows {
             let (product_id, sku, name, units_sold, revenue, order_count, avg_price) =
                 row.map_err(map_db_error)?;
+            let revenue = parse_decimal_value(&revenue, "revenue")?;
+            let average_price = parse_decimal_value(&avg_price, "average_price")?;
             results.push(TopProduct {
                 product_id: product_id.and_then(|s| Uuid::parse_str(&s).ok()),
                 sku,
                 name,
                 units_sold: units_sold as u64,
-                revenue: parse_decimal(&revenue),
+                revenue,
                 order_count: order_count as u64,
-                average_price: parse_decimal(&avg_price),
+                average_price,
             });
         }
 
@@ -392,12 +400,16 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or_else(|_| "0".to_string());
 
+        let average_lifetime_value = parse_decimal_value(&avg_ltv, "average_lifetime_value")?;
+        let average_orders_per_customer =
+            parse_decimal_value(&avg_orders, "average_orders_per_customer")?;
+
         Ok(CustomerMetrics {
             total_customers: total_customers as u64,
             new_customers: new_customers as u64,
             returning_customers: returning_customers as u64,
-            average_lifetime_value: parse_decimal(&avg_ltv),
-            average_orders_per_customer: parse_decimal(&avg_orders),
+            average_lifetime_value,
+            average_orders_per_customer,
             retention_rate_percent: None,
         })
     }
@@ -450,13 +462,15 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         for row in rows {
             let (id, email, name, total_spent, order_count, avg_order, first_order, last_order) =
                 row.map_err(map_db_error)?;
+            let total_spent = parse_decimal_value(&total_spent, "total_spent")?;
+            let average_order_value = parse_decimal_value(&avg_order, "average_order_value")?;
             results.push(TopCustomer {
                 customer_id: Uuid::parse_str(&id).unwrap_or_default(),
                 email,
                 name,
-                total_spent: parse_decimal(&total_spent),
+                total_spent,
                 order_count: order_count as u64,
-                average_order_value: parse_decimal(&avg_order),
+                average_order_value,
                 first_order_date: first_order
                     .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                     .map(|dt| dt.with_timezone(&Utc)),
@@ -506,12 +520,14 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             )
             .unwrap_or_else(|_| "0".to_string());
 
+        let total_value = parse_decimal_value(&total_value, "total_value")?;
+
         Ok(InventoryHealth {
             total_skus: total_skus as u64,
             in_stock_skus: in_stock as u64,
             low_stock_skus: low_stock as u64,
             out_of_stock_skus: out_of_stock as u64,
-            total_value: parse_decimal(&total_value),
+            total_value,
             turnover_ratio: None,
         })
     }
@@ -554,13 +570,19 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         for row in rows {
             let (sku, name, on_hand, allocated, available, reorder_point) =
                 row.map_err(map_db_error)?;
+            let on_hand = parse_decimal_value(&on_hand, "on_hand")?;
+            let allocated = parse_decimal_value(&allocated, "allocated")?;
+            let available = parse_decimal_value(&available, "available")?;
+            let reorder_point = reorder_point
+                .map(|s| parse_decimal_value(&s, "reorder_point"))
+                .transpose()?;
             results.push(LowStockItem {
                 sku,
                 name,
-                on_hand: parse_decimal(&on_hand),
-                allocated: parse_decimal(&allocated),
-                available: parse_decimal(&available),
-                reorder_point: reorder_point.map(|s| parse_decimal(&s)),
+                on_hand,
+                allocated,
+                available,
+                reorder_point,
                 average_daily_sales: None,
                 days_of_stock: None,
             });
@@ -832,10 +854,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             });
         }
 
+        let total_refunded = parse_decimal_value(&total_refunded, "total_refunded")?;
+
         Ok(ReturnMetrics {
             total_returns: total_returns as u64,
             return_rate_percent: return_rate,
-            total_refunded: parse_decimal(&total_refunded),
+            total_refunded,
             by_reason,
             top_returned_products,
         })

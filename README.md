@@ -576,6 +576,27 @@ stateset-sync groups:show <id>  # Show group details
 stateset-sync groups:my-groups  # List your group memberships
 ```
 
+### Validation & Errors
+
+Inputs are validated at the repository layer (SKU format, required fields, currency codes, etc.)
+and errors include field-level context when possible.
+
+```rust
+use stateset_core::CommerceError;
+
+match commerce.orders().create(order_input) {
+    Ok(order) => println!("created order {}", order.order_number),
+    Err(err) if err.is_validation() => {
+        eprintln!("validation error: {}", err);
+    }
+    Err(err) => {
+        eprintln!("unexpected error: {}", err);
+    }
+}
+```
+
+Order status updates enforce the core state machine (cancel before shipment, refund after delivery).
+
 ---
 
 ## Production Notes

@@ -79,77 +79,137 @@ impl PgWarrantyRepository {
         Self { pool }
     }
 
-    fn parse_status(s: &str) -> WarrantyStatus {
-        s.parse().unwrap_or_default()
+    fn row_to_warranty(row: WarrantyRow) -> Result<Warranty> {
+        let WarrantyRow {
+            id,
+            warranty_number,
+            customer_id,
+            order_id,
+            order_item_id,
+            product_id,
+            sku,
+            serial_number,
+            status,
+            warranty_type,
+            provider,
+            coverage_description,
+            purchase_date,
+            start_date,
+            end_date,
+            duration_months,
+            max_coverage_amount,
+            deductible,
+            max_claims,
+            claims_used,
+            terms,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: WarrantyStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid warranty.status '{}': {}", status, e))
+        })?;
+        let warranty_type: WarrantyType = warranty_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid warranty.warranty_type '{}': {}",
+                warranty_type, e
+            ))
+        })?;
+
+        Ok(Warranty {
+            id,
+            warranty_number,
+            customer_id,
+            order_id,
+            order_item_id,
+            product_id,
+            sku,
+            serial_number,
+            status,
+            warranty_type,
+            provider,
+            coverage_description,
+            purchase_date,
+            start_date,
+            end_date,
+            duration_months,
+            max_coverage_amount,
+            deductible,
+            max_claims,
+            claims_used,
+            terms,
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn parse_type(s: &str) -> WarrantyType {
-        s.parse().unwrap_or_default()
-    }
+    fn row_to_claim(row: ClaimRow) -> Result<WarrantyClaim> {
+        let ClaimRow {
+            id,
+            claim_number,
+            warranty_id,
+            customer_id,
+            status,
+            resolution,
+            issue_description,
+            issue_category,
+            issue_date,
+            contact_phone,
+            contact_email,
+            shipping_address,
+            repair_cost,
+            replacement_product_id,
+            refund_amount,
+            denial_reason,
+            internal_notes,
+            customer_notes,
+            submitted_at,
+            approved_at,
+            resolved_at,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn parse_claim_status(s: &str) -> ClaimStatus {
-        s.parse().unwrap_or_default()
-    }
+        let status: ClaimStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid warranty_claim.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let resolution: ClaimResolution = resolution.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid warranty_claim.resolution '{}': {}",
+                resolution, e
+            ))
+        })?;
 
-    fn parse_resolution(s: &str) -> ClaimResolution {
-        s.parse().unwrap_or_default()
-    }
-
-    fn row_to_warranty(row: WarrantyRow) -> Warranty {
-        Warranty {
-            id: row.id,
-            warranty_number: row.warranty_number,
-            customer_id: row.customer_id,
-            order_id: row.order_id,
-            order_item_id: row.order_item_id,
-            product_id: row.product_id,
-            sku: row.sku,
-            serial_number: row.serial_number,
-            status: Self::parse_status(&row.status),
-            warranty_type: Self::parse_type(&row.warranty_type),
-            provider: row.provider,
-            coverage_description: row.coverage_description,
-            purchase_date: row.purchase_date,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            duration_months: row.duration_months,
-            max_coverage_amount: row.max_coverage_amount,
-            deductible: row.deductible,
-            max_claims: row.max_claims,
-            claims_used: row.claims_used,
-            terms: row.terms,
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
-    }
-
-    fn row_to_claim(row: ClaimRow) -> WarrantyClaim {
-        WarrantyClaim {
-            id: row.id,
-            claim_number: row.claim_number,
-            warranty_id: row.warranty_id,
-            customer_id: row.customer_id,
-            status: Self::parse_claim_status(&row.status),
-            resolution: Self::parse_resolution(&row.resolution),
-            issue_description: row.issue_description,
-            issue_category: row.issue_category,
-            issue_date: row.issue_date,
-            contact_phone: row.contact_phone,
-            contact_email: row.contact_email,
-            shipping_address: row.shipping_address,
-            repair_cost: row.repair_cost,
-            replacement_product_id: row.replacement_product_id,
-            refund_amount: row.refund_amount,
-            denial_reason: row.denial_reason,
-            internal_notes: row.internal_notes,
-            customer_notes: row.customer_notes,
-            submitted_at: row.submitted_at,
-            approved_at: row.approved_at,
-            resolved_at: row.resolved_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+        Ok(WarrantyClaim {
+            id,
+            claim_number,
+            warranty_id,
+            customer_id,
+            status,
+            resolution,
+            issue_description,
+            issue_category,
+            issue_date,
+            contact_phone,
+            contact_email,
+            shipping_address,
+            repair_cost,
+            replacement_product_id,
+            refund_amount,
+            denial_reason,
+            internal_notes,
+            customer_notes,
+            submitted_at,
+            approved_at,
+            resolved_at,
+            created_at,
+            updated_at,
+        })
     }
 
     /// Create warranty (async)
@@ -217,7 +277,7 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warranty))
+        row.map(Self::row_to_warranty).transpose()
     }
 
     /// Get warranty by number (async)
@@ -233,7 +293,7 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warranty))
+        row.map(Self::row_to_warranty).transpose()
     }
 
     /// Get warranty by serial number (async)
@@ -249,7 +309,7 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warranty))
+        row.map(Self::row_to_warranty).transpose()
     }
 
     /// Update warranty (async)
@@ -315,7 +375,11 @@ impl PgWarrantyRepository {
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_warranty).collect())
+        let mut warranties = Vec::with_capacity(rows.len());
+        for row in rows {
+            warranties.push(Self::row_to_warranty(row)?);
+        }
+        Ok(warranties)
     }
 
     /// Get warranties for customer (async)
@@ -417,7 +481,7 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_claim))
+        row.map(Self::row_to_claim).transpose()
     }
 
     /// Get warranty claim by number (async)
@@ -434,7 +498,7 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_claim))
+        row.map(Self::row_to_claim).transpose()
     }
 
     /// Update warranty claim (async)
@@ -508,7 +572,11 @@ impl PgWarrantyRepository {
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_claim).collect())
+        let mut claims = Vec::with_capacity(rows.len());
+        for row in rows {
+            claims.push(Self::row_to_claim(row)?);
+        }
+        Ok(claims)
     }
 
     /// Get claims for warranty (async)
@@ -770,7 +838,7 @@ impl PgWarrantyRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
 
-            let warranty = Self::row_to_warranty(row);
+            let warranty = Self::row_to_warranty(row)?;
 
             sqlx::query(
                 "UPDATE warranties SET status = $1, serial_number = $2, end_date = $3,
@@ -800,7 +868,7 @@ impl PgWarrantyRepository {
             .await
             .map_err(map_db_error)?;
 
-            warranties.push(Self::row_to_warranty(updated_row));
+            warranties.push(Self::row_to_warranty(updated_row)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -871,7 +939,11 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_warranty).collect())
+        let mut warranties = Vec::with_capacity(rows.len());
+        for row in rows {
+            warranties.push(Self::row_to_warranty(row)?);
+        }
+        Ok(warranties)
     }
 }
 

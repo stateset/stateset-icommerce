@@ -74,6 +74,24 @@ impl std::fmt::Display for ReturnStatus {
     }
 }
 
+impl std::str::FromStr for ReturnStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "requested" => Ok(Self::Requested),
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
+            "in_transit" | "intransit" => Ok(Self::InTransit),
+            "received" => Ok(Self::Received),
+            "inspecting" => Ok(Self::Inspecting),
+            "completed" => Ok(Self::Completed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            _ => Err(format!("Unknown return status: {}", s)),
+        }
+    }
+}
+
 /// Return reason enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +127,24 @@ impl std::fmt::Display for ReturnReason {
     }
 }
 
+impl std::str::FromStr for ReturnReason {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "defective" => Ok(Self::Defective),
+            "wrong_item" | "wrongitem" => Ok(Self::WrongItem),
+            "not_as_described" | "notasdescribed" => Ok(Self::NotAsDescribed),
+            "changed_mind" | "changedmind" => Ok(Self::ChangedMind),
+            "better_price_found" | "betterpricefound" => Ok(Self::BetterPriceFound),
+            "no_longer_needed" | "nolongerneeded" => Ok(Self::NoLongerNeeded),
+            "damaged" => Ok(Self::Damaged),
+            "other" => Ok(Self::Other),
+            _ => Err(format!("Unknown return reason: {}", s)),
+        }
+    }
+}
+
 /// Item condition on return
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +174,20 @@ impl std::fmt::Display for ItemCondition {
     }
 }
 
+impl std::str::FromStr for ItemCondition {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "new" => Ok(Self::New),
+            "opened" => Ok(Self::Opened),
+            "used" => Ok(Self::Used),
+            "damaged" => Ok(Self::Damaged),
+            "defective" => Ok(Self::Defective),
+            _ => Err(format!("Unknown item condition: {}", s)),
+        }
+    }
+}
 /// Input for creating a return
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateReturn {
@@ -201,6 +251,39 @@ pub struct ReturnFilter {
     pub to_date: Option<DateTime<Utc>>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_return_status_from_str() {
+        assert_eq!(ReturnStatus::from_str("in_transit").unwrap(), ReturnStatus::InTransit);
+        assert_eq!(ReturnStatus::from_str("intransit").unwrap(), ReturnStatus::InTransit);
+        assert_eq!(ReturnStatus::from_str("canceled").unwrap(), ReturnStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_return_reason_from_str() {
+        assert_eq!(ReturnReason::from_str("wrong_item").unwrap(), ReturnReason::WrongItem);
+        assert_eq!(ReturnReason::from_str("wrongitem").unwrap(), ReturnReason::WrongItem);
+        assert_eq!(
+            ReturnReason::from_str("notasdescribed").unwrap(),
+            ReturnReason::NotAsDescribed
+        );
+        assert_eq!(
+            ReturnReason::from_str("no_longer_needed").unwrap(),
+            ReturnReason::NoLongerNeeded
+        );
+    }
+
+    #[test]
+    fn test_item_condition_from_str() {
+        assert_eq!(ItemCondition::from_str("opened").unwrap(), ItemCondition::Opened);
+        assert_eq!(ItemCondition::from_str("damaged").unwrap(), ItemCondition::Damaged);
+    }
 }
 
 impl Return {

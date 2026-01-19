@@ -184,13 +184,12 @@ proptest! {
         let to = statuses[to_idx];
         let valid_transitions = valid_order_status_transitions(from);
 
-        // If transitioning to a different status, it should be in valid transitions
-        // (or we're staying in the same status)
-        if from != to {
-            let is_valid = valid_transitions.contains(&to);
-            // This test documents the state machine - transitions not in the valid list should fail
-            // In a real system, we'd assert that invalid transitions are rejected
-            prop_assert!(is_valid || valid_transitions.is_empty() || true); // Always passes - just documenting
+        let is_valid = from.can_transition_to(to);
+
+        if from == to {
+            prop_assert!(is_valid);
+        } else {
+            prop_assert_eq!(is_valid, valid_transitions.contains(&to));
         }
     }
 }

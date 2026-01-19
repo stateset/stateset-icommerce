@@ -209,6 +209,35 @@ where
     }
 }
 
+/// Parse a required enum within a rusqlite row mapping context.
+pub fn parse_enum_row<T>(
+    s: &str,
+    entity: &str,
+    field: &str,
+) -> std::result::Result<T, rusqlite::Error>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    s.parse::<T>().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid {} for {}.{}: '{}' - {}",
+                    std::any::type_name::<T>(),
+                    entity,
+                    field,
+                    s,
+                    e
+                ),
+            )),
+        )
+    })
+}
+
 // ============================================================================
 // Integer Parsing
 // ============================================================================

@@ -1,15 +1,14 @@
 //! SQLite implementation for Accounts Payable
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row, parse_uuid,
-    parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_uuid, parse_uuid_opt_row, parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
-use std::str::FromStr;
 use uuid::Uuid;
 
 use stateset_core::{
@@ -34,15 +33,13 @@ impl SqliteAccountsPayableRepository {
     }
 
     fn row_to_bill(row: &rusqlite::Row) -> rusqlite::Result<Bill> {
-        let status_str: String = row.get("status")?;
-
         Ok(Bill {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?,
             bill_number: row.get("bill_number")?,
             supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "bill", "supplier_id")?,
             supplier_name: row.get("supplier_name")?,
             purchase_order_id: parse_uuid_opt_row(row.get("purchase_order_id")?, "bill", "purchase_order_id")?,
-            status: BillStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "bill", "status")?,
             bill_date: parse_datetime_row(&row.get::<_, String>("bill_date")?, "bill", "bill_date")?,
             due_date: parse_datetime_row(&row.get::<_, String>("due_date")?, "bill", "due_date")?,
             payment_terms: row.get("payment_terms")?,
@@ -62,8 +59,6 @@ impl SqliteAccountsPayableRepository {
     }
 
     fn row_to_bill_item(row: &rusqlite::Row) -> rusqlite::Result<BillItem> {
-        use crate::sqlite::parse_decimal_opt_row;
-
         Ok(BillItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_item", "id")?,
             bill_id: parse_uuid_row(&row.get::<_, String>("bill_id")?, "bill_item", "bill_id")?,
@@ -81,37 +76,39 @@ impl SqliteAccountsPayableRepository {
     }
 
     fn row_to_payment(row: &rusqlite::Row) -> rusqlite::Result<BillPayment> {
-        let method_str: String = row.get("payment_method")?;
-        let status_str: String = row.get("status")?;
-
         Ok(BillPayment {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_payment", "id")?,
             payment_number: row.get("payment_number")?,
             supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "bill_payment", "supplier_id")?,
             payment_date: parse_datetime_row(&row.get::<_, String>("payment_date")?, "bill_payment", "payment_date")?,
-            payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
+            payment_method: parse_enum_row(
+                &row.get::<_, String>("payment_method")?,
+                "bill_payment",
+                "payment_method",
+            )?,
             amount: parse_decimal_row(&row.get::<_, String>("amount")?, "bill_payment", "amount")?,
             currency: row.get("currency")?,
             reference_number: row.get("reference_number")?,
             bank_account: row.get("bank_account")?,
             check_number: row.get("check_number")?,
             memo: row.get("memo")?,
-            status: PaymentStatusAP::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "bill_payment", "status")?,
             created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "bill_payment", "created_at")?,
             updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "bill_payment", "updated_at")?,
         })
     }
 
     fn row_to_payment_run(row: &rusqlite::Row) -> rusqlite::Result<PaymentRun> {
-        let status_str: String = row.get("status")?;
-        let method_str: String = row.get("payment_method")?;
-
         Ok(PaymentRun {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_run", "id")?,
             run_number: row.get("run_number")?,
-            status: PaymentRunStatus::from_str(&status_str).unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "payment_run", "status")?,
             payment_date: parse_datetime_row(&row.get::<_, String>("payment_date")?, "payment_run", "payment_date")?,
-            payment_method: PaymentMethodAP::from_str(&method_str).unwrap_or_default(),
+            payment_method: parse_enum_row(
+                &row.get::<_, String>("payment_method")?,
+                "payment_run",
+                "payment_method",
+            )?,
             total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "payment_run", "total_amount")?,
             payment_count: row.get("payment_count")?,
             notes: row.get("notes")?,
@@ -135,8 +132,8 @@ impl SqliteAccountsPayableRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(map_db_error)?;
 
-        let subtotal_dec = Decimal::from_f64_retain(subtotal_f).unwrap_or_default();
-        let tax_dec = Decimal::from_f64_retain(tax_f).unwrap_or_default();
+        let subtotal_dec = Self::decimal_from_f64(subtotal_f, "ap_bill_items", "subtotal")?;
+        let tax_dec = Self::decimal_from_f64(tax_f, "ap_bill_items", "tax_amount")?;
         let total = subtotal_dec + tax_dec;
 
         // Get amount paid as f64
@@ -144,9 +141,9 @@ impl SqliteAccountsPayableRepository {
             "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM ap_payment_allocations WHERE bill_id = ?1",
             params![bill_id.to_string()],
             |row| row.get(0),
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
-        let paid = Decimal::from_f64_retain(amount_paid_f).unwrap_or_default();
+        let paid = Self::decimal_from_f64(amount_paid_f, "ap_payment_allocations", "amount")?;
         let due = total - paid;
 
         conn.execute(
@@ -155,6 +152,15 @@ impl SqliteAccountsPayableRepository {
         ).map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    fn decimal_from_f64(value: f64, entity: &str, field: &str) -> Result<Decimal> {
+        Decimal::from_f64_retain(value).ok_or_else(|| {
+            CommerceError::DatabaseError(format!(
+                "Invalid decimal for {}.{}: '{}'",
+                entity, field, value
+            ))
+        })
     }
 }
 
@@ -339,7 +345,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
             params![bill_id.to_string()],
             |row| row.get(0),
-        ).unwrap_or(1);
+        ).map_err(map_db_error)?;
 
         let amount = item.quantity * item.unit_price;
         let tax_amount = item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
@@ -734,35 +740,39 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let current: f64 = conn.query_row(
             "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date >= datetime('now') AND status NOT IN ('paid', 'cancelled')",
             [], |row| row.get(0)
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
         let days_1_30: f64 = conn.query_row(
             "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now') AND due_date >= datetime('now', '-30 days') AND status NOT IN ('paid', 'cancelled')",
             [], |row| row.get(0)
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
         let days_31_60: f64 = conn.query_row(
             "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-30 days') AND due_date >= datetime('now', '-60 days') AND status NOT IN ('paid', 'cancelled')",
             [], |row| row.get(0)
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
         let days_61_90: f64 = conn.query_row(
             "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-60 days') AND due_date >= datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
             [], |row| row.get(0)
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
         let days_over_90: f64 = conn.query_row(
             "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
             [], |row| row.get(0)
-        ).unwrap_or(0.0);
+        ).map_err(map_db_error)?;
 
         Ok(ApAgingSummary {
-            current: Decimal::from_f64_retain(current).unwrap_or_default(),
-            days_1_30: Decimal::from_f64_retain(days_1_30).unwrap_or_default(),
-            days_31_60: Decimal::from_f64_retain(days_31_60).unwrap_or_default(),
-            days_61_90: Decimal::from_f64_retain(days_61_90).unwrap_or_default(),
-            days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
-            total: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
+            current: Self::decimal_from_f64(current, "ap_bills", "amount_due")?,
+            days_1_30: Self::decimal_from_f64(days_1_30, "ap_bills", "amount_due_1_30")?,
+            days_31_60: Self::decimal_from_f64(days_31_60, "ap_bills", "amount_due_31_60")?,
+            days_61_90: Self::decimal_from_f64(days_61_90, "ap_bills", "amount_due_61_90")?,
+            days_over_90: Self::decimal_from_f64(days_over_90, "ap_bills", "amount_due_over_90")?,
+            total: Self::decimal_from_f64(
+                current + days_1_30 + days_31_60 + days_61_90 + days_over_90,
+                "ap_bills",
+                "amount_due_total",
+            )?,
         })
     }
 
@@ -781,8 +791,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(SupplierApSummary {
             supplier_id,
             supplier_name: None,
-            total_outstanding: Decimal::from_f64_retain(outstanding).unwrap_or_default(),
-            total_overdue: Decimal::from_f64_retain(overdue).unwrap_or_default(),
+            total_outstanding: Self::decimal_from_f64(outstanding, "ap_bills", "amount_due")?,
+            total_overdue: Self::decimal_from_f64(overdue, "ap_bills", "amount_due_overdue")?,
             bill_count: count,
         })
     }
@@ -794,7 +804,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             [], |row| row.get(0)
         ).map_err(map_db_error)?;
 
-        Ok(Decimal::from_f64_retain(total).unwrap_or_default())
+        Ok(Self::decimal_from_f64(total, "ap_bills", "amount_due_total")?)
     }
 
     fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {

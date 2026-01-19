@@ -52,49 +52,120 @@ struct CartRow {
 }
 
 impl CartRow {
-    fn into_cart(self, items: Vec<CartItem>) -> Cart {
-        Cart {
-            id: self.id,
-            cart_number: self.cart_number,
-            customer_id: self.customer_id,
-            status: parse_cart_status(&self.status),
-            currency: self.currency,
+    fn into_cart(self, items: Vec<CartItem>) -> Result<Cart> {
+        let CartRow {
+            id,
+            cart_number,
+            customer_id,
+            status,
+            currency,
+            subtotal,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
+            grand_total,
+            customer_email,
+            customer_phone,
+            customer_name,
+            shipping_address,
+            billing_address,
+            billing_same_as_shipping,
+            fulfillment_type,
+            shipping_method,
+            shipping_carrier,
+            estimated_delivery,
+            payment_method,
+            payment_token,
+            payment_status,
+            coupon_code,
+            discount_description,
+            order_id,
+            order_number,
+            notes,
+            metadata,
+            inventory_reserved,
+            reservation_expires_at,
+            expires_at,
+            completed_at,
+            created_at,
+            updated_at,
+        } = self;
+
+        let status: CartStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid cart.status '{}': {}", status, e))
+        })?;
+        let payment_status: CartPaymentStatus = payment_status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid cart.payment_status '{}': {}",
+                payment_status, e
+            ))
+        })?;
+        let fulfillment_type = match fulfillment_type {
+            Some(value) => Some(value.parse::<FulfillmentType>().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid cart.fulfillment_type '{}': {}",
+                    value, e
+                ))
+            })?),
+            None => None,
+        };
+        let shipping_address = shipping_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for cart.shipping_address: {}",
+                    e
+                ))
+            })?;
+        let billing_address = billing_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for cart.billing_address: {}",
+                    e
+                ))
+            })?;
+
+        Ok(Cart {
+            id,
+            cart_number,
+            customer_id,
+            status,
+            currency,
             items,
-            subtotal: self.subtotal,
-            tax_amount: self.tax_amount,
-            shipping_amount: self.shipping_amount,
-            discount_amount: self.discount_amount,
-            grand_total: self.grand_total,
-            customer_email: self.customer_email,
-            customer_phone: self.customer_phone,
-            customer_name: self.customer_name,
-            shipping_address: self
-                .shipping_address
-                .and_then(|v| serde_json::from_value(v).ok()),
-            billing_address: self
-                .billing_address
-                .and_then(|v| serde_json::from_value(v).ok()),
-            billing_same_as_shipping: self.billing_same_as_shipping,
-            fulfillment_type: self.fulfillment_type.map(|s| parse_fulfillment_type(&s)),
-            shipping_method: self.shipping_method,
-            shipping_carrier: self.shipping_carrier,
-            estimated_delivery: self.estimated_delivery,
-            payment_method: self.payment_method,
-            payment_token: self.payment_token,
-            payment_status: parse_payment_status(&self.payment_status),
-            coupon_code: self.coupon_code,
-            discount_description: self.discount_description,
-            order_id: self.order_id,
-            order_number: self.order_number,
-            notes: self.notes,
-            metadata: self.metadata,
-            inventory_reserved: self.inventory_reserved,
-            reservation_expires_at: self.reservation_expires_at,
-            expires_at: self.expires_at,
-            completed_at: self.completed_at,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }
+            subtotal,
+            tax_amount,
+            shipping_amount,
+            discount_amount,
+            grand_total,
+            customer_email,
+            customer_phone,
+            customer_name,
+            shipping_address,
+            billing_address,
+            billing_same_as_shipping,
+            fulfillment_type,
+            shipping_method,
+            shipping_carrier,
+            estimated_delivery,
+            payment_method,
+            payment_token,
+            payment_status,
+            coupon_code,
+            discount_description,
+            order_id,
+            order_number,
+            notes,
+            metadata,
+            inventory_reserved,
+            reservation_expires_at,
+            expires_at,
+            completed_at,
+            created_at,
+            updated_at,
+        })
     }
 }
 
@@ -184,7 +255,7 @@ impl PgCartRepository {
         match row {
             Some(cart_row) => {
                 let items = self.get_cart_items_async(id).await?;
-                Ok(Some(cart_row.into_cart(items)))
+                Ok(Some(cart_row.into_cart(items)?))
             }
             None => Ok(None),
         }
@@ -394,7 +465,7 @@ impl PgCartRepository {
         match row {
             Some(cart_row) => {
                 let items = self.get_cart_items_async(cart_row.id).await?;
-                Ok(Some(cart_row.into_cart(items)))
+                Ok(Some(cart_row.into_cart(items)?))
             }
             None => Ok(None),
         }
@@ -524,7 +595,7 @@ impl PgCartRepository {
         let mut carts = Vec::new();
         for row in rows {
             let items = self.get_cart_items_async(row.id).await?;
-            carts.push(row.into_cart(items));
+            carts.push(row.into_cart(items)?);
         }
 
         Ok(carts)
@@ -1510,7 +1581,7 @@ impl PgCartRepository {
         let mut carts = Vec::with_capacity(rows.len());
         for row in rows {
             let items = self.get_cart_items_async(row.id).await?;
-            carts.push(row.into_cart(items));
+            carts.push(row.into_cart(items)?);
         }
 
         Ok(carts)
@@ -1674,39 +1745,5 @@ impl CartRepository for PgCartRepository {
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Cart>> {
         super::block_on(self.get_batch_async(ids))
-    }
-}
-
-fn parse_cart_status(s: &str) -> CartStatus {
-    match s {
-        "active" => CartStatus::Active,
-        "ready_for_payment" => CartStatus::ReadyForPayment,
-        "payment_pending" => CartStatus::PaymentPending,
-        "completed" => CartStatus::Completed,
-        "abandoned" => CartStatus::Abandoned,
-        "cancelled" => CartStatus::Cancelled,
-        "expired" => CartStatus::Expired,
-        _ => CartStatus::Active,
-    }
-}
-
-fn parse_payment_status(s: &str) -> CartPaymentStatus {
-    match s {
-        "none" => CartPaymentStatus::None,
-        "method_selected" => CartPaymentStatus::MethodSelected,
-        "authorized" => CartPaymentStatus::Authorized,
-        "captured" => CartPaymentStatus::Captured,
-        "failed" => CartPaymentStatus::Failed,
-        "refunded" => CartPaymentStatus::Refunded,
-        _ => CartPaymentStatus::None,
-    }
-}
-
-fn parse_fulfillment_type(s: &str) -> FulfillmentType {
-    match s {
-        "shipping" => FulfillmentType::Shipping,
-        "pickup" => FulfillmentType::Pickup,
-        "digital" => FulfillmentType::Digital,
-        _ => FulfillmentType::Shipping,
     }
 }

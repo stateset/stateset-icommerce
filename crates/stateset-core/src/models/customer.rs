@@ -71,6 +71,20 @@ impl std::fmt::Display for CustomerStatus {
     }
 }
 
+impl std::str::FromStr for CustomerStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "active" => Ok(Self::Active),
+            "inactive" => Ok(Self::Inactive),
+            "suspended" => Ok(Self::Suspended),
+            "deleted" => Ok(Self::Deleted),
+            _ => Err(format!("Unknown customer status: {}", s)),
+        }
+    }
+}
+
 /// Address type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +106,19 @@ impl std::fmt::Display for AddressType {
             Self::Shipping => write!(f, "shipping"),
             Self::Billing => write!(f, "billing"),
             Self::Both => write!(f, "both"),
+        }
+    }
+}
+
+impl std::str::FromStr for AddressType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "shipping" => Ok(Self::Shipping),
+            "billing" => Ok(Self::Billing),
+            "both" => Ok(Self::Both),
+            _ => Err(format!("Unknown address type: {}", s)),
         }
     }
 }
@@ -284,6 +311,20 @@ mod tests {
     }
 
     #[test]
+    fn test_customer_status_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            CustomerStatus::from_str("active").unwrap(),
+            CustomerStatus::Active
+        );
+        assert_eq!(
+            CustomerStatus::from_str("suspended").unwrap(),
+            CustomerStatus::Suspended
+        );
+    }
+
+    #[test]
     fn test_customer_status_serialization() {
         let status = CustomerStatus::Suspended;
         let json = serde_json::to_string(&status).unwrap();
@@ -307,6 +348,17 @@ mod tests {
         assert_eq!(format!("{}", AddressType::Shipping), "shipping");
         assert_eq!(format!("{}", AddressType::Billing), "billing");
         assert_eq!(format!("{}", AddressType::Both), "both");
+    }
+
+    #[test]
+    fn test_address_type_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            AddressType::from_str("shipping").unwrap(),
+            AddressType::Shipping
+        );
+        assert_eq!(AddressType::from_str("both").unwrap(), AddressType::Both);
     }
 
     #[test]

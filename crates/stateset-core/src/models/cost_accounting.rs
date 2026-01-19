@@ -145,15 +145,15 @@ impl std::fmt::Display for CostMethod {
 }
 
 impl FromStr for CostMethod {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "average" => Ok(CostMethod::Average),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "average" | "avg" => Ok(CostMethod::Average),
             "fifo" => Ok(CostMethod::Fifo),
             "lifo" => Ok(CostMethod::Lifo),
-            "standard" => Ok(CostMethod::Standard),
+            "standard" | "std" => Ok(CostMethod::Standard),
             "specific" => Ok(CostMethod::Specific),
-            _ => Ok(CostMethod::Average),
+            _ => Err(format!("Unknown cost method: {}", s)),
         }
     }
 }
@@ -183,15 +183,15 @@ impl std::fmt::Display for CostLayerSource {
 }
 
 impl FromStr for CostLayerSource {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "purchase" => Ok(CostLayerSource::Purchase),
             "production" => Ok(CostLayerSource::Production),
             "transfer" => Ok(CostLayerSource::Transfer),
             "adjustment" => Ok(CostLayerSource::Adjustment),
-            "opening" => Ok(CostLayerSource::Opening),
-            _ => Ok(CostLayerSource::Purchase),
+            "opening" | "opening_balance" => Ok(CostLayerSource::Opening),
+            _ => Err(format!("Unknown cost layer source: {}", s)),
         }
     }
 }
@@ -221,15 +221,15 @@ impl std::fmt::Display for CostTransactionType {
 }
 
 impl FromStr for CostTransactionType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "receipt" => Ok(CostTransactionType::Receipt),
             "issue" => Ok(CostTransactionType::Issue),
             "adjustment" => Ok(CostTransactionType::Adjustment),
             "transfer" => Ok(CostTransactionType::Transfer),
             "revaluation" => Ok(CostTransactionType::Revaluation),
-            _ => Ok(CostTransactionType::Receipt),
+            _ => Err(format!("Unknown cost transaction type: {}", s)),
         }
     }
 }
@@ -261,16 +261,16 @@ impl std::fmt::Display for VarianceType {
 }
 
 impl FromStr for VarianceType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "purchase" => Ok(VarianceType::Purchase),
             "material" => Ok(VarianceType::Material),
             "labor" => Ok(VarianceType::Labor),
             "overhead" => Ok(VarianceType::Overhead),
             "efficiency" => Ok(VarianceType::Efficiency),
             "volume" => Ok(VarianceType::Volume),
-            _ => Ok(VarianceType::Purchase),
+            _ => Err(format!("Unknown variance type: {}", s)),
         }
     }
 }
@@ -298,14 +298,16 @@ impl std::fmt::Display for CostAdjustmentType {
 }
 
 impl FromStr for CostAdjustmentType {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "standard_cost_update" => Ok(CostAdjustmentType::StandardCostUpdate),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "standard_cost_update" | "standardcostupdate" => {
+                Ok(CostAdjustmentType::StandardCostUpdate)
+            }
             "revaluation" => Ok(CostAdjustmentType::Revaluation),
-            "write_off" => Ok(CostAdjustmentType::WriteOff),
+            "write_off" | "writeoff" => Ok(CostAdjustmentType::WriteOff),
             "correction" => Ok(CostAdjustmentType::Correction),
-            _ => Ok(CostAdjustmentType::StandardCostUpdate),
+            _ => Err(format!("Unknown cost adjustment type: {}", s)),
         }
     }
 }
@@ -333,14 +335,14 @@ impl std::fmt::Display for CostAdjustmentStatus {
 }
 
 impl FromStr for CostAdjustmentStatus {
-    type Err = ();
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.trim().to_ascii_lowercase().as_str() {
             "pending" => Ok(CostAdjustmentStatus::Pending),
             "approved" => Ok(CostAdjustmentStatus::Approved),
             "applied" => Ok(CostAdjustmentStatus::Applied),
             "rejected" => Ok(CostAdjustmentStatus::Rejected),
-            _ => Ok(CostAdjustmentStatus::Pending),
+            _ => Err(format!("Unknown cost adjustment status: {}", s)),
         }
     }
 }
@@ -499,4 +501,53 @@ pub fn generate_cost_adjustment_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..4].to_uppercase();
     format!("CADJ-{}-{}", timestamp, random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cost_method_from_str() {
+        assert_eq!(CostMethod::from_str("avg").unwrap(), CostMethod::Average);
+        assert_eq!(CostMethod::from_str("standard").unwrap(), CostMethod::Standard);
+        assert!(CostMethod::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_cost_layer_source_from_str() {
+        assert_eq!(CostLayerSource::from_str("opening_balance").unwrap(), CostLayerSource::Opening);
+        assert_eq!(CostLayerSource::from_str("transfer").unwrap(), CostLayerSource::Transfer);
+        assert!(CostLayerSource::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_cost_transaction_type_from_str() {
+        assert_eq!(CostTransactionType::from_str("receipt").unwrap(), CostTransactionType::Receipt);
+        assert_eq!(CostTransactionType::from_str("revaluation").unwrap(), CostTransactionType::Revaluation);
+        assert!(CostTransactionType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_variance_type_from_str() {
+        assert_eq!(VarianceType::from_str("material").unwrap(), VarianceType::Material);
+        assert_eq!(VarianceType::from_str("volume").unwrap(), VarianceType::Volume);
+        assert!(VarianceType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_cost_adjustment_type_from_str() {
+        assert_eq!(
+            CostAdjustmentType::from_str("standardcostupdate").unwrap(),
+            CostAdjustmentType::StandardCostUpdate
+        );
+        assert_eq!(CostAdjustmentType::from_str("writeoff").unwrap(), CostAdjustmentType::WriteOff);
+        assert!(CostAdjustmentType::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn test_cost_adjustment_status_from_str() {
+        assert_eq!(CostAdjustmentStatus::from_str("approved").unwrap(), CostAdjustmentStatus::Approved);
+        assert!(CostAdjustmentStatus::from_str("nope").is_err());
+    }
 }

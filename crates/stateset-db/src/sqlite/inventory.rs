@@ -2,7 +2,8 @@
 
 use super::{
     build_in_clause, i64_params, map_db_error, params_refs, string_params,
-    parse_datetime_row, parse_datetime_opt_row, parse_decimal_row, parse_decimal_opt_row,
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -589,7 +590,15 @@ impl InventoryRepository for SqliteInventoryRepository {
             Err(e) => return Err(map_db_error(e)),
         };
 
-        if status == "released" || status == "cancelled" {
+        let parsed_status: ReservationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                status, e
+            ))
+        })?;
+        if parsed_status == ReservationStatus::Released
+            || parsed_status == ReservationStatus::Cancelled
+        {
             return Ok(()); // Already released
         }
 
@@ -768,7 +777,11 @@ impl InventoryRepository for SqliteInventoryRepository {
                     id: row.get("id")?,
                     item_id: row.get("item_id")?,
                     location_id: row.get("location_id")?,
-                    transaction_type: parse_transaction_type(&row.get::<_, String>("transaction_type")?),
+                    transaction_type: parse_enum_row(
+                        &row.get::<_, String>("transaction_type")?,
+                        "inventory_transaction",
+                        "transaction_type",
+                    )?,
                     quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_transaction", "quantity")?,
                     reference_type: row.get("reference_type")?,
                     reference_id: row.get("reference_id")?,
@@ -1179,19 +1192,5 @@ impl InventoryRepository for SqliteInventoryRepository {
         }
 
         Ok(results)
-    }
-}
-
-fn parse_transaction_type(s: &str) -> TransactionType {
-    match s {
-        "receipt" => TransactionType::Receipt,
-        "shipment" => TransactionType::Shipment,
-        "adjustment" => TransactionType::Adjustment,
-        "transfer" => TransactionType::Transfer,
-        "return" => TransactionType::Return,
-        "allocation" => TransactionType::Allocation,
-        "deallocation" => TransactionType::Deallocation,
-        "cycle_count" => TransactionType::CycleCount,
-        _ => TransactionType::Adjustment,
     }
 }

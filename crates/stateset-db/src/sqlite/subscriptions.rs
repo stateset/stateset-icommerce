@@ -21,6 +21,7 @@ use super::{
     parse_uuid_row, parse_uuid_opt_row,
     parse_datetime_row, parse_datetime_opt_row,
     parse_decimal_row, parse_decimal_opt_row,
+    parse_enum_row, parse_json_opt_row,
 };
 
 pub struct SqliteSubscriptionRepository {
@@ -159,7 +160,7 @@ impl SqliteSubscriptionRepository {
 
             if let Some(status) = &filter.status {
                 sql.push_str(" AND status = ?");
-                params.push(Box::new(format!("{:?}", status).to_lowercase()));
+                params.push(Box::new(status.to_string()));
             }
 
             if let Some(interval) = &filter.billing_interval {
@@ -237,7 +238,7 @@ impl SqliteSubscriptionRepository {
                 rusqlite::params![
                     input.name,
                     input.description,
-                    input.status.map(|s| format!("{:?}", s).to_lowercase()),
+                    input.status.map(|s| s.to_string()),
                     input.price.map(|d| d.to_string()),
                     input.setup_fee.map(|d| d.to_string()),
                     input.trial_days,
@@ -1022,7 +1023,7 @@ impl SqliteSubscriptionRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
 
         sql.push_str(" ORDER BY cycle_number DESC");
@@ -1071,7 +1072,7 @@ impl SqliteSubscriptionRepository {
                     updated_at = ?5
                  WHERE id = ?6",
                 rusqlite::params![
-                    format!("{:?}", status).to_lowercase(),
+                    status.to_string(),
                     payment_id,
                     billed_at.map(|d| d.to_rfc3339()),
                     failure_reason,
@@ -1103,7 +1104,7 @@ impl SqliteSubscriptionRepository {
             rusqlite::params![
                 id.to_string(),
                 subscription_id.to_string(),
-                format!("{:?}", event_type).to_lowercase(),
+                event_type.to_string(),
                 description,
                 data.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()),
                 triggered_by,
@@ -1141,9 +1142,9 @@ impl SqliteSubscriptionRepository {
             Ok(SubscriptionEvent {
                 id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_event", "id")?,
                 subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_event", "subscription_id")?,
-                event_type: parse_event_type(&row.get::<_, String>(2)?),
+                event_type: parse_enum_row(&row.get::<_, String>(2)?, "subscription_event", "event_type")?,
                 description: row.get(3)?,
-                data: row.get::<_, Option<String>>(4)?.and_then(|s| serde_json::from_str(&s).ok()),
+                data: parse_json_opt_row(row.get::<_, Option<String>>(4)?, "subscription_event", "data")?,
                 triggered_by: row.get(5)?,
                 created_at: parse_datetime_row(&row.get::<_, String>(6)?, "subscription_event", "created_at")?,
             })
@@ -1163,8 +1164,8 @@ impl SqliteSubscriptionRepository {
             code: row.get(1)?,
             name: row.get(2)?,
             description: row.get(3)?,
-            status: parse_plan_status(&row.get::<_, String>(4)?),
-            billing_interval: parse_interval(&row.get::<_, String>(5)?),
+            status: parse_enum_row(&row.get::<_, String>(4)?, "subscription_plan", "status")?,
+            billing_interval: parse_enum_row(&row.get::<_, String>(5)?, "subscription_plan", "billing_interval")?,
             custom_interval_days: row.get(6)?,
             price: parse_decimal_row(&row.get::<_, String>(7)?, "subscription_plan", "price")?,
             setup_fee: parse_decimal_opt_row(row.get::<_, Option<String>>(8)?, "subscription_plan", "setup_fee")?,
@@ -1175,7 +1176,7 @@ impl SqliteSubscriptionRepository {
             max_cycles: row.get(13)?,
             discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(14)?, "subscription_plan", "discount_percent")?,
             discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(15)?, "subscription_plan", "discount_amount")?,
-            metadata: row.get::<_, Option<String>>(16)?.and_then(|s| serde_json::from_str(&s).ok()),
+            metadata: parse_json_opt_row(row.get::<_, Option<String>>(16)?, "subscription_plan", "metadata")?,
             created_at: parse_datetime_row(&row.get::<_, String>(17)?, "subscription_plan", "created_at")?,
             updated_at: parse_datetime_row(&row.get::<_, String>(18)?, "subscription_plan", "updated_at")?,
             items: Vec::new(), // Loaded separately
@@ -1189,8 +1190,8 @@ impl SqliteSubscriptionRepository {
             customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription", "customer_id")?,
             plan_id: parse_uuid_row(&row.get::<_, String>(3)?, "subscription", "plan_id")?,
             plan_name: row.get(4)?,
-            status: parse_subscription_status(&row.get::<_, String>(5)?),
-            billing_interval: parse_interval(&row.get::<_, String>(6)?),
+            status: parse_enum_row(&row.get::<_, String>(5)?, "subscription", "status")?,
+            billing_interval: parse_enum_row(&row.get::<_, String>(6)?, "subscription", "billing_interval")?,
             custom_interval_days: row.get(7)?,
             price: parse_decimal_row(&row.get::<_, String>(8)?, "subscription", "price")?,
             currency: row.get(9)?,
@@ -1206,12 +1207,12 @@ impl SqliteSubscriptionRepository {
             resume_at: parse_datetime_opt_row(row.get::<_, Option<String>>(19)?, "subscription", "resume_at")?,
             billing_cycle_count: row.get(20)?,
             failed_payment_attempts: row.get(21)?,
-            shipping_address: row.get::<_, Option<String>>(22)?.and_then(|s| serde_json::from_str(&s).ok()),
-            billing_address: row.get::<_, Option<String>>(23)?.and_then(|s| serde_json::from_str(&s).ok()),
+            shipping_address: parse_json_opt_row(row.get::<_, Option<String>>(22)?, "subscription", "shipping_address")?,
+            billing_address: parse_json_opt_row(row.get::<_, Option<String>>(23)?, "subscription", "billing_address")?,
             discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(24)?, "subscription", "discount_percent")?,
             discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(25)?, "subscription", "discount_amount")?,
             coupon_code: row.get(26)?,
-            metadata: row.get::<_, Option<String>>(27)?.and_then(|s| serde_json::from_str(&s).ok()),
+            metadata: parse_json_opt_row(row.get::<_, Option<String>>(27)?, "subscription", "metadata")?,
             created_at: parse_datetime_row(&row.get::<_, String>(28)?, "subscription", "created_at")?,
             updated_at: parse_datetime_row(&row.get::<_, String>(29)?, "subscription", "updated_at")?,
             items: Vec::new(), // Loaded separately
@@ -1223,7 +1224,7 @@ impl SqliteSubscriptionRepository {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "billing_cycle", "id")?,
             subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "billing_cycle", "subscription_id")?,
             cycle_number: row.get(2)?,
-            status: parse_billing_cycle_status(&row.get::<_, String>(3)?),
+            status: parse_enum_row(&row.get::<_, String>(3)?, "billing_cycle", "status")?,
             period_start: parse_datetime_row(&row.get::<_, String>(4)?, "billing_cycle", "period_start")?,
             period_end: parse_datetime_row(&row.get::<_, String>(5)?, "billing_cycle", "period_end")?,
             billed_at: parse_datetime_opt_row(row.get::<_, Option<String>>(6)?, "billing_cycle", "billed_at")?,
@@ -1341,80 +1342,5 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
 
     fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
         SqliteSubscriptionRepository::get_subscription_events(self, subscription_id, None)
-    }
-}
-
-fn parse_plan_status(s: &str) -> PlanStatus {
-    match s {
-        "draft" => PlanStatus::Draft,
-        "active" => PlanStatus::Active,
-        "archived" => PlanStatus::Archived,
-        _ => PlanStatus::Draft,
-    }
-}
-
-fn parse_subscription_status(s: &str) -> SubscriptionStatus {
-    match s {
-        "trial" => SubscriptionStatus::Trial,
-        "active" => SubscriptionStatus::Active,
-        "paused" => SubscriptionStatus::Paused,
-        "past_due" => SubscriptionStatus::PastDue,
-        "cancelled" => SubscriptionStatus::Cancelled,
-        "expired" => SubscriptionStatus::Expired,
-        "pending" => SubscriptionStatus::Pending,
-        _ => SubscriptionStatus::Pending,
-    }
-}
-
-fn parse_billing_cycle_status(s: &str) -> BillingCycleStatus {
-    match s {
-        "scheduled" => BillingCycleStatus::Scheduled,
-        "processing" => BillingCycleStatus::Processing,
-        "paid" => BillingCycleStatus::Paid,
-        "failed" => BillingCycleStatus::Failed,
-        "skipped" => BillingCycleStatus::Skipped,
-        "refunded" => BillingCycleStatus::Refunded,
-        "voided" => BillingCycleStatus::Voided,
-        _ => BillingCycleStatus::Scheduled,
-    }
-}
-
-fn parse_interval(s: &str) -> BillingInterval {
-    match s {
-        "weekly" => BillingInterval::Weekly,
-        "biweekly" => BillingInterval::Biweekly,
-        "monthly" => BillingInterval::Monthly,
-        "bimonthly" => BillingInterval::Bimonthly,
-        "quarterly" => BillingInterval::Quarterly,
-        "semiannual" => BillingInterval::Semiannual,
-        "annual" => BillingInterval::Annual,
-        "custom" => BillingInterval::Custom,
-        _ => BillingInterval::Monthly,
-    }
-}
-
-fn parse_event_type(s: &str) -> SubscriptionEventType {
-    match s {
-        "created" => SubscriptionEventType::Created,
-        "activated" => SubscriptionEventType::Activated,
-        "trial_started" => SubscriptionEventType::TrialStarted,
-        "trial_ended" => SubscriptionEventType::TrialEnded,
-        "renewed" => SubscriptionEventType::Renewed,
-        "payment_failed" => SubscriptionEventType::PaymentFailed,
-        "payment_retry_succeeded" => SubscriptionEventType::PaymentRetrySucceeded,
-        "paused" => SubscriptionEventType::Paused,
-        "resumed" => SubscriptionEventType::Resumed,
-        "skipped" => SubscriptionEventType::Skipped,
-        "cancelled" => SubscriptionEventType::Cancelled,
-        "expired" => SubscriptionEventType::Expired,
-        "plan_changed" => SubscriptionEventType::PlanChanged,
-        "items_modified" => SubscriptionEventType::ItemsModified,
-        "quantity_changed" => SubscriptionEventType::QuantityChanged,
-        "address_updated" => SubscriptionEventType::AddressUpdated,
-        "payment_method_updated" => SubscriptionEventType::PaymentMethodUpdated,
-        "discount_applied" => SubscriptionEventType::DiscountApplied,
-        "discount_removed" => SubscriptionEventType::DiscountRemoved,
-        "refunded" => SubscriptionEventType::Refunded,
-        _ => SubscriptionEventType::Created,
     }
 }

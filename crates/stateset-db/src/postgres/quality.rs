@@ -8,7 +8,7 @@ use sqlx::FromRow;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    NcrStatus, NonConformance, NonConformanceFilter, QualityHold, QualityHoldFilter,
+    InspectionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold, QualityHoldFilter,
     RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection, UpdateNonConformance,
 };
 use stateset_core::traits::QualityRepository;
@@ -122,105 +122,262 @@ impl PgQualityRepository {
         format!("NCR-{}", Utc::now().format("%Y%m%d%H%M%S"))
     }
 
-    fn row_to_inspection(row: InspectionRow, items: Vec<InspectionItem>) -> Inspection {
-        Inspection {
-            id: row.id,
-            inspection_number: row.inspection_number,
-            inspection_type: row.inspection_type.parse().unwrap_or_default(),
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            status: row.status.parse().unwrap_or_default(),
-            inspector_id: row.inspector_id,
-            scheduled_at: row.scheduled_at,
-            started_at: row.started_at,
-            completed_at: row.completed_at,
-            notes: row.notes,
+    fn row_to_inspection(row: InspectionRow, items: Vec<InspectionItem>) -> Result<Inspection> {
+        let InspectionRow {
+            id,
+            inspection_number,
+            inspection_type,
+            reference_type,
+            reference_id,
+            status,
+            inspector_id,
+            scheduled_at,
+            started_at,
+            completed_at,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let inspection_type: InspectionType = inspection_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inspection.inspection_type '{}': {}",
+                inspection_type, e
+            ))
+        })?;
+        let status: InspectionStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inspection.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(Inspection {
+            id,
+            inspection_number,
+            inspection_type,
+            reference_type,
+            reference_id,
+            status,
+            inspector_id,
+            scheduled_at,
+            started_at,
+            completed_at,
+            notes,
             items,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_inspection_item(row: InspectionItemRow) -> InspectionItem {
-        let defect_codes: Vec<String> = serde_json::from_value(row.defect_codes).unwrap_or_default();
-        let measurements = row
-            .measurements
-            .and_then(|v| serde_json::from_value(v).ok());
-
-        InspectionItem {
-            id: row.id,
-            inspection_id: row.inspection_id,
-            sku: row.sku,
-            lot_number: row.lot_number,
-            serial_number: row.serial_number,
-            quantity_inspected: row.quantity_inspected,
-            quantity_passed: row.quantity_passed,
-            quantity_failed: row.quantity_failed,
+    fn row_to_inspection_item(row: InspectionItemRow) -> Result<InspectionItem> {
+        let InspectionItemRow {
+            id,
+            inspection_id,
+            sku,
+            lot_number,
+            serial_number,
+            quantity_inspected,
+            quantity_passed,
+            quantity_failed,
             defect_codes,
             measurements,
-            result: row.result.parse().unwrap_or_default(),
-            notes: row.notes,
-            created_at: row.created_at,
-        }
+            result,
+            notes,
+            created_at,
+        } = row;
+
+        let defect_codes: Vec<String> = serde_json::from_value(defect_codes).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inspection_item.defect_codes: {}",
+                e
+            ))
+        })?;
+        let measurements = match measurements {
+            Some(value) => Some(serde_json::from_value(value).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid inspection_item.measurements: {}",
+                    e
+                ))
+            })?),
+            None => None,
+        };
+        let result: InspectionResult = result.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inspection_item.result '{}': {}",
+                result, e
+            ))
+        })?;
+
+        Ok(InspectionItem {
+            id,
+            inspection_id,
+            sku,
+            lot_number,
+            serial_number,
+            quantity_inspected,
+            quantity_passed,
+            quantity_failed,
+            defect_codes,
+            measurements,
+            result,
+            notes,
+            created_at,
+        })
     }
 
-    fn row_to_ncr(row: NcrRow) -> NonConformance {
-        NonConformance {
-            id: row.id,
-            ncr_number: row.ncr_number,
-            inspection_id: row.inspection_id,
-            source: row.source.parse().unwrap_or_default(),
-            severity: row.severity.parse().unwrap_or_default(),
-            status: row.status.parse().unwrap_or_default(),
-            sku: row.sku,
-            lot_number: row.lot_number,
-            serial_number: row.serial_number,
-            quantity_affected: row.quantity_affected,
-            description: row.description,
-            root_cause: row.root_cause,
-            corrective_action: row.corrective_action,
-            preventive_action: row.preventive_action,
-            disposition: row.disposition.and_then(|d| d.parse().ok()),
-            disposition_quantity: row.disposition_quantity,
-            assigned_to: row.assigned_to,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            closed_at: row.closed_at,
-        }
+    fn row_to_ncr(row: NcrRow) -> Result<NonConformance> {
+        let NcrRow {
+            id,
+            ncr_number,
+            inspection_id,
+            source,
+            severity,
+            status,
+            sku,
+            lot_number,
+            serial_number,
+            quantity_affected,
+            description,
+            root_cause,
+            corrective_action,
+            preventive_action,
+            disposition,
+            disposition_quantity,
+            assigned_to,
+            created_at,
+            updated_at,
+            closed_at,
+        } = row;
+
+        let source = source.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid non_conformance.source '{}': {}",
+                source, e
+            ))
+        })?;
+        let severity = severity.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid non_conformance.severity '{}': {}",
+                severity, e
+            ))
+        })?;
+        let status: NcrStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid non_conformance.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let disposition = match disposition {
+            Some(value) => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid non_conformance.disposition '{}': {}",
+                    value, e
+                ))
+            })?),
+            None => None,
+        };
+
+        Ok(NonConformance {
+            id,
+            ncr_number,
+            inspection_id,
+            source,
+            severity,
+            status,
+            sku,
+            lot_number,
+            serial_number,
+            quantity_affected,
+            description,
+            root_cause,
+            corrective_action,
+            preventive_action,
+            disposition,
+            disposition_quantity,
+            assigned_to,
+            created_at,
+            updated_at,
+            closed_at,
+        })
     }
 
-    fn row_to_hold(row: HoldRow) -> QualityHold {
-        QualityHold {
-            id: row.id,
-            sku: row.sku,
-            lot_number: row.lot_number,
-            serial_number: row.serial_number,
-            location_id: row.location_id,
-            quantity_held: row.quantity_held,
-            reason: row.reason,
-            hold_type: row.hold_type.parse().unwrap_or_default(),
-            ncr_id: row.ncr_id,
-            inspection_id: row.inspection_id,
-            placed_by: row.placed_by,
-            released_by: row.released_by,
-            release_notes: row.release_notes,
-            placed_at: row.placed_at,
-            released_at: row.released_at,
-            expires_at: row.expires_at,
-        }
+    fn row_to_hold(row: HoldRow) -> Result<QualityHold> {
+        let HoldRow {
+            id,
+            sku,
+            lot_number,
+            serial_number,
+            location_id,
+            quantity_held,
+            reason,
+            hold_type,
+            ncr_id,
+            inspection_id,
+            placed_by,
+            released_by,
+            release_notes,
+            placed_at,
+            released_at,
+            expires_at,
+        } = row;
+
+        let hold_type = hold_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid quality_hold.hold_type '{}': {}",
+                hold_type, e
+            ))
+        })?;
+
+        Ok(QualityHold {
+            id,
+            sku,
+            lot_number,
+            serial_number,
+            location_id,
+            quantity_held,
+            reason,
+            hold_type,
+            ncr_id,
+            inspection_id,
+            placed_by,
+            released_by,
+            release_notes,
+            placed_at,
+            released_at,
+            expires_at,
+        })
     }
 
-    fn row_to_defect_code(row: DefectRow) -> DefectCode {
-        DefectCode {
-            id: row.id,
-            code: row.code,
-            name: row.name,
-            description: row.description,
-            category: row.category,
-            severity: row.severity.parse().unwrap_or_default(),
-            is_active: row.is_active,
-            created_at: row.created_at,
-        }
+    fn row_to_defect_code(row: DefectRow) -> Result<DefectCode> {
+        let DefectRow {
+            id,
+            code,
+            name,
+            description,
+            category,
+            severity,
+            is_active,
+            created_at,
+        } = row;
+
+        let severity = severity.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid defect_code.severity '{}': {}",
+                severity, e
+            ))
+        })?;
+
+        Ok(DefectCode {
+            id,
+            code,
+            name,
+            description,
+            category,
+            severity,
+            is_active,
+            created_at,
+        })
     }
 
     async fn load_inspection_items_async(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
@@ -234,7 +391,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_inspection_item).collect())
+        Ok(rows.into_iter().map(Self::row_to_inspection_item).collect::<Result<Vec<_>>>()?)
     }
 
     // ========================================================================
@@ -338,7 +495,7 @@ impl PgQualityRepository {
 
         if let Some(row) = row {
             let items = self.load_inspection_items_async(id).await?;
-            Ok(Some(Self::row_to_inspection(row, items)))
+            Ok(Some(Self::row_to_inspection(row, items)?))
         } else {
             Ok(None)
         }
@@ -360,7 +517,7 @@ impl PgQualityRepository {
 
         if let Some(row) = row {
             let items = self.load_inspection_items_async(row.id).await?;
-            Ok(Some(Self::row_to_inspection(row, items)))
+            Ok(Some(Self::row_to_inspection(row, items)?))
         } else {
             Ok(None)
         }
@@ -466,7 +623,7 @@ impl PgQualityRepository {
         let mut inspections = Vec::new();
         for row in rows {
             let items = self.load_inspection_items_async(row.id).await?;
-            inspections.push(Self::row_to_inspection(row, items));
+            inspections.push(Self::row_to_inspection(row, items)?);
         }
 
         Ok(inspections)
@@ -556,7 +713,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_inspection_item(row))
+        Ok(Self::row_to_inspection_item(row)?)
     }
 
     pub async fn count_inspections_async(&self, filter: InspectionFilter) -> Result<u64> {
@@ -630,7 +787,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_ncr))
+        Ok(row.map(Self::row_to_ncr).transpose()?)
     }
 
     pub async fn get_ncr_by_number_async(&self, number: &str) -> Result<Option<NonConformance>> {
@@ -645,7 +802,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_ncr))
+        Ok(row.map(Self::row_to_ncr).transpose()?)
     }
 
     pub async fn update_ncr_async(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
@@ -760,7 +917,7 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_ncr).collect())
+        Ok(rows.into_iter().map(Self::row_to_ncr).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn close_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
@@ -862,7 +1019,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_hold))
+        Ok(row.map(Self::row_to_hold).transpose()?)
     }
 
     pub async fn list_holds_async(&self, filter: QualityHoldFilter) -> Result<Vec<QualityHold>> {
@@ -916,7 +1073,7 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_hold).collect())
+        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn release_hold_async(
@@ -950,7 +1107,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_hold).collect())
+        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_active_holds_for_lot_async(&self, lot_number: &str) -> Result<Vec<QualityHold>> {
@@ -964,7 +1121,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_hold).collect())
+        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_active_holds_async(&self) -> Result<u64> {
@@ -1013,7 +1170,7 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_defect_code))
+        Ok(row.map(Self::row_to_defect_code).transpose()?)
     }
 
     pub async fn list_defect_codes_async(&self, category: Option<&str>) -> Result<Vec<DefectCode>> {
@@ -1033,7 +1190,7 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_defect_code).collect())
+        Ok(rows.into_iter().map(Self::row_to_defect_code).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn deactivate_defect_code_async(&self, id: Uuid) -> Result<()> {

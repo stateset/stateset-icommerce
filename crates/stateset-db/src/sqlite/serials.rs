@@ -1,6 +1,6 @@
 //! SQLite implementation of Serial Number Repository
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Row};
@@ -14,7 +14,11 @@ use stateset_core::{
 use stateset_core::CommerceError;
 use uuid::Uuid;
 
-use super::{map_db_error, build_in_clause, uuid_params, params_refs, string_params};
+use super::{
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, string_params,
+    uuid_params,
+};
 
 /// SQLite implementation of SerialRepository
 pub struct SqliteSerialRepository {
@@ -31,41 +35,54 @@ impl SqliteSerialRepository {
         let attributes_str: Option<String> = row.get("attributes")?;
 
         Ok(SerialNumber {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "serial", "id")?,
             serial: row.get("serial")?,
             sku: row.get("sku")?,
-            status: status_str.parse().unwrap_or_default(),
-            lot_id: row.get::<_, Option<String>>("lot_id")?.and_then(|s| s.parse().ok()),
+            status: parse_enum_row(&status_str, "serial", "status")?,
+            lot_id: parse_uuid_opt_row(row.get::<_, Option<String>>("lot_id")?, "serial", "lot_id")?,
             lot_number: row.get("lot_number")?,
             current_location_id: row.get("current_location_id")?,
-            current_owner_id: row.get::<_, Option<String>>("current_owner_id")?.and_then(|s| s.parse().ok()),
+            current_owner_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("current_owner_id")?,
+                "serial",
+                "current_owner_id",
+            )?,
             current_owner_type: row.get("current_owner_type")?,
-            warranty_id: row.get::<_, Option<String>>("warranty_id")?.and_then(|s| s.parse().ok()),
-            manufactured_at: row.get::<_, Option<String>>("manufactured_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            received_at: row.get::<_, Option<String>>("received_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            sold_at: row.get::<_, Option<String>>("sold_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            activated_at: row.get::<_, Option<String>>("activated_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            last_service_at: row.get::<_, Option<String>>("last_service_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
+            warranty_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("warranty_id")?,
+                "serial",
+                "warranty_id",
+            )?,
+            manufactured_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("manufactured_at")?,
+                "serial",
+                "manufactured_at",
+            )?,
+            received_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("received_at")?,
+                "serial",
+                "received_at",
+            )?,
+            sold_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("sold_at")?,
+                "serial",
+                "sold_at",
+            )?,
+            activated_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("activated_at")?,
+                "serial",
+                "activated_at",
+            )?,
+            last_service_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("last_service_at")?,
+                "serial",
+                "last_service_at",
+            )?,
             notes: row.get("notes")?,
-            attributes: attributes_str
-                .and_then(|s| serde_json::from_str(&s).ok())
+            attributes: parse_json_opt_row(attributes_str, "serial", "attributes")?
                 .unwrap_or(serde_json::Value::Null),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("updated_at")?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "serial", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "serial", "updated_at")?,
         })
     }
 
@@ -75,44 +92,70 @@ impl SqliteSerialRepository {
         let to_status_str: String = row.get("to_status")?;
 
         Ok(SerialHistory {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            serial_id: row.get::<_, String>("serial_id")?.parse().unwrap_or_default(),
-            event_type: event_type_str.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "serial_history", "id")?,
+            serial_id: parse_uuid_row(&row.get::<_, String>("serial_id")?, "serial_history", "serial_id")?,
+            event_type: parse_enum_row(&event_type_str, "serial_history", "event_type")?,
             reference_type: row.get("reference_type")?,
-            reference_id: row.get::<_, Option<String>>("reference_id")?.and_then(|s| s.parse().ok()),
-            from_status: from_status_str.parse().unwrap_or_default(),
-            to_status: to_status_str.parse().unwrap_or_default(),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("reference_id")?,
+                "serial_history",
+                "reference_id",
+            )?,
+            from_status: parse_enum_row(&from_status_str, "serial_history", "from_status")?,
+            to_status: parse_enum_row(&to_status_str, "serial_history", "to_status")?,
             from_location_id: row.get("from_location_id")?,
             to_location_id: row.get("to_location_id")?,
-            from_owner_id: row.get::<_, Option<String>>("from_owner_id")?.and_then(|s| s.parse().ok()),
-            to_owner_id: row.get::<_, Option<String>>("to_owner_id")?.and_then(|s| s.parse().ok()),
+            from_owner_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("from_owner_id")?,
+                "serial_history",
+                "from_owner_id",
+            )?,
+            to_owner_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("to_owner_id")?,
+                "serial_history",
+                "to_owner_id",
+            )?,
             performed_by: row.get("performed_by")?,
             notes: row.get("notes")?,
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "serial_history",
+                "created_at",
+            )?,
         })
     }
 
     fn map_reservation_row(row: &Row) -> Result<SerialReservation, rusqlite::Error> {
         Ok(SerialReservation {
-            id: row.get::<_, String>("id")?.parse().unwrap_or_default(),
-            serial_id: row.get::<_, String>("serial_id")?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "serial_reservation", "id")?,
+            serial_id: parse_uuid_row(&row.get::<_, String>("serial_id")?, "serial_reservation", "serial_id")?,
             reference_type: row.get("reference_type")?,
-            reference_id: row.get::<_, String>("reference_id")?.parse().unwrap_or_default(),
+            reference_id: parse_uuid_row(
+                &row.get::<_, String>("reference_id")?,
+                "serial_reservation",
+                "reference_id",
+            )?,
             reserved_by: row.get("reserved_by")?,
-            reserved_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("reserved_at")?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            expires_at: row.get::<_, Option<String>>("expires_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            confirmed_at: row.get::<_, Option<String>>("confirmed_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            released_at: row.get::<_, Option<String>>("released_at")?
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
+            reserved_at: parse_datetime_row(
+                &row.get::<_, String>("reserved_at")?,
+                "serial_reservation",
+                "reserved_at",
+            )?,
+            expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expires_at")?,
+                "serial_reservation",
+                "expires_at",
+            )?,
+            confirmed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("confirmed_at")?,
+                "serial_reservation",
+                "confirmed_at",
+            )?,
+            released_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("released_at")?,
+                "serial_reservation",
+                "released_at",
+            )?,
         })
     }
 

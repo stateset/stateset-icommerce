@@ -23,6 +23,7 @@ fn create_order_with_item(commerce: &Commerce) -> (Uuid, Uuid) {
         .create(CreateOrder {
             customer_id: customer.id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "IDEM-001".into(),
                 name: "Idempotent Widget".into(),
                 quantity: 1,

@@ -82,6 +82,19 @@ impl std::fmt::Display for BomStatus {
     }
 }
 
+impl std::str::FromStr for BomStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "draft" => Ok(Self::Draft),
+            "active" => Ok(Self::Active),
+            "obsolete" => Ok(Self::Obsolete),
+            _ => Err(format!("Unknown BOM status: {}", s)),
+        }
+    }
+}
+
 /// A component in a Bill of Materials
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BomComponent {
@@ -264,6 +277,22 @@ impl std::fmt::Display for WorkOrderStatus {
     }
 }
 
+impl std::str::FromStr for WorkOrderStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "planned" => Ok(Self::Planned),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "partially_completed" | "partiallycompleted" => Ok(Self::PartiallyCompleted),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "on_hold" | "onhold" => Ok(Self::OnHold),
+            _ => Err(format!("Unknown work order status: {}", s)),
+        }
+    }
+}
+
 /// Work order priority
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -286,6 +315,20 @@ impl std::fmt::Display for WorkOrderPriority {
             WorkOrderPriority::Normal => write!(f, "normal"),
             WorkOrderPriority::High => write!(f, "high"),
             WorkOrderPriority::Urgent => write!(f, "urgent"),
+        }
+    }
+}
+
+impl std::str::FromStr for WorkOrderPriority {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "normal" => Ok(Self::Normal),
+            "high" => Ok(Self::High),
+            "urgent" => Ok(Self::Urgent),
+            _ => Err(format!("Unknown work order priority: {}", s)),
         }
     }
 }
@@ -434,6 +477,21 @@ impl std::fmt::Display for TaskStatus {
     }
 }
 
+impl std::str::FromStr for TaskStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "in_progress" | "inprogress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "skipped" => Ok(Self::Skipped),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            _ => Err(format!("Unknown task status: {}", s)),
+        }
+    }
+}
+
 /// Input for creating a work order task
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateWorkOrderTask {
@@ -515,6 +573,7 @@ pub struct ConsumeMaterial {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_work_order_completion_percentage() {
@@ -552,9 +611,39 @@ mod tests {
     }
 
     #[test]
+    fn test_bom_status_from_str() {
+        assert_eq!(BomStatus::from_str("draft").unwrap(), BomStatus::Draft);
+        assert!(BomStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
     fn test_work_order_status_display() {
         assert_eq!(WorkOrderStatus::Planned.to_string(), "planned");
         assert_eq!(WorkOrderStatus::InProgress.to_string(), "in_progress");
         assert_eq!(WorkOrderStatus::Completed.to_string(), "completed");
+    }
+
+    #[test]
+    fn test_work_order_status_from_str() {
+        assert_eq!(
+            WorkOrderStatus::from_str("partially_completed").unwrap(),
+            WorkOrderStatus::PartiallyCompleted
+        );
+        assert!(WorkOrderStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn test_work_order_priority_from_str() {
+        assert_eq!(
+            WorkOrderPriority::from_str("urgent").unwrap(),
+            WorkOrderPriority::Urgent
+        );
+        assert!(WorkOrderPriority::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn test_task_status_from_str() {
+        assert_eq!(TaskStatus::from_str("pending").unwrap(), TaskStatus::Pending);
+        assert!(TaskStatus::from_str("unknown").is_err());
     }
 }

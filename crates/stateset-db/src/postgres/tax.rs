@@ -102,194 +102,262 @@ impl PgTaxRepository {
         Self { pool }
     }
 
-    fn parse_tax_type(s: &str) -> TaxType {
-        match s {
-            "sales_tax" => TaxType::SalesTax,
-            "vat" => TaxType::Vat,
-            "gst" => TaxType::Gst,
-            "hst" => TaxType::Hst,
-            "pst" => TaxType::Pst,
-            "qst" => TaxType::Qst,
-            "consumption_tax" => TaxType::ConsumptionTax,
-            "custom" => TaxType::Custom,
-            _ => TaxType::SalesTax,
-        }
-    }
-
-    fn parse_jurisdiction_level(s: &str) -> JurisdictionLevel {
-        match s {
-            "country" => JurisdictionLevel::Country,
-            "state" => JurisdictionLevel::State,
-            "county" => JurisdictionLevel::County,
-            "city" => JurisdictionLevel::City,
-            "district" => JurisdictionLevel::District,
-            "special" => JurisdictionLevel::Special,
-            _ => JurisdictionLevel::Country,
-        }
-    }
-
-    fn parse_product_category(s: &str) -> ProductTaxCategory {
-        match s {
-            "standard" => ProductTaxCategory::Standard,
-            "reduced" => ProductTaxCategory::Reduced,
-            "super_reduced" => ProductTaxCategory::SuperReduced,
-            "zero_rated" => ProductTaxCategory::ZeroRated,
-            "exempt" => ProductTaxCategory::Exempt,
-            "digital" => ProductTaxCategory::Digital,
-            "clothing" => ProductTaxCategory::Clothing,
-            "food" => ProductTaxCategory::Food,
-            "prepared_food" => ProductTaxCategory::PreparedFood,
-            "medical" => ProductTaxCategory::Medical,
-            "educational" => ProductTaxCategory::Educational,
-            "luxury" => ProductTaxCategory::Luxury,
-            _ => ProductTaxCategory::Standard,
-        }
-    }
-
-    fn parse_exemption_type(s: &str) -> ExemptionType {
-        match s {
-            "resale" => ExemptionType::Resale,
-            "non_profit" => ExemptionType::NonProfit,
-            "government" => ExemptionType::Government,
-            "educational" => ExemptionType::Educational,
-            "religious" => ExemptionType::Religious,
-            "medical" => ExemptionType::Medical,
-            "manufacturing" => ExemptionType::Manufacturing,
-            "agricultural" => ExemptionType::Agricultural,
-            "export" => ExemptionType::Export,
-            "diplomatic" => ExemptionType::Diplomatic,
-            _ => ExemptionType::Other,
-        }
-    }
-
-    fn parse_calculation_method(s: &str) -> TaxCalculationMethod {
-        match s {
-            "inclusive" => TaxCalculationMethod::Inclusive,
-            _ => TaxCalculationMethod::Exclusive,
-        }
-    }
-
-    fn parse_compound_method(s: &str) -> TaxCompoundMethod {
-        match s {
-            "compound" => TaxCompoundMethod::Compound,
-            "separate" => TaxCompoundMethod::Separate,
-            _ => TaxCompoundMethod::Combined,
-        }
-    }
-
-    fn calculation_method_str(method: TaxCalculationMethod) -> &'static str {
-        match method {
-            TaxCalculationMethod::Inclusive => "inclusive",
-            TaxCalculationMethod::Exclusive => "exclusive",
-        }
-    }
-
-    fn compound_method_str(method: TaxCompoundMethod) -> &'static str {
-        match method {
-            TaxCompoundMethod::Combined => "combined",
-            TaxCompoundMethod::Compound => "compound",
-            TaxCompoundMethod::Separate => "separate",
-        }
-    }
-
-    fn row_to_jurisdiction(row: TaxJurisdictionRow) -> TaxJurisdiction {
-        let postal_codes: Vec<String> = serde_json::from_value(row.postal_codes).unwrap_or_default();
-
-        TaxJurisdiction {
-            id: row.id,
-            parent_id: row.parent_id,
-            name: row.name,
-            code: row.code,
-            level: Self::parse_jurisdiction_level(&row.level),
-            country_code: row.country_code,
-            state_code: row.state_code,
-            county: row.county,
-            city: row.city,
+    fn row_to_jurisdiction(row: TaxJurisdictionRow) -> Result<TaxJurisdiction> {
+        let TaxJurisdictionRow {
+            id,
+            parent_id,
+            name,
+            code,
+            level,
+            country_code,
+            state_code,
+            county,
+            city,
             postal_codes,
-            active: row.active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let level: JurisdictionLevel = level.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid tax_jurisdiction.level '{}': {}",
+                level, e
+            ))
+        })?;
+        let postal_codes: Vec<String> = serde_json::from_value(postal_codes).map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid JSON for tax_jurisdiction.postal_codes: {}",
+                e
+            ))
+        })?;
+
+        Ok(TaxJurisdiction {
+            id,
+            parent_id,
+            name,
+            code,
+            level,
+            country_code,
+            state_code,
+            county,
+            city,
+            postal_codes,
+            active,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_rate(row: TaxRateRow) -> TaxRate {
-        TaxRate {
-            id: row.id,
-            jurisdiction_id: row.jurisdiction_id,
-            tax_type: Self::parse_tax_type(&row.tax_type),
-            product_category: Self::parse_product_category(&row.product_category),
-            rate: row.rate,
-            name: row.name,
-            description: row.description,
-            is_compound: row.is_compound,
-            priority: row.priority,
-            threshold_min: row.threshold_min,
-            threshold_max: row.threshold_max,
-            fixed_amount: row.fixed_amount,
-            effective_from: row.effective_from,
-            effective_to: row.effective_to,
-            active: row.active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_rate(row: TaxRateRow) -> Result<TaxRate> {
+        let TaxRateRow {
+            id,
+            jurisdiction_id,
+            tax_type,
+            product_category,
+            rate,
+            name,
+            description,
+            is_compound,
+            priority,
+            threshold_min,
+            threshold_max,
+            fixed_amount,
+            effective_from,
+            effective_to,
+            active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let tax_type: TaxType = tax_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid tax_rate.tax_type '{}': {}", tax_type, e))
+        })?;
+        let product_category: ProductTaxCategory = product_category.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid tax_rate.product_category '{}': {}",
+                product_category, e
+            ))
+        })?;
+
+        Ok(TaxRate {
+            id,
+            jurisdiction_id,
+            tax_type,
+            product_category,
+            rate,
+            name,
+            description,
+            is_compound,
+            priority,
+            threshold_min,
+            threshold_max,
+            fixed_amount,
+            effective_from,
+            effective_to,
+            active,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_exemption(row: TaxExemptionRow) -> TaxExemption {
-        let jurisdiction_ids: Vec<Uuid> = serde_json::from_value::<Vec<String>>(row.jurisdiction_ids)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|id| id.parse().ok())
-            .collect();
-
-        let exempt_categories: Vec<ProductTaxCategory> =
-            serde_json::from_value::<Vec<String>>(row.exempt_categories)
-                .unwrap_or_default()
-                .iter()
-                .map(|s| Self::parse_product_category(s))
-                .collect();
-
-        TaxExemption {
-            id: row.id,
-            customer_id: row.customer_id,
-            exemption_type: Self::parse_exemption_type(&row.exemption_type),
-            certificate_number: row.certificate_number,
-            issuing_authority: row.issuing_authority,
+    fn row_to_exemption(row: TaxExemptionRow) -> Result<TaxExemption> {
+        let TaxExemptionRow {
+            id,
+            customer_id,
+            exemption_type,
+            certificate_number,
+            issuing_authority,
             jurisdiction_ids,
             exempt_categories,
-            effective_from: row.effective_from,
-            expires_at: row.expires_at,
-            verified: row.verified,
-            verified_at: row.verified_at,
-            notes: row.notes,
-            active: row.active,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            effective_from,
+            expires_at,
+            verified,
+            verified_at,
+            notes,
+            active,
+            created_at,
+            updated_at,
+        } = row;
+
+        let exemption_type: ExemptionType = exemption_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid tax_exemption.exemption_type '{}': {}",
+                exemption_type, e
+            ))
+        })?;
+        let raw_jurisdiction_ids: Vec<String> =
+            serde_json::from_value(jurisdiction_ids).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for tax_exemption.jurisdiction_ids: {}",
+                    e
+                ))
+            })?;
+        let jurisdiction_ids = raw_jurisdiction_ids
+            .into_iter()
+            .map(|value| {
+                value.parse().map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid tax_exemption.jurisdiction_ids value '{}': {}",
+                        value, e
+                    ))
+                })
+            })
+            .collect::<Result<Vec<Uuid>>>()?;
+        let raw_exempt_categories: Vec<String> =
+            serde_json::from_value(exempt_categories).map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for tax_exemption.exempt_categories: {}",
+                    e
+                ))
+            })?;
+        let exempt_categories = raw_exempt_categories
+            .into_iter()
+            .map(|value| {
+                value.parse().map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid tax_exemption.exempt_categories value '{}': {}",
+                        value, e
+                    ))
+                })
+            })
+            .collect::<Result<Vec<ProductTaxCategory>>>()?;
+
+        Ok(TaxExemption {
+            id,
+            customer_id,
+            exemption_type,
+            certificate_number,
+            issuing_authority,
+            jurisdiction_ids,
+            exempt_categories,
+            effective_from,
+            expires_at,
+            verified,
+            verified_at,
+            notes,
+            active,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_settings(row: TaxSettingsRow) -> TaxSettings {
-        let origin_address = row
-            .origin_address
-            .and_then(|value| serde_json::from_value(value).ok());
-
-        TaxSettings {
-            id: row.id.parse().unwrap_or_default(),
-            enabled: row.enabled,
-            calculation_method: Self::parse_calculation_method(&row.calculation_method),
-            compound_method: Self::parse_compound_method(&row.compound_method),
-            tax_shipping: row.tax_shipping,
-            tax_handling: row.tax_handling,
-            tax_gift_wrap: row.tax_gift_wrap,
+    fn row_to_settings(row: TaxSettingsRow) -> Result<TaxSettings> {
+        let TaxSettingsRow {
+            id,
+            enabled,
+            calculation_method,
+            compound_method,
+            tax_shipping,
+            tax_handling,
+            tax_gift_wrap,
             origin_address,
-            default_product_category: Self::parse_product_category(&row.default_product_category),
-            rounding_mode: row.rounding_mode,
-            decimal_places: row.decimal_places,
-            validate_addresses: row.validate_addresses,
-            tax_provider: row.tax_provider,
-            provider_credentials: row.provider_credentials,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            default_product_category,
+            rounding_mode,
+            decimal_places,
+            validate_addresses,
+            tax_provider,
+            provider_credentials,
+            created_at,
+            updated_at,
+        } = row;
+
+        let id = if id == "default" {
+            Uuid::nil()
+        } else {
+            id.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!("Invalid tax_settings.id '{}': {}", id, e))
+            })?
+        };
+        let calculation_method: TaxCalculationMethod =
+            calculation_method.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid tax_settings.calculation_method '{}': {}",
+                    calculation_method, e
+                ))
+            })?;
+        let compound_method: TaxCompoundMethod = compound_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid tax_settings.compound_method '{}': {}",
+                compound_method, e
+            ))
+        })?;
+        let default_product_category: ProductTaxCategory =
+            default_product_category.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid tax_settings.default_product_category '{}': {}",
+                    default_product_category, e
+                ))
+            })?;
+        let origin_address =
+            origin_address
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid JSON for tax_settings.origin_address: {}",
+                        e
+                    ))
+                })?;
+
+        Ok(TaxSettings {
+            id,
+            enabled,
+            calculation_method,
+            compound_method,
+            tax_shipping,
+            tax_handling,
+            tax_gift_wrap,
+            origin_address,
+            default_product_category,
+            rounding_mode,
+            decimal_places,
+            validate_addresses,
+            tax_provider,
+            provider_credentials,
+            created_at,
+            updated_at,
+        })
     }
 
     pub async fn create_jurisdiction_async(
@@ -313,14 +381,7 @@ impl PgTaxRepository {
         .bind(input.parent_id)
         .bind(&input.name)
         .bind(&input.code)
-        .bind(match input.level {
-            JurisdictionLevel::Country => "country",
-            JurisdictionLevel::State => "state",
-            JurisdictionLevel::County => "county",
-            JurisdictionLevel::City => "city",
-            JurisdictionLevel::District => "district",
-            JurisdictionLevel::Special => "special",
-        })
+        .bind(input.level.to_string())
         .bind(&input.country_code)
         .bind(&input.state_code)
         .bind(&input.county)
@@ -347,7 +408,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_jurisdiction))
+        row.map(Self::row_to_jurisdiction).transpose()
     }
 
     pub async fn get_jurisdiction_by_code_async(
@@ -363,7 +424,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_jurisdiction))
+        row.map(Self::row_to_jurisdiction).transpose()
     }
 
     pub async fn list_jurisdictions_async(
@@ -403,26 +464,22 @@ impl PgTaxRepository {
             q = q.bind(state);
         }
         if let Some(level) = &filter.level {
-            let level_str = match level {
-                JurisdictionLevel::Country => "country",
-                JurisdictionLevel::State => "state",
-                JurisdictionLevel::County => "county",
-                JurisdictionLevel::City => "city",
-                JurisdictionLevel::District => "district",
-                JurisdictionLevel::Special => "special",
-            };
-            q = q.bind(level_str);
+            q = q.bind(level.to_string());
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_jurisdiction).collect())
+        let mut jurisdictions = Vec::with_capacity(rows.len());
+        for row in rows {
+            jurisdictions.push(Self::row_to_jurisdiction(row)?);
+        }
+        Ok(jurisdictions)
     }
 
     pub async fn create_rate_async(&self, input: CreateTaxRate) -> Result<TaxRate> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let tax_type = input.tax_type.as_str();
-        let category = input.product_category.as_str();
+        let tax_type = input.tax_type.to_string();
+        let category = input.product_category.to_string();
 
         sqlx::query(
             r#"
@@ -467,7 +524,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_rate))
+        row.map(Self::row_to_rate).transpose()
     }
 
     pub async fn list_rates_async(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>> {
@@ -516,7 +573,11 @@ impl PgTaxRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_rate).collect())
+        let mut rates = Vec::with_capacity(rows.len());
+        for row in rows {
+            rates.push(Self::row_to_rate(row)?);
+        }
+        Ok(rates)
     }
 
     pub async fn get_rates_for_address_async(
@@ -570,7 +631,7 @@ impl PgTaxRepository {
         let exempt_categories: Vec<String> = input
             .exempt_categories
             .iter()
-            .map(|cat| cat.as_str().to_string())
+            .map(|cat| cat.to_string())
             .collect();
 
         sqlx::query(
@@ -584,19 +645,7 @@ impl PgTaxRepository {
         )
         .bind(id)
         .bind(input.customer_id)
-        .bind(match input.exemption_type {
-            ExemptionType::Resale => "resale",
-            ExemptionType::NonProfit => "non_profit",
-            ExemptionType::Government => "government",
-            ExemptionType::Educational => "educational",
-            ExemptionType::Religious => "religious",
-            ExemptionType::Medical => "medical",
-            ExemptionType::Manufacturing => "manufacturing",
-            ExemptionType::Agricultural => "agricultural",
-            ExemptionType::Export => "export",
-            ExemptionType::Diplomatic => "diplomatic",
-            ExemptionType::Other => "other",
-        })
+        .bind(input.exemption_type.to_string())
         .bind(&input.certificate_number)
         .bind(&input.issuing_authority)
         .bind(serde_json::to_value(jurisdiction_ids).unwrap_or_default())
@@ -627,7 +676,7 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_exemption))
+        row.map(Self::row_to_exemption).transpose()
     }
 
     pub async fn get_customer_exemptions_async(
@@ -648,7 +697,11 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_exemption).collect())
+        let mut exemptions = Vec::with_capacity(rows.len());
+        for row in rows {
+            exemptions.push(Self::row_to_exemption(row)?);
+        }
+        Ok(exemptions)
     }
 
     pub async fn get_settings_async(&self) -> Result<TaxSettings> {
@@ -663,7 +716,10 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_settings).unwrap_or_default())
+        match row {
+            Some(settings_row) => Self::row_to_settings(settings_row),
+            None => Ok(TaxSettings::default()),
+        }
     }
 
     pub async fn update_settings_async(&self, settings: TaxSettings) -> Result<TaxSettings> {
@@ -673,8 +729,8 @@ impl PgTaxRepository {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let calc_method = Self::calculation_method_str(settings.calculation_method);
-        let compound_method = Self::compound_method_str(settings.compound_method);
+        let calc_method = settings.calculation_method.to_string();
+        let compound_method = settings.compound_method.to_string();
 
         sqlx::query(
             r#"
@@ -709,7 +765,7 @@ impl PgTaxRepository {
         .bind(settings.tax_handling)
         .bind(settings.tax_gift_wrap)
         .bind(origin_address)
-        .bind(settings.default_product_category.as_str())
+        .bind(settings.default_product_category.to_string())
         .bind(settings.rounding_mode)
         .bind(settings.decimal_places)
         .bind(settings.validate_addresses)

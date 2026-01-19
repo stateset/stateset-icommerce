@@ -146,29 +146,66 @@ impl PgSubscriptionRepository {
         Self { pool }
     }
 
-    fn row_to_plan(row: PlanRow) -> SubscriptionPlan {
-        SubscriptionPlan {
-            id: row.id,
-            code: row.code,
-            name: row.name,
-            description: row.description,
-            status: parse_plan_status(&row.status),
-            billing_interval: parse_billing_interval(&row.billing_interval),
-            custom_interval_days: row.custom_interval_days,
-            price: row.price,
-            setup_fee: row.setup_fee,
-            currency: row.currency,
-            trial_days: row.trial_days as u32,
-            trial_requires_payment_method: row.trial_requires_payment_method,
-            min_cycles: row.min_cycles,
-            max_cycles: row.max_cycles,
-            discount_percent: row.discount_percent,
-            discount_amount: row.discount_amount,
-            metadata: row.metadata.and_then(|v| serde_json::from_value(v).ok()),
+    fn row_to_plan(row: PlanRow) -> Result<SubscriptionPlan> {
+        let PlanRow {
+            id,
+            code,
+            name,
+            description,
+            status,
+            billing_interval,
+            custom_interval_days,
+            price,
+            setup_fee,
+            currency,
+            trial_days,
+            trial_requires_payment_method,
+            min_cycles,
+            max_cycles,
+            discount_percent,
+            discount_amount,
+            metadata,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: PlanStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid subscription_plan.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+        let billing_interval: BillingInterval = billing_interval.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid subscription_plan.billing_interval '{}': {}",
+                billing_interval.as_str(),
+                e
+            ))
+        })?;
+
+        Ok(SubscriptionPlan {
+            id,
+            code,
+            name,
+            description,
+            status,
+            billing_interval,
+            custom_interval_days,
+            price,
+            setup_fee,
+            currency,
+            trial_days: trial_days as u32,
+            trial_requires_payment_method,
+            min_cycles,
+            max_cycles,
+            discount_percent,
+            discount_amount,
+            metadata,
             items: Vec::new(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_plan_item(row: PlanItemRow) -> SubscriptionPlanItem {
@@ -187,40 +224,106 @@ impl PgSubscriptionRepository {
         }
     }
 
-    fn row_to_subscription(row: SubscriptionRow, items: Vec<SubscriptionItem>) -> Subscription {
-        Subscription {
-            id: row.id,
-            subscription_number: row.subscription_number,
-            customer_id: row.customer_id,
-            plan_id: row.plan_id,
-            plan_name: row.plan_name,
-            status: parse_subscription_status(&row.status),
-            billing_interval: parse_billing_interval(&row.billing_interval),
-            custom_interval_days: row.custom_interval_days,
-            price: row.price,
-            currency: row.currency,
-            payment_method_id: row.payment_method_id,
-            started_at: row.started_at,
-            current_period_start: row.current_period_start,
-            current_period_end: row.current_period_end,
-            next_billing_date: row.next_billing_date,
-            trial_ends_at: row.trial_ends_at,
-            cancelled_at: row.cancelled_at,
-            ends_at: row.ends_at,
-            paused_at: row.paused_at,
-            resume_at: row.resume_at,
-            billing_cycle_count: row.billing_cycle_count,
-            failed_payment_attempts: row.failed_payment_attempts,
-            shipping_address: row.shipping_address.and_then(|v| serde_json::from_value(v).ok()),
-            billing_address: row.billing_address.and_then(|v| serde_json::from_value(v).ok()),
-            discount_percent: row.discount_percent,
-            discount_amount: row.discount_amount,
-            coupon_code: row.coupon_code,
-            metadata: row.metadata.and_then(|v| serde_json::from_value(v).ok()),
+    fn row_to_subscription(row: SubscriptionRow, items: Vec<SubscriptionItem>) -> Result<Subscription> {
+        let SubscriptionRow {
+            id,
+            subscription_number,
+            customer_id,
+            plan_id,
+            plan_name,
+            status,
+            billing_interval,
+            custom_interval_days,
+            price,
+            currency,
+            payment_method_id,
+            started_at,
+            current_period_start,
+            current_period_end,
+            next_billing_date,
+            trial_ends_at,
+            cancelled_at,
+            ends_at,
+            paused_at,
+            resume_at,
+            billing_cycle_count,
+            failed_payment_attempts,
+            shipping_address,
+            billing_address,
+            discount_percent,
+            discount_amount,
+            coupon_code,
+            metadata,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: SubscriptionStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid subscription.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+        let billing_interval: BillingInterval = billing_interval.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid subscription.billing_interval '{}': {}",
+                billing_interval.as_str(),
+                e
+            ))
+        })?;
+        let shipping_address = shipping_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for subscription.shipping_address: {}",
+                    e
+                ))
+            })?;
+        let billing_address = billing_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for subscription.billing_address: {}",
+                    e
+                ))
+            })?;
+
+        Ok(Subscription {
+            id,
+            subscription_number,
+            customer_id,
+            plan_id,
+            plan_name,
+            status,
+            billing_interval,
+            custom_interval_days,
+            price,
+            currency,
+            payment_method_id,
+            started_at,
+            current_period_start,
+            current_period_end,
+            next_billing_date,
+            trial_ends_at,
+            cancelled_at,
+            ends_at,
+            paused_at,
+            resume_at,
+            billing_cycle_count,
+            failed_payment_attempts,
+            shipping_address,
+            billing_address,
+            discount_percent,
+            discount_amount,
+            coupon_code,
+            metadata,
             items,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_subscription_item(row: SubscriptionItemRow) -> SubscriptionItem {
@@ -237,41 +340,90 @@ impl PgSubscriptionRepository {
         }
     }
 
-    fn row_to_billing_cycle(row: BillingCycleRow) -> BillingCycle {
-        BillingCycle {
-            id: row.id,
-            subscription_id: row.subscription_id,
-            cycle_number: row.cycle_number,
-            status: parse_billing_cycle_status(&row.status),
-            period_start: row.period_start,
-            period_end: row.period_end,
-            billed_at: row.billed_at,
-            subtotal: row.subtotal,
-            discount: row.discount,
-            tax: row.tax,
-            total: row.total,
-            currency: row.currency,
-            payment_id: row.payment_id,
-            order_id: row.order_id,
-            invoice_id: row.invoice_id,
-            failure_reason: row.failure_reason,
-            retry_count: row.retry_count,
-            next_retry_at: row.next_retry_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_billing_cycle(row: BillingCycleRow) -> Result<BillingCycle> {
+        let BillingCycleRow {
+            id,
+            subscription_id,
+            cycle_number,
+            status,
+            period_start,
+            period_end,
+            billed_at,
+            subtotal,
+            discount,
+            tax,
+            total,
+            currency,
+            payment_id,
+            order_id,
+            invoice_id,
+            failure_reason,
+            retry_count,
+            next_retry_at,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: BillingCycleStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid billing_cycle.status '{}': {}",
+                status.as_str(),
+                e
+            ))
+        })?;
+
+        Ok(BillingCycle {
+            id,
+            subscription_id,
+            cycle_number,
+            status,
+            period_start,
+            period_end,
+            billed_at,
+            subtotal,
+            discount,
+            tax,
+            total,
+            currency,
+            payment_id,
+            order_id,
+            invoice_id,
+            failure_reason,
+            retry_count,
+            next_retry_at,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_event(row: EventRow) -> SubscriptionEvent {
-        SubscriptionEvent {
-            id: row.id,
-            subscription_id: row.subscription_id,
-            event_type: parse_event_type(&row.event_type),
-            description: row.description,
-            data: row.data.and_then(|v| serde_json::from_value(v).ok()),
-            triggered_by: row.triggered_by,
-            created_at: row.created_at,
-        }
+    fn row_to_event(row: EventRow) -> Result<SubscriptionEvent> {
+        let EventRow {
+            id,
+            subscription_id,
+            event_type,
+            description,
+            data,
+            triggered_by,
+            created_at,
+        } = row;
+
+        let event_type: SubscriptionEventType = event_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid subscription_event.event_type '{}': {}",
+                event_type.as_str(),
+                e
+            ))
+        })?;
+
+        Ok(SubscriptionEvent {
+            id,
+            subscription_id,
+            event_type,
+            description,
+            data,
+            triggered_by,
+            created_at,
+        })
     }
 
     async fn get_plan_items_async(&self, plan_id: Uuid) -> Result<Vec<SubscriptionPlanItem>> {
@@ -474,7 +626,7 @@ impl PgSubscriptionRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let mut plan = Self::row_to_plan(row);
+            let mut plan = Self::row_to_plan(row)?;
             plan.items = self.get_plan_items_async(id).await?;
             Ok(Some(plan))
         } else {
@@ -496,7 +648,7 @@ impl PgSubscriptionRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = row {
-            let mut plan = Self::row_to_plan(row);
+            let mut plan = Self::row_to_plan(row)?;
             plan.items = self.get_plan_items_async(plan.id).await?;
             Ok(Some(plan))
         } else {
@@ -549,7 +701,7 @@ impl PgSubscriptionRepository {
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
         let mut plans = Vec::new();
         for row in rows {
-            let mut plan = Self::row_to_plan(row);
+            let mut plan = Self::row_to_plan(row)?;
             plan.items = self.get_plan_items_async(plan.id).await?;
             plans.push(plan);
         }
@@ -795,7 +947,7 @@ impl PgSubscriptionRepository {
 
         if let Some(row) = row {
             let items = self.get_subscription_items_async(row.id).await?;
-            Ok(Some(Self::row_to_subscription(row, items)))
+            Ok(Some(Self::row_to_subscription(row, items)?))
         } else {
             Ok(None)
         }
@@ -820,7 +972,7 @@ impl PgSubscriptionRepository {
 
         if let Some(row) = row {
             let items = self.get_subscription_items_async(row.id).await?;
-            Ok(Some(Self::row_to_subscription(row, items)))
+            Ok(Some(Self::row_to_subscription(row, items)?))
         } else {
             Ok(None)
         }
@@ -904,7 +1056,7 @@ impl PgSubscriptionRepository {
         let mut subs = Vec::new();
         for row in rows {
             let items = self.get_subscription_items_async(row.id).await?;
-            subs.push(Self::row_to_subscription(row, items));
+            subs.push(Self::row_to_subscription(row, items)?);
         }
 
         Ok(subs)
@@ -1198,7 +1350,7 @@ impl PgSubscriptionRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_billing_cycle))
+        row.map(Self::row_to_billing_cycle).transpose()
     }
 
     pub async fn list_billing_cycles_async(
@@ -1253,7 +1405,11 @@ impl PgSubscriptionRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_billing_cycle).collect())
+        let mut cycles = Vec::with_capacity(rows.len());
+        for row in rows {
+            cycles.push(Self::row_to_billing_cycle(row)?);
+        }
+        Ok(cycles)
     }
 
     pub async fn update_billing_cycle_status_async(
@@ -1306,7 +1462,11 @@ impl PgSubscriptionRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_event).collect())
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            events.push(Self::row_to_event(row)?);
+        }
+        Ok(events)
     }
 }
 
@@ -1410,80 +1570,6 @@ impl SubscriptionRepository for PgSubscriptionRepository {
     }
 }
 
-fn parse_plan_status(s: &str) -> PlanStatus {
-    match s {
-        "draft" => PlanStatus::Draft,
-        "active" => PlanStatus::Active,
-        "archived" => PlanStatus::Archived,
-        _ => PlanStatus::Draft,
-    }
-}
-
-fn parse_subscription_status(s: &str) -> SubscriptionStatus {
-    match s {
-        "trial" => SubscriptionStatus::Trial,
-        "active" => SubscriptionStatus::Active,
-        "paused" => SubscriptionStatus::Paused,
-        "past_due" => SubscriptionStatus::PastDue,
-        "cancelled" => SubscriptionStatus::Cancelled,
-        "expired" => SubscriptionStatus::Expired,
-        "pending" => SubscriptionStatus::Pending,
-        _ => SubscriptionStatus::Active,
-    }
-}
-
-fn parse_billing_interval(s: &str) -> BillingInterval {
-    match s {
-        "weekly" => BillingInterval::Weekly,
-        "biweekly" => BillingInterval::Biweekly,
-        "monthly" => BillingInterval::Monthly,
-        "bimonthly" => BillingInterval::Bimonthly,
-        "quarterly" => BillingInterval::Quarterly,
-        "semiannual" => BillingInterval::Semiannual,
-        "annual" => BillingInterval::Annual,
-        "custom" => BillingInterval::Custom,
-        _ => BillingInterval::Monthly,
-    }
-}
-
-fn parse_billing_cycle_status(s: &str) -> BillingCycleStatus {
-    match s {
-        "scheduled" => BillingCycleStatus::Scheduled,
-        "processing" => BillingCycleStatus::Processing,
-        "paid" => BillingCycleStatus::Paid,
-        "failed" => BillingCycleStatus::Failed,
-        "skipped" => BillingCycleStatus::Skipped,
-        "refunded" => BillingCycleStatus::Refunded,
-        "voided" => BillingCycleStatus::Voided,
-        _ => BillingCycleStatus::Scheduled,
-    }
-}
-
-fn parse_event_type(s: &str) -> SubscriptionEventType {
-    match s {
-        "created" => SubscriptionEventType::Created,
-        "activated" => SubscriptionEventType::Activated,
-        "trial_started" => SubscriptionEventType::TrialStarted,
-        "trial_ended" => SubscriptionEventType::TrialEnded,
-        "renewed" => SubscriptionEventType::Renewed,
-        "payment_failed" => SubscriptionEventType::PaymentFailed,
-        "payment_retry_succeeded" => SubscriptionEventType::PaymentRetrySucceeded,
-        "paused" => SubscriptionEventType::Paused,
-        "resumed" => SubscriptionEventType::Resumed,
-        "skipped" => SubscriptionEventType::Skipped,
-        "cancelled" => SubscriptionEventType::Cancelled,
-        "expired" => SubscriptionEventType::Expired,
-        "plan_changed" => SubscriptionEventType::PlanChanged,
-        "items_modified" => SubscriptionEventType::ItemsModified,
-        "quantity_changed" => SubscriptionEventType::QuantityChanged,
-        "address_updated" => SubscriptionEventType::AddressUpdated,
-        "payment_method_updated" => SubscriptionEventType::PaymentMethodUpdated,
-        "discount_applied" => SubscriptionEventType::DiscountApplied,
-        "discount_removed" => SubscriptionEventType::DiscountRemoved,
-        "refunded" => SubscriptionEventType::Refunded,
-        _ => SubscriptionEventType::Created,
-    }
-}
 
 fn plan_status_str(status: PlanStatus) -> &'static str {
     match status {

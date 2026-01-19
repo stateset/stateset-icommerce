@@ -1,8 +1,9 @@
 //! SQLite product repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_datetime_row, parse_decimal_row, parse_decimal_opt_row, parse_json_row, parse_json_opt_row,
+    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_row,
+    uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -39,8 +40,8 @@ impl SqliteProductRepository {
             name: row.get("name")?,
             slug: row.get("slug")?,
             description: row.get("description")?,
-            status: parse_product_status(&row.get::<_, String>("status")?),
-            product_type: parse_product_type(&row.get::<_, String>("product_type")?),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "product", "status")?,
+            product_type: parse_enum_row(&row.get::<_, String>("product_type")?, "product", "product_type")?,
             attributes: parse_json_row(&attributes_json, "product", "attributes")?,
             seo: parse_json_opt_row(seo_json, "product", "seo")?,
             created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "product", "created_at")?,
@@ -102,12 +103,13 @@ impl ProductRepository for SqliteProductRepository {
 
         tx.execute(
             "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
                 id.to_string(),
                 &name,
                 &slug,
                 &description,
+                ProductStatus::Draft.to_string(),
                 product_type.to_string(),
                 attributes_json,
                 seo_json,
@@ -584,12 +586,13 @@ impl ProductRepository for SqliteProductRepository {
 
             tx.execute(
                 "INSERT INTO products (id, name, slug, description, status, product_type, attributes, seo, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     id.to_string(),
                     &name,
                     &slug,
                     &description,
+                    ProductStatus::Draft.to_string(),
                     product_type.to_string(),
                     attributes_json,
                     seo_json,
@@ -829,24 +832,5 @@ impl ProductRepository for SqliteProductRepository {
             .map_err(map_db_error)?;
 
         Ok(products)
-    }
-}
-
-fn parse_product_status(s: &str) -> ProductStatus {
-    match s {
-        "draft" => ProductStatus::Draft,
-        "active" => ProductStatus::Active,
-        "archived" => ProductStatus::Archived,
-        _ => ProductStatus::Draft,
-    }
-}
-
-fn parse_product_type(s: &str) -> ProductType {
-    match s {
-        "simple" => ProductType::Simple,
-        "variable" => ProductType::Variable,
-        "bundle" => ProductType::Bundle,
-        "digital" => ProductType::Digital,
-        _ => ProductType::Simple,
     }
 }

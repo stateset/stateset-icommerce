@@ -30,12 +30,10 @@ impl SqliteBomRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn parse_bom_status(s: &str) -> BomStatus {
-        match s {
-            "active" => BomStatus::Active,
-            "obsolete" => BomStatus::Obsolete,
-            _ => BomStatus::Draft,
-        }
+    fn parse_bom_status(s: &str) -> Result<BomStatus> {
+        s.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid bom.status '{}': {}", s, e))
+        })
     }
 
     fn load_components(&self, bom_id: Uuid) -> Result<Vec<BomComponent>> {
@@ -191,7 +189,7 @@ impl BomRepository for SqliteBomRepository {
                     name,
                     description,
                     revision,
-                    status: Self::parse_bom_status(&status),
+                    status: Self::parse_bom_status(&status)?,
                     components,
                     created_by: match created_by {
                         Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "created_by")?),
@@ -641,9 +639,8 @@ impl BomRepository for SqliteBomRepository {
             let new_name = input.name.unwrap_or(existing_data.0);
             let new_description = input.description.or(existing_data.1);
             let new_revision = input.revision.unwrap_or(existing_data.2);
-            let new_status = input
-                .status
-                .unwrap_or_else(|| Self::parse_bom_status(&existing_data.3));
+            let existing_status = Self::parse_bom_status(&existing_data.3)?;
+            let new_status = input.status.unwrap_or(existing_status);
 
             tx.execute(
                 "UPDATE manufacturing_boms SET name = ?, description = ?, revision = ?, status = ?, updated_by = ?, updated_at = ? WHERE id = ?",
@@ -835,7 +832,7 @@ impl BomRepository for SqliteBomRepository {
                 name,
                 description,
                 revision,
-                status: Self::parse_bom_status(&status),
+                status: Self::parse_bom_status(&status)?,
                 components,
                 created_by: match created_by {
                     Some(ref s) if !s.is_empty() => Some(parse_uuid(s, "bom", "created_by")?),

@@ -12,7 +12,10 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-use super::{map_db_error, parse_decimal};
+use super::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
+    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+};
 
 pub struct SqliteBackorderRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -25,50 +28,114 @@ impl SqliteBackorderRepository {
 
     fn row_to_backorder(&self, row: &rusqlite::Row) -> rusqlite::Result<Backorder> {
         Ok(Backorder {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?,
             backorder_number: row.get(1)?,
-            order_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-            order_line_id: row.get::<_, Option<String>>(3)?.and_then(|s| s.parse().ok()),
-            customer_id: row.get::<_, String>(4)?.parse().unwrap_or_default(),
+            order_id: parse_uuid_row(&row.get::<_, String>(2)?, "backorder", "order_id")?,
+            order_line_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(3)?,
+                "backorder",
+                "order_line_id",
+            )?,
+            customer_id: parse_uuid_row(&row.get::<_, String>(4)?, "backorder", "customer_id")?,
             sku: row.get(5)?,
-            quantity_ordered: parse_decimal(&row.get::<_, String>(6)?),
-            quantity_fulfilled: parse_decimal(&row.get::<_, String>(7)?),
-            quantity_remaining: parse_decimal(&row.get::<_, String>(8)?),
-            status: row.get::<_, String>(9)?.parse().unwrap_or_default(),
-            priority: row.get::<_, String>(10)?.parse().unwrap_or_default(),
-            expected_date: row.get::<_, Option<String>>(11)?.and_then(|s| s.parse().ok()),
-            promised_date: row.get::<_, Option<String>>(12)?.and_then(|s| s.parse().ok()),
+            quantity_ordered: parse_decimal_row(
+                &row.get::<_, String>(6)?,
+                "backorder",
+                "quantity_ordered",
+            )?,
+            quantity_fulfilled: parse_decimal_row(
+                &row.get::<_, String>(7)?,
+                "backorder",
+                "quantity_fulfilled",
+            )?,
+            quantity_remaining: parse_decimal_row(
+                &row.get::<_, String>(8)?,
+                "backorder",
+                "quantity_remaining",
+            )?,
+            status: parse_enum_row(&row.get::<_, String>(9)?, "backorder", "status")?,
+            priority: parse_enum_row(&row.get::<_, String>(10)?, "backorder", "priority")?,
+            expected_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "backorder",
+                "expected_date",
+            )?,
+            promised_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(12)?,
+                "backorder",
+                "promised_date",
+            )?,
             source_location_id: row.get(13)?,
             notes: row.get(14)?,
-            created_at: row.get::<_, String>(15)?.parse().unwrap_or_else(|_| Utc::now()),
-            updated_at: row.get::<_, String>(16)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>(15)?, "backorder", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "backorder", "updated_at")?,
         })
     }
 
     fn row_to_fulfillment(&self, row: &rusqlite::Row) -> rusqlite::Result<BackorderFulfillment> {
         Ok(BackorderFulfillment {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            backorder_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
-            quantity: parse_decimal(&row.get::<_, String>(2)?),
-            source_type: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-            source_id: row.get::<_, Option<String>>(4)?.and_then(|s| s.parse().ok()),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_fulfillment", "id")?,
+            backorder_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "backorder_fulfillment",
+                "backorder_id",
+            )?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>(2)?,
+                "backorder_fulfillment",
+                "quantity",
+            )?,
+            source_type: parse_enum_row(
+                &row.get::<_, String>(3)?,
+                "backorder_fulfillment",
+                "source_type",
+            )?,
+            source_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(4)?,
+                "backorder_fulfillment",
+                "source_id",
+            )?,
             notes: row.get(5)?,
-            fulfilled_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| Utc::now()),
+            fulfilled_at: parse_datetime_row(
+                &row.get::<_, String>(6)?,
+                "backorder_fulfillment",
+                "fulfilled_at",
+            )?,
             fulfilled_by: row.get(7)?,
         })
     }
 
     fn row_to_allocation(&self, row: &rusqlite::Row) -> rusqlite::Result<BackorderAllocation> {
         Ok(BackorderAllocation {
-            id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
-            backorder_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_allocation", "id")?,
+            backorder_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "backorder_allocation",
+                "backorder_id",
+            )?,
             sku: row.get(2)?,
-            quantity: parse_decimal(&row.get::<_, String>(3)?),
+            quantity: parse_decimal_row(
+                &row.get::<_, String>(3)?,
+                "backorder_allocation",
+                "quantity",
+            )?,
             location_id: row.get(4)?,
-            lot_id: row.get::<_, Option<String>>(5)?.and_then(|s| s.parse().ok()),
-            status: row.get::<_, String>(6)?.parse().unwrap_or_default(),
-            allocated_at: row.get::<_, String>(7)?.parse().unwrap_or_else(|_| Utc::now()),
-            expires_at: row.get::<_, Option<String>>(8)?.and_then(|s| s.parse().ok()),
+            lot_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(5)?,
+                "backorder_allocation",
+                "lot_id",
+            )?,
+            status: parse_enum_row(&row.get::<_, String>(6)?, "backorder_allocation", "status")?,
+            allocated_at: parse_datetime_row(
+                &row.get::<_, String>(7)?,
+                "backorder_allocation",
+                "allocated_at",
+            )?,
+            expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(8)?,
+                "backorder_allocation",
+                "expires_at",
+            )?,
         })
     }
 }
@@ -458,29 +525,36 @@ impl BackorderRepository for SqliteBackorderRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        let (total, total_qty, pending, allocated, critical): (i32, String, i32, i32, i32) = conn.query_row(
-            "SELECT
-                COUNT(*),
-                COALESCE(SUM(CAST(quantity_remaining AS REAL)), '0'),
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
-             FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        ).unwrap_or((0, "0".to_string(), 0, 0, 0));
+        let (total, total_qty, pending, allocated, critical): (i32, String, i32, i32, i32) =
+            conn.query_row(
+                "SELECT
+                    COUNT(*),
+                    COALESCE(SUM(CAST(quantity_remaining AS REAL)), '0'),
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
+                 FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .map_err(map_db_error)?;
 
-        let overdue: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM backorders
-             WHERE status NOT IN ('fulfilled', 'cancelled')
-             AND expected_date IS NOT NULL AND expected_date < ?",
-            [now.to_rfc3339()],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let overdue: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backorders
+                 WHERE status NOT IN ('fulfilled', 'cancelled')
+                 AND expected_date IS NOT NULL AND expected_date < ?",
+                [now.to_rfc3339()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        let total_quantity =
+            parse_decimal_strict(&total_qty, "backorder_summary", "total_quantity")?;
 
         Ok(BackorderSummary {
             total_backorders: total,
-            total_quantity: parse_decimal(&total_qty),
+            total_quantity,
             pending_count: pending,
             allocated_count: allocated,
             critical_count: critical,
@@ -503,12 +577,28 @@ impl BackorderRepository for SqliteBackorderRepository {
              GROUP BY sku",
             [sku],
             |row| {
+                let total_quantity = parse_decimal_row(
+                    &row.get::<_, String>(1)?,
+                    "sku_backorder_summary",
+                    "total_quantity",
+                )?;
+                let oldest_date = parse_datetime_opt_row(
+                    row.get::<_, Option<String>>(3)?,
+                    "sku_backorder_summary",
+                    "oldest_date",
+                )?;
+                let earliest_expected = parse_datetime_opt_row(
+                    row.get::<_, Option<String>>(4)?,
+                    "sku_backorder_summary",
+                    "earliest_expected",
+                )?;
+
                 Ok(SkuBackorderSummary {
                     sku: row.get(0)?,
-                    total_quantity: parse_decimal(&row.get::<_, String>(1)?),
+                    total_quantity,
                     backorder_count: row.get(2)?,
-                    oldest_date: row.get::<_, Option<String>>(3)?.and_then(|s| s.parse().ok()),
-                    earliest_expected: row.get::<_, Option<String>>(4)?.and_then(|s| s.parse().ok()),
+                    oldest_date,
+                    earliest_expected,
                 })
             },
         );

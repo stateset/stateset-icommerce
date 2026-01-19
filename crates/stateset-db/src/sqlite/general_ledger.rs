@@ -1,6 +1,6 @@
 //! SQLite implementation of General Ledger repository
 
-use crate::sqlite::map_db_error;
+use crate::sqlite::{map_db_error, parse_uuid};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -687,7 +687,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             Err(e) => return Err(map_db_error(e)),
         };
 
-        self.get_journal_entry(id.parse().unwrap_or_default())
+        let entry_id = parse_uuid(&id, "gl_journal_entry", "id")?;
+        self.get_journal_entry(entry_id)
     }
 
     fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>> {

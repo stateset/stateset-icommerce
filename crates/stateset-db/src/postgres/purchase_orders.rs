@@ -102,72 +102,139 @@ impl PgPurchaseOrderRepository {
         Self { pool }
     }
 
-    fn parse_payment_terms(s: &str) -> PaymentTerms {
-        s.parse().unwrap_or_default()
+    fn row_to_supplier(row: SupplierRow) -> Result<Supplier> {
+        let SupplierRow {
+            id,
+            supplier_code,
+            name,
+            contact_name,
+            email,
+            phone,
+            website,
+            address,
+            city,
+            state,
+            postal_code,
+            country,
+            tax_id,
+            payment_terms,
+            currency,
+            lead_time_days,
+            minimum_order,
+            is_active,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let payment_terms: PaymentTerms = payment_terms.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid supplier.payment_terms '{}': {}",
+                payment_terms, e
+            ))
+        })?;
+
+        Ok(Supplier {
+            id,
+            supplier_code,
+            name,
+            contact_name,
+            email,
+            phone,
+            website,
+            address,
+            city,
+            state,
+            postal_code,
+            country,
+            tax_id,
+            payment_terms,
+            currency,
+            lead_time_days,
+            minimum_order,
+            is_active,
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn parse_status(s: &str) -> PurchaseOrderStatus {
-        s.parse().unwrap_or_default()
-    }
+    fn row_to_po(row: PurchaseOrderRow, items: Vec<PurchaseOrderItem>) -> Result<PurchaseOrder> {
+        let PurchaseOrderRow {
+            id,
+            po_number,
+            supplier_id,
+            status,
+            order_date,
+            expected_date,
+            delivered_date,
+            ship_to_address,
+            ship_to_city,
+            ship_to_state,
+            ship_to_postal_code,
+            ship_to_country,
+            payment_terms,
+            currency,
+            subtotal,
+            tax_amount,
+            shipping_cost,
+            discount_amount,
+            total,
+            amount_paid,
+            supplier_reference,
+            notes,
+            supplier_notes,
+            approved_by,
+            approved_at,
+            sent_at,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn row_to_supplier(row: SupplierRow) -> Supplier {
-        Supplier {
-            id: row.id,
-            supplier_code: row.supplier_code,
-            name: row.name,
-            contact_name: row.contact_name,
-            email: row.email,
-            phone: row.phone,
-            website: row.website,
-            address: row.address,
-            city: row.city,
-            state: row.state,
-            postal_code: row.postal_code,
-            country: row.country,
-            tax_id: row.tax_id,
-            payment_terms: Self::parse_payment_terms(&row.payment_terms),
-            currency: row.currency,
-            lead_time_days: row.lead_time_days,
-            minimum_order: row.minimum_order,
-            is_active: row.is_active,
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
-    }
+        let status: PurchaseOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid purchase_order.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let payment_terms: PaymentTerms = payment_terms.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid purchase_order.payment_terms '{}': {}",
+                payment_terms, e
+            ))
+        })?;
 
-    fn row_to_po(row: PurchaseOrderRow, items: Vec<PurchaseOrderItem>) -> PurchaseOrder {
-        PurchaseOrder {
-            id: row.id,
-            po_number: row.po_number,
-            supplier_id: row.supplier_id,
-            status: Self::parse_status(&row.status),
-            order_date: row.order_date,
-            expected_date: row.expected_date,
-            delivered_date: row.delivered_date,
-            ship_to_address: row.ship_to_address,
-            ship_to_city: row.ship_to_city,
-            ship_to_state: row.ship_to_state,
-            ship_to_postal_code: row.ship_to_postal_code,
-            ship_to_country: row.ship_to_country,
-            payment_terms: Self::parse_payment_terms(&row.payment_terms),
-            currency: row.currency,
-            subtotal: row.subtotal,
-            tax_amount: row.tax_amount,
-            shipping_cost: row.shipping_cost,
-            discount_amount: row.discount_amount,
-            total: row.total,
-            amount_paid: row.amount_paid,
-            supplier_reference: row.supplier_reference,
-            notes: row.notes,
-            supplier_notes: row.supplier_notes,
-            approved_by: row.approved_by,
-            approved_at: row.approved_at,
+        Ok(PurchaseOrder {
+            id,
+            po_number,
+            supplier_id,
+            status,
+            order_date,
+            expected_date,
+            delivered_date,
+            ship_to_address,
+            ship_to_city,
+            ship_to_state,
+            ship_to_postal_code,
+            ship_to_country,
+            payment_terms,
+            currency,
+            subtotal,
+            tax_amount,
+            shipping_cost,
+            discount_amount,
+            total,
+            amount_paid,
+            supplier_reference,
+            notes,
+            supplier_notes,
+            approved_by,
+            approved_at,
             items,
-            sent_at: row.sent_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            sent_at,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_item(row: PurchaseOrderItemRow) -> PurchaseOrderItem {
@@ -284,7 +351,7 @@ impl PgPurchaseOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_supplier))
+        row.map(Self::row_to_supplier).transpose()
     }
 
     pub async fn get_supplier_by_code_async(&self, code: &str) -> Result<Option<Supplier>> {
@@ -294,7 +361,7 @@ impl PgPurchaseOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_supplier))
+        row.map(Self::row_to_supplier).transpose()
     }
 
     pub async fn update_supplier_async(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
@@ -348,7 +415,11 @@ impl PgPurchaseOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_supplier).collect())
+        let mut suppliers = Vec::with_capacity(rows.len());
+        for row in rows {
+            suppliers.push(Self::row_to_supplier(row)?);
+        }
+        Ok(suppliers)
     }
 
     pub async fn delete_supplier_async(&self, id: Uuid) -> Result<()> {
@@ -455,7 +526,7 @@ impl PgPurchaseOrderRepository {
         match row {
             Some(row) => {
                 let items = self.load_items_async(row.id).await?;
-                Ok(Some(Self::row_to_po(row, items)))
+                Ok(Some(Self::row_to_po(row, items)?))
             }
             None => Ok(None),
         }
@@ -471,7 +542,7 @@ impl PgPurchaseOrderRepository {
         match row {
             Some(row) => {
                 let items = self.load_items_async(row.id).await?;
-                Ok(Some(Self::row_to_po(row, items)))
+                Ok(Some(Self::row_to_po(row, items)?))
             }
             None => Ok(None),
         }
@@ -544,7 +615,7 @@ impl PgPurchaseOrderRepository {
         let mut orders = Vec::new();
         for row in rows {
             let items = self.load_items_async(row.id).await?;
-            orders.push(Self::row_to_po(row, items));
+            orders.push(Self::row_to_po(row, items)?);
         }
         Ok(orders)
     }
@@ -560,7 +631,13 @@ impl PgPurchaseOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        if Self::parse_status(&status) != PurchaseOrderStatus::Draft {
+        let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid purchase_order.status '{}': {}",
+                status, e
+            ))
+        })?;
+        if parsed_status != PurchaseOrderStatus::Draft {
             return Err(CommerceError::ValidationError("Can only delete draft purchase orders".to_string()));
         }
 
@@ -1192,7 +1269,7 @@ impl PgPurchaseOrderRepository {
         let mut orders = Vec::with_capacity(rows.len());
         for row in rows {
             let items = self.load_items_async(row.id).await?;
-            orders.push(Self::row_to_po(row, items));
+            orders.push(Self::row_to_po(row, items)?);
         }
 
         Ok(orders)

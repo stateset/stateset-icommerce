@@ -12,7 +12,7 @@ use stateset_core::{
     CollectionActivityType, CollectionStatus, CommerceError, CreateCollectionActivity,
     CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoReason,
     CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, InvoiceType, Result, StatementLineItem,
+    GenerateStatementRequest, Invoice, InvoiceStatus, InvoiceType, Result, StatementLineItem,
     StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
     generate_credit_memo_number, generate_write_off_number,
 };
@@ -145,59 +145,144 @@ impl PgAccountsReceivableRepository {
         Self { pool }
     }
 
-    fn row_to_collection_activity(row: CollectionActivityRow) -> CollectionActivity {
-        CollectionActivity {
-            id: row.id,
-            invoice_id: row.invoice_id,
-            customer_id: row.customer_id,
-            activity_type: row.activity_type.parse().unwrap_or_default(),
-            activity_date: row.activity_date,
-            dunning_letter_type: row.dunning_letter_type.and_then(|s| s.parse().ok()),
-            notes: row.notes,
-            contact_method: row.contact_method,
-            contact_result: row.contact_result,
-            promise_to_pay_date: row.promise_to_pay_date,
-            promise_to_pay_amount: row.promise_to_pay_amount,
-            performed_by: row.performed_by,
-            created_at: row.created_at,
-        }
+    fn row_to_collection_activity(row: CollectionActivityRow) -> Result<CollectionActivity> {
+        let CollectionActivityRow {
+            id,
+            invoice_id,
+            customer_id,
+            activity_type,
+            activity_date,
+            dunning_letter_type,
+            notes,
+            contact_method,
+            contact_result,
+            promise_to_pay_date,
+            promise_to_pay_amount,
+            performed_by,
+            created_at,
+        } = row;
+
+        let activity_type: CollectionActivityType = activity_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid collection_activity.activity_type '{}': {}",
+                activity_type, e
+            ))
+        })?;
+        let dunning_letter_type = match dunning_letter_type {
+            Some(value) => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid collection_activity.dunning_letter_type '{}': {}",
+                    value, e
+                ))
+            })?),
+            None => None,
+        };
+
+        Ok(CollectionActivity {
+            id,
+            invoice_id,
+            customer_id,
+            activity_type,
+            activity_date,
+            dunning_letter_type,
+            notes,
+            contact_method,
+            contact_result,
+            promise_to_pay_date,
+            promise_to_pay_amount,
+            performed_by,
+            created_at,
+        })
     }
 
-    fn row_to_write_off(row: WriteOffRow) -> WriteOff {
-        WriteOff {
-            id: row.id,
-            write_off_number: row.write_off_number,
-            invoice_id: row.invoice_id,
-            customer_id: row.customer_id,
-            amount: row.amount,
-            reason: row.reason.parse().unwrap_or_default(),
-            notes: row.notes,
-            write_off_date: from_date(row.write_off_date),
-            approved_by: row.approved_by,
-            approved_at: row.approved_at,
-            reversed_at: row.reversed_at,
-            gl_journal_entry_id: row.gl_journal_entry_id,
-            created_at: row.created_at,
-        }
+    fn row_to_write_off(row: WriteOffRow) -> Result<WriteOff> {
+        let WriteOffRow {
+            id,
+            write_off_number,
+            invoice_id,
+            customer_id,
+            amount,
+            reason,
+            notes,
+            write_off_date,
+            approved_by,
+            approved_at,
+            reversed_at,
+            gl_journal_entry_id,
+            created_at,
+        } = row;
+
+        let reason: WriteOffReason = reason.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid write_off.reason '{}': {}",
+                reason, e
+            ))
+        })?;
+
+        Ok(WriteOff {
+            id,
+            write_off_number,
+            invoice_id,
+            customer_id,
+            amount,
+            reason,
+            notes,
+            write_off_date: from_date(write_off_date),
+            approved_by,
+            approved_at,
+            reversed_at,
+            gl_journal_entry_id,
+            created_at,
+        })
     }
 
-    fn row_to_credit_memo(row: CreditMemoRow) -> CreditMemo {
-        CreditMemo {
-            id: row.id,
-            credit_memo_number: row.credit_memo_number,
-            customer_id: row.customer_id,
-            original_invoice_id: row.original_invoice_id,
-            reason: row.reason.parse().unwrap_or_default(),
-            amount: row.amount,
-            applied_amount: row.applied_amount,
-            unapplied_amount: row.unapplied_amount,
-            status: row.status.parse().unwrap_or_default(),
-            notes: row.notes,
-            issue_date: from_date(row.issue_date),
-            gl_journal_entry_id: row.gl_journal_entry_id,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_credit_memo(row: CreditMemoRow) -> Result<CreditMemo> {
+        let CreditMemoRow {
+            id,
+            credit_memo_number,
+            customer_id,
+            original_invoice_id,
+            reason,
+            amount,
+            applied_amount,
+            unapplied_amount,
+            status,
+            notes,
+            issue_date,
+            gl_journal_entry_id,
+            created_at,
+            updated_at,
+        } = row;
+
+        let reason: CreditMemoReason = reason.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_memo.reason '{}': {}",
+                reason, e
+            ))
+        })?;
+        let status: CreditMemoStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid credit_memo.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(CreditMemo {
+            id,
+            credit_memo_number,
+            customer_id,
+            original_invoice_id,
+            reason,
+            amount,
+            applied_amount,
+            unapplied_amount,
+            status,
+            notes,
+            issue_date: from_date(issue_date),
+            gl_journal_entry_id,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_payment_application(row: PaymentApplicationRow) -> ArPaymentApplication {
@@ -211,46 +296,98 @@ impl PgAccountsReceivableRepository {
         }
     }
 
-    fn row_to_invoice(row: InvoiceRow) -> Invoice {
-        Invoice {
-            id: row.id,
-            invoice_number: row.invoice_number,
-            customer_id: row.customer_id,
-            order_id: row.order_id,
-            status: row.status.parse().unwrap_or_default(),
-            invoice_type: row.invoice_type.parse().unwrap_or(InvoiceType::Standard),
-            invoice_date: row.invoice_date,
-            due_date: row.due_date,
-            payment_terms: row.payment_terms,
-            currency: row.currency,
-            billing_name: row.billing_name,
-            billing_email: row.billing_email,
-            billing_address: row.billing_address,
-            billing_city: row.billing_city,
-            billing_state: row.billing_state,
-            billing_postal_code: row.billing_postal_code,
-            billing_country: row.billing_country,
-            subtotal: row.subtotal,
-            discount_amount: row.discount_amount,
-            discount_percent: row.discount_percent,
-            tax_amount: row.tax_amount,
-            tax_rate: row.tax_rate,
-            shipping_amount: row.shipping_amount,
-            total: row.total,
-            amount_paid: row.amount_paid,
-            balance_due: row.balance_due,
-            po_number: row.po_number,
-            notes: row.notes,
-            terms: row.terms,
-            footer: row.footer,
-            sent_at: row.sent_at,
-            viewed_at: row.viewed_at,
-            paid_at: row.paid_at,
-            voided_at: row.voided_at,
+    fn row_to_invoice(row: InvoiceRow) -> Result<Invoice> {
+        let InvoiceRow {
+            id,
+            invoice_number,
+            customer_id,
+            order_id,
+            status,
+            invoice_type,
+            invoice_date,
+            due_date,
+            payment_terms,
+            currency,
+            billing_name,
+            billing_email,
+            billing_address,
+            billing_city,
+            billing_state,
+            billing_postal_code,
+            billing_country,
+            subtotal,
+            discount_amount,
+            discount_percent,
+            tax_amount,
+            tax_rate,
+            shipping_amount,
+            total,
+            amount_paid,
+            balance_due,
+            po_number,
+            notes,
+            terms,
+            footer,
+            sent_at,
+            viewed_at,
+            paid_at,
+            voided_at,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: InvoiceStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid invoice.status '{}': {}",
+                status, e
+            ))
+        })?;
+        let invoice_type: InvoiceType = invoice_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid invoice.invoice_type '{}': {}",
+                invoice_type, e
+            ))
+        })?;
+
+        Ok(Invoice {
+            id,
+            invoice_number,
+            customer_id,
+            order_id,
+            status,
+            invoice_type,
+            invoice_date,
+            due_date,
+            payment_terms,
+            currency,
+            billing_name,
+            billing_email,
+            billing_address,
+            billing_city,
+            billing_state,
+            billing_postal_code,
+            billing_country,
+            subtotal,
+            discount_amount,
+            discount_percent,
+            tax_amount,
+            tax_rate,
+            shipping_amount,
+            total,
+            amount_paid,
+            balance_due,
+            po_number,
+            notes,
+            terms,
+            footer,
+            sent_at,
+            viewed_at,
+            paid_at,
+            voided_at,
             items: Vec::new(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_at,
+            updated_at,
+        })
     }
 
     async fn get_invoice_customer_id_async(&self, invoice_id: Uuid) -> Result<Uuid> {
@@ -578,7 +715,7 @@ impl PgAccountsReceivableRepository {
         Ok(rows
             .into_iter()
             .map(Self::row_to_collection_activity)
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn update_collection_status_async(
@@ -615,7 +752,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_invoice).collect())
+        Ok(rows.into_iter().map(Self::row_to_invoice).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn send_dunning_letter_async(
@@ -719,7 +856,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_write_off))
+        Ok(row.map(Self::row_to_write_off).transpose()?)
     }
 
     pub async fn list_write_offs_async(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>> {
@@ -763,7 +900,7 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_write_off).collect())
+        Ok(rows.into_iter().map(Self::row_to_write_off).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn reverse_write_off_async(&self, id: Uuid) -> Result<WriteOff> {
@@ -851,7 +988,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_memo))
+        Ok(row.map(Self::row_to_credit_memo).transpose()?)
     }
 
     pub async fn get_credit_memo_by_number_async(
@@ -869,7 +1006,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_memo))
+        Ok(row.map(Self::row_to_credit_memo).transpose()?)
     }
 
     pub async fn list_credit_memos_async(
@@ -921,7 +1058,7 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_credit_memo).collect())
+        Ok(rows.into_iter().map(Self::row_to_credit_memo).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn apply_credit_memo_async(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {

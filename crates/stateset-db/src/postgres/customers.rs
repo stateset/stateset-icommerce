@@ -5,9 +5,10 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    validate_batch_size, AddressType, BatchResult, CommerceError, CreateCustomer,
-    CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter, CustomerRepository,
-    CustomerStatus, Result, UpdateCustomer,
+    validate_batch_size, validate_email, validate_phone, validate_postal_code,
+    validate_required_text, validate_required_uuid, AddressType, BatchResult, CommerceError,
+    CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
+    CustomerRepository, CustomerStatus, Result, UpdateCustomer,
 };
 use uuid::Uuid;
 
@@ -61,14 +62,54 @@ impl PgCustomerRepository {
         Self { pool }
     }
 
-    fn row_to_customer(row: CustomerRow) -> Customer {
-        Customer {
+    fn validate_customer_input(input: &CreateCustomer) -> Result<()> {
+        validate_email(&input.email)?;
+        validate_required_text("customer.first_name", &input.first_name, 100)?;
+        validate_required_text("customer.last_name", &input.last_name, 100)?;
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_address_input(input: &CreateCustomerAddress) -> Result<()> {
+        validate_required_uuid("customer_address.customer_id", input.customer_id)?;
+        validate_required_text("customer_address.first_name", &input.first_name, 100)?;
+        validate_required_text("customer_address.last_name", &input.last_name, 100)?;
+        validate_required_text("customer_address.line1", &input.line1, 255)?;
+        validate_required_text("customer_address.city", &input.city, 255)?;
+        validate_postal_code(&input.postal_code)?;
+        validate_required_text("customer_address.country", &input.country, 64)?;
+
+        if let Some(line2) = &input.line2 {
+            validate_required_text("customer_address.line2", line2, 255)?;
+        }
+        if let Some(state) = &input.state {
+            validate_required_text("customer_address.state", state, 64)?;
+        }
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
+
+        Ok(())
+    }
+
+    fn row_to_customer(row: CustomerRow) -> Result<Customer> {
+        let status: CustomerStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid customer.status '{}': {}",
+                row.status, e
+            ))
+        })?;
+
+        Ok(Customer {
             id: row.id,
             email: row.email,
             first_name: row.first_name,
             last_name: row.last_name,
             phone: row.phone,
-            status: parse_customer_status(&row.status),
+            status,
             accepts_marketing: row.accepts_marketing,
             email_verified: row.email_verified,
             tags: serde_json::from_value(row.tags).unwrap_or_default(),
@@ -77,14 +118,21 @@ impl PgCustomerRepository {
             default_billing_address_id: row.default_billing_address_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_address(row: AddressRow) -> CustomerAddress {
-        CustomerAddress {
+    fn row_to_address(row: AddressRow) -> Result<CustomerAddress> {
+        let address_type: AddressType = row.address_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid customer_address.address_type '{}': {}",
+                row.address_type, e
+            ))
+        })?;
+
+        Ok(CustomerAddress {
             id: row.id,
             customer_id: row.customer_id,
-            address_type: parse_address_type(&row.address_type),
+            address_type,
             first_name: row.first_name,
             last_name: row.last_name,
             company: row.company,
@@ -98,11 +146,13 @@ impl PgCustomerRepository {
             is_default: row.is_default,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
     /// Create a new customer (async)
     pub async fn create_async(&self, input: CreateCustomer) -> Result<Customer> {
+        Self::validate_customer_input(&input)?;
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let tags = input.tags.clone().unwrap_or_default();
@@ -176,7 +226,10 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(result.map(Self::row_to_customer))
+        match result {
+            Some(row) => Ok(Some(Self::row_to_customer(row)?)),
+            None => Ok(None),
+        }
     }
 
     /// Get a customer by email (async)
@@ -189,7 +242,10 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(result.map(Self::row_to_customer))
+        match result {
+            Some(row) => Ok(Some(Self::row_to_customer(row)?)),
+            None => Ok(None),
+        }
     }
 
     /// Update a customer (async)
@@ -203,7 +259,32 @@ impl PgCustomerRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::CustomerNotFound(id))?;
         let current_version = existing_row.version;
-        let existing = Self::row_to_customer(existing_row);
+        let existing = Self::row_to_customer(existing_row)?;
+
+        if let Some(email) = &input.email {
+            validate_email(email)?;
+            let existing_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT id FROM customers WHERE email = $1",
+            )
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+            if let Some(existing_id) = existing_id {
+                if existing_id != id {
+                    return Err(CommerceError::EmailAlreadyExists(email.clone()));
+                }
+            }
+        }
+        if let Some(first_name) = &input.first_name {
+            validate_required_text("customer.first_name", first_name, 100)?;
+        }
+        if let Some(last_name) = &input.last_name {
+            validate_required_text("customer.last_name", last_name, 100)?;
+        }
+        if let Some(phone) = &input.phone {
+            validate_phone(phone)?;
+        }
 
         let new_email = input.email.unwrap_or(existing.email);
         let new_first_name = input.first_name.unwrap_or(existing.first_name);
@@ -263,7 +344,10 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_customer).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_customer)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     /// Delete a customer (soft delete, async)
@@ -282,9 +366,13 @@ impl PgCustomerRepository {
 
     /// Add a customer address (async)
     pub async fn add_address_async(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+        Self::validate_address_input(&input)?;
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let address_type = input.address_type.unwrap_or_default();
+        let is_default = input.is_default.unwrap_or(false);
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
             r#"
@@ -296,7 +384,7 @@ impl PgCustomerRepository {
         )
         .bind(id)
         .bind(input.customer_id)
-        .bind(format!("{:?}", address_type).to_lowercase())
+        .bind(address_type.to_string())
         .bind(&input.first_name)
         .bind(&input.last_name)
         .bind(&input.company)
@@ -307,12 +395,75 @@ impl PgCustomerRepository {
         .bind(&input.postal_code)
         .bind(&input.country)
         .bind(&input.phone)
-        .bind(input.is_default.unwrap_or(false))
+        .bind(is_default)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
+
+        if is_default {
+            let clear_sql = match address_type {
+                AddressType::Shipping => {
+                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'shipping' OR address_type = 'both')"
+                }
+                AddressType::Billing => {
+                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'billing' OR address_type = 'both')"
+                }
+                AddressType::Both => {
+                    "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
+                }
+            };
+            sqlx::query(clear_sql)
+                .bind(input.customer_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+
+            match address_type {
+                AddressType::Shipping => {
+                    sqlx::query(
+                        "UPDATE customers SET default_shipping_address_id = $1, updated_at = $2 WHERE id = $3",
+                    )
+                    .bind(id)
+                    .bind(now)
+                    .bind(input.customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Billing => {
+                    sqlx::query(
+                        "UPDATE customers SET default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
+                    )
+                    .bind(id)
+                    .bind(now)
+                    .bind(input.customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Both => {
+                    sqlx::query(
+                        "UPDATE customers SET default_shipping_address_id = $1, default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
+                    )
+                    .bind(id)
+                    .bind(now)
+                    .bind(input.customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+            }
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CustomerAddress {
             id,
@@ -328,7 +479,7 @@ impl PgCustomerRepository {
             postal_code: input.postal_code,
             country: input.country,
             phone: input.phone,
-            is_default: input.is_default.unwrap_or(false),
+            is_default,
             created_at: now,
             updated_at: now,
         })
@@ -344,7 +495,235 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_address).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_address)
+            .collect::<Result<Vec<_>>>()?)
+    }
+
+    /// Update a customer address (async)
+    pub async fn update_address_async(
+        &self,
+        address_id: Uuid,
+        input: CreateCustomerAddress,
+    ) -> Result<CustomerAddress> {
+        Self::validate_address_input(&input)?;
+
+        let now = Utc::now();
+
+        let owner: Option<Uuid> = sqlx::query_scalar(
+            "SELECT customer_id FROM customer_addresses WHERE id = $1",
+        )
+        .bind(address_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        match owner {
+            Some(customer_id) if customer_id != input.customer_id => {
+                return Err(CommerceError::ValidationError(
+                    "Address does not belong to customer".into(),
+                ));
+            }
+            None => {
+                return Err(CommerceError::NotFound);
+            }
+            _ => {}
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE customer_addresses
+            SET first_name = $1, last_name = $2, company = $3,
+                line1 = $4, line2 = $5, city = $6, state = $7,
+                postal_code = $8, country = $9, phone = $10, updated_at = $11
+            WHERE id = $12
+            "#,
+        )
+        .bind(&input.first_name)
+        .bind(&input.last_name)
+        .bind(&input.company)
+        .bind(&input.line1)
+        .bind(&input.line2)
+        .bind(&input.city)
+        .bind(&input.state)
+        .bind(&input.postal_code)
+        .bind(&input.country)
+        .bind(&input.phone)
+        .bind(now)
+        .bind(address_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let row = sqlx::query_as::<_, AddressRow>("SELECT * FROM customer_addresses WHERE id = $1")
+            .bind(address_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+
+        Ok(Self::row_to_address(row)?)
+    }
+
+    /// Delete a customer address (async)
+    pub async fn delete_address_async(&self, address_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let row: Option<(Uuid, String, bool)> = sqlx::query_as(
+            "SELECT customer_id, address_type, is_default FROM customer_addresses WHERE id = $1",
+        )
+        .bind(address_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let (customer_id, address_type, is_default) = match row {
+            Some(values) => values,
+            None => return Err(CommerceError::NotFound),
+        };
+
+        if is_default {
+            let parsed_type: AddressType = address_type.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid customer_address.address_type '{}': {}",
+                    address_type, e
+                ))
+            })?;
+            match parsed_type {
+                AddressType::Shipping => {
+                    sqlx::query(
+                        "UPDATE customers SET default_shipping_address_id = NULL, updated_at = $1 WHERE id = $2",
+                    )
+                    .bind(now)
+                    .bind(customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Billing => {
+                    sqlx::query(
+                        "UPDATE customers SET default_billing_address_id = NULL, updated_at = $1 WHERE id = $2",
+                    )
+                    .bind(now)
+                    .bind(customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+                AddressType::Both => {
+                    sqlx::query(
+                        "UPDATE customers SET default_shipping_address_id = NULL, default_billing_address_id = NULL, updated_at = $1 WHERE id = $2",
+                    )
+                    .bind(now)
+                    .bind(customer_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_db_error)?;
+                }
+            }
+        }
+
+        sqlx::query("DELETE FROM customer_addresses WHERE id = $1")
+            .bind(address_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Set default address (async)
+    pub async fn set_default_address_async(
+        &self,
+        customer_id: Uuid,
+        address_id: Uuid,
+        address_type: AddressType,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let now = Utc::now();
+
+        let owner: Option<Uuid> = sqlx::query_scalar(
+            "SELECT customer_id FROM customer_addresses WHERE id = $1",
+        )
+        .bind(address_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        match owner {
+            Some(id) if id != customer_id => {
+                return Err(CommerceError::ValidationError(
+                    "Address does not belong to customer".into(),
+                ));
+            }
+            None => {
+                return Err(CommerceError::NotFound);
+            }
+            _ => {}
+        }
+
+        let clear_sql = match address_type {
+            AddressType::Shipping => {
+                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'shipping' OR address_type = 'both')"
+            }
+            AddressType::Billing => {
+                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1 AND (address_type = 'billing' OR address_type = 'both')"
+            }
+            AddressType::Both => {
+                "UPDATE customer_addresses SET is_default = false WHERE customer_id = $1"
+            }
+        };
+        sqlx::query(clear_sql)
+            .bind(customer_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
+            .bind(address_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        match address_type {
+            AddressType::Shipping => {
+                sqlx::query(
+                    "UPDATE customers SET default_shipping_address_id = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(address_id)
+                .bind(now)
+                .bind(customer_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+            }
+            AddressType::Billing => {
+                sqlx::query(
+                    "UPDATE customers SET default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(address_id)
+                .bind(now)
+                .bind(customer_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+            }
+            AddressType::Both => {
+                sqlx::query(
+                    "UPDATE customers SET default_shipping_address_id = $1, default_billing_address_id = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(address_id)
+                .bind(now)
+                .bind(customer_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+            }
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(())
     }
 
     /// Count customers (async)
@@ -387,6 +766,8 @@ impl PgCustomerRepository {
         let mut customers = Vec::with_capacity(inputs.len());
 
         for input in inputs {
+            Self::validate_customer_input(&input)?;
+
             let id = Uuid::new_v4();
             let now = Utc::now();
             let tags = input.tags.clone().unwrap_or_default();
@@ -487,7 +868,32 @@ impl PgCustomerRepository {
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::CustomerNotFound(id))?;
             let current_version = existing_row.version;
-            let existing = Self::row_to_customer(existing_row);
+            let existing = Self::row_to_customer(existing_row)?;
+
+            if let Some(email) = &input.email {
+                validate_email(email)?;
+                let existing_id: Option<Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM customers WHERE email = $1",
+                )
+                .bind(email)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_db_error)?;
+                if let Some(existing_id) = existing_id {
+                    if existing_id != id {
+                        return Err(CommerceError::EmailAlreadyExists(email.clone()));
+                    }
+                }
+            }
+            if let Some(first_name) = &input.first_name {
+                validate_required_text("customer.first_name", first_name, 100)?;
+            }
+            if let Some(last_name) = &input.last_name {
+                validate_required_text("customer.last_name", last_name, 100)?;
+            }
+            if let Some(phone) = &input.phone {
+                validate_phone(phone)?;
+            }
 
             let new_email = input.email.unwrap_or(existing.email);
             let new_first_name = input.first_name.unwrap_or(existing.first_name);
@@ -538,7 +944,7 @@ impl PgCustomerRepository {
                 .await
                 .map_err(map_db_error)?;
 
-            customers.push(Self::row_to_customer(updated_row));
+            customers.push(Self::row_to_customer(updated_row)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -599,7 +1005,10 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_customer).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_customer)
+            .collect::<Result<Vec<_>>>()?)
     }
 }
 
@@ -636,16 +1045,16 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.get_addresses_async(customer_id))
     }
 
-    fn update_address(&self, _address_id: Uuid, _input: CreateCustomerAddress) -> Result<CustomerAddress> {
-        Err(CommerceError::Internal("update_address not implemented".to_string()))
+    fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+        super::block_on(self.update_address_async(address_id, input))
     }
 
-    fn delete_address(&self, _address_id: Uuid) -> Result<()> {
-        Err(CommerceError::Internal("delete_address not implemented".to_string()))
+    fn delete_address(&self, address_id: Uuid) -> Result<()> {
+        super::block_on(self.delete_address_async(address_id))
     }
 
-    fn set_default_address(&self, _customer_id: Uuid, _address_id: Uuid, _address_type: AddressType) -> Result<()> {
-        Err(CommerceError::Internal("set_default_address not implemented".to_string()))
+    fn set_default_address(&self, customer_id: Uuid, address_id: Uuid, address_type: AddressType) -> Result<()> {
+        super::block_on(self.set_default_address_async(customer_id, address_id, address_type))
     }
 
     fn count(&self, filter: CustomerFilter) -> Result<u64> {
@@ -682,24 +1091,5 @@ impl CustomerRepository for PgCustomerRepository {
 
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Customer>> {
         super::block_on(self.get_batch_async(ids))
-    }
-}
-
-fn parse_customer_status(s: &str) -> CustomerStatus {
-    match s {
-        "active" => CustomerStatus::Active,
-        "inactive" => CustomerStatus::Inactive,
-        "suspended" => CustomerStatus::Suspended,
-        "deleted" => CustomerStatus::Deleted,
-        _ => CustomerStatus::Active,
-    }
-}
-
-fn parse_address_type(s: &str) -> AddressType {
-    match s {
-        "shipping" => AddressType::Shipping,
-        "billing" => AddressType::Billing,
-        "both" => AddressType::Both,
-        _ => AddressType::Both,
     }
 }

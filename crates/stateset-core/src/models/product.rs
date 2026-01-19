@@ -65,6 +65,19 @@ impl std::fmt::Display for ProductStatus {
     }
 }
 
+impl std::str::FromStr for ProductStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "draft" => Ok(Self::Draft),
+            "active" => Ok(Self::Active),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("Unknown product status: {}", s)),
+        }
+    }
+}
+
 /// Product type enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +101,20 @@ impl std::fmt::Display for ProductType {
             Self::Variable => write!(f, "variable"),
             Self::Bundle => write!(f, "bundle"),
             Self::Digital => write!(f, "digital"),
+        }
+    }
+}
+
+impl std::str::FromStr for ProductType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "simple" => Ok(Self::Simple),
+            "variable" => Ok(Self::Variable),
+            "bundle" => Ok(Self::Bundle),
+            "digital" => Ok(Self::Digital),
+            _ => Err(format!("Unknown product type: {}", s)),
         }
     }
 }
@@ -231,10 +258,32 @@ impl ProductVariant {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+    use std::str::FromStr;
 
     // ============================================================================
     // Test Helpers
     // ============================================================================
+
+    #[test]
+    fn product_status_display() {
+        assert_eq!(ProductStatus::Draft.to_string(), "draft");
+        assert_eq!(ProductStatus::Active.to_string(), "active");
+        assert_eq!(ProductStatus::Archived.to_string(), "archived");
+    }
+
+    #[test]
+    fn product_status_from_str() {
+        assert_eq!(ProductStatus::from_str("draft").unwrap(), ProductStatus::Draft);
+        assert_eq!(ProductStatus::from_str("Active").unwrap(), ProductStatus::Active);
+        assert!(ProductStatus::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn product_type_from_str() {
+        assert_eq!(ProductType::from_str("simple").unwrap(), ProductType::Simple);
+        assert_eq!(ProductType::from_str("Bundle").unwrap(), ProductType::Bundle);
+        assert!(ProductType::from_str("physical").is_err());
+    }
 
     fn create_test_product(status: ProductStatus) -> Product {
         let now = Utc::now();

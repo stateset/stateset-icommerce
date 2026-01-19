@@ -1,6 +1,6 @@
 //! SQLite repository for promotions and coupons
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
@@ -8,13 +8,17 @@ use rusqlite::OptionalExtension;
 use stateset_core::{
     AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult, ConditionOperator,
     ConditionType, CouponCode, CouponFilter, CouponStatus, CreateCouponCode, CreatePromotion,
-    CreatePromotionCondition, DiscountTier, Promotion, PromotionCondition,
+    CreatePromotionCondition, DiscountTier, Promotion, PromotionCondition, CommerceError,
     PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget, PromotionTrigger,
     PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior,
     UpdatePromotion, generate_promotion_code,
 };
-use std::str::FromStr;
 use uuid::Uuid;
+
+use super::{
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_enum_row,
+    parse_json_opt_row, parse_uuid_row,
+};
 
 pub struct SqlitePromotionRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -73,10 +77,10 @@ impl SqlitePromotionRepository {
                 input.name,
                 input.description,
                 input.internal_notes,
-                format!("{:?}", input.promotion_type).to_lowercase(),
-                format!("{:?}", input.trigger).to_lowercase(),
-                format!("{:?}", input.target).to_lowercase(),
-                format!("{:?}", input.stacking).to_lowercase(),
+                input.promotion_type.to_string(),
+                input.trigger.to_string(),
+                input.target.to_string(),
+                input.stacking.to_string(),
                 "draft",
                 input.percentage_off.map(|d| d.to_string()),
                 input.fixed_amount_off.map(|d| d.to_string()),
@@ -116,8 +120,8 @@ impl SqlitePromotionRepository {
                     rusqlite::params![
                         cond_id.to_string(),
                         id.to_string(),
-                        format!("{:?}", cond.condition_type).to_lowercase(),
-                        format!("{:?}", cond.operator).to_lowercase(),
+                        cond.condition_type.to_string(),
+                        cond.operator.to_string(),
                         cond.value,
                         cond.is_required as i32,
                     ],
@@ -184,17 +188,17 @@ impl SqlitePromotionRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
 
         if let Some(promo_type) = &filter.promotion_type {
             sql.push_str(" AND promotion_type = ?");
-            params.push(Box::new(format!("{:?}", promo_type).to_lowercase()));
+            params.push(Box::new(promo_type.to_string()));
         }
 
         if let Some(trigger) = &filter.trigger {
             sql.push_str(" AND trigger = ?");
-            params.push(Box::new(format!("{:?}", trigger).to_lowercase()));
+            params.push(Box::new(trigger.to_string()));
         }
 
         if let Some(is_active) = filter.is_active {
@@ -267,7 +271,7 @@ impl SqlitePromotionRepository {
                 input.name,
                 input.description,
                 input.internal_notes,
-                input.status.map(|s| format!("{:?}", s).to_lowercase()),
+                input.status.map(|s| s.to_string()),
                 input.percentage_off.map(|d| d.to_string()),
                 input.fixed_amount_off.map(|d| d.to_string()),
                 input.max_discount_amount.map(|d| d.to_string()),
@@ -328,8 +332,8 @@ impl SqlitePromotionRepository {
             rusqlite::params![
                 id.to_string(),
                 promotion_id.to_string(),
-                format!("{:?}", input.condition_type).to_lowercase(),
-                format!("{:?}", input.operator).to_lowercase(),
+                input.condition_type.to_string(),
+                input.operator.to_string(),
                 input.value,
                 input.is_required as i32,
             ],
@@ -357,10 +361,10 @@ impl SqlitePromotionRepository {
 
         let rows = stmt.query_map([promotion_id.to_string()], |row| {
             Ok(PromotionCondition {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-                promotion_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
-                condition_type: parse_condition_type(&row.get::<_, String>(2)?),
-                operator: parse_operator(&row.get::<_, String>(3)?),
+                id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion_condition", "id")?,
+                promotion_id: parse_uuid_row(&row.get::<_, String>(1)?, "promotion_condition", "promotion_id")?,
+                condition_type: parse_enum_row(&row.get::<_, String>(2)?, "promotion_condition", "condition_type")?,
+                operator: parse_enum_row(&row.get::<_, String>(3)?, "promotion_condition", "operator")?,
                 value: row.get(4)?,
                 is_required: row.get::<_, i32>(5)? != 0,
             })
@@ -446,7 +450,7 @@ impl SqlitePromotionRepository {
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
-            params.push(Box::new(format!("{:?}", status).to_lowercase()));
+            params.push(Box::new(status.to_string()));
         }
 
         if let Some(search) = &filter.search {
@@ -638,9 +642,13 @@ impl SqlitePromotionRepository {
 
         // At least one optional condition must be met (if any exist)
         if !optional_conditions.is_empty() {
-            let any_met = optional_conditions.iter().any(|c| {
-                self.evaluate_condition(c, request).unwrap_or(false)
-            });
+            let mut any_met = false;
+            for cond in &optional_conditions {
+                if self.evaluate_condition(cond, request)? {
+                    any_met = true;
+                    break;
+                }
+            }
             if !any_met {
                 return Ok(false);
             }
@@ -652,11 +660,11 @@ impl SqlitePromotionRepository {
     fn evaluate_condition(&self, cond: &PromotionCondition, request: &ApplyPromotionsRequest) -> Result<bool> {
         match cond.condition_type {
             ConditionType::MinimumSubtotal => {
-                let min = Decimal::from_str(&cond.value).unwrap_or(Decimal::ZERO);
+                let min = self.parse_condition_decimal(cond)?;
                 Ok(self.compare_decimal(request.subtotal, cond.operator, min))
             }
             ConditionType::MinimumQuantity => {
-                let min: i32 = cond.value.parse().unwrap_or(0);
+                let min = self.parse_condition_i32(cond)?;
                 let total_qty: i32 = request.line_items.iter().map(|i| i.quantity).sum();
                 Ok(self.compare_i32(total_qty, cond.operator, min))
             }
@@ -678,12 +686,30 @@ impl SqlitePromotionRepository {
                 }
             }
             ConditionType::CartItemCount => {
-                let required: i32 = cond.value.parse().unwrap_or(0);
+                let required = self.parse_condition_i32(cond)?;
                 let count = request.line_items.len() as i32;
                 Ok(self.compare_i32(count, cond.operator, required))
             }
             _ => Ok(true), // Default to true for unhandled conditions
         }
+    }
+
+    fn parse_condition_decimal(&self, cond: &PromotionCondition) -> Result<Decimal> {
+        cond.value.parse::<Decimal>().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion condition value for {:?}: '{}' - {}",
+                cond.condition_type, cond.value, e
+            ))
+        })
+    }
+
+    fn parse_condition_i32(&self, cond: &PromotionCondition) -> Result<i32> {
+        cond.value.parse::<i32>().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid promotion condition value for {:?}: '{}' - {}",
+                cond.condition_type, cond.value, e
+            ))
+        })
     }
 
     fn compare_decimal(&self, actual: Decimal, op: ConditionOperator, expected: Decimal) -> bool {
@@ -874,70 +900,119 @@ impl SqlitePromotionRepository {
 
     fn row_to_promotion(&self, row: &rusqlite::Row) -> rusqlite::Result<Promotion> {
         Ok(Promotion {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "promotion", "id")?,
             code: row.get(1)?,
             name: row.get(2)?,
             description: row.get(3)?,
             internal_notes: row.get(4)?,
-            promotion_type: parse_promotion_type(&row.get::<_, String>(5)?),
-            trigger: parse_trigger(&row.get::<_, String>(6)?),
-            target: parse_target(&row.get::<_, String>(7)?),
-            stacking: parse_stacking(&row.get::<_, String>(8)?),
-            status: parse_status(&row.get::<_, String>(9)?),
-            percentage_off: row.get::<_, Option<String>>(10)?.and_then(|s| Decimal::from_str(&s).ok()),
-            fixed_amount_off: row.get::<_, Option<String>>(11)?.and_then(|s| Decimal::from_str(&s).ok()),
-            max_discount_amount: row.get::<_, Option<String>>(12)?.and_then(|s| Decimal::from_str(&s).ok()),
+            promotion_type: parse_enum_row(&row.get::<_, String>(5)?, "promotion", "promotion_type")?,
+            trigger: parse_enum_row(&row.get::<_, String>(6)?, "promotion", "trigger")?,
+            target: parse_enum_row(&row.get::<_, String>(7)?, "promotion", "target")?,
+            stacking: parse_enum_row(&row.get::<_, String>(8)?, "promotion", "stacking")?,
+            status: parse_enum_row(&row.get::<_, String>(9)?, "promotion", "status")?,
+            percentage_off: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "promotion",
+                "percentage_off",
+            )?,
+            fixed_amount_off: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "promotion",
+                "fixed_amount_off",
+            )?,
+            max_discount_amount: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(12)?,
+                "promotion",
+                "max_discount_amount",
+            )?,
             buy_quantity: row.get(13)?,
             get_quantity: row.get(14)?,
-            get_discount_percent: row.get::<_, Option<String>>(15)?.and_then(|s| Decimal::from_str(&s).ok()),
-            tiers: row.get::<_, Option<String>>(16)?.and_then(|s| serde_json::from_str(&s).ok()),
-            bundle_product_ids: row.get::<_, Option<String>>(17)?.and_then(|s| serde_json::from_str(&s).ok()),
-            bundle_discount: row.get::<_, Option<String>>(18)?.and_then(|s| Decimal::from_str(&s).ok()),
-            starts_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(19)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            ends_at: row.get::<_, Option<String>>(20)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
+            get_discount_percent: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(15)?,
+                "promotion",
+                "get_discount_percent",
+            )?,
+            tiers: parse_json_opt_row(row.get::<_, Option<String>>(16)?, "promotion", "tiers")?,
+            bundle_product_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(17)?,
+                "promotion",
+                "bundle_product_ids",
+            )?,
+            bundle_discount: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(18)?,
+                "promotion",
+                "bundle_discount",
+            )?,
+            starts_at: parse_datetime_row(&row.get::<_, String>(19)?, "promotion", "starts_at")?,
+            ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(20)?, "promotion", "ends_at")?,
             total_usage_limit: row.get(21)?,
             per_customer_limit: row.get(22)?,
             usage_count: row.get(23)?,
-            applicable_product_ids: row.get::<_, String>(24).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            applicable_category_ids: row.get::<_, String>(25).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            applicable_skus: row.get::<_, String>(26).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            excluded_product_ids: row.get::<_, String>(27).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            excluded_category_ids: row.get::<_, String>(28).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            eligible_customer_ids: row.get::<_, String>(29).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-            eligible_customer_groups: row.get::<_, String>(30).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
+            applicable_product_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(24)?,
+                "promotion",
+                "applicable_product_ids",
+            )?
+            .unwrap_or_default(),
+            applicable_category_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(25)?,
+                "promotion",
+                "applicable_category_ids",
+            )?
+            .unwrap_or_default(),
+            applicable_skus: parse_json_opt_row(
+                row.get::<_, Option<String>>(26)?,
+                "promotion",
+                "applicable_skus",
+            )?
+            .unwrap_or_default(),
+            excluded_product_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(27)?,
+                "promotion",
+                "excluded_product_ids",
+            )?
+            .unwrap_or_default(),
+            excluded_category_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(28)?,
+                "promotion",
+                "excluded_category_ids",
+            )?
+            .unwrap_or_default(),
+            eligible_customer_ids: parse_json_opt_row(
+                row.get::<_, Option<String>>(29)?,
+                "promotion",
+                "eligible_customer_ids",
+            )?
+            .unwrap_or_default(),
+            eligible_customer_groups: parse_json_opt_row(
+                row.get::<_, Option<String>>(30)?,
+                "promotion",
+                "eligible_customer_groups",
+            )?
+            .unwrap_or_default(),
             currency: row.get(31)?,
             priority: row.get(32)?,
-            metadata: row.get::<_, Option<String>>(33)?.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(34)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(35)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            metadata: parse_json_opt_row(row.get::<_, Option<String>>(33)?, "promotion", "metadata")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(34)?, "promotion", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(35)?, "promotion", "updated_at")?,
             conditions: Vec::new(), // Loaded separately
         })
     }
 
     fn row_to_coupon(&self, row: &rusqlite::Row) -> rusqlite::Result<CouponCode> {
         Ok(CouponCode {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
-            promotion_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>(0)?, "coupon_code", "id")?,
+            promotion_id: parse_uuid_row(&row.get::<_, String>(1)?, "coupon_code", "promotion_id")?,
             code: row.get(2)?,
-            status: parse_coupon_status(&row.get::<_, String>(3)?),
+            status: parse_enum_row(&row.get::<_, String>(3)?, "coupon_code", "status")?,
             usage_limit: row.get(4)?,
             per_customer_limit: row.get(5)?,
             usage_count: row.get(6)?,
-            starts_at: row.get::<_, Option<String>>(7)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            ends_at: row.get::<_, Option<String>>(8)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-            metadata: row.get::<_, Option<String>>(9)?.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            starts_at: parse_datetime_opt_row(row.get::<_, Option<String>>(7)?, "coupon_code", "starts_at")?,
+            ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(8)?, "coupon_code", "ends_at")?,
+            metadata: parse_json_opt_row(row.get::<_, Option<String>>(9)?, "coupon_code", "metadata")?,
+            created_at: parse_datetime_row(&row.get::<_, String>(10)?, "coupon_code", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>(11)?, "coupon_code", "updated_at")?,
         })
     }
 }
@@ -1019,106 +1094,5 @@ impl PromotionRepository for SqlitePromotionRepository {
             discount_amount,
             currency,
         )
-    }
-}
-
-fn parse_promotion_type(s: &str) -> PromotionType {
-    match s {
-        "percentage_off" => PromotionType::PercentageOff,
-        "fixed_amount_off" => PromotionType::FixedAmountOff,
-        "buy_x_get_y" => PromotionType::BuyXGetY,
-        "free_shipping" => PromotionType::FreeShipping,
-        "tiered_discount" => PromotionType::TieredDiscount,
-        "bundle_discount" => PromotionType::BundleDiscount,
-        "first_order_discount" => PromotionType::FirstOrderDiscount,
-        "gift_with_purchase" => PromotionType::GiftWithPurchase,
-        _ => PromotionType::PercentageOff,
-    }
-}
-
-fn parse_trigger(s: &str) -> PromotionTrigger {
-    match s {
-        "automatic" => PromotionTrigger::Automatic,
-        "coupon_code" => PromotionTrigger::CouponCode,
-        "both" => PromotionTrigger::Both,
-        _ => PromotionTrigger::Automatic,
-    }
-}
-
-fn parse_target(s: &str) -> PromotionTarget {
-    match s {
-        "order" => PromotionTarget::Order,
-        "product" => PromotionTarget::Product,
-        "category" => PromotionTarget::Category,
-        "shipping" => PromotionTarget::Shipping,
-        "line_item" => PromotionTarget::LineItem,
-        _ => PromotionTarget::Order,
-    }
-}
-
-fn parse_stacking(s: &str) -> StackingBehavior {
-    match s {
-        "stackable" => StackingBehavior::Stackable,
-        "exclusive" => StackingBehavior::Exclusive,
-        "selective_stack" => StackingBehavior::SelectiveStack,
-        _ => StackingBehavior::Stackable,
-    }
-}
-
-fn parse_status(s: &str) -> PromotionStatus {
-    match s {
-        "draft" => PromotionStatus::Draft,
-        "scheduled" => PromotionStatus::Scheduled,
-        "active" => PromotionStatus::Active,
-        "paused" => PromotionStatus::Paused,
-        "expired" => PromotionStatus::Expired,
-        "exhausted" => PromotionStatus::Exhausted,
-        "archived" => PromotionStatus::Archived,
-        _ => PromotionStatus::Draft,
-    }
-}
-
-fn parse_coupon_status(s: &str) -> CouponStatus {
-    match s {
-        "active" => CouponStatus::Active,
-        "disabled" => CouponStatus::Disabled,
-        "exhausted" => CouponStatus::Exhausted,
-        "expired" => CouponStatus::Expired,
-        _ => CouponStatus::Active,
-    }
-}
-
-fn parse_condition_type(s: &str) -> ConditionType {
-    match s {
-        "minimum_subtotal" => ConditionType::MinimumSubtotal,
-        "minimum_quantity" => ConditionType::MinimumQuantity,
-        "product_in_cart" => ConditionType::ProductInCart,
-        "category_in_cart" => ConditionType::CategoryInCart,
-        "sku_in_cart" => ConditionType::SkuInCart,
-        "customer_group" => ConditionType::CustomerGroup,
-        "first_order" => ConditionType::FirstOrder,
-        "customer_email_domain" => ConditionType::CustomerEmailDomain,
-        "shipping_country" => ConditionType::ShippingCountry,
-        "shipping_state" => ConditionType::ShippingState,
-        "payment_method" => ConditionType::PaymentMethod,
-        "cart_item_count" => ConditionType::CartItemCount,
-        "customer_id" => ConditionType::CustomerId,
-        _ => ConditionType::MinimumSubtotal,
-    }
-}
-
-fn parse_operator(s: &str) -> ConditionOperator {
-    match s {
-        "equals" => ConditionOperator::Equals,
-        "not_equals" => ConditionOperator::NotEquals,
-        "greater_than" => ConditionOperator::GreaterThan,
-        "greater_than_or_equal" => ConditionOperator::GreaterThanOrEqual,
-        "less_than" => ConditionOperator::LessThan,
-        "less_than_or_equal" => ConditionOperator::LessThanOrEqual,
-        "contains" => ConditionOperator::Contains,
-        "not_contains" => ConditionOperator::NotContains,
-        "in" => ConditionOperator::In,
-        "not_in" => ConditionOperator::NotIn,
-        _ => ConditionOperator::Equals,
     }
 }

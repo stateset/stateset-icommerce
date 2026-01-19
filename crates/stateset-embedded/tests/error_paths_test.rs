@@ -50,6 +50,7 @@ fn test_order_with_invalid_customer() {
     let result = commerce.orders().create(CreateOrder {
         customer_id: Uuid::new_v4(),
         items: vec![CreateOrderItem {
+            product_id: Uuid::new_v4(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: 1,
@@ -84,6 +85,7 @@ fn test_order_negative_quantity() {
     let result = commerce.orders().create(CreateOrder {
         customer_id: Uuid::new_v4(),
         items: vec![CreateOrderItem {
+            product_id: Uuid::new_v4(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: -1, // Negative quantity
@@ -104,6 +106,7 @@ fn test_order_zero_quantity() {
     let result = commerce.orders().create(CreateOrder {
         customer_id: Uuid::new_v4(),
         items: vec![CreateOrderItem {
+            product_id: Uuid::new_v4(),
             sku: "TEST-001".into(),
             name: "Test Product".into(),
             quantity: 0, // Zero quantity
@@ -424,6 +427,7 @@ fn test_return_approve_already_approved() {
         .create(CreateOrder {
             customer_id: customer.id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "RET-001".into(),
                 name: "Returnable Item".into(),
                 quantity: 1,
@@ -604,6 +608,7 @@ fn test_concurrent_order_creation() {
             let result = commerce_clone.orders().create(CreateOrder {
                 customer_id: cid,
                 items: vec![CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: format!("THREAD-{}", i),
                     name: format!("Thread {} Product", i),
                     quantity: 1,
@@ -704,6 +709,7 @@ fn test_decimal_precision() {
         .create(CreateOrder {
             customer_id: customer.id,
             items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: "PRECISION-001".into(),
                 name: "Precision Test".into(),
                 quantity: 1,
@@ -725,6 +731,7 @@ fn test_max_decimal_value() {
     let result = commerce.orders().create(CreateOrder {
         customer_id: Uuid::new_v4(),
         items: vec![CreateOrderItem {
+            product_id: Uuid::new_v4(),
             sku: "MAX-001".into(),
             name: "Max Value Test".into(),
             quantity: 1,

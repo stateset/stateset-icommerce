@@ -2,7 +2,7 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_uuid_row, uuid_params,
+    parse_decimal_row, parse_enum_row, parse_uuid_row, uuid_params,
 };
 use super::parse_helpers::{parse_decimal, parse_uuid};
 use chrono::Utc;
@@ -36,8 +36,8 @@ impl SqliteReturnRepository {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "return", "id")?,
             order_id: parse_uuid_row(&row.get::<_, String>("order_id")?, "return", "order_id")?,
             customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "return", "customer_id")?,
-            status: parse_return_status(&row.get::<_, String>("status")?),
-            reason: parse_return_reason(&row.get::<_, String>("reason")?),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "return", "status")?,
+            reason: parse_enum_row(&row.get::<_, String>("reason")?, "return", "reason")?,
             reason_details: row.get("reason_details")?,
             idempotency_key: row.get("idempotency_key")?,
             refund_amount: parse_decimal_opt_row(row.get::<_, Option<String>>("refund_amount")?, "return", "refund_amount")?,
@@ -70,7 +70,7 @@ impl SqliteReturnRepository {
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     quantity: row.get("quantity")?,
-                    condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                    condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                     refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                 })
             })
@@ -120,7 +120,7 @@ impl SqliteReturnRepository {
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
-                            condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                            condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                             refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                         })
                     })
@@ -265,7 +265,7 @@ impl ReturnRepository for SqliteReturnRepository {
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
-                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                         refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
@@ -306,7 +306,7 @@ impl ReturnRepository for SqliteReturnRepository {
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
-                            condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                            condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                             refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                         })
                     })
@@ -383,7 +383,7 @@ impl ReturnRepository for SqliteReturnRepository {
                             sku: row.get("sku")?,
                             name: row.get("name")?,
                             quantity: row.get("quantity")?,
-                            condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                            condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                             refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                         })
                     })
@@ -465,7 +465,7 @@ impl ReturnRepository for SqliteReturnRepository {
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
-                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                         refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
@@ -779,7 +779,7 @@ impl ReturnRepository for SqliteReturnRepository {
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
-                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                         refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
@@ -874,7 +874,7 @@ impl ReturnRepository for SqliteReturnRepository {
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         quantity: row.get("quantity")?,
-                        condition: parse_item_condition(&row.get::<_, String>("condition")?),
+                        condition: parse_enum_row(&row.get::<_, String>("condition")?, "return_item", "condition")?,
                         refund_amount: parse_decimal_row(&row.get::<_, String>("refund_amount")?, "return_item", "refund_amount")?,
                     })
                 })
@@ -886,68 +886,5 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         Ok(result)
-    }
-}
-
-fn parse_return_status(s: &str) -> ReturnStatus {
-    match s {
-        "requested" => ReturnStatus::Requested,
-        "approved" => ReturnStatus::Approved,
-        "rejected" => ReturnStatus::Rejected,
-        "in_transit" | "intransit" => ReturnStatus::InTransit,
-        "received" => ReturnStatus::Received,
-        "inspecting" => ReturnStatus::Inspecting,
-        "completed" => ReturnStatus::Completed,
-        "cancelled" => ReturnStatus::Cancelled,
-        _ => ReturnStatus::Requested,
-    }
-}
-
-fn parse_return_reason(s: &str) -> ReturnReason {
-    match s {
-        "defective" => ReturnReason::Defective,
-        "wrong_item" | "wrongitem" => ReturnReason::WrongItem,
-        "not_as_described" | "notasdescribed" => ReturnReason::NotAsDescribed,
-        "changed_mind" | "changedmind" => ReturnReason::ChangedMind,
-        "better_price_found" | "betterpricefound" => ReturnReason::BetterPriceFound,
-        "no_longer_needed" | "nolongerneeded" => ReturnReason::NoLongerNeeded,
-        "damaged" => ReturnReason::Damaged,
-        "other" => ReturnReason::Other,
-        _ => ReturnReason::Other,
-    }
-}
-
-fn parse_item_condition(s: &str) -> ItemCondition {
-    match s {
-        "new" => ItemCondition::New,
-        "opened" => ItemCondition::Opened,
-        "used" => ItemCondition::Used,
-        "damaged" => ItemCondition::Damaged,
-        "defective" => ItemCondition::Defective,
-        _ => ItemCondition::New,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_return_status_snake_case_and_legacy() {
-        assert_eq!(parse_return_status("in_transit"), ReturnStatus::InTransit);
-        assert_eq!(parse_return_status("intransit"), ReturnStatus::InTransit);
-    }
-
-    #[test]
-    fn parses_return_reason_snake_case_and_legacy() {
-        assert_eq!(parse_return_reason("wrong_item"), ReturnReason::WrongItem);
-        assert_eq!(parse_return_reason("wrongitem"), ReturnReason::WrongItem);
-        assert_eq!(
-            parse_return_reason("not_as_described"),
-            ReturnReason::NotAsDescribed
-        );
-        assert_eq!(parse_return_reason("notasdescribed"), ReturnReason::NotAsDescribed);
-        assert_eq!(parse_return_reason("no_longer_needed"), ReturnReason::NoLongerNeeded);
-        assert_eq!(parse_return_reason("nolongerneeded"), ReturnReason::NoLongerNeeded);
     }
 }

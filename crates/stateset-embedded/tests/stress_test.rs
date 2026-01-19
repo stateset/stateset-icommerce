@@ -38,6 +38,7 @@ fn stress_test_bulk_order_creation() {
             .create(CreateOrder {
                 customer_id,
                 items: vec![CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: format!("BULK-{}", i),
                     name: format!("Bulk Product {}", i),
                     quantity: 1,
@@ -212,6 +213,7 @@ fn stress_test_concurrent_orders() {
                 let result = commerce_clone.orders().create(CreateOrder {
                     customer_id: cid,
                     items: vec![CreateOrderItem {
+                        product_id: Uuid::new_v4(),
                         sku: format!("THREAD-{}-ORDER-{}", t, i),
                         name: format!("Thread {} Order {} Product", t, i),
                         quantity: 1,
@@ -406,6 +408,7 @@ fn stress_test_mixed_workload() {
                 let _ = commerce_clone.orders().create(CreateOrder {
                     customer_id: Uuid::new_v4(),
                     items: vec![CreateOrderItem {
+                        product_id: Uuid::new_v4(),
                         sku: "MIXED-001".into(),
                         name: "Mixed Item".into(),
                         quantity: 1,
@@ -512,6 +515,7 @@ fn stress_test_large_batch_insert() {
     for i in 0..batch_size {
         let items: Vec<CreateOrderItem> = (0..item_count_per_order)
             .map(|j| CreateOrderItem {
+                product_id: Uuid::new_v4(),
                 sku: format!("BATCH-{}-ITEM-{}", i, j),
                 name: format!("Batch {} Item {}", i, j),
                 quantity: 1,
@@ -620,6 +624,7 @@ fn stress_test_long_running_operations() {
             .create(CreateOrder {
                 customer_id: customer.id,
                 items: vec![CreateOrderItem {
+                    product_id: Uuid::new_v4(),
                     sku: format!("LONG-RUN-{}", i),
                     name: "Long Running Item".into(),
                     quantity: 1,

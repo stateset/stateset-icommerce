@@ -120,67 +120,177 @@ impl PgGeneralLedgerRepository {
         Self { pool }
     }
 
-    fn row_to_account(row: AccountRow) -> GlAccount {
-        GlAccount {
-            id: row.id,
-            account_number: row.account_number,
-            name: row.name,
-            description: row.description,
-            account_type: row.account_type.parse().unwrap_or_default(),
-            account_sub_type: row.account_sub_type.and_then(|s| s.parse().ok()),
-            parent_account_id: row.parent_account_id,
-            is_header: row.is_header,
-            is_posting: row.is_posting,
-            normal_balance: row.normal_balance.parse().unwrap_or_default(),
-            currency: row.currency,
-            status: row.status.parse().unwrap_or_default(),
-            current_balance: row.current_balance,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_account(row: AccountRow) -> Result<GlAccount> {
+        let AccountRow {
+            id,
+            account_number,
+            name,
+            description,
+            account_type,
+            account_sub_type,
+            parent_account_id,
+            is_header,
+            is_posting,
+            normal_balance,
+            currency,
+            status,
+            current_balance,
+            created_at,
+            updated_at,
+        } = row;
+
+        let account_type: AccountType = account_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_account.account_type '{}': {}",
+                account_type, e
+            ))
+        })?;
+        let account_sub_type = match account_sub_type {
+            Some(value) if !value.trim().is_empty() => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.account_sub_type '{}': {}",
+                    value, e
+                ))
+            })?),
+            _ => None,
+        };
+        let normal_balance: BalanceSide = normal_balance.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_account.normal_balance '{}': {}",
+                normal_balance, e
+            ))
+        })?;
+        let status: AccountStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_account.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(GlAccount {
+            id,
+            account_number,
+            name,
+            description,
+            account_type,
+            account_sub_type,
+            parent_account_id,
+            is_header,
+            is_posting,
+            normal_balance,
+            currency,
+            status,
+            current_balance,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_period(row: PeriodRow) -> GlPeriod {
-        GlPeriod {
-            id: row.id,
-            period_name: row.period_name,
-            fiscal_year: row.fiscal_year,
-            period_number: row.period_number,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            status: row.status.parse().unwrap_or_default(),
-            closed_at: row.closed_at,
-            closed_by: row.closed_by,
-            locked_at: row.locked_at,
-            locked_by: row.locked_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_period(row: PeriodRow) -> Result<GlPeriod> {
+        let PeriodRow {
+            id,
+            period_name,
+            fiscal_year,
+            period_number,
+            start_date,
+            end_date,
+            status,
+            closed_at,
+            closed_by,
+            locked_at,
+            locked_by,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: PeriodStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_period.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(GlPeriod {
+            id,
+            period_name,
+            fiscal_year,
+            period_number,
+            start_date,
+            end_date,
+            status,
+            closed_at,
+            closed_by,
+            locked_at,
+            locked_by,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_journal_entry(row: JournalEntryRow) -> JournalEntry {
-        JournalEntry {
-            id: row.id,
-            entry_number: row.entry_number,
-            entry_date: row.entry_date,
-            period_id: row.period_id,
-            entry_type: row.entry_type.parse().unwrap_or_default(),
-            source: row.source.parse().unwrap_or_default(),
-            source_document_type: row.source_document_type,
-            source_document_id: row.source_document_id,
-            description: row.description,
-            total_debits: row.total_debits,
-            total_credits: row.total_credits,
-            is_balanced: row.is_balanced,
-            status: row.status.parse().unwrap_or_default(),
-            posted_at: row.posted_at,
-            posted_by: row.posted_by,
-            reversed_entry_id: row.reversed_entry_id,
-            reversing_entry_id: row.reversing_entry_id,
+    fn row_to_journal_entry(row: JournalEntryRow) -> Result<JournalEntry> {
+        let JournalEntryRow {
+            id,
+            entry_number,
+            entry_date,
+            period_id,
+            entry_type,
+            source,
+            source_document_type,
+            source_document_id,
+            description,
+            total_debits,
+            total_credits,
+            is_balanced,
+            status,
+            posted_at,
+            posted_by,
+            reversed_entry_id,
+            reversing_entry_id,
+            created_at,
+            updated_at,
+        } = row;
+
+        let entry_type: JournalEntryType = entry_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_journal_entry.entry_type '{}': {}",
+                entry_type, e
+            ))
+        })?;
+        let source: JournalEntrySource = source.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_journal_entry.source '{}': {}",
+                source, e
+            ))
+        })?;
+        let status: JournalEntryStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid gl_journal_entry.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(JournalEntry {
+            id,
+            entry_number,
+            entry_date,
+            period_id,
+            entry_type,
+            source,
+            source_document_type,
+            source_document_id,
+            description,
+            total_debits,
+            total_credits,
+            is_balanced,
+            status,
+            posted_at,
+            posted_by,
+            reversed_entry_id,
+            reversing_entry_id,
             lines: Vec::new(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_journal_entry_line(row: JournalEntryLineRow) -> JournalEntryLine {
@@ -238,7 +348,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        let account = Self::row_to_account(row);
+        let account = Self::row_to_account(row)?;
         let balance_change = account.balance_effect(debit, credit);
         let new_balance = account.current_balance + balance_change;
 
@@ -300,7 +410,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_account))
+        Ok(row.map(Self::row_to_account).transpose()?)
     }
 
     pub async fn get_account_by_number_async(&self, account_number: &str) -> Result<Option<GlAccount>> {
@@ -315,7 +425,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_account))
+        Ok(row.map(Self::row_to_account).transpose()?)
     }
 
     pub async fn update_account_async(
@@ -396,7 +506,10 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_account).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_account)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_account_hierarchy_async(&self) -> Result<Vec<GlAccount>> {
@@ -476,7 +589,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period))
+        Ok(row.map(Self::row_to_period).transpose()?)
     }
 
     pub async fn get_current_period_async(&self) -> Result<Option<GlPeriod>> {
@@ -489,7 +602,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period))
+        Ok(row.map(Self::row_to_period).transpose()?)
     }
 
     pub async fn get_period_for_date_async(
@@ -506,7 +619,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period))
+        Ok(row.map(Self::row_to_period).transpose()?)
     }
 
     pub async fn list_periods_async(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
@@ -538,7 +651,10 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_period).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_period)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn open_period_async(&self, id: Uuid) -> Result<GlPeriod> {
@@ -706,7 +822,7 @@ impl PgGeneralLedgerRepository {
 
         match row {
             Some(row) => {
-                let mut entry = Self::row_to_journal_entry(row);
+                let mut entry = Self::row_to_journal_entry(row)?;
                 entry.lines = self.get_journal_entry_lines_async(id).await?;
                 Ok(Some(entry))
             }
@@ -803,7 +919,7 @@ impl PgGeneralLedgerRepository {
 
         let mut entries = Vec::new();
         for row in rows {
-            let mut entry = Self::row_to_journal_entry(row);
+            let mut entry = Self::row_to_journal_entry(row)?;
             entry.lines = self.get_journal_entry_lines_async(entry.id).await?;
             entries.push(entry);
         }
@@ -1277,17 +1393,28 @@ impl PgGeneralLedgerRepository {
         let mut total_credits = Decimal::ZERO;
 
         for (id, number, name, account_type, normal_balance, balance) in rows {
-            let normal: BalanceSide = normal_balance.parse().unwrap_or_default();
+            let normal: BalanceSide = normal_balance.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.normal_balance '{}': {}",
+                    normal_balance, e
+                ))
+            })?;
             let (debit_balance, credit_balance) = match normal {
                 BalanceSide::Debit => (balance, Decimal::ZERO),
                 BalanceSide::Credit => (Decimal::ZERO, balance),
             };
+            let account_type: AccountType = account_type.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.account_type '{}': {}",
+                    account_type, e
+                ))
+            })?;
 
             lines.push(TrialBalanceLine {
                 account_id: id,
                 account_number: number,
                 account_name: name,
-                account_type: account_type.parse().unwrap_or_default(),
+                account_type,
                 debit_balance,
                 credit_balance,
             });
@@ -1329,8 +1456,21 @@ impl PgGeneralLedgerRepository {
         let mut total_equity = Decimal::ZERO;
 
         for (id, number, name, account_type, sub_type, balance, _normal_balance) in rows {
-            let account_type: AccountType = account_type.parse().unwrap_or_default();
-            let sub_type = sub_type.and_then(|s| s.parse().ok());
+            let account_type: AccountType = account_type.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.account_type '{}': {}",
+                    account_type, e
+                ))
+            })?;
+            let sub_type = match sub_type {
+                Some(value) if !value.trim().is_empty() => Some(value.parse().map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid gl_account.account_sub_type '{}': {}",
+                        value, e
+                    ))
+                })?),
+                _ => None,
+            };
             let line = BalanceSheetLine {
                 account_id: id,
                 account_number: number,
@@ -1400,7 +1540,12 @@ impl PgGeneralLedgerRepository {
         let mut total_expenses = Decimal::ZERO;
 
         for (id, number, name, account_type, sub_type, total_debits, total_credits) in rows {
-            let account_type: AccountType = account_type.parse().unwrap_or_default();
+            let account_type: AccountType = account_type.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid gl_account.account_type '{}': {}",
+                    account_type, e
+                ))
+            })?;
             let amount = match account_type {
                 AccountType::Revenue => total_credits - total_debits,
                 AccountType::Expense => total_debits - total_credits,
@@ -1415,7 +1560,15 @@ impl PgGeneralLedgerRepository {
                 account_id: id,
                 account_number: number,
                 account_name: name,
-                account_sub_type: sub_type.and_then(|s| s.parse().ok()),
+                account_sub_type: match sub_type {
+                    Some(value) if !value.trim().is_empty() => Some(value.parse().map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid gl_account.account_sub_type '{}': {}",
+                            value, e
+                        ))
+                    })?),
+                    _ => None,
+                },
                 amount,
                 indent_level: 0,
                 is_total: false,

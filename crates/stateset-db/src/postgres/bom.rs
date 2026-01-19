@@ -52,29 +52,39 @@ impl PgBomRepository {
         Self { pool }
     }
 
-    fn parse_status(s: &str) -> BomStatus {
-        match s {
-            "active" => BomStatus::Active,
-            "obsolete" => BomStatus::Obsolete,
-            _ => BomStatus::Draft,
-        }
-    }
+    fn row_to_bom(row: BomRow, components: Vec<BomComponent>) -> Result<BillOfMaterials> {
+        let BomRow {
+            id,
+            bom_number,
+            product_id,
+            name,
+            description,
+            revision,
+            status,
+            created_by,
+            updated_by,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn row_to_bom(row: BomRow, components: Vec<BomComponent>) -> BillOfMaterials {
-        BillOfMaterials {
-            id: row.id,
-            bom_number: row.bom_number,
-            product_id: row.product_id,
-            name: row.name,
-            description: row.description,
-            revision: row.revision,
-            status: Self::parse_status(&row.status),
+        let status: BomStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid bom.status '{}': {}", status, e))
+        })?;
+
+        Ok(BillOfMaterials {
+            id,
+            bom_number,
+            product_id,
+            name,
+            description,
+            revision,
+            status,
             components,
-            created_by: row.created_by,
-            updated_by: row.updated_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+            created_by,
+            updated_by,
+            created_at,
+            updated_at,
+        })
     }
 
     fn row_to_component(row: BomComponentRow) -> BomComponent {
@@ -169,7 +179,7 @@ impl PgBomRepository {
         match result {
             Some(row) => {
                 let components = self.get_components_async(row.id).await?;
-                Ok(Some(Self::row_to_bom(row, components)))
+                Ok(Some(Self::row_to_bom(row, components)?))
             }
             None => Ok(None),
         }
@@ -188,7 +198,7 @@ impl PgBomRepository {
         match result {
             Some(row) => {
                 let components = self.get_components_async(row.id).await?;
-                Ok(Some(Self::row_to_bom(row, components)))
+                Ok(Some(Self::row_to_bom(row, components)?))
             }
             None => Ok(None),
         }
@@ -261,7 +271,7 @@ impl PgBomRepository {
         let mut boms = Vec::new();
         for row in rows {
             let components = self.get_components_async(row.id).await?;
-            boms.push(Self::row_to_bom(row, components));
+            boms.push(Self::row_to_bom(row, components)?);
         }
 
         Ok(boms)
@@ -560,7 +570,7 @@ impl PgBomRepository {
             let existing = Self::row_to_bom(
                 existing_row,
                 existing_components.into_iter().map(Self::row_to_component).collect(),
-            );
+            )?;
 
             let new_name = input.name.unwrap_or(existing.name);
             let new_description = input.description.or(existing.description);
@@ -601,7 +611,7 @@ impl PgBomRepository {
             boms.push(Self::row_to_bom(
                 updated_row,
                 updated_components.into_iter().map(Self::row_to_component).collect(),
-            ));
+            )?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -665,7 +675,7 @@ impl PgBomRepository {
         let mut boms = Vec::with_capacity(rows.len());
         for row in rows {
             let components = self.get_components_async(row.id).await?;
-            boms.push(Self::row_to_bom(row, components));
+            boms.push(Self::row_to_bom(row, components)?);
         }
 
         Ok(boms)

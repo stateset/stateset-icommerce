@@ -184,6 +184,23 @@ impl std::fmt::Display for CartStatus {
     }
 }
 
+impl std::str::FromStr for CartStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "active" => Ok(Self::Active),
+            "ready_for_payment" | "readyforpayment" => Ok(Self::ReadyForPayment),
+            "payment_pending" | "paymentpending" => Ok(Self::PaymentPending),
+            "completed" => Ok(Self::Completed),
+            "abandoned" => Ok(Self::Abandoned),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "expired" => Ok(Self::Expired),
+            _ => Err(format!("Unknown cart status: {}", s)),
+        }
+    }
+}
+
 /// Cart payment status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -221,6 +238,22 @@ impl std::fmt::Display for CartPaymentStatus {
     }
 }
 
+impl std::str::FromStr for CartPaymentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "method_selected" | "methodselected" => Ok(Self::MethodSelected),
+            "authorized" => Ok(Self::Authorized),
+            "captured" => Ok(Self::Captured),
+            "failed" => Ok(Self::Failed),
+            "refunded" => Ok(Self::Refunded),
+            _ => Err(format!("Unknown cart payment status: {}", s)),
+        }
+    }
+}
+
 /// Fulfillment type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -245,6 +278,19 @@ impl std::fmt::Display for FulfillmentType {
             Self::Shipping => write!(f, "shipping"),
             Self::Pickup => write!(f, "pickup"),
             Self::Digital => write!(f, "digital"),
+        }
+    }
+}
+
+impl std::str::FromStr for FulfillmentType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "shipping" => Ok(Self::Shipping),
+            "pickup" | "pick_up" | "pick-up" => Ok(Self::Pickup),
+            "digital" => Ok(Self::Digital),
+            _ => Err(format!("Unknown fulfillment type: {}", s)),
         }
     }
 }
@@ -574,5 +620,64 @@ mod tests {
 
         // Now ready
         assert!(cart.is_ready_for_checkout());
+    }
+
+    #[test]
+    fn test_cart_status_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(CartStatus::from_str("active").unwrap(), CartStatus::Active);
+        assert_eq!(
+            CartStatus::from_str("ready_for_payment").unwrap(),
+            CartStatus::ReadyForPayment
+        );
+        assert_eq!(
+            CartStatus::from_str("paymentpending").unwrap(),
+            CartStatus::PaymentPending
+        );
+        assert_eq!(
+            CartStatus::from_str("canceled").unwrap(),
+            CartStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_cart_payment_status_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            CartPaymentStatus::from_str("method_selected").unwrap(),
+            CartPaymentStatus::MethodSelected
+        );
+        assert_eq!(
+            CartPaymentStatus::from_str("methodselected").unwrap(),
+            CartPaymentStatus::MethodSelected
+        );
+        assert_eq!(
+            CartPaymentStatus::from_str("authorized").unwrap(),
+            CartPaymentStatus::Authorized
+        );
+        assert_eq!(
+            CartPaymentStatus::from_str("captured").unwrap(),
+            CartPaymentStatus::Captured
+        );
+    }
+
+    #[test]
+    fn test_fulfillment_type_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            FulfillmentType::from_str("shipping").unwrap(),
+            FulfillmentType::Shipping
+        );
+        assert_eq!(
+            FulfillmentType::from_str("pick_up").unwrap(),
+            FulfillmentType::Pickup
+        );
+        assert_eq!(
+            FulfillmentType::from_str("digital").unwrap(),
+            FulfillmentType::Digital
+        );
     }
 }

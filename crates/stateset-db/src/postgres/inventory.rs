@@ -107,33 +107,47 @@ impl PgInventoryRepository {
         }
     }
 
-    fn row_to_reservation(row: ReservationRow) -> InventoryReservation {
-        InventoryReservation {
+    fn row_to_reservation(row: ReservationRow) -> Result<InventoryReservation> {
+        let status: ReservationStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                row.status, e
+            ))
+        })?;
+
+        Ok(InventoryReservation {
             id: row.id,
             item_id: row.item_id,
             location_id: row.location_id,
             quantity: row.quantity,
-            status: parse_reservation_status(&row.status),
+            status,
             reference_type: row.reference_type,
             reference_id: row.reference_id,
             expires_at: row.expires_at,
             created_at: row.created_at,
-        }
+        })
     }
 
-    fn row_to_transaction(row: TransactionRow) -> InventoryTransaction {
-        InventoryTransaction {
+    fn row_to_transaction(row: TransactionRow) -> Result<InventoryTransaction> {
+        let transaction_type: TransactionType = row.transaction_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_transaction.transaction_type '{}': {}",
+                row.transaction_type, e
+            ))
+        })?;
+
+        Ok(InventoryTransaction {
             id: row.id,
             item_id: row.item_id,
             location_id: row.location_id,
-            transaction_type: parse_transaction_type(&row.transaction_type),
+            transaction_type,
             quantity: row.quantity,
             reference_type: row.reference_type,
             reference_id: row.reference_id,
             reason: row.reason,
             created_by: row.created_by,
             created_at: row.created_at,
-        }
+        })
     }
 
     /// Create an inventory item (async)
@@ -491,7 +505,13 @@ impl PgInventoryRepository {
         .map_err(map_db_error)?
         .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
 
-        if res.status == "released" {
+        let status: ReservationStatus = res.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                res.status, e
+            ))
+        })?;
+        if status == ReservationStatus::Released {
             return Ok(());
         }
 
@@ -608,7 +628,11 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_transaction).collect())
+        let mut transactions = Vec::with_capacity(rows.len());
+        for row in rows {
+            transactions.push(Self::row_to_transaction(row)?);
+        }
+        Ok(transactions)
     }
 
     // ========================================================================
@@ -988,31 +1012,5 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn get_stock_batch(&self, skus: Vec<String>) -> Result<Vec<StockLevel>> {
         super::block_on(self.get_stock_batch_async(skus))
-    }
-}
-
-fn parse_reservation_status(s: &str) -> ReservationStatus {
-    match s {
-        "pending" => ReservationStatus::Pending,
-        "confirmed" => ReservationStatus::Confirmed,
-        "allocated" => ReservationStatus::Allocated,
-        "cancelled" => ReservationStatus::Cancelled,
-        "released" => ReservationStatus::Released,
-        "expired" => ReservationStatus::Expired,
-        _ => ReservationStatus::Pending,
-    }
-}
-
-fn parse_transaction_type(s: &str) -> TransactionType {
-    match s {
-        "receipt" => TransactionType::Receipt,
-        "shipment" => TransactionType::Shipment,
-        "adjustment" => TransactionType::Adjustment,
-        "transfer" => TransactionType::Transfer,
-        "return" => TransactionType::Return,
-        "allocation" => TransactionType::Allocation,
-        "deallocation" => TransactionType::Deallocation,
-        "cycle_count" => TransactionType::CycleCount,
-        _ => TransactionType::Adjustment,
     }
 }

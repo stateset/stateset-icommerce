@@ -87,71 +87,159 @@ impl PgReceivingRepository {
         Self { pool }
     }
 
-    fn row_to_receipt(row: ReceiptRow) -> Receipt {
-        Receipt {
-            id: row.id,
-            receipt_number: row.receipt_number,
-            receipt_type: row.receipt_type.parse().unwrap_or_default(),
-            status: row.status.parse().unwrap_or_default(),
-            reference_type: row.reference_type,
-            reference_id: row.reference_id,
-            supplier_id: row.supplier_id,
-            warehouse_id: row.warehouse_id,
-            carrier: row.carrier,
-            tracking_number: row.tracking_number,
-            expected_date: row.expected_date,
-            received_date: row.received_date,
-            completed_date: row.completed_date,
-            expected_quantity: row.expected_quantity,
-            received_quantity: row.received_quantity,
-            pending_inspection_quantity: row.pending_inspection_quantity,
-            put_away_quantity: row.put_away_quantity,
-            notes: row.notes,
-            created_by: row.created_by,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_receipt(row: ReceiptRow) -> Result<Receipt> {
+        let ReceiptRow {
+            id,
+            receipt_number,
+            receipt_type,
+            status,
+            reference_type,
+            reference_id,
+            supplier_id,
+            warehouse_id,
+            carrier,
+            tracking_number,
+            expected_date,
+            received_date,
+            completed_date,
+            expected_quantity,
+            received_quantity,
+            pending_inspection_quantity,
+            put_away_quantity,
+            notes,
+            created_by,
+            created_at,
+            updated_at,
+        } = row;
+
+        let receipt_type: ReceiptType = receipt_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid receipt.receipt_type '{}': {}",
+                receipt_type, e
+            ))
+        })?;
+        let status: ReceiptStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid receipt.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(Receipt {
+            id,
+            receipt_number,
+            receipt_type,
+            status,
+            reference_type,
+            reference_id,
+            supplier_id,
+            warehouse_id,
+            carrier,
+            tracking_number,
+            expected_date,
+            received_date,
+            completed_date,
+            expected_quantity,
+            received_quantity,
+            pending_inspection_quantity,
+            put_away_quantity,
+            notes,
+            created_by,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_receipt_item(row: ReceiptItemRow) -> ReceiptItem {
-        ReceiptItem {
-            id: row.id,
-            receipt_id: row.receipt_id,
-            line_number: row.line_number,
-            sku: row.sku,
-            description: row.description,
-            po_line_id: row.po_line_id,
-            expected_quantity: row.expected_quantity,
-            received_quantity: row.received_quantity,
-            rejected_quantity: row.rejected_quantity,
-            unit_cost: row.unit_cost,
-            lot_number: row.lot_number,
-            serial_numbers: row.serial_numbers,
-            expiration_date: row.expiration_date,
-            status: row.status.parse().unwrap_or_default(),
-            notes: row.notes,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+    fn row_to_receipt_item(row: ReceiptItemRow) -> Result<ReceiptItem> {
+        let ReceiptItemRow {
+            id,
+            receipt_id,
+            line_number,
+            sku,
+            description,
+            po_line_id,
+            expected_quantity,
+            received_quantity,
+            rejected_quantity,
+            unit_cost,
+            lot_number,
+            serial_numbers,
+            expiration_date,
+            status,
+            notes,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: ReceiptItemStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid receipt_item.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(ReceiptItem {
+            id,
+            receipt_id,
+            line_number,
+            sku,
+            description,
+            po_line_id,
+            expected_quantity,
+            received_quantity,
+            rejected_quantity,
+            unit_cost,
+            lot_number,
+            serial_numbers,
+            expiration_date,
+            status,
+            notes,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn row_to_put_away(row: PutAwayRow) -> PutAway {
-        PutAway {
-            id: row.id,
-            receipt_id: row.receipt_id,
-            receipt_item_id: row.receipt_item_id,
-            sku: row.sku,
-            from_location_id: row.from_location_id,
-            to_location_id: row.to_location_id,
-            quantity: row.quantity,
-            lot_id: row.lot_id,
-            status: row.status.parse().unwrap_or_default(),
-            assigned_to: row.assigned_to,
-            started_at: row.started_at,
-            completed_at: row.completed_at,
-            notes: row.notes,
-            created_at: row.created_at,
-        }
+    fn row_to_put_away(row: PutAwayRow) -> Result<PutAway> {
+        let PutAwayRow {
+            id,
+            receipt_id,
+            receipt_item_id,
+            sku,
+            from_location_id,
+            to_location_id,
+            quantity,
+            lot_id,
+            status,
+            assigned_to,
+            started_at,
+            completed_at,
+            notes,
+            created_at,
+        } = row;
+
+        let status: PutAwayStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid put_away.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        Ok(PutAway {
+            id,
+            receipt_id,
+            receipt_item_id,
+            sku,
+            from_location_id,
+            to_location_id,
+            quantity,
+            lot_id,
+            status,
+            assigned_to,
+            started_at,
+            completed_at,
+            notes,
+            created_at,
+        })
     }
 
     async fn update_receipt_totals(&self, receipt_id: Uuid) -> Result<()> {
@@ -250,7 +338,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_receipt))
+        Ok(row.map(Self::row_to_receipt).transpose()?)
     }
 
     pub async fn get_receipt_by_number_async(&self, number: &str) -> Result<Option<Receipt>> {
@@ -262,7 +350,7 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_receipt))
+        Ok(row.map(Self::row_to_receipt).transpose()?)
     }
 
     pub async fn update_receipt_async(&self, id: Uuid, input: UpdateReceipt) -> Result<Receipt> {
@@ -330,7 +418,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_receipt).collect())
+        Ok(rows.into_iter().map(Self::row_to_receipt).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_receipt_async(&self, id: Uuid) -> Result<()> {
@@ -488,7 +576,7 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_receipt_item).collect())
+        Ok(rows.into_iter().map(Self::row_to_receipt_item).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_receipts_async(&self, filter: ReceiptFilter) -> Result<u64> {
@@ -564,7 +652,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_put_away))
+        Ok(row.map(Self::row_to_put_away).transpose()?)
     }
 
     pub async fn list_put_aways_async(&self, filter: PutAwayFilter) -> Result<Vec<PutAway>> {
@@ -595,7 +683,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_put_away).collect())
+        Ok(rows.into_iter().map(Self::row_to_put_away).collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn assign_put_away_async(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
@@ -792,7 +880,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_receipt).collect())
+        Ok(rows.into_iter().map(Self::row_to_receipt).collect::<Result<Vec<_>>>()?)
     }
 }
 

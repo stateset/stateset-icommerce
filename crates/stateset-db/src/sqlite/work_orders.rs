@@ -2,10 +2,9 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_datetime_row, parse_decimal_row,
-    parse_datetime_opt_row, parse_decimal_opt_row,
-    parse_uuid, parse_datetime, parse_decimal_strict,
-    parse_datetime_opt, parse_uuid_opt,
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    parse_datetime, parse_datetime_opt, parse_decimal_strict, parse_uuid, parse_uuid_opt,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -29,37 +28,6 @@ impl SqliteWorkOrderRepository {
         Self { pool }
     }
 
-    fn parse_status(s: &str) -> WorkOrderStatus {
-        match s {
-            "in_progress" => WorkOrderStatus::InProgress,
-            "completed" => WorkOrderStatus::Completed,
-            "partially_completed" => WorkOrderStatus::PartiallyCompleted,
-            "cancelled" => WorkOrderStatus::Cancelled,
-            "on_hold" => WorkOrderStatus::OnHold,
-            _ => WorkOrderStatus::Planned,
-        }
-    }
-
-    fn parse_priority(s: &str) -> WorkOrderPriority {
-        match s {
-            "low" => WorkOrderPriority::Low,
-            "high" => WorkOrderPriority::High,
-            "urgent" => WorkOrderPriority::Urgent,
-            _ => WorkOrderPriority::Normal,
-        }
-    }
-
-    fn parse_task_status(s: &str) -> TaskStatus {
-        match s {
-            "in_progress" => TaskStatus::InProgress,
-            "completed" => TaskStatus::Completed,
-            "skipped" => TaskStatus::Skipped,
-            "cancelled" => TaskStatus::Cancelled,
-            _ => TaskStatus::Pending,
-        }
-    }
-
-
     fn load_tasks(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderTask>> {
         let conn = self
             .pool
@@ -81,12 +49,14 @@ impl SqliteWorkOrderRepository {
                     work_order_id: parse_uuid_row(&row.get::<_, String>(1)?, "work_order_task", "work_order_id")?,
                     sequence: row.get(2)?,
                     task_name: row.get(3)?,
-                    status: Self::parse_task_status(&row.get::<_, String>(4)?),
+                    status: parse_enum_row(&row.get::<_, String>(4)?, "work_order_task", "status")?,
                     estimated_hours: parse_decimal_opt_row(row.get(5)?, "work_order_task", "estimated_hours")?,
                     actual_hours: parse_decimal_opt_row(row.get(6)?, "work_order_task", "actual_hours")?,
-                    assigned_to: row
-                        .get::<_, Option<String>>(7)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    assigned_to: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(7)?,
+                        "work_order_task",
+                        "assigned_to",
+                    )?,
                     started_at: parse_datetime_opt_row(row.get(8)?, "work_order_task", "started_at")?,
                     completed_at: parse_datetime_opt_row(row.get(9)?, "work_order_task", "completed_at")?,
                     notes: row.get(10)?,
@@ -123,16 +93,20 @@ impl SqliteWorkOrderRepository {
                 Ok(WorkOrderMaterial {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "work_order_material", "id")?,
                     work_order_id: parse_uuid_row(&row.get::<_, String>(1)?, "work_order_material", "work_order_id")?,
-                    component_id: row
-                        .get::<_, Option<String>>(2)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    component_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(2)?,
+                        "work_order_material",
+                        "component_id",
+                    )?,
                     component_sku: row.get(3)?,
                     component_name: row.get(4)?,
                     reserved_quantity: parse_decimal_row(&row.get::<_, String>(5)?, "work_order_material", "reserved_quantity")?,
                     consumed_quantity: parse_decimal_row(&row.get::<_, String>(6)?, "work_order_material", "consumed_quantity")?,
-                    inventory_reservation_id: row
-                        .get::<_, Option<String>>(7)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    inventory_reservation_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(7)?,
+                        "work_order_material",
+                        "inventory_reservation_id",
+                    )?,
                     created_at: parse_datetime_row(&row.get::<_, String>(8)?, "work_order_material", "created_at")?,
                     updated_at: parse_datetime_row(&row.get::<_, String>(9)?, "work_order_material", "updated_at")?,
                 })
@@ -164,12 +138,14 @@ impl SqliteWorkOrderRepository {
                     work_order_id: parse_uuid_row(&row.get::<_, String>(1)?, "work_order_task", "work_order_id")?,
                     sequence: row.get(2)?,
                     task_name: row.get(3)?,
-                    status: Self::parse_task_status(&row.get::<_, String>(4)?),
+                    status: parse_enum_row(&row.get::<_, String>(4)?, "work_order_task", "status")?,
                     estimated_hours: parse_decimal_opt_row(row.get(5)?, "work_order_task", "estimated_hours")?,
                     actual_hours: parse_decimal_opt_row(row.get(6)?, "work_order_task", "actual_hours")?,
-                    assigned_to: row
-                        .get::<_, Option<String>>(7)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    assigned_to: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(7)?,
+                        "work_order_task",
+                        "assigned_to",
+                    )?,
                     started_at: parse_datetime_opt_row(row.get(8)?, "work_order_task", "started_at")?,
                     completed_at: parse_datetime_opt_row(row.get(9)?, "work_order_task", "completed_at")?,
                     notes: row.get(10)?,
@@ -199,16 +175,20 @@ impl SqliteWorkOrderRepository {
                 Ok(WorkOrderMaterial {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "work_order_material", "id")?,
                     work_order_id: parse_uuid_row(&row.get::<_, String>(1)?, "work_order_material", "work_order_id")?,
-                    component_id: row
-                        .get::<_, Option<String>>(2)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    component_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(2)?,
+                        "work_order_material",
+                        "component_id",
+                    )?,
                     component_sku: row.get(3)?,
                     component_name: row.get(4)?,
                     reserved_quantity: parse_decimal_row(&row.get::<_, String>(5)?, "work_order_material", "reserved_quantity")?,
                     consumed_quantity: parse_decimal_row(&row.get::<_, String>(6)?, "work_order_material", "consumed_quantity")?,
-                    inventory_reservation_id: row
-                        .get::<_, Option<String>>(7)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
+                    inventory_reservation_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(7)?,
+                        "work_order_material",
+                        "inventory_reservation_id",
+                    )?,
                     created_at: parse_datetime_row(&row.get::<_, String>(8)?, "work_order_material", "created_at")?,
                     updated_at: parse_datetime_row(&row.get::<_, String>(9)?, "work_order_material", "updated_at")?,
                 })
@@ -366,8 +346,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                     bom_id: parse_uuid_opt(bom_id, "work_order", "bom_id")?,
                     work_center_id,
                     assigned_to: parse_uuid_opt(assigned_to, "work_order", "assigned_to")?,
-                    status: Self::parse_status(&status),
-                    priority: Self::parse_priority(&priority),
+                    status: parse_enum(&status, "work_order", "status")?,
+                    priority: parse_enum(&priority, "work_order", "priority")?,
                     quantity_to_build: parse_decimal_strict(&quantity_to_build, "work_order", "quantity_to_build")?,
                     quantity_completed: parse_decimal_strict(&quantity_completed, "work_order", "quantity_completed")?,
                     scheduled_start: parse_datetime_opt(scheduled_start, "work_order", "scheduled_start")?,
@@ -1305,8 +1285,8 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 bom_id: parse_uuid_opt(bom_id, "work_order", "bom_id")?,
                 work_center_id,
                 assigned_to: parse_uuid_opt(assigned_to, "work_order", "assigned_to")?,
-                status: Self::parse_status(&status),
-                priority: Self::parse_priority(&priority),
+                status: parse_enum(&status, "work_order", "status")?,
+                priority: parse_enum(&priority, "work_order", "priority")?,
                 quantity_to_build: parse_decimal_strict(&quantity_to_build, "work_order", "quantity_to_build")?,
                 quantity_completed: parse_decimal_strict(&quantity_completed, "work_order", "quantity_completed")?,
                 scheduled_start: parse_datetime_opt(scheduled_start, "work_order", "scheduled_start")?,

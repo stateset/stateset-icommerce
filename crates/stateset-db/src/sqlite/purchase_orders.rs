@@ -2,8 +2,8 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row,
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
     // Non-row variants for Result-returning functions
     parse_uuid,
 };
@@ -50,7 +50,7 @@ impl SqlitePurchaseOrderRepository {
             postal_code: row.get("postal_code")?,
             country: row.get("country")?,
             tax_id: row.get("tax_id")?,
-            payment_terms: row.get::<_, String>("payment_terms")?.parse().unwrap_or_default(),
+            payment_terms: parse_enum_row(&row.get::<_, String>("payment_terms")?, "supplier", "payment_terms")?,
             currency: row.get("currency")?,
             lead_time_days: row.get("lead_time_days")?,
             minimum_order: parse_decimal_opt_row(row.get::<_, Option<String>>("minimum_order")?, "supplier", "minimum_order")?,
@@ -66,7 +66,7 @@ impl SqlitePurchaseOrderRepository {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "purchase_order", "id")?,
             po_number: row.get("po_number")?,
             supplier_id: parse_uuid_row(&row.get::<_, String>("supplier_id")?, "purchase_order", "supplier_id")?,
-            status: row.get::<_, String>("status")?.parse().unwrap_or_default(),
+            status: parse_enum_row(&row.get::<_, String>("status")?, "purchase_order", "status")?,
             order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "purchase_order", "order_date")?,
             expected_date: parse_datetime_opt_row(row.get::<_, Option<String>>("expected_date")?, "purchase_order", "expected_date")?,
             delivered_date: parse_datetime_opt_row(row.get::<_, Option<String>>("delivered_date")?, "purchase_order", "delivered_date")?,
@@ -75,7 +75,7 @@ impl SqlitePurchaseOrderRepository {
             ship_to_state: row.get("ship_to_state")?,
             ship_to_postal_code: row.get("ship_to_postal_code")?,
             ship_to_country: row.get("ship_to_country")?,
-            payment_terms: row.get::<_, String>("payment_terms")?.parse().unwrap_or_default(),
+            payment_terms: parse_enum_row(&row.get::<_, String>("payment_terms")?, "purchase_order", "payment_terms")?,
             currency: row.get("currency")?,
             subtotal: parse_decimal_row(&row.get::<_, String>("subtotal")?, "purchase_order", "subtotal")?,
             tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "purchase_order", "tax_amount")?,
@@ -555,7 +555,13 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
             )
             .map_err(map_db_error)?;
 
-        if status.parse::<PurchaseOrderStatus>().unwrap_or_default() != PurchaseOrderStatus::Draft {
+        let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid purchase_order.status '{}': {}",
+                status, e
+            ))
+        })?;
+        if parsed_status != PurchaseOrderStatus::Draft {
             return Err(CommerceError::ValidationError("Can only delete draft purchase orders".to_string()));
         }
 
@@ -635,15 +641,19 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = chrono::Utc::now();
 
-        let current_status: PurchaseOrderStatus = tx
+        let status: String = tx
             .query_row(
                 "SELECT status FROM purchase_orders WHERE id = ?",
                 [id.to_string()],
                 |row| row.get::<_, String>(0),
             )
-            .map_err(map_db_error)?
-            .parse()
-            .unwrap_or_default();
+            .map_err(map_db_error)?;
+        let current_status: PurchaseOrderStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid purchase_order.status '{}': {}",
+                status, e
+            ))
+        })?;
 
         for item in items.items {
             tx.execute(
@@ -1095,9 +1105,13 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 )
                 .map_err(map_db_error)?;
 
-            if status.parse::<PurchaseOrderStatus>().unwrap_or_default()
-                != PurchaseOrderStatus::Draft
-            {
+            let parsed_status: PurchaseOrderStatus = status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid purchase_order.status '{}': {}",
+                    status, e
+                ))
+            })?;
+            if parsed_status != PurchaseOrderStatus::Draft {
                 return Err(CommerceError::ValidationError(
                     "Can only delete draft purchase orders".to_string(),
                 ));

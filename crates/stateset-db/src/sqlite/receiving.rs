@@ -2,13 +2,16 @@
 //!
 //! Provides goods receipt, receiving, and put-away functionality.
 
-use crate::sqlite::{map_db_error, parse_decimal};
+use crate::sqlite::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt,
+    parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt,
+    parse_uuid_opt_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
-use std::str::FromStr;
 use uuid::Uuid;
 
 use stateset_core::{
@@ -35,116 +38,141 @@ impl SqliteReceivingRepository {
     }
 
     fn row_to_receipt(row: &rusqlite::Row) -> rusqlite::Result<Receipt> {
-        let type_str: String = row.get("receipt_type")?;
-        let status_str: String = row.get("status")?;
-        let exp_qty: String = row.get("expected_quantity")?;
-        let rcv_qty: String = row.get("received_quantity")?;
-        let insp_qty: String = row.get("pending_inspection_quantity")?;
-        let putaway_qty: String = row.get("put_away_quantity")?;
-        let id_str: String = row.get("id")?;
-        let ref_id_str: Option<String> = row.get("reference_id")?;
-        let supplier_id_str: Option<String> = row.get("supplier_id")?;
-        let expected_date_str: Option<String> = row.get("expected_date")?;
-        let received_date_str: Option<String> = row.get("received_date")?;
-        let completed_date_str: Option<String> = row.get("completed_date")?;
-
         Ok(Receipt {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "receipt", "id")?,
             receipt_number: row.get("receipt_number")?,
-            receipt_type: ReceiptType::from_str(&type_str).unwrap_or_default(),
-            status: ReceiptStatus::from_str(&status_str).unwrap_or_default(),
+            receipt_type: parse_enum_row(&row.get::<_, String>("receipt_type")?, "receipt", "receipt_type")?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "receipt", "status")?,
             reference_type: row.get("reference_type")?,
-            reference_id: ref_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            supplier_id: supplier_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            reference_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("reference_id")?,
+                "receipt",
+                "reference_id",
+            )?,
+            supplier_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("supplier_id")?,
+                "receipt",
+                "supplier_id",
+            )?,
             warehouse_id: row.get("warehouse_id")?,
             carrier: row.get("carrier")?,
             tracking_number: row.get("tracking_number")?,
-            expected_date: expected_date_str.and_then(|s| s.parse().ok()),
-            received_date: received_date_str.and_then(|s| s.parse().ok()),
-            completed_date: completed_date_str.and_then(|s| s.parse().ok()),
-            expected_quantity: parse_decimal(&exp_qty),
-            received_quantity: parse_decimal(&rcv_qty),
-            pending_inspection_quantity: parse_decimal(&insp_qty),
-            put_away_quantity: parse_decimal(&putaway_qty),
+            expected_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expected_date")?,
+                "receipt",
+                "expected_date",
+            )?,
+            received_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("received_date")?,
+                "receipt",
+                "received_date",
+            )?,
+            completed_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("completed_date")?,
+                "receipt",
+                "completed_date",
+            )?,
+            expected_quantity: parse_decimal_row(
+                &row.get::<_, String>("expected_quantity")?,
+                "receipt",
+                "expected_quantity",
+            )?,
+            received_quantity: parse_decimal_row(
+                &row.get::<_, String>("received_quantity")?,
+                "receipt",
+                "received_quantity",
+            )?,
+            pending_inspection_quantity: parse_decimal_row(
+                &row.get::<_, String>("pending_inspection_quantity")?,
+                "receipt",
+                "pending_inspection_quantity",
+            )?,
+            put_away_quantity: parse_decimal_row(
+                &row.get::<_, String>("put_away_quantity")?,
+                "receipt",
+                "put_away_quantity",
+            )?,
             notes: row.get("notes")?,
             created_by: row.get("created_by")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "receipt", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "receipt", "updated_at")?,
         })
     }
 
     fn row_to_receipt_item(row: &rusqlite::Row) -> rusqlite::Result<ReceiptItem> {
-        let id_str: String = row.get("id")?;
-        let receipt_id_str: String = row.get("receipt_id")?;
-        let po_line_id_str: Option<String> = row.get("po_line_id")?;
-        let exp_qty: String = row.get("expected_quantity")?;
-        let rcv_qty: String = row.get("received_quantity")?;
-        let rej_qty: String = row.get("rejected_quantity")?;
-        let cost_str: Option<String> = row.get("unit_cost")?;
-        let status_str: String = row.get("status")?;
-        let exp_date_str: Option<String> = row.get("expiration_date")?;
-
         Ok(ReceiptItem {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            receipt_id: Uuid::parse_str(&receipt_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "receipt_item", "id")?,
+            receipt_id: parse_uuid_row(&row.get::<_, String>("receipt_id")?, "receipt_item", "receipt_id")?,
             line_number: row.get("line_number")?,
             sku: row.get("sku")?,
             description: row.get("description")?,
-            po_line_id: po_line_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            expected_quantity: parse_decimal(&exp_qty),
-            received_quantity: parse_decimal(&rcv_qty),
-            rejected_quantity: parse_decimal(&rej_qty),
-            unit_cost: cost_str.map(|s| parse_decimal(&s)),
+            po_line_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("po_line_id")?,
+                "receipt_item",
+                "po_line_id",
+            )?,
+            expected_quantity: parse_decimal_row(
+                &row.get::<_, String>("expected_quantity")?,
+                "receipt_item",
+                "expected_quantity",
+            )?,
+            received_quantity: parse_decimal_row(
+                &row.get::<_, String>("received_quantity")?,
+                "receipt_item",
+                "received_quantity",
+            )?,
+            rejected_quantity: parse_decimal_row(
+                &row.get::<_, String>("rejected_quantity")?,
+                "receipt_item",
+                "rejected_quantity",
+            )?,
+            unit_cost: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("unit_cost")?,
+                "receipt_item",
+                "unit_cost",
+            )?,
             lot_number: row.get("lot_number")?,
             serial_numbers: row.get("serial_numbers")?,
-            expiration_date: exp_date_str.and_then(|s| s.parse().ok()),
-            status: ReceiptItemStatus::from_str(&status_str).unwrap_or_default(),
+            expiration_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expiration_date")?,
+                "receipt_item",
+                "expiration_date",
+            )?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "receipt_item", "status")?,
             notes: row.get("notes")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: row
-                .get::<_, String>("updated_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "receipt_item", "created_at")?,
+            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "receipt_item", "updated_at")?,
         })
     }
 
     fn row_to_put_away(row: &rusqlite::Row) -> rusqlite::Result<PutAway> {
-        let id_str: String = row.get("id")?;
-        let receipt_id_str: String = row.get("receipt_id")?;
-        let receipt_item_id_str: String = row.get("receipt_item_id")?;
-        let qty_str: String = row.get("quantity")?;
-        let lot_id_str: Option<String> = row.get("lot_id")?;
-        let status_str: String = row.get("status")?;
-        let started_str: Option<String> = row.get("started_at")?;
-        let completed_str: Option<String> = row.get("completed_at")?;
-
         Ok(PutAway {
-            id: Uuid::parse_str(&id_str).unwrap_or_default(),
-            receipt_id: Uuid::parse_str(&receipt_id_str).unwrap_or_default(),
-            receipt_item_id: Uuid::parse_str(&receipt_item_id_str).unwrap_or_default(),
+            id: parse_uuid_row(&row.get::<_, String>("id")?, "put_away", "id")?,
+            receipt_id: parse_uuid_row(&row.get::<_, String>("receipt_id")?, "put_away", "receipt_id")?,
+            receipt_item_id: parse_uuid_row(
+                &row.get::<_, String>("receipt_item_id")?,
+                "put_away",
+                "receipt_item_id",
+            )?,
             sku: row.get("sku")?,
             from_location_id: row.get("from_location_id")?,
             to_location_id: row.get("to_location_id")?,
-            quantity: parse_decimal(&qty_str),
-            lot_id: lot_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            status: PutAwayStatus::from_str(&status_str).unwrap_or_default(),
+            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "put_away", "quantity")?,
+            lot_id: parse_uuid_opt_row(row.get::<_, Option<String>>("lot_id")?, "put_away", "lot_id")?,
+            status: parse_enum_row(&row.get::<_, String>("status")?, "put_away", "status")?,
             assigned_to: row.get("assigned_to")?,
-            started_at: started_str.and_then(|s| s.parse().ok()),
-            completed_at: completed_str.and_then(|s| s.parse().ok()),
+            started_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("started_at")?,
+                "put_away",
+                "started_at",
+            )?,
+            completed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("completed_at")?,
+                "put_away",
+                "completed_at",
+            )?,
             notes: row.get("notes")?,
-            created_at: row
-                .get::<_, String>("created_at")?
-                .parse()
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "put_away", "created_at")?,
         })
     }
 
@@ -760,12 +788,16 @@ impl ReceivingRepository for SqliteReceivingRepository {
             let qty_str: String = row.get(2).map_err(map_db_error)?;
             let cost_str: Option<String> = row.get(3).map_err(map_db_error)?;
 
+            let expected_quantity =
+                parse_decimal_strict(&qty_str, "purchase_order_item", "quantity")?;
+            let unit_cost = parse_decimal_opt(cost_str, "purchase_order_item", "unit_cost")?;
+
             items.push(CreateReceiptItem {
                 sku,
                 description,
                 po_line_id: None,
-                expected_quantity: parse_decimal(&qty_str),
-                unit_cost: cost_str.map(|s| parse_decimal(&s)),
+                expected_quantity,
+                unit_cost,
                 lot_number: None,
                 expiration_date: None,
                 notes: None,
@@ -773,20 +805,21 @@ impl ReceivingRepository for SqliteReceivingRepository {
         }
 
         // Get supplier ID from PO
-        let supplier_id: Option<String> = conn
+        let supplier_id_raw: Option<String> = conn
             .query_row(
                 "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
                 params![po_id.to_string()],
                 |row| row.get(0),
             )
             .ok();
+        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
 
         self.create_receipt(CreateReceipt {
             receipt_number: None,
             receipt_type: ReceiptType::PurchaseOrder,
             reference_type: Some("purchase_order".into()),
             reference_id: Some(po_id),
-            supplier_id: supplier_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            supplier_id,
             warehouse_id,
             carrier: None,
             tracking_number: None,

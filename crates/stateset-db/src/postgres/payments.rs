@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    generate_payment_number, generate_refund_number, validate_batch_size, BatchResult, CardBrand,
+    generate_payment_number, generate_refund_number, validate_batch_size, BatchResult,
     CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
     PaymentMethod, PaymentMethodType, PaymentRepository, PaymentTransactionStatus, Refund,
     RefundStatus, Result, UpdatePayment,
@@ -93,92 +93,181 @@ impl PgPaymentRepository {
         Self { pool }
     }
 
-    fn parse_status(s: &str) -> PaymentTransactionStatus {
-        s.parse().unwrap_or_default()
+    fn row_to_payment(row: PaymentRow) -> Result<Payment> {
+        let PaymentRow {
+            id,
+            payment_number,
+            order_id,
+            invoice_id,
+            customer_id,
+            status,
+            payment_method,
+            amount,
+            currency,
+            amount_refunded,
+            external_id,
+            idempotency_key,
+            processor,
+            card_brand,
+            card_last4,
+            card_exp_month,
+            card_exp_year,
+            billing_email,
+            billing_name,
+            billing_address,
+            description,
+            failure_reason,
+            failure_code,
+            metadata,
+            paid_at,
+            version,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: PaymentTransactionStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid payment.status '{}': {}", status, e))
+        })?;
+        let payment_method: PaymentMethodType = payment_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid payment.payment_method '{}': {}",
+                payment_method, e
+            ))
+        })?;
+        let card_brand = match card_brand {
+            Some(value) => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid payment.card_brand '{}': {}",
+                    value, e
+                ))
+            })?),
+            None => None,
+        };
+
+        Ok(Payment {
+            id,
+            payment_number,
+            order_id,
+            invoice_id,
+            customer_id,
+            status,
+            payment_method,
+            amount,
+            currency,
+            amount_refunded,
+            external_id,
+            idempotency_key,
+            processor,
+            card_brand,
+            card_last4,
+            card_exp_month,
+            card_exp_year,
+            billing_email,
+            billing_name,
+            billing_address,
+            description,
+            failure_reason,
+            failure_code,
+            metadata,
+            paid_at,
+            version,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn parse_method_type(s: &str) -> PaymentMethodType {
-        s.parse().unwrap_or_default()
+    fn row_to_refund(row: RefundRow) -> Result<Refund> {
+        let RefundRow {
+            id,
+            refund_number,
+            payment_id,
+            status,
+            amount,
+            currency,
+            reason,
+            external_id,
+            idempotency_key,
+            failure_reason,
+            notes,
+            refunded_at,
+            created_at,
+            updated_at,
+        } = row;
+
+        let status: RefundStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid refund.status '{}': {}", status, e))
+        })?;
+
+        Ok(Refund {
+            id,
+            refund_number,
+            payment_id,
+            status,
+            amount,
+            currency,
+            reason,
+            external_id,
+            idempotency_key,
+            failure_reason,
+            notes,
+            refunded_at,
+            created_at,
+            updated_at,
+        })
     }
 
-    fn parse_card_brand(s: &str) -> CardBrand {
-        s.parse().unwrap_or_default()
-    }
+    fn row_to_payment_method(row: PaymentMethodRow) -> Result<PaymentMethod> {
+        let PaymentMethodRow {
+            id,
+            customer_id,
+            method_type,
+            is_default,
+            card_brand,
+            card_last4,
+            card_exp_month,
+            card_exp_year,
+            cardholder_name,
+            bank_name,
+            account_last4,
+            external_id,
+            billing_address,
+            created_at,
+            updated_at,
+        } = row;
 
-    fn parse_refund_status(s: &str) -> RefundStatus {
-        s.parse().unwrap_or_default()
-    }
+        let method_type: PaymentMethodType = method_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid payment_method.method_type '{}': {}",
+                method_type, e
+            ))
+        })?;
+        let card_brand = match card_brand {
+            Some(value) => Some(value.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid payment_method.card_brand '{}': {}",
+                    value, e
+                ))
+            })?),
+            None => None,
+        };
 
-    fn row_to_payment(row: PaymentRow) -> Payment {
-        Payment {
-            id: row.id,
-            payment_number: row.payment_number,
-            order_id: row.order_id,
-            invoice_id: row.invoice_id,
-            customer_id: row.customer_id,
-            status: Self::parse_status(&row.status),
-            payment_method: Self::parse_method_type(&row.payment_method),
-            amount: row.amount,
-            currency: row.currency,
-            amount_refunded: row.amount_refunded,
-            external_id: row.external_id,
-            idempotency_key: row.idempotency_key,
-            processor: row.processor,
-            card_brand: row.card_brand.map(|s| Self::parse_card_brand(&s)),
-            card_last4: row.card_last4,
-            card_exp_month: row.card_exp_month,
-            card_exp_year: row.card_exp_year,
-            billing_email: row.billing_email,
-            billing_name: row.billing_name,
-            billing_address: row.billing_address,
-            description: row.description,
-            failure_reason: row.failure_reason,
-            failure_code: row.failure_code,
-            metadata: row.metadata,
-            paid_at: row.paid_at,
-            version: row.version,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
-    }
-
-    fn row_to_refund(row: RefundRow) -> Refund {
-        Refund {
-            id: row.id,
-            refund_number: row.refund_number,
-            payment_id: row.payment_id,
-            status: Self::parse_refund_status(&row.status),
-            amount: row.amount,
-            currency: row.currency,
-            reason: row.reason,
-            external_id: row.external_id,
-            idempotency_key: row.idempotency_key,
-            failure_reason: row.failure_reason,
-            notes: row.notes,
-            refunded_at: row.refunded_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
-    }
-
-    fn row_to_payment_method(row: PaymentMethodRow) -> PaymentMethod {
-        PaymentMethod {
-            id: row.id,
-            customer_id: row.customer_id,
-            method_type: Self::parse_method_type(&row.method_type),
-            is_default: row.is_default,
-            card_brand: row.card_brand.map(|s| Self::parse_card_brand(&s)),
-            card_last4: row.card_last4,
-            card_exp_month: row.card_exp_month,
-            card_exp_year: row.card_exp_year,
-            cardholder_name: row.cardholder_name,
-            bank_name: row.bank_name,
-            account_last4: row.account_last4,
-            external_id: row.external_id,
-            billing_address: row.billing_address,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }
+        Ok(PaymentMethod {
+            id,
+            customer_id,
+            method_type,
+            is_default,
+            card_brand,
+            card_last4,
+            card_exp_month,
+            card_exp_year,
+            cardholder_name,
+            bank_name,
+            account_last4,
+            external_id,
+            billing_address,
+            created_at,
+            updated_at,
+        })
     }
 
     /// Create payment (async)
@@ -245,7 +334,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        row.map(Self::row_to_payment).transpose()
     }
 
     /// Get payment by number (async)
@@ -262,7 +351,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        row.map(Self::row_to_payment).transpose()
     }
 
     /// Get payment by external ID (async)
@@ -279,7 +368,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        row.map(Self::row_to_payment).transpose()
     }
 
     async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<Payment>> {
@@ -295,7 +384,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment))
+        row.map(Self::row_to_payment).transpose()
     }
 
     /// Update payment (async)
@@ -365,7 +454,11 @@ impl PgPaymentRepository {
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_payment).collect())
+        let mut payments = Vec::with_capacity(rows.len());
+        for row in rows {
+            payments.push(Self::row_to_payment(row)?);
+        }
+        Ok(payments)
     }
 
     /// Get payments for order (async)
@@ -471,7 +564,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_refund))
+        row.map(Self::row_to_refund).transpose()
     }
 
     async fn get_refund_by_idempotency_key_async(&self, key: &str) -> Result<Option<Refund>> {
@@ -485,7 +578,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_refund))
+        row.map(Self::row_to_refund).transpose()
     }
 
     /// Get refunds for payment (async)
@@ -500,7 +593,11 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_refund).collect())
+        let mut refunds = Vec::with_capacity(rows.len());
+        for row in rows {
+            refunds.push(Self::row_to_refund(row)?);
+        }
+        Ok(refunds)
     }
 
     /// Complete refund (async)
@@ -599,7 +696,7 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_payment_method(row))
+        Self::row_to_payment_method(row)
     }
 
     /// Get payment methods for customer (async)
@@ -615,7 +712,11 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment_method).collect())
+        let mut methods = Vec::with_capacity(rows.len());
+        for row in rows {
+            methods.push(Self::row_to_payment_method(row)?);
+        }
+        Ok(methods)
     }
 
     /// Delete payment method (async)
@@ -837,6 +938,7 @@ impl PgPaymentRepository {
             .await
             .map_err(map_db_error)?
             .map(Self::row_to_payment)
+            .transpose()?
             .ok_or(CommerceError::NotFound)?;
 
             let now = Utc::now();
@@ -869,7 +971,7 @@ impl PgPaymentRepository {
             .await
             .map_err(map_db_error)?;
 
-            payments.push(Self::row_to_payment(updated_row));
+            payments.push(Self::row_to_payment(updated_row)?);
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -940,7 +1042,11 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment).collect())
+        let mut payments = Vec::with_capacity(rows.len());
+        for row in rows {
+            payments.push(Self::row_to_payment(row)?);
+        }
+        Ok(payments)
     }
 }
 

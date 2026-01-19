@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    AddLotCertificate, AdjustLot, BatchResult, CommerceError, ConsumeLot, CreateLot, Lot,
-    LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus, LotTransaction,
-    LotTransactionType, MergeLots, ReserveLot, Result, SplitLot, TraceabilityResult, TraceNode,
-    TraceNodeType, TransferLot, UpdateLot, validate_batch_size,
+    AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
+    CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
+    LotTransaction, LotTransactionType, MergeLots, ReserveLot, Result, SplitLot,
+    TraceabilityResult, TraceNode, TraceNodeType, TransferLot, UpdateLot, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -103,12 +103,16 @@ impl PgLotRepository {
         )
     }
 
-    fn row_to_lot(row: LotRow) -> Lot {
-        Lot {
+    fn row_to_lot(row: LotRow) -> Result<Lot> {
+        let status: LotStatus = row.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid lot.status '{}': {}", row.status, e))
+        })?;
+
+        Ok(Lot {
             id: row.id,
             lot_number: row.lot_number,
             sku: row.sku,
-            status: parse_lot_status(&row.status),
+            status,
             quantity_produced: row.quantity_produced,
             quantity_remaining: row.quantity_remaining,
             quantity_reserved: row.quantity_reserved,
@@ -125,14 +129,21 @@ impl PgLotRepository {
             notes: row.notes,
             created_at: row.created_at,
             updated_at: row.updated_at,
-        }
+        })
     }
 
-    fn row_to_transaction(row: LotTransactionRow) -> LotTransaction {
-        LotTransaction {
+    fn row_to_transaction(row: LotTransactionRow) -> Result<LotTransaction> {
+        let transaction_type: LotTransactionType = row.transaction_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid lot_transaction.transaction_type '{}': {}",
+                row.transaction_type, e
+            ))
+        })?;
+
+        Ok(LotTransaction {
             id: row.id,
             lot_id: row.lot_id,
-            transaction_type: parse_lot_transaction_type(&row.transaction_type),
+            transaction_type,
             quantity: row.quantity,
             reference_type: row.reference_type,
             reference_id: row.reference_id,
@@ -141,14 +152,21 @@ impl PgLotRepository {
             reason: row.reason,
             performed_by: row.performed_by,
             created_at: row.created_at,
-        }
+        })
     }
 
-    fn row_to_certificate(row: LotCertificateRow) -> LotCertificate {
-        LotCertificate {
+    fn row_to_certificate(row: LotCertificateRow) -> Result<LotCertificate> {
+        let certificate_type: CertificateType = row.certificate_type.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid lot_certificate.certificate_type '{}': {}",
+                row.certificate_type, e
+            ))
+        })?;
+
+        Ok(LotCertificate {
             id: row.id,
             lot_id: row.lot_id,
-            certificate_type: row.certificate_type.parse().unwrap_or_default(),
+            certificate_type,
             certificate_number: row.certificate_number,
             document_url: row.document_url,
             issued_by: row.issued_by,
@@ -156,7 +174,7 @@ impl PgLotRepository {
             expires_at: row.expires_at,
             notes: row.notes,
             created_at: row.created_at,
-        }
+        })
     }
 
     fn row_to_location(row: LotLocationRow) -> LotLocation {
@@ -343,7 +361,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_lot))
+        row.map(Self::row_to_lot).transpose()
     }
 
     pub async fn get_by_number_async(&self, lot_number: &str) -> Result<Option<Lot>> {
@@ -353,7 +371,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_lot))
+        row.map(Self::row_to_lot).transpose()
     }
 
     pub async fn update_async(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
@@ -419,7 +437,11 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_lot).collect())
+        let mut lots = Vec::with_capacity(rows.len());
+        for row in rows {
+            lots.push(Self::row_to_lot(row)?);
+        }
+        Ok(lots)
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -455,7 +477,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let lot = Self::row_to_lot(lot_row);
+        let lot = Self::row_to_lot(lot_row)?;
 
         let new_remaining = lot.quantity_remaining + input.quantity_change;
         if new_remaining < Decimal::ZERO {
@@ -503,7 +525,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let lot = Self::row_to_lot(lot_row);
+        let lot = Self::row_to_lot(lot_row)?;
 
         if !lot.can_consume(input.quantity) {
             return Err(CommerceError::InsufficientStock {
@@ -560,7 +582,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let lot = Self::row_to_lot(lot_row);
+        let lot = Self::row_to_lot(lot_row)?;
 
         if !lot.can_reserve(input.quantity) {
             return Err(CommerceError::InsufficientStock {
@@ -796,7 +818,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let original = Self::row_to_lot(original_row);
+        let original = Self::row_to_lot(original_row)?;
 
         if original.quantity_remaining < input.quantity {
             return Err(CommerceError::ValidationError(
@@ -903,7 +925,7 @@ impl PgLotRepository {
                 .ok_or_else(|| {
                     CommerceError::ValidationError(format!("Lot {} not found", lot_id))
                 })?;
-            let lot = Self::row_to_lot(lot_row);
+            let lot = Self::row_to_lot(lot_row)?;
 
             if let Some(ref s) = sku {
                 if s != &lot.sku {
@@ -931,7 +953,7 @@ impl PgLotRepository {
             .fetch_one(&mut *tx)
             .await
             .map_err(map_db_error)?;
-        let template = Self::row_to_lot(template_row);
+        let template = Self::row_to_lot(template_row)?;
 
         sqlx::query(
             r#"
@@ -1012,7 +1034,7 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
-        let lot = Self::row_to_lot(lot_row);
+        let lot = Self::row_to_lot(lot_row)?;
 
         let available = lot.quantity_available();
 
@@ -1098,7 +1120,11 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_transaction).collect())
+        let mut transactions = Vec::with_capacity(rows.len());
+        for row in rows {
+            transactions.push(Self::row_to_transaction(row)?);
+        }
+        Ok(transactions)
     }
 
     pub async fn get_quantity_at_location_async(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
@@ -1175,7 +1201,11 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_certificate).collect())
+        let mut certificates = Vec::with_capacity(rows.len());
+        for row in rows {
+            certificates.push(Self::row_to_certificate(row)?);
+        }
+        Ok(certificates)
     }
 
     pub async fn delete_certificate_async(&self, certificate_id: Uuid) -> Result<()> {
@@ -1204,7 +1234,11 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_lot).collect())
+        let mut lots = Vec::with_capacity(rows.len());
+        for row in rows {
+            lots.push(Self::row_to_lot(row)?);
+        }
+        Ok(lots)
     }
 
     pub async fn get_expired_lots_async(&self) -> Result<Vec<Lot>> {
@@ -1220,7 +1254,11 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_lot).collect())
+        let mut lots = Vec::with_capacity(rows.len());
+        for row in rows {
+            lots.push(Self::row_to_lot(row)?);
+        }
+        Ok(lots)
     }
 
     pub async fn get_available_lots_for_sku_async(&self, sku: &str) -> Result<Vec<Lot>> {
@@ -1360,7 +1398,11 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_lot).collect())
+        let mut lots = Vec::with_capacity(rows.len());
+        for row in rows {
+            lots.push(Self::row_to_lot(row)?);
+        }
+        Ok(lots)
     }
 }
 
@@ -1480,12 +1522,4 @@ impl LotRepository for PgLotRepository {
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
         block_on(self.get_batch_async(ids))
     }
-}
-
-fn parse_lot_status(s: &str) -> LotStatus {
-    s.parse().unwrap_or_default()
-}
-
-fn parse_lot_transaction_type(s: &str) -> LotTransactionType {
-    s.parse().unwrap_or_default()
 }
