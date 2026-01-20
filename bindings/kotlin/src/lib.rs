@@ -33,21 +33,26 @@ fn create_handle(commerce: RustCommerce) -> jlong {
     Arc::into_raw(handle) as jlong
 }
 
-fn get_handle(ptr: jlong) -> CommerceHandle {
-    unsafe { Arc::from_raw(ptr as *const Mutex<RustCommerce>) }
+fn get_handle(ptr: jlong) -> Option<CommerceHandle> {
+    if ptr == 0 {
+        return None;
+    }
+    let raw = ptr as *const Mutex<RustCommerce>;
+    unsafe {
+        Arc::increment_strong_count(raw);
+        Some(Arc::from_raw(raw))
+    }
 }
 
 fn use_handle<F, R>(ptr: jlong, f: F) -> Result<R, String>
 where
     F: FnOnce(&RustCommerce) -> Result<R, String>,
 {
-    let handle = get_handle(ptr);
-    let result = {
-        let guard = handle.lock().map_err(|e| format!("Lock failed: {}", e))?;
-        f(&guard)
-    };
-    let _ = Arc::into_raw(handle);
-    result
+    let handle = get_handle(ptr).ok_or_else(|| "Null handle".to_string())?;
+    let guard = handle
+        .lock()
+        .map_err(|e| format!("Lock failed: {}", e))?;
+    f(&guard)
 }
 
 // =============================================================================

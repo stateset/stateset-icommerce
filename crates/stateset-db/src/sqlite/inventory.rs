@@ -3,9 +3,9 @@
 use super::{
     build_in_clause, i64_params, map_db_error, params_refs, string_params,
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_enum_row,
+    parse_decimal_strict, parse_enum_row, parse_uuid,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
@@ -32,6 +32,92 @@ impl SqliteInventoryRepository {
             .get()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
+
+    fn expire_reservation_in_tx(
+        conn: &rusqlite::Connection,
+        reservation_id: Uuid,
+        item_id: i64,
+        location_id: i32,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+                rusqlite::params![item_id, location_id],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        let rows_affected = conn
+            .execute(
+                "UPDATE inventory_balances SET quantity_allocated = quantity_allocated - ?,
+                 quantity_available = quantity_available + ?, version = version + 1, updated_at = ?
+                 WHERE item_id = ? AND location_id = ? AND version = ?",
+                rusqlite::params![
+                    quantity.to_string(),
+                    quantity.to_string(),
+                    now.to_rfc3339(),
+                    item_id,
+                    location_id,
+                    current_version
+                ],
+            )
+            .map_err(map_db_error)?;
+
+        if rows_affected == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item_id, location_id),
+                expected_version: current_version,
+            });
+        }
+
+        conn.execute(
+            "UPDATE inventory_reservations SET status = 'expired' WHERE id = ?",
+            [reservation_id.to_string()],
+        )
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    fn expire_reservations_for_item_in_tx(
+        conn: &rusqlite::Connection,
+        item_id: i64,
+        location_id: i32,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, quantity FROM inventory_reservations
+                 WHERE item_id = ? AND location_id = ?
+                   AND status IN ('pending', 'confirmed', 'allocated')
+                   AND expires_at IS NOT NULL AND expires_at < ?",
+            )
+            .map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(rusqlite::params![item_id, location_id, now.to_rfc3339()])
+            .map_err(map_db_error)?;
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let id_str: String = row.get(0).map_err(map_db_error)?;
+            let qty_str: String = row.get(1).map_err(map_db_error)?;
+            let reservation_id = parse_uuid(&id_str, "inventory_reservation", "id")?;
+            let quantity = parse_decimal_strict(&qty_str, "inventory_reservation", "quantity")?;
+
+            Self::expire_reservation_in_tx(
+                conn,
+                reservation_id,
+                item_id,
+                location_id,
+                quantity,
+                now,
+            )?;
+        }
+
+        Ok(())
+    }
 }
 
 impl InventoryRepository for SqliteInventoryRepository {
@@ -39,7 +125,8 @@ impl InventoryRepository for SqliteInventoryRepository {
         // Validate SKU format
         validate_sku(&input.sku)?;
 
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
         let sku = input.sku.clone();
         let name = input.name.clone();
@@ -47,7 +134,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let unit_of_measure = input.unit_of_measure.clone().unwrap_or_else(|| "EA".to_string());
 
         // Check SKU uniqueness
-        let exists: i32 = conn
+        let exists: i32 = tx
             .query_row(
                 "SELECT COUNT(*) FROM inventory_items WHERE sku = ?",
                 [&sku],
@@ -59,7 +146,7 @@ impl InventoryRepository for SqliteInventoryRepository {
             return Err(CommerceError::DuplicateSku(sku));
         }
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_items (sku, name, description, unit_of_measure, is_active, created_at, updated_at)
              VALUES (?, ?, ?, ?, 1, ?, ?)",
             rusqlite::params![
@@ -73,13 +160,13 @@ impl InventoryRepository for SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
-        let item_id = conn.last_insert_rowid();
+        let item_id = tx.last_insert_rowid();
 
         // Create initial balance if quantity provided
         let location_id = input.location_id.unwrap_or(1);
         let initial_qty = input.initial_quantity.unwrap_or_default();
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, reorder_point, safety_stock, updated_at)
              VALUES (?, ?, ?, '0', ?, ?, ?, ?)",
             rusqlite::params![
@@ -96,13 +183,15 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         // Record initial transaction if quantity > 0
         if initial_qty > Decimal::ZERO {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reason, created_at)
                  VALUES (?, ?, 'receipt', ?, 'Initial stock', ?)",
                 rusqlite::params![item_id, location_id, initial_qty.to_string(), now.to_rfc3339()],
             )
             .map_err(map_db_error)?;
         }
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(InventoryItem {
             id: item_id,
@@ -366,6 +455,13 @@ impl InventoryRepository for SqliteInventoryRepository {
                 available: balance.quantity_on_hand.to_string(),
             });
         }
+        if new_available < Decimal::ZERO {
+            return Err(CommerceError::InsufficientStock {
+                sku: input.sku.clone(),
+                requested: input.quantity.abs().to_string(),
+                available: balance.quantity_available.to_string(),
+            });
+        }
 
         // Update balance with optimistic locking
         let current_version = balance.version;
@@ -463,6 +559,8 @@ impl InventoryRepository for SqliteInventoryRepository {
         })?;
 
         let location_id = input.location_id.unwrap_or(1);
+
+        Self::expire_reservations_for_item_in_tx(&tx, item.id, location_id, now)?;
 
         // Get balance directly with this connection
         let balance = tx.query_row(
@@ -570,7 +668,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         // Get reservation
         let res = tx.query_row(
-            "SELECT item_id, location_id, quantity, status FROM inventory_reservations WHERE id = ?",
+            "SELECT item_id, location_id, quantity, status, expires_at FROM inventory_reservations WHERE id = ?",
             [reservation_id.to_string()],
             |row| {
                 Ok((
@@ -578,11 +676,12 @@ impl InventoryRepository for SqliteInventoryRepository {
                     row.get::<_, i32>("location_id")?,
                     parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_reservation", "quantity")?,
                     row.get::<_, String>("status")?,
+                    parse_datetime_opt_row(row.get::<_, Option<String>>("expires_at")?, "inventory_reservation", "expires_at")?,
                 ))
             },
         );
 
-        let (item_id, location_id, quantity, status) = match res {
+        let (item_id, location_id, quantity, status, expires_at) = match res {
             Ok(r) => r,
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 return Err(CommerceError::ReservationNotFound(reservation_id))
@@ -598,8 +697,18 @@ impl InventoryRepository for SqliteInventoryRepository {
         })?;
         if parsed_status == ReservationStatus::Released
             || parsed_status == ReservationStatus::Cancelled
+            || parsed_status == ReservationStatus::Expired
         {
+            tx.commit().map_err(map_db_error)?;
             return Ok(()); // Already released
+        }
+
+        if let Some(expires_at) = expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(&tx, reservation_id, item_id, location_id, quantity, now)?;
+                tx.commit().map_err(map_db_error)?;
+                return Ok(());
+            }
         }
 
         // Update reservation status
@@ -647,13 +756,64 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let now = Utc::now();
 
-        conn.execute(
+        let res = tx.query_row(
+            "SELECT item_id, location_id, quantity, status, expires_at FROM inventory_reservations WHERE id = ?",
+            [reservation_id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>("item_id")?,
+                    row.get::<_, i32>("location_id")?,
+                    parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_reservation", "quantity")?,
+                    row.get::<_, String>("status")?,
+                    parse_datetime_opt_row(row.get::<_, Option<String>>("expires_at")?, "inventory_reservation", "expires_at")?,
+                ))
+            },
+        );
+
+        let (item_id, location_id, quantity, status, expires_at) = match res {
+            Ok(r) => r,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(CommerceError::ReservationNotFound(reservation_id))
+            }
+            Err(e) => return Err(map_db_error(e)),
+        };
+
+        let parsed_status: ReservationStatus = status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                status, e
+            ))
+        })?;
+
+        if parsed_status == ReservationStatus::Released
+            || parsed_status == ReservationStatus::Cancelled
+        {
+            tx.commit().map_err(map_db_error)?;
+            return Ok(());
+        }
+        if parsed_status == ReservationStatus::Expired {
+            return Err(CommerceError::ReservationExpired(reservation_id));
+        }
+
+        if let Some(expires_at) = expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(&tx, reservation_id, item_id, location_id, quantity, now)?;
+                tx.commit().map_err(map_db_error)?;
+                return Err(CommerceError::ReservationExpired(reservation_id));
+            }
+        }
+
+        tx.execute(
             "UPDATE inventory_reservations SET status = 'confirmed' WHERE id = ?",
             [reservation_id.to_string()],
         )
         .map_err(map_db_error)?;
+
+        tx.commit().map_err(map_db_error)?;
 
         Ok(())
     }
@@ -1018,6 +1178,13 @@ impl InventoryRepository for SqliteInventoryRepository {
                     sku: input.sku.clone(),
                     requested: input.quantity.abs().to_string(),
                     available: balance.quantity_on_hand.to_string(),
+                });
+            }
+            if new_available < Decimal::ZERO {
+                return Err(CommerceError::InsufficientStock {
+                    sku: input.sku.clone(),
+                    requested: input.quantity.abs().to_string(),
+                    available: balance.quantity_available.to_string(),
                 });
             }
 

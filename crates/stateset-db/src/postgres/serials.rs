@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of serial number repository
 
-use super::{block_on, map_db_error};
+use super::{block_on, map_db_error, PgLotRepository, PgWarrantyRepository};
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
@@ -1184,18 +1184,50 @@ impl PgSerialRepository {
             )
             .await?;
 
-        let lot = None;
+        let product_name = sqlx::query_scalar::<_, String>(
+            "SELECT COALESCE(p.name, v.name)
+             FROM product_variants v
+             LEFT JOIN products p ON p.id = v.product_id
+             WHERE v.sku = $1",
+        )
+        .bind(&serial_number.sku)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        let warranty_status = serial_number.warranty_id.map(|warranty_id| WarrantyLookupStatus {
-            warranty_id,
-            is_active: true,
-            expires_at: None,
-            coverage_type: None,
-        });
+        let lot = {
+            let lot_repo = PgLotRepository::new(self.pool.clone());
+            match (serial_number.lot_id, serial_number.lot_number.as_deref()) {
+                (Some(lot_id), lot_number) => match lot_repo.get_async(lot_id).await? {
+                    Some(lot) => Some(lot),
+                    None => match lot_number {
+                        Some(number) => lot_repo.get_by_number_async(number).await?,
+                        None => None,
+                    },
+                },
+                (None, Some(lot_number)) => lot_repo.get_by_number_async(lot_number).await?,
+                (None, None) => None,
+            }
+        };
+
+        let warranty_status = if let Some(warranty_id) = serial_number.warranty_id {
+            let warranty_repo = PgWarrantyRepository::new(self.pool.clone());
+            match warranty_repo.get_async(warranty_id).await? {
+                Some(warranty) => Some(WarrantyLookupStatus {
+                    warranty_id,
+                    is_active: warranty.is_valid(),
+                    expires_at: warranty.end_date,
+                    coverage_type: Some(warranty.warranty_type.to_string()),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
 
         Ok(Some(SerialLookupResult {
             serial: serial_number,
-            product_name: None,
+            product_name,
             lot,
             warranty_status,
             recent_history,

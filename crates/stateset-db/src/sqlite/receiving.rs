@@ -5,7 +5,7 @@
 use crate::sqlite::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt,
     parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt,
-    parse_uuid_opt_row, parse_uuid_row,
+    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -180,19 +180,28 @@ impl SqliteReceivingRepository {
         let conn = self.conn()?;
 
         // Calculate totals from items
-        let (exp_total, rcv_total): (String, String) = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(expected_quantity AS REAL)), 0),
-                        COALESCE(SUM(CAST(received_quantity AS REAL)), 0)
-                 FROM receipt_items WHERE receipt_id = ?1",
-                params![receipt_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+        let receipt_id_param = receipt_id.to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT expected_quantity, received_quantity FROM receipt_items WHERE receipt_id = ?1",
             )
             .map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![&receipt_id_param])
+            .map_err(map_db_error)?;
+        let mut exp_total = Decimal::ZERO;
+        let mut rcv_total = Decimal::ZERO;
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let expected_str: String = row.get(0).map_err(map_db_error)?;
+            let received_str: String = row.get(1).map_err(map_db_error)?;
+            exp_total += parse_decimal_strict(&expected_str, "receipt_item", "expected_quantity")?;
+            rcv_total += parse_decimal_strict(&received_str, "receipt_item", "received_quantity")?;
+        }
 
         conn.execute(
             "UPDATE receipts SET expected_quantity = ?1, received_quantity = ?2 WHERE id = ?3",
-            params![exp_total, rcv_total, receipt_id.to_string()],
+            params![exp_total.to_string(), rcv_total.to_string(), receipt_id_param],
         )
         .map_err(map_db_error)?;
 
@@ -708,17 +717,19 @@ impl ReceivingRepository for SqliteReceivingRepository {
 
         // Update receipt put_away_quantity
         let receipt_id = existing.receipt_id;
-        let put_away_total: String = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(quantity AS REAL)), 0) FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
-                params![receipt_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let receipt_id_param = receipt_id.to_string();
+        let put_away_params: [&dyn rusqlite::ToSql; 1] = [&receipt_id_param];
+        let put_away_total = sum_decimal_query(
+            &conn,
+            "SELECT quantity FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
+            &put_away_params,
+            "put_aways",
+            "quantity",
+        )?;
 
         conn.execute(
             "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
-            params![put_away_total, receipt_id.to_string()],
+            params![put_away_total.to_string(), receipt_id_param],
         )
         .map_err(map_db_error)?;
 

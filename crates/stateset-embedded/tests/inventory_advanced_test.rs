@@ -2,7 +2,7 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateInventoryItem, InventoryFilter, ReservationStatus, TransactionType,
+    Commerce, CommerceError, CreateInventoryItem, InventoryFilter, ReservationStatus, TransactionType,
 };
 use uuid::Uuid;
 
@@ -265,6 +265,61 @@ fn test_confirm_reservation() {
 }
 
 #[test]
+fn test_expired_reservation_released_on_confirm() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let sku = unique_sku("EXP-CONFIRM");
+    create_test_inventory_item(&commerce, &sku);
+
+    let reservation = commerce
+        .inventory()
+        .reserve(&sku, dec!(5), "order", "ORD-EXP-001", Some(-1))
+        .expect("Failed to create reservation");
+
+    let result = commerce.inventory().confirm_reservation(reservation.id);
+    match result {
+        Err(CommerceError::ReservationExpired(id)) => assert_eq!(id, reservation.id),
+        _ => panic!("Expected ReservationExpired error"),
+    }
+
+    let stock = commerce
+        .inventory()
+        .get_stock(&sku)
+        .expect("Failed to get stock")
+        .expect("Stock not found");
+
+    assert_eq!(stock.total_allocated, dec!(0));
+    assert_eq!(stock.total_available, dec!(100));
+}
+
+#[test]
+fn test_expired_reservation_released_on_new_reserve() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let sku = unique_sku("EXP-RESERVE");
+    create_test_inventory_item(&commerce, &sku);
+
+    commerce
+        .inventory()
+        .reserve(&sku, dec!(5), "order", "ORD-EXP-002", Some(-1))
+        .expect("Failed to create reservation");
+
+    let reservation = commerce
+        .inventory()
+        .reserve(&sku, dec!(100), "order", "ORD-NEW-001", None)
+        .expect("Failed to create reservation");
+
+    assert_eq!(reservation.quantity, dec!(100));
+
+    let stock = commerce
+        .inventory()
+        .get_stock(&sku)
+        .expect("Failed to get stock")
+        .expect("Stock not found");
+
+    assert_eq!(stock.total_allocated, dec!(100));
+    assert_eq!(stock.total_available, dec!(0));
+}
+
+#[test]
 fn test_reservation_reduces_available() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let sku = unique_sku("AVAIL");
@@ -299,6 +354,24 @@ fn test_reservation_reduces_available() {
     assert_eq!(stock_after.total_available, initial_available - dec!(30));
     // Allocated should increase
     assert_eq!(stock_after.total_allocated, dec!(30));
+}
+
+#[test]
+fn test_adjust_below_allocated_fails() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let sku = unique_sku("ADJ-ALLOC");
+    create_test_inventory_item(&commerce, &sku);
+
+    commerce
+        .inventory()
+        .reserve(&sku, dec!(80), "order", "ORD-ALLOC-001", None)
+        .expect("Failed to create reservation");
+
+    let result = commerce
+        .inventory()
+        .adjust(&sku, dec!(-30), "test adjustment");
+
+    assert!(matches!(result, Err(CommerceError::InsufficientStock { .. })));
 }
 
 #[test]

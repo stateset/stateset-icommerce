@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row, parse_enum_row,
+    parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row, parse_enum_row, sum_decimal_query,
     SqliteCustomerRepository, SqliteOrderRepository,
 };
 use super::parse_helpers::{parse_uuid, parse_decimal as parse_decimal_err};
@@ -152,13 +152,15 @@ impl SqliteCartRepository {
         cart_id: Uuid,
     ) -> Result<()> {
         // Calculate subtotal from items
-        let subtotal: String = conn
-            .query_row(
-                "SELECT COALESCE(CAST(SUM(CAST(total AS REAL)) AS TEXT), '0') FROM cart_items WHERE cart_id = ?",
-                [cart_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let cart_id_param = cart_id.to_string();
+        let cart_params: [&dyn rusqlite::ToSql; 1] = [&cart_id_param];
+        let subtotal = sum_decimal_query(
+            conn,
+            "SELECT total FROM cart_items WHERE cart_id = ?",
+            &cart_params,
+            "cart_item",
+            "total",
+        )?;
 
         // Get current tax and shipping
         let (tax, shipping, discount): (String, String, String) = conn
@@ -170,16 +172,15 @@ impl SqliteCartRepository {
             .map_err(map_db_error)?;
 
         // Calculate grand total
-        let subtotal_dec = parse_decimal_err(&subtotal, "cart", "subtotal")?;
         let tax_dec = parse_decimal_err(&tax, "cart", "tax_amount")?;
         let shipping_dec = parse_decimal_err(&shipping, "cart", "shipping_amount")?;
         let discount_dec = parse_decimal_err(&discount, "cart", "discount_amount")?;
-        let grand_total = subtotal_dec + tax_dec + shipping_dec - discount_dec;
+        let grand_total = subtotal + tax_dec + shipping_dec - discount_dec;
 
         conn.execute(
             "UPDATE carts SET subtotal = ?, grand_total = ?, updated_at = ? WHERE id = ?",
             rusqlite::params![
-                subtotal,
+                subtotal.to_string(),
                 grand_total.to_string(),
                 Utc::now().to_rfc3339(),
                 cart_id.to_string()

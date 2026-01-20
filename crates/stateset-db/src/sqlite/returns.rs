@@ -2,7 +2,7 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_uuid_row, uuid_params,
+    parse_decimal_row, parse_enum_row, parse_uuid_row, sum_decimal_query, uuid_params,
 };
 use super::parse_helpers::{parse_decimal, parse_uuid};
 use chrono::Utc;
@@ -225,17 +225,19 @@ impl ReturnRepository for SqliteReturnRepository {
         }
 
         // Calculate total refund amount
-        let total_refund: f64 = tx
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(refund_amount AS REAL)), 0) FROM return_items WHERE return_id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let return_id_param = id.to_string();
+        let return_params: [&dyn rusqlite::ToSql; 1] = [&return_id_param];
+        let total_refund = sum_decimal_query(
+            &tx,
+            "SELECT refund_amount FROM return_items WHERE return_id = ?",
+            &return_params,
+            "return_item",
+            "refund_amount",
+        )?;
 
         tx.execute(
             "UPDATE returns SET refund_amount = ? WHERE id = ?",
-            rusqlite::params![total_refund.to_string(), id.to_string()],
+            rusqlite::params![total_refund.to_string(), return_id_param],
         )
         .map_err(map_db_error)?;
 
@@ -648,17 +650,19 @@ impl ReturnRepository for SqliteReturnRepository {
             }
 
             // Calculate total refund amount
-            let total_refund: f64 = tx
-                .query_row(
-                    "SELECT COALESCE(SUM(CAST(refund_amount AS REAL)), 0) FROM return_items WHERE return_id = ?",
-                    [id.to_string()],
-                    |row| row.get(0),
-                )
-                .map_err(map_db_error)?;
+            let return_id_param = id.to_string();
+            let return_params: [&dyn rusqlite::ToSql; 1] = [&return_id_param];
+            let total_refund = sum_decimal_query(
+                &tx,
+                "SELECT refund_amount FROM return_items WHERE return_id = ?",
+                &return_params,
+                "return_item",
+                "refund_amount",
+            )?;
 
             tx.execute(
                 "UPDATE returns SET refund_amount = ? WHERE id = ?",
-                rusqlite::params![total_refund.to_string(), id.to_string()],
+                rusqlite::params![total_refund.to_string(), return_id_param],
             )
             .map_err(map_db_error)?;
 
@@ -670,7 +674,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 reason: input.reason,
                 reason_details: input.reason_details,
                 idempotency_key: input.idempotency_key,
-                refund_amount: Some(Decimal::try_from(total_refund).unwrap_or_default()),
+                refund_amount: Some(total_refund),
                 refund_method: None,
                 tracking_number: None,
                 items,

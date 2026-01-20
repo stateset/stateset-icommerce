@@ -278,9 +278,11 @@ impl PgOrderRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // Get next order number
         let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
-            .fetch_one(&self.pool)
+            .fetch_one(&mut tx)
             .await
             .map_err(map_db_error)?;
 
@@ -330,7 +332,7 @@ impl PgOrderRepository {
         .bind(&billing_address_json)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut tx)
         .await
         .map_err(map_db_error)?;
 
@@ -361,7 +363,7 @@ impl PgOrderRepository {
             .bind(tax)
             .bind(item_total)
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut tx)
             .await
             .map_err(map_db_error)?;
 
@@ -379,6 +381,8 @@ impl PgOrderRepository {
                 total: item_total,
             });
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(Order {
             id,

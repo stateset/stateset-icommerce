@@ -1,8 +1,9 @@
 //! SQLite implementation for Accounts Payable
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_uuid, parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid, parse_uuid_opt_row,
+    parse_uuid_row, sum_decimal_query,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -124,26 +125,32 @@ impl SqliteAccountsPayableRepository {
     fn recalculate_bill(&self, bill_id: Uuid) -> Result<()> {
         let conn = self.conn()?;
 
-        // Get item totals as f64 (REAL in SQLite)
-        let (subtotal_f, tax_f): (f64, f64) = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0), COALESCE(SUM(CAST(tax_amount AS REAL)), 0)
-             FROM ap_bill_items WHERE bill_id = ?1",
-            params![bill_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let bill_id_param = bill_id.to_string();
+        let mut stmt = conn
+            .prepare("SELECT amount, tax_amount FROM ap_bill_items WHERE bill_id = ?1")
+            .map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![&bill_id_param])
+            .map_err(map_db_error)?;
+        let mut subtotal_dec = Decimal::ZERO;
+        let mut tax_dec = Decimal::ZERO;
 
-        let subtotal_dec = Self::decimal_from_f64(subtotal_f, "ap_bill_items", "subtotal")?;
-        let tax_dec = Self::decimal_from_f64(tax_f, "ap_bill_items", "tax_amount")?;
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let amount_str: String = row.get(0).map_err(map_db_error)?;
+            let tax_str: String = row.get(1).map_err(map_db_error)?;
+            subtotal_dec += parse_decimal_strict(&amount_str, "ap_bill_items", "amount")?;
+            tax_dec += parse_decimal_strict(&tax_str, "ap_bill_items", "tax_amount")?;
+        }
         let total = subtotal_dec + tax_dec;
 
-        // Get amount paid as f64
-        let amount_paid_f: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) FROM ap_payment_allocations WHERE bill_id = ?1",
-            params![bill_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
-
-        let paid = Self::decimal_from_f64(amount_paid_f, "ap_payment_allocations", "amount")?;
+        let payment_params: [&dyn rusqlite::ToSql; 1] = [&bill_id_param];
+        let paid = sum_decimal_query(
+            &conn,
+            "SELECT amount FROM ap_payment_allocations WHERE bill_id = ?1",
+            &payment_params,
+            "ap_payment_allocations",
+            "amount",
+        )?;
         let due = total - paid;
 
         conn.execute(
@@ -154,14 +161,6 @@ impl SqliteAccountsPayableRepository {
         Ok(())
     }
 
-    fn decimal_from_f64(value: f64, entity: &str, field: &str) -> Result<Decimal> {
-        Decimal::from_f64_retain(value).ok_or_else(|| {
-            CommerceError::DatabaseError(format!(
-                "Invalid decimal for {}.{}: '{}'",
-                entity, field, value
-            ))
-        })
-    }
 }
 
 impl AccountsPayableRepository for SqliteAccountsPayableRepository {
@@ -736,75 +735,100 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
     fn get_aging_summary(&self) -> Result<ApAgingSummary> {
         let conn = self.conn()?;
+        let now = Utc::now();
+        let cutoff_30 = now - chrono::Duration::days(30);
+        let cutoff_60 = now - chrono::Duration::days(60);
+        let cutoff_90 = now - chrono::Duration::days(90);
 
-        let current: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date >= datetime('now') AND status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
-        ).map_err(map_db_error)?;
+        let mut current = Decimal::ZERO;
+        let mut days_1_30 = Decimal::ZERO;
+        let mut days_31_60 = Decimal::ZERO;
+        let mut days_61_90 = Decimal::ZERO;
+        let mut days_over_90 = Decimal::ZERO;
 
-        let days_1_30: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now') AND due_date >= datetime('now', '-30 days') AND status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
+        let mut stmt = conn.prepare(
+            "SELECT due_date, amount_due FROM ap_bills WHERE status NOT IN ('paid', 'cancelled')",
         ).map_err(map_db_error)?;
+        let mut rows = stmt.query([]).map_err(map_db_error)?;
 
-        let days_31_60: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-30 days') AND due_date >= datetime('now', '-60 days') AND status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
-        ).map_err(map_db_error)?;
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let due_date_str: String = row.get(0).map_err(map_db_error)?;
+            let due_date = parse_datetime(&due_date_str, "ap_bill", "due_date")?;
+            let amount_str: String = row.get(1).map_err(map_db_error)?;
+            let amount = parse_decimal_strict(&amount_str, "ap_bills", "amount_due")?;
 
-        let days_61_90: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-60 days') AND due_date >= datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
-        ).map_err(map_db_error)?;
+            if due_date >= now {
+                current += amount;
+            } else if due_date >= cutoff_30 {
+                days_1_30 += amount;
+            } else if due_date >= cutoff_60 {
+                days_31_60 += amount;
+            } else if due_date >= cutoff_90 {
+                days_61_90 += amount;
+            } else {
+                days_over_90 += amount;
+            }
+        }
 
-        let days_over_90: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE due_date < datetime('now', '-90 days') AND status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
-        ).map_err(map_db_error)?;
+        let total = current + days_1_30 + days_31_60 + days_61_90 + days_over_90;
 
         Ok(ApAgingSummary {
-            current: Self::decimal_from_f64(current, "ap_bills", "amount_due")?,
-            days_1_30: Self::decimal_from_f64(days_1_30, "ap_bills", "amount_due_1_30")?,
-            days_31_60: Self::decimal_from_f64(days_31_60, "ap_bills", "amount_due_31_60")?,
-            days_61_90: Self::decimal_from_f64(days_61_90, "ap_bills", "amount_due_61_90")?,
-            days_over_90: Self::decimal_from_f64(days_over_90, "ap_bills", "amount_due_over_90")?,
-            total: Self::decimal_from_f64(
-                current + days_1_30 + days_31_60 + days_61_90 + days_over_90,
-                "ap_bills",
-                "amount_due_total",
-            )?,
+            current,
+            days_1_30,
+            days_31_60,
+            days_61_90,
+            days_over_90,
+            total,
         })
     }
 
     fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
         let conn = self.conn()?;
+        let now = Utc::now();
+        let supplier_id_param = supplier_id.to_string();
 
-        let (outstanding, overdue, count): (f64, f64, i32) = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0),
-                    COALESCE(SUM(CASE WHEN due_date < datetime('now') THEN CAST(amount_due AS REAL) ELSE 0 END), 0),
-                    COUNT(*)
-             FROM ap_bills WHERE supplier_id = ?1 AND status NOT IN ('paid', 'cancelled')",
-            params![supplier_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let mut stmt = conn.prepare(
+            "SELECT due_date, amount_due FROM ap_bills WHERE supplier_id = ?1 AND status NOT IN ('paid', 'cancelled')",
         ).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![&supplier_id_param])
+            .map_err(map_db_error)?;
+        let mut outstanding = Decimal::ZERO;
+        let mut overdue = Decimal::ZERO;
+        let mut count: i32 = 0;
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            count += 1;
+            let due_date_str: String = row.get(0).map_err(map_db_error)?;
+            let due_date = parse_datetime(&due_date_str, "ap_bill", "due_date")?;
+            let amount_str: String = row.get(1).map_err(map_db_error)?;
+            let amount = parse_decimal_strict(&amount_str, "ap_bills", "amount_due")?;
+            outstanding += amount;
+            if due_date < now {
+                overdue += amount;
+            }
+        }
 
         Ok(SupplierApSummary {
             supplier_id,
             supplier_name: None,
-            total_outstanding: Self::decimal_from_f64(outstanding, "ap_bills", "amount_due")?,
-            total_overdue: Self::decimal_from_f64(overdue, "ap_bills", "amount_due_overdue")?,
+            total_outstanding: outstanding,
+            total_overdue: overdue,
             bill_count: count,
         })
     }
 
     fn get_total_outstanding(&self) -> Result<Decimal> {
         let conn = self.conn()?;
-        let total: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(amount_due AS REAL)), 0) FROM ap_bills WHERE status NOT IN ('paid', 'cancelled')",
-            [], |row| row.get(0)
-        ).map_err(map_db_error)?;
+        let total = sum_decimal_query(
+            &conn,
+            "SELECT amount_due FROM ap_bills WHERE status NOT IN ('paid', 'cancelled')",
+            &[],
+            "ap_bills",
+            "amount_due",
+        )?;
 
-        Ok(Self::decimal_from_f64(total, "ap_bills", "amount_due_total")?)
+        Ok(total)
     }
 
     fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {

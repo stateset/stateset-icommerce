@@ -847,7 +847,10 @@ impl SqliteTaxRepository {
 
         // Calculate tax for each line item
         for item in &request.line_items {
-            let line_amount = item.unit_price * item.quantity - item.discount_amount;
+            let mut line_amount = item.unit_price * item.quantity - item.discount_amount;
+            if line_amount < Decimal::ZERO {
+                line_amount = Decimal::ZERO;
+            }
             subtotal += line_amount;
 
             // Check if item is exempt due to customer exemption
@@ -873,28 +876,43 @@ impl SqliteTaxRepository {
 
             let mut line_tax = Decimal::ZERO;
             let mut line_tax_details = Vec::new();
-            let taxable_base = line_amount;
 
             for rate in &rates {
-                let tax_amount = if rate.is_compound {
-                    // Compound tax is applied on (subtotal + previous taxes)
-                    (taxable_base + line_tax) * rate.rate
-                } else {
-                    taxable_base * rate.rate
-                };
+                if line_amount <= Decimal::ZERO {
+                    continue;
+                }
 
-                // Apply thresholds if set
-                let final_tax = if let Some(max) = rate.threshold_max {
-                    if taxable_base > max {
-                        max * rate.rate
-                    } else {
-                        tax_amount
+                if let Some(min) = rate.threshold_min {
+                    if line_amount < min {
+                        continue;
                     }
-                } else {
-                    tax_amount
+                }
+
+                let capped_base = match rate.threshold_max {
+                    Some(max) if line_amount > max => max,
+                    _ => line_amount,
                 };
 
-                line_tax += final_tax;
+                if capped_base <= Decimal::ZERO {
+                    continue;
+                }
+
+                let taxable_amount = if rate.fixed_amount.is_some() {
+                    capped_base
+                } else if rate.is_compound {
+                    // Compound tax is applied on (subtotal + previous taxes)
+                    capped_base + line_tax
+                } else {
+                    capped_base
+                };
+
+                let rate_tax = if let Some(fixed) = rate.fixed_amount {
+                    fixed
+                } else {
+                    taxable_amount * rate.rate
+                };
+
+                line_tax += rate_tax;
 
                 // Get jurisdiction info
                 if let Some(jurisdiction) = self.get_jurisdiction(rate.jurisdiction_id)? {
@@ -909,13 +927,13 @@ impl SqliteTaxRepository {
 
                     if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
                         summary.total_rate += rate.rate;
-                        summary.total_tax += final_tax;
+                        summary.total_tax += rate_tax;
                     }
 
                     // Add to breakdown
                     if let Some(existing) = tax_breakdown.iter_mut().find(|b| b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type) {
-                        existing.taxable_amount += taxable_base;
-                        existing.tax_amount += final_tax;
+                        existing.taxable_amount += taxable_amount;
+                        existing.tax_amount += rate_tax;
                     } else {
                         tax_breakdown.push(TaxBreakdown {
                             jurisdiction_id: jurisdiction.id,
@@ -923,8 +941,8 @@ impl SqliteTaxRepository {
                             tax_type: rate.tax_type,
                             rate_name: rate.name.clone(),
                             rate: rate.rate,
-                            taxable_amount: taxable_base,
-                            tax_amount: final_tax,
+                            taxable_amount,
+                            tax_amount: rate_tax,
                             is_compound: rate.is_compound,
                         });
                     }
@@ -933,7 +951,7 @@ impl SqliteTaxRepository {
                         tax_type: rate.tax_type,
                         jurisdiction_name: jurisdiction.name,
                         rate: rate.rate,
-                        amount: final_tax,
+                        amount: rate_tax,
                     });
                 }
             }
@@ -959,11 +977,83 @@ impl SqliteTaxRepository {
         // Calculate shipping tax if applicable
         let mut shipping_tax = Decimal::ZERO;
         if settings.tax_shipping {
-            if let Some(shipping_amount) = request.shipping_amount {
-                let shipping_rates = self.get_rates_for_address(&request.shipping_address, ProductTaxCategory::Standard, transaction_date)?;
-                for rate in shipping_rates {
-                    shipping_tax += shipping_amount * rate.rate;
+            if let Some(mut shipping_amount) = request.shipping_amount {
+                if shipping_amount < Decimal::ZERO {
+                    shipping_amount = Decimal::ZERO;
                 }
+
+                let shipping_rates = self.get_rates_for_address(&request.shipping_address, ProductTaxCategory::Standard, transaction_date)?;
+                for rate in &shipping_rates {
+                    if shipping_amount <= Decimal::ZERO {
+                        continue;
+                    }
+
+                    if let Some(min) = rate.threshold_min {
+                        if shipping_amount < min {
+                            continue;
+                        }
+                    }
+
+                    let capped_base = match rate.threshold_max {
+                        Some(max) if shipping_amount > max => max,
+                        _ => shipping_amount,
+                    };
+
+                    if capped_base <= Decimal::ZERO {
+                        continue;
+                    }
+
+                    let taxable_amount = if rate.fixed_amount.is_some() {
+                        capped_base
+                    } else if rate.is_compound {
+                        capped_base + shipping_tax
+                    } else {
+                        capped_base
+                    };
+
+                    let rate_tax = if let Some(fixed) = rate.fixed_amount {
+                        fixed
+                    } else {
+                        taxable_amount * rate.rate
+                    };
+
+                    shipping_tax += rate_tax;
+
+                    if let Some(jurisdiction) = self.get_jurisdiction(rate.jurisdiction_id)? {
+                        jurisdictions_map
+                            .entry(jurisdiction.id)
+                            .or_insert_with(|| JurisdictionSummary {
+                                id: jurisdiction.id,
+                                name: jurisdiction.name.clone(),
+                                code: jurisdiction.code.clone(),
+                                level: jurisdiction.level,
+                                total_rate: Decimal::ZERO,
+                                total_tax: Decimal::ZERO,
+                            });
+
+                        if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
+                            summary.total_rate += rate.rate;
+                            summary.total_tax += rate_tax;
+                        }
+
+                        if let Some(existing) = tax_breakdown.iter_mut().find(|b| b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type) {
+                            existing.taxable_amount += taxable_amount;
+                            existing.tax_amount += rate_tax;
+                        } else {
+                            tax_breakdown.push(TaxBreakdown {
+                                jurisdiction_id: jurisdiction.id,
+                                jurisdiction_name: jurisdiction.name.clone(),
+                                tax_type: rate.tax_type,
+                                rate_name: rate.name.clone(),
+                                rate: rate.rate,
+                                taxable_amount,
+                                tax_amount: rate_tax,
+                                is_compound: rate.is_compound,
+                            });
+                        }
+                    }
+                }
+
                 total_tax += shipping_tax;
             }
         }

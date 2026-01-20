@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row, parse_enum, parse_enum_row,
+    parse_decimal_row, parse_decimal_opt_row, parse_enum, parse_enum_row, sum_decimal_query,
 };
 use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use r2d2::Pool;
@@ -131,13 +131,15 @@ impl SqliteInvoiceRepository {
 
     fn recalculate_with_conn(conn: &rusqlite::Connection, id: Uuid) -> Result<()> {
         // Calculate subtotal from items
-        let subtotal: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(line_total AS REAL)), 0) FROM invoice_items WHERE invoice_id = ?",
-                [id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let invoice_id_param = id.to_string();
+        let invoice_params: [&dyn rusqlite::ToSql; 1] = [&invoice_id_param];
+        let subtotal = sum_decimal_query(
+            conn,
+            "SELECT line_total FROM invoice_items WHERE invoice_id = ?",
+            &invoice_params,
+            "invoice_item",
+            "line_total",
+        )?;
 
         let (discount_amount, tax_amount, shipping_amount, amount_paid): (String, String, String, String) = conn
             .query_row(
@@ -147,13 +149,7 @@ impl SqliteInvoiceRepository {
             )
             .map_err(map_db_error)?;
 
-        let subtotal_dec = Decimal::from_f64_retain(subtotal).ok_or_else(|| {
-            CommerceError::DatabaseError(format!(
-                "Invalid invoice subtotal sum for {}: {}",
-                id, subtotal
-            ))
-        })?;
-        let total = subtotal_dec - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
+        let total = subtotal - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
             + parse_decimal_with_context(&tax_amount, "invoice", "tax_amount")?
             + parse_decimal_with_context(&shipping_amount, "invoice", "shipping_amount")?;
         let balance_due = total - parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?;
@@ -161,7 +157,7 @@ impl SqliteInvoiceRepository {
         conn.execute(
             "UPDATE invoices SET subtotal = ?, total = ?, balance_due = ?, updated_at = ? WHERE id = ?",
             params![
-                subtotal_dec.to_string(),
+                subtotal.to_string(),
                 total.to_string(),
                 balance_due.to_string(),
                 chrono::Utc::now().to_rfc3339(),

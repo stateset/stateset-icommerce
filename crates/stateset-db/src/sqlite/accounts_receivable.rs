@@ -2,7 +2,8 @@
 
 use crate::sqlite::{
     map_db_error, parse_decimal_row, parse_decimal_opt_row, parse_datetime_row,
-    parse_datetime_opt_row, parse_enum_row, parse_uuid_row, parse_uuid_opt_row,
+    parse_datetime_opt_row, parse_enum_row, parse_uuid, parse_uuid_row, parse_uuid_opt_row,
+    sum_decimal_query,
 };
 use crate::sqlite::parse_helpers::{
     parse_datetime as parse_datetime_safe, parse_decimal as parse_decimal_safe,
@@ -12,6 +13,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::params;
+use std::collections::HashMap;
 use stateset_core::{
     AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices,
     ArAgingFilter, ArAgingSummary, ArPaymentApplication, CollectionActivity,
@@ -172,90 +174,137 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     fn get_aging_summary(&self) -> Result<ArAgingSummary> {
         let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (current, days_1_30, days_31_60, days_61_90, days_over_90): (String, String, String, String, String) = conn.query_row(
-            "SELECT
-                COALESCE(SUM(CASE WHEN due_date >= datetime('now') THEN CAST(balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN due_date < datetime('now') AND due_date >= datetime('now', '-30 days') THEN CAST(balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN due_date < datetime('now', '-30 days') AND due_date >= datetime('now', '-60 days') THEN CAST(balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN due_date < datetime('now', '-60 days') AND due_date >= datetime('now', '-90 days') THEN CAST(balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN due_date < datetime('now', '-90 days') THEN CAST(balance_due AS REAL) ELSE 0 END), 0)
-            FROM invoices
-            WHERE status NOT IN ('paid', 'voided', 'written_off')
-              AND CAST(balance_due AS REAL) > 0",
-            [],
-            |row| Ok((
-                row.get::<_, f64>(0)?.to_string(),
-                row.get::<_, f64>(1)?.to_string(),
-                row.get::<_, f64>(2)?.to_string(),
-                row.get::<_, f64>(3)?.to_string(),
-                row.get::<_, f64>(4)?.to_string(),
-            )),
-        ).map_err(map_db_error)?;
+        let now = Utc::now();
+        let cutoff_30 = now - chrono::Duration::days(30);
+        let cutoff_60 = now - chrono::Duration::days(60);
+        let cutoff_90 = now - chrono::Duration::days(90);
 
-        let current_dec = parse_decimal_safe(&current, "aging_summary", "current")?;
-        let days_1_30_dec = parse_decimal_safe(&days_1_30, "aging_summary", "days_1_30")?;
-        let days_31_60_dec = parse_decimal_safe(&days_31_60, "aging_summary", "days_31_60")?;
-        let days_61_90_dec = parse_decimal_safe(&days_61_90, "aging_summary", "days_61_90")?;
-        let days_over_90_dec = parse_decimal_safe(&days_over_90, "aging_summary", "days_over_90")?;
+        let mut current = Decimal::ZERO;
+        let mut days_1_30 = Decimal::ZERO;
+        let mut days_31_60 = Decimal::ZERO;
+        let mut days_61_90 = Decimal::ZERO;
+        let mut days_over_90 = Decimal::ZERO;
+
+        let mut stmt = conn.prepare(
+            "SELECT due_date, balance_due FROM invoices WHERE status NOT IN ('paid', 'voided', 'written_off')",
+        ).map_err(map_db_error)?;
+        let mut rows = stmt.query([]).map_err(map_db_error)?;
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let due_date_str: String = row.get(0).map_err(map_db_error)?;
+            let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
+            let balance_str: String = row.get(1).map_err(map_db_error)?;
+            let balance = parse_decimal_safe(&balance_str, "invoice", "balance_due")?;
+            if balance <= Decimal::ZERO {
+                continue;
+            }
+
+            if due_date >= now {
+                current += balance;
+            } else if due_date >= cutoff_30 {
+                days_1_30 += balance;
+            } else if due_date >= cutoff_60 {
+                days_31_60 += balance;
+            } else if due_date >= cutoff_90 {
+                days_61_90 += balance;
+            } else {
+                days_over_90 += balance;
+            }
+        }
 
         Ok(ArAgingSummary {
-            current: current_dec,
-            days_1_30: days_1_30_dec,
-            days_31_60: days_31_60_dec,
-            days_61_90: days_61_90_dec,
-            days_over_90: days_over_90_dec,
-            total: current_dec + days_1_30_dec + days_31_60_dec + days_61_90_dec + days_over_90_dec,
-            as_of_date: Utc::now(),
+            current,
+            days_1_30,
+            days_31_60,
+            days_61_90,
+            days_over_90,
+            total: current + days_1_30 + days_31_60 + days_61_90 + days_over_90,
+            as_of_date: now,
         })
     }
 
     fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
         let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let (first_name, last_name, email): (String, String, String) = conn
+            .query_row(
+                "SELECT first_name, last_name, email FROM customers WHERE id = ?1",
+                params![customer_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
 
-        let row = conn.query_row(
-            "SELECT
-                i.customer_id,
-                c.first_name || ' ' || c.last_name,
-                c.email,
-                COALESCE(SUM(CASE WHEN i.due_date >= datetime('now') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now') AND i.due_date >= datetime('now', '-30 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-30 days') AND i.due_date >= datetime('now', '-60 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-60 days') AND i.due_date >= datetime('now', '-90 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-90 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0),
-                COUNT(*),
-                MIN(i.created_at)
-            FROM invoices i
-            LEFT JOIN customers c ON i.customer_id = c.id
-            WHERE i.customer_id = ?1
-              AND i.status NOT IN ('paid', 'voided', 'written_off')
-              AND CAST(i.balance_due AS REAL) > 0
-            GROUP BY i.customer_id",
-            params![customer_id.to_string()],
-            |row| {
-                let current: f64 = row.get(3)?;
-                let days_1_30: f64 = row.get(4)?;
-                let days_31_60: f64 = row.get(5)?;
-                let days_61_90: f64 = row.get(6)?;
-                let days_over_90: f64 = row.get(7)?;
+        let now = Utc::now();
+        let cutoff_30 = now - chrono::Duration::days(30);
+        let cutoff_60 = now - chrono::Duration::days(60);
+        let cutoff_90 = now - chrono::Duration::days(90);
 
-                Ok(CustomerArAging {
-                    customer_id: parse_uuid_row(&row.get::<_, String>(0)?, "customer_aging", "customer_id")?,
-                    customer_name: row.get(1)?,
-                    customer_email: row.get(2)?,
-                    current: Decimal::from_f64_retain(current).unwrap_or_default(),
-                    days_1_30: Decimal::from_f64_retain(days_1_30).unwrap_or_default(),
-                    days_31_60: Decimal::from_f64_retain(days_31_60).unwrap_or_default(),
-                    days_61_90: Decimal::from_f64_retain(days_61_90).unwrap_or_default(),
-                    days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
-                    total_outstanding: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
-                    invoice_count: row.get(8)?,
-                    oldest_invoice_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "customer_aging", "oldest_invoice_date")?,
-                    last_payment_date: None,
-                })
-            },
+        let mut current = Decimal::ZERO;
+        let mut days_1_30 = Decimal::ZERO;
+        let mut days_31_60 = Decimal::ZERO;
+        let mut days_61_90 = Decimal::ZERO;
+        let mut days_over_90 = Decimal::ZERO;
+        let mut invoice_count: i32 = 0;
+        let mut oldest_invoice_date: Option<chrono::DateTime<Utc>> = None;
+
+        let mut stmt = conn.prepare(
+            "SELECT due_date, balance_due, created_at
+             FROM invoices
+             WHERE customer_id = ?1
+               AND status NOT IN ('paid', 'voided', 'written_off')",
         ).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![customer_id.to_string()])
+            .map_err(map_db_error)?;
 
-        Ok(row)
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let balance_str: String = row.get(1).map_err(map_db_error)?;
+            let balance = parse_decimal_safe(&balance_str, "invoice", "balance_due")?;
+            if balance <= Decimal::ZERO {
+                continue;
+            }
+
+            invoice_count += 1;
+            let due_date_str: String = row.get(0).map_err(map_db_error)?;
+            let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
+            let created_at_str: String = row.get(2).map_err(map_db_error)?;
+            let created_at = parse_datetime_safe(&created_at_str, "invoice", "created_at")?;
+
+            oldest_invoice_date = match oldest_invoice_date {
+                Some(existing) if existing <= created_at => Some(existing),
+                _ => Some(created_at),
+            };
+
+            if due_date >= now {
+                current += balance;
+            } else if due_date >= cutoff_30 {
+                days_1_30 += balance;
+            } else if due_date >= cutoff_60 {
+                days_31_60 += balance;
+            } else if due_date >= cutoff_90 {
+                days_61_90 += balance;
+            } else {
+                days_over_90 += balance;
+            }
+        }
+
+        if invoice_count == 0 {
+            return Err(stateset_core::CommerceError::NotFound);
+        }
+
+        Ok(CustomerArAging {
+            customer_id,
+            customer_name: Some(format!("{} {}", first_name, last_name)),
+            customer_email: Some(email),
+            current,
+            days_1_30,
+            days_31_60,
+            days_61_90,
+            days_over_90,
+            total_outstanding: current + days_1_30 + days_31_60 + days_61_90 + days_over_90,
+            invoice_count,
+            oldest_invoice_date,
+            last_payment_date: None,
+        })
     }
 
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
@@ -264,65 +313,142 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut sql = String::from(
             "SELECT
                 i.customer_id,
-                c.first_name || ' ' || c.last_name,
+                c.first_name,
+                c.last_name,
                 c.email,
-                COALESCE(SUM(CASE WHEN i.due_date >= datetime('now') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0) as current_amt,
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now') AND i.due_date >= datetime('now', '-30 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0) as days_1_30,
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-30 days') AND i.due_date >= datetime('now', '-60 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0) as days_31_60,
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-60 days') AND i.due_date >= datetime('now', '-90 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0) as days_61_90,
-                COALESCE(SUM(CASE WHEN i.due_date < datetime('now', '-90 days') THEN CAST(i.balance_due AS REAL) ELSE 0 END), 0) as days_over_90,
-                COUNT(*) as invoice_count,
-                MIN(i.created_at) as oldest
-            FROM invoices i
-            LEFT JOIN customers c ON i.customer_id = c.id
-            WHERE i.status NOT IN ('paid', 'voided', 'written_off')
-              AND CAST(i.balance_due AS REAL) > 0"
+                i.due_date,
+                i.balance_due,
+                i.created_at
+             FROM invoices i
+             LEFT JOIN customers c ON i.customer_id = c.id
+             WHERE i.status NOT IN ('paid', 'voided', 'written_off')",
         );
 
-        if let Some(cid) = &filter.customer_id {
-            sql.push_str(&format!(" AND i.customer_id = '{}'", cid));
+        if filter.customer_id.is_some() {
+            sql.push_str(" AND i.customer_id = ?1");
         }
 
-        sql.push_str(" GROUP BY i.customer_id");
+        let now = Utc::now();
+        let cutoff_30 = now - chrono::Duration::days(30);
+        let cutoff_60 = now - chrono::Duration::days(60);
+        let cutoff_90 = now - chrono::Duration::days(90);
 
-        if filter.overdue_only.unwrap_or(false) {
-            sql.push_str(" HAVING (days_1_30 + days_31_60 + days_61_90 + days_over_90) > 0");
-        }
-
-        sql.push_str(" ORDER BY (current_amt + days_1_30 + days_31_60 + days_61_90 + days_over_90) DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        #[derive(Default)]
+        struct AgingAccum {
+            customer_id: Uuid,
+            customer_name: String,
+            customer_email: String,
+            current: Decimal,
+            days_1_30: Decimal,
+            days_31_60: Decimal,
+            days_61_90: Decimal,
+            days_over_90: Decimal,
+            invoice_count: i32,
+            oldest_invoice_date: Option<chrono::DateTime<Utc>>,
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], |row| {
-            let current: f64 = row.get(3)?;
-            let days_1_30: f64 = row.get(4)?;
-            let days_31_60: f64 = row.get(5)?;
-            let days_61_90: f64 = row.get(6)?;
-            let days_over_90: f64 = row.get(7)?;
+        let mut rows = match filter.customer_id {
+            Some(cid) => stmt.query(params![cid.to_string()]).map_err(map_db_error)?,
+            None => stmt.query([]).map_err(map_db_error)?,
+        };
 
-            Ok(CustomerArAging {
-                customer_id: parse_uuid_row(&row.get::<_, String>(0)?, "customer_aging", "customer_id")?,
-                customer_name: row.get(1)?,
-                customer_email: row.get(2)?,
-                current: Decimal::from_f64_retain(current).unwrap_or_default(),
-                days_1_30: Decimal::from_f64_retain(days_1_30).unwrap_or_default(),
-                days_31_60: Decimal::from_f64_retain(days_31_60).unwrap_or_default(),
-                days_61_90: Decimal::from_f64_retain(days_61_90).unwrap_or_default(),
-                days_over_90: Decimal::from_f64_retain(days_over_90).unwrap_or_default(),
-                total_outstanding: Decimal::from_f64_retain(current + days_1_30 + days_31_60 + days_61_90 + days_over_90).unwrap_or_default(),
-                invoice_count: row.get(8)?,
-                oldest_invoice_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "customer_aging", "oldest_invoice_date")?,
-                last_payment_date: None,
+        let mut by_customer: HashMap<Uuid, AgingAccum> = HashMap::new();
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let id_str: String = row.get(0).map_err(map_db_error)?;
+            let customer_id = parse_uuid(&id_str, "invoice", "customer_id")?;
+            let first_name: String = row.get(1).map_err(map_db_error)?;
+            let last_name: String = row.get(2).map_err(map_db_error)?;
+            let email: String = row.get(3).map_err(map_db_error)?;
+            let due_date_str: String = row.get(4).map_err(map_db_error)?;
+            let balance_str: String = row.get(5).map_err(map_db_error)?;
+            let created_at_str: String = row.get(6).map_err(map_db_error)?;
+
+            let balance = parse_decimal_safe(&balance_str, "invoice", "balance_due")?;
+            if balance <= Decimal::ZERO {
+                continue;
+            }
+
+            let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
+            let created_at = parse_datetime_safe(&created_at_str, "invoice", "created_at")?;
+
+            let entry = by_customer.entry(customer_id).or_insert_with(|| AgingAccum {
+                customer_id,
+                customer_name: format!("{} {}", first_name, last_name),
+                customer_email: email,
+                ..Default::default()
+            });
+
+            entry.invoice_count += 1;
+            entry.oldest_invoice_date = match entry.oldest_invoice_date {
+                Some(existing) if existing <= created_at => Some(existing),
+                _ => Some(created_at),
+            };
+
+            if due_date >= now {
+                entry.current += balance;
+            } else if due_date >= cutoff_30 {
+                entry.days_1_30 += balance;
+            } else if due_date >= cutoff_60 {
+                entry.days_31_60 += balance;
+            } else if due_date >= cutoff_90 {
+                entry.days_61_90 += balance;
+            } else {
+                entry.days_over_90 += balance;
+            }
+        }
+
+        let mut results: Vec<CustomerArAging> = by_customer
+            .into_values()
+            .filter(|entry| {
+                if filter.overdue_only.unwrap_or(false) {
+                    entry.days_1_30 + entry.days_31_60 + entry.days_61_90 + entry.days_over_90
+                        > Decimal::ZERO
+                } else {
+                    true
+                }
             })
-        }).map_err(map_db_error)?;
+            .map(|entry| {
+                let total = entry.current
+                    + entry.days_1_30
+                    + entry.days_31_60
+                    + entry.days_61_90
+                    + entry.days_over_90;
+                CustomerArAging {
+                    customer_id: entry.customer_id,
+                    customer_name: Some(entry.customer_name),
+                    customer_email: Some(entry.customer_email),
+                    current: entry.current,
+                    days_1_30: entry.days_1_30,
+                    days_31_60: entry.days_31_60,
+                    days_61_90: entry.days_61_90,
+                    days_over_90: entry.days_over_90,
+                    total_outstanding: total,
+                    invoice_count: entry.invoice_count,
+                    oldest_invoice_date: entry.oldest_invoice_date,
+                    last_payment_date: None,
+                }
+            })
+            .collect();
 
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        results.sort_by(|a, b| b.total_outstanding.cmp(&a.total_outstanding));
+
+        let offset = filter.offset.unwrap_or(0) as usize;
+        let limit = filter.limit.map(|l| l as usize);
+        let results = if offset >= results.len() {
+            Vec::new()
+        } else {
+            let mut sliced = results.split_off(offset);
+            if let Some(limit) = limit {
+                if sliced.len() > limit {
+                    sliced.truncate(limit);
+                }
+            }
+            sliced
+        };
+
+        Ok(results)
     }
 
     fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
@@ -1049,24 +1175,32 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // DSO = (Accounts Receivable / Total Credit Sales) × Number of Days
-        let ar_balance: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(balance_due AS REAL)), 0) FROM invoices WHERE status NOT IN ('paid', 'voided', 'written_off')",
-            [],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let ar_balance = sum_decimal_query(
+            &conn,
+            "SELECT balance_due FROM invoices WHERE status NOT IN ('paid', 'voided', 'written_off')",
+            &[],
+            "invoices",
+            "balance_due",
+        )?;
 
-        let total_sales: f64 = conn.query_row(
-            &format!("SELECT COALESCE(SUM(CAST(total AS REAL)), 0) FROM invoices WHERE created_at >= datetime('now', '-{} days')", days),
-            [],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let sales_sql = format!(
+            "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{} days')",
+            days
+        );
+        let total_sales = sum_decimal_query(
+            &conn,
+            &sales_sql,
+            &[],
+            "invoices",
+            "total",
+        )?;
 
-        if total_sales == 0.0 {
+        if total_sales == Decimal::ZERO {
             return Ok(Decimal::ZERO);
         }
 
-        let dso = (ar_balance / total_sales) * days as f64;
-        Ok(Decimal::from_f64_retain(dso).unwrap_or_default())
+        let dso = (ar_balance / total_sales) * Decimal::from(days);
+        Ok(dso)
     }
 
     fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>> {

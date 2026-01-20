@@ -67,6 +67,7 @@ use crate::migrations;
 use crate::DatabaseConfig;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
+use rust_decimal::Decimal;
 use rusqlite::OpenFlags;
 use stateset_core::CommerceError;
 
@@ -332,6 +333,30 @@ pub(crate) fn build_in_clause(count: usize) -> String {
     std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Sum a single decimal column from a query using exact Decimal parsing.
+pub(crate) fn sum_decimal_query(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    params: &[&dyn rusqlite::ToSql],
+    entity: &str,
+    field: &str,
+) -> stateset_core::Result<Decimal> {
+    let mut stmt = conn.prepare(sql).map_err(map_db_error)?;
+    let mut rows = stmt.query(params).map_err(map_db_error)?;
+    let mut total = Decimal::ZERO;
+
+    while let Some(row) = rows.next().map_err(map_db_error)? {
+        let raw: Option<String> = row.get(0).map_err(map_db_error)?;
+        if let Some(raw) = raw {
+            if !raw.is_empty() {
+                total += parse_decimal_strict(&raw, entity, field)?;
+            }
+        }
+    }
+
+    Ok(total)
 }
 
 /// Convert a slice of UUIDs to boxed parameter vector for rusqlite

@@ -20,6 +20,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
@@ -98,6 +99,141 @@ struct Store {
 type StoreRef = Rc<RefCell<Store>>;
 
 // ============================================================================
+// Money Helpers
+// ============================================================================
+
+// Monetary values are stored in minor units (cents), rounded to 2 decimals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Money(i64);
+
+impl Money {
+    const SCALE: i64 = 100;
+
+    fn zero() -> Self {
+        Money(0)
+    }
+
+    fn from_f64(value: f64) -> Self {
+        if value.is_finite() {
+            Money((value * Self::SCALE as f64).round() as i64)
+        } else {
+            Money::zero()
+        }
+    }
+
+    fn to_f64(self) -> f64 {
+        self.0 as f64 / Self::SCALE as f64
+    }
+
+    fn mul_rate(self, rate: f64) -> Self {
+        if !rate.is_finite() {
+            return Money::zero();
+        }
+        Money(((self.0 as f64) * rate).round() as i64)
+    }
+}
+
+impl std::ops::Add for Money {
+    type Output = Money;
+
+    fn add(self, rhs: Money) -> Money {
+        Money(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign for Money {
+    fn add_assign(&mut self, rhs: Money) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub for Money {
+    type Output = Money;
+
+    fn sub(self, rhs: Money) -> Money {
+        Money(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::SubAssign for Money {
+    fn sub_assign(&mut self, rhs: Money) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl std::ops::Mul<i32> for Money {
+    type Output = Money;
+
+    fn mul(self, rhs: i32) -> Money {
+        Money(self.0.saturating_mul(rhs as i64))
+    }
+}
+
+impl Serialize for Money {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_f64(self.to_f64())
+    }
+}
+
+impl<'de> Deserialize<'de> for Money {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MoneyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for MoneyVisitor {
+            type Value = Money;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a monetary amount")
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Money, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(Money::from_f64(value))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Money, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(Money::from_f64(value as f64))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Money, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(Money::from_f64(value as f64))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Money, E>
+            where
+                E: serde::de::Error,
+            {
+                let parsed: f64 = value.parse().map_err(E::custom)?;
+                Ok(Money::from_f64(parsed))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Money, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(MoneyVisitor)
+    }
+}
+
+// ============================================================================
 // Internal Data Types
 // ============================================================================
 
@@ -120,7 +256,7 @@ struct OrderData {
     order_number: String,
     customer_id: Uuid,
     status: String,
-    total_amount: f64,
+    total_amount: Money,
     currency: String,
     payment_status: String,
     fulfillment_status: String,
@@ -138,8 +274,8 @@ struct OrderItemData {
     sku: String,
     name: String,
     quantity: i32,
-    unit_price: f64,
-    total: f64,
+    unit_price: Money,
+    total: Money,
 }
 
 #[derive(Clone)]
@@ -159,8 +295,8 @@ struct VariantData {
     product_id: Uuid,
     sku: String,
     name: String,
-    price: f64,
-    compare_at_price: Option<f64>,
+    price: Money,
+    compare_at_price: Option<Money>,
     is_default: bool,
 }
 
@@ -216,7 +352,7 @@ struct PaymentData {
     payment_number: String,
     order_id: Option<Uuid>,
     customer_id: Option<Uuid>,
-    amount: f64,
+    amount: Money,
     currency: String,
     status: String,
     payment_method: Option<String>,
@@ -229,7 +365,7 @@ struct PaymentData {
 struct RefundData {
     id: Uuid,
     payment_id: Uuid,
-    amount: f64,
+    amount: Money,
     reason: Option<String>,
     status: String,
     created_at: String,
@@ -292,7 +428,7 @@ struct PurchaseOrderData {
     po_number: String,
     supplier_id: Uuid,
     status: String,
-    total_amount: f64,
+    total_amount: Money,
     currency: String,
     created_at: String,
     updated_at: String,
@@ -305,10 +441,10 @@ struct InvoiceData {
     customer_id: Uuid,
     order_id: Option<Uuid>,
     status: String,
-    subtotal: f64,
-    tax_amount: f64,
-    total: f64,
-    amount_paid: f64,
+    subtotal: Money,
+    tax_amount: Money,
+    total: Money,
+    amount_paid: Money,
     due_date: Option<String>,
     created_at: String,
     updated_at: String,
@@ -360,11 +496,11 @@ struct CartData {
     customer_id: Option<Uuid>,
     status: String,
     currency: String,
-    subtotal: f64,
-    tax_amount: f64,
-    shipping_amount: f64,
-    discount_amount: f64,
-    grand_total: f64,
+    subtotal: Money,
+    tax_amount: Money,
+    shipping_amount: Money,
+    discount_amount: Money,
+    grand_total: Money,
     customer_email: Option<String>,
     customer_name: Option<String>,
     payment_method: Option<String>,
@@ -386,8 +522,8 @@ struct CartItemData {
     name: String,
     description: Option<String>,
     quantity: i32,
-    unit_price: f64,
-    total: f64,
+    unit_price: Money,
+    total: Money,
 }
 
 #[derive(Clone, Serialize)]
@@ -414,9 +550,9 @@ struct SubscriptionPlanData {
     description: Option<String>,
     billing_interval: String,
     billing_interval_count: i32,
-    price: f64,
+    price: Money,
     currency: String,
-    setup_fee: f64,
+    setup_fee: Money,
     trial_days: i32,
     status: String,
     created_at: String,
@@ -438,7 +574,7 @@ struct SubscriptionData {
     cancel_at_period_end: bool,
     pause_start: Option<String>,
     pause_end: Option<String>,
-    price: f64,
+    price: Money,
     currency: String,
     created_at: String,
     updated_at: String,
@@ -452,7 +588,7 @@ struct BillingCycleData {
     status: String,
     period_start: String,
     period_end: String,
-    amount: f64,
+    amount: Money,
     currency: String,
     payment_id: Option<Uuid>,
     invoice_id: Option<Uuid>,
@@ -481,8 +617,8 @@ struct PromotionData {
     stacking: String,
     status: String,
     percentage_off: Option<f64>,
-    fixed_amount_off: Option<f64>,
-    max_discount_amount: Option<f64>,
+    fixed_amount_off: Option<Money>,
+    max_discount_amount: Option<Money>,
     buy_quantity: Option<i32>,
     get_quantity: Option<i32>,
     starts_at: String,
@@ -519,7 +655,7 @@ struct PromotionUsageData {
     customer_id: Option<Uuid>,
     order_id: Option<Uuid>,
     cart_id: Option<Uuid>,
-    discount_amount: f64,
+    discount_amount: Money,
     currency: String,
     used_at: String,
 }
@@ -567,8 +703,8 @@ struct JsOrderItem {
     sku: String,
     name: String,
     quantity: i32,
-    unit_price: f64,
-    total: f64,
+    unit_price: Money,
+    total: Money,
 }
 
 impl From<&OrderItemData> for JsOrderItem {
@@ -591,7 +727,7 @@ struct JsOrder {
     order_number: String,
     customer_id: String,
     status: String,
-    total_amount: f64,
+    total_amount: Money,
     currency: String,
     payment_status: String,
     fulfillment_status: String,
@@ -635,8 +771,8 @@ struct JsProductVariant {
     product_id: String,
     sku: String,
     name: String,
-    price: f64,
-    compare_at_price: Option<f64>,
+    price: Money,
+    compare_at_price: Option<Money>,
     is_default: bool,
 }
 
@@ -741,7 +877,7 @@ struct JsPayment {
     payment_number: String,
     order_id: Option<String>,
     customer_id: Option<String>,
-    amount: f64,
+    amount: Money,
     currency: String,
     status: String,
     payment_method: Option<String>,
@@ -773,7 +909,7 @@ impl From<&PaymentData> for JsPayment {
 struct JsRefund {
     id: String,
     payment_id: String,
-    amount: f64,
+    amount: Money,
     reason: Option<String>,
     status: String,
     created_at: String,
@@ -917,7 +1053,7 @@ struct JsPurchaseOrder {
     po_number: String,
     supplier_id: String,
     status: String,
-    total_amount: f64,
+    total_amount: Money,
     currency: String,
     created_at: String,
     updated_at: String,
@@ -946,11 +1082,11 @@ struct JsInvoice {
     customer_id: String,
     order_id: Option<String>,
     status: String,
-    subtotal: f64,
-    tax_amount: f64,
-    total: f64,
-    amount_paid: f64,
-    balance_due: f64,
+    subtotal: Money,
+    tax_amount: Money,
+    total: Money,
+    amount_paid: Money,
+    balance_due: Money,
     due_date: Option<String>,
     created_at: String,
     updated_at: String,
@@ -1075,8 +1211,8 @@ struct JsCartItem {
     name: String,
     description: Option<String>,
     quantity: i32,
-    unit_price: f64,
-    total: f64,
+    unit_price: Money,
+    total: Money,
 }
 
 impl From<&CartItemData> for JsCartItem {
@@ -1102,11 +1238,11 @@ struct JsCart {
     customer_id: Option<String>,
     status: String,
     currency: String,
-    subtotal: f64,
-    tax_amount: f64,
-    shipping_amount: f64,
-    discount_amount: f64,
-    grand_total: f64,
+    subtotal: Money,
+    tax_amount: Money,
+    shipping_amount: Money,
+    discount_amount: Money,
+    grand_total: Money,
     customer_email: Option<String>,
     customer_name: Option<String>,
     payment_method: Option<String>,
@@ -1132,9 +1268,9 @@ struct JsSubscriptionPlan {
     description: Option<String>,
     billing_interval: String,
     billing_interval_count: i32,
-    price: f64,
+    price: Money,
     currency: String,
-    setup_fee: f64,
+    setup_fee: Money,
     trial_days: i32,
     status: String,
     created_at: String,
@@ -1177,7 +1313,7 @@ struct JsSubscription {
     cancel_at_period_end: bool,
     pause_start: Option<String>,
     pause_end: Option<String>,
-    price: f64,
+    price: Money,
     currency: String,
     created_at: String,
     updated_at: String,
@@ -1216,7 +1352,7 @@ struct JsBillingCycle {
     status: String,
     period_start: String,
     period_end: String,
-    amount: f64,
+    amount: Money,
     currency: String,
     payment_id: Option<String>,
     invoice_id: Option<String>,
@@ -1278,8 +1414,8 @@ struct JsPromotion {
     stacking: String,
     status: String,
     percentage_off: Option<f64>,
-    fixed_amount_off: Option<f64>,
-    max_discount_amount: Option<f64>,
+    fixed_amount_off: Option<Money>,
+    max_discount_amount: Option<Money>,
     buy_quantity: Option<i32>,
     get_quantity: Option<i32>,
     starts_at: String,
@@ -1366,7 +1502,7 @@ struct JsPromotionUsage {
     customer_id: Option<String>,
     order_id: Option<String>,
     cart_id: Option<String>,
-    discount_amount: f64,
+    discount_amount: Money,
     currency: String,
     used_at: String,
 }
@@ -1390,13 +1526,13 @@ impl From<&PromotionUsageData> for JsPromotionUsage {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsApplyPromotionsResult {
-    original_subtotal: f64,
-    total_discount: f64,
-    discounted_subtotal: f64,
-    original_shipping: f64,
-    shipping_discount: f64,
-    final_shipping: f64,
-    grand_total: f64,
+    original_subtotal: Money,
+    total_discount: Money,
+    discounted_subtotal: Money,
+    original_shipping: Money,
+    shipping_discount: Money,
+    final_shipping: Money,
+    grand_total: Money,
     applied_promotions: Vec<JsAppliedPromotion>,
 }
 
@@ -1406,7 +1542,7 @@ struct JsAppliedPromotion {
     promotion_id: String,
     promotion_name: String,
     coupon_code: Option<String>,
-    discount_amount: f64,
+    discount_amount: Money,
     discount_type: String,
 }
 
@@ -1416,7 +1552,7 @@ struct JsCheckoutResult {
     order_id: String,
     order_number: String,
     cart_id: String,
-    total_charged: f64,
+    total_charged: Money,
     currency: String,
 }
 
@@ -1440,7 +1576,7 @@ struct CreateOrderItemInput {
     sku: String,
     name: String,
     quantity: i32,
-    unit_price: f64,
+    unit_price: Money,
 }
 
 #[derive(Deserialize)]
@@ -1457,8 +1593,8 @@ struct CreateOrderInput {
 struct CreateVariantInput {
     sku: String,
     name: Option<String>,
-    price: f64,
-    compare_at_price: Option<f64>,
+    price: Money,
+    compare_at_price: Option<Money>,
 }
 
 #[derive(Deserialize)]
@@ -1498,7 +1634,7 @@ struct CreateReturnInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreatePaymentInput {
-    amount: f64,
+    amount: Money,
     currency: Option<String>,
     order_id: Option<String>,
     customer_id: Option<String>,
@@ -1509,7 +1645,7 @@ struct CreatePaymentInput {
 #[serde(rename_all = "camelCase")]
 struct CreateRefundInput {
     payment_id: String,
-    amount: f64,
+    amount: Money,
     reason: Option<String>,
 }
 
@@ -1557,8 +1693,8 @@ struct CreatePurchaseOrderInput {
 struct CreateInvoiceInput {
     customer_id: String,
     order_id: Option<String>,
-    subtotal: f64,
-    tax_amount: Option<f64>,
+    subtotal: Money,
+    tax_amount: Option<Money>,
     due_date: Option<String>,
 }
 
@@ -1604,7 +1740,7 @@ struct AddCartItemInput {
     sku: String,
     name: String,
     quantity: i32,
-    unit_price: f64,
+    unit_price: Money,
     description: Option<String>,
 }
 
@@ -1626,8 +1762,8 @@ struct CreatePromotionInput {
     target: Option<String>,
     stacking: Option<String>,
     percentage_off: Option<f64>,
-    fixed_amount_off: Option<f64>,
-    max_discount_amount: Option<f64>,
+    fixed_amount_off: Option<Money>,
+    max_discount_amount: Option<Money>,
     buy_quantity: Option<i32>,
     get_quantity: Option<i32>,
     starts_at: Option<String>,
@@ -1645,8 +1781,8 @@ struct UpdatePromotionInput {
     description: Option<String>,
     status: Option<String>,
     percentage_off: Option<f64>,
-    fixed_amount_off: Option<f64>,
-    max_discount_amount: Option<f64>,
+    fixed_amount_off: Option<Money>,
+    max_discount_amount: Option<Money>,
     starts_at: Option<String>,
     ends_at: Option<String>,
     total_usage_limit: Option<i32>,
@@ -1671,8 +1807,8 @@ struct ApplyPromotionsInput {
     cart_id: Option<String>,
     customer_id: Option<String>,
     coupon_codes: Option<Vec<String>>,
-    subtotal: f64,
-    shipping_amount: Option<f64>,
+    subtotal: Money,
+    shipping_amount: Option<Money>,
     currency: Option<String>,
 }
 
@@ -1942,11 +2078,11 @@ impl Orders {
         let order_number = format!("ORD-{}", store.next_order_number);
 
         // Calculate total and create items
-        let mut total = 0.0;
+        let mut total = Money::zero();
         let mut items = Vec::new();
 
         for item_input in &input.items {
-            let item_total = item_input.unit_price * item_input.quantity as f64;
+            let item_total = item_input.unit_price * item_input.quantity;
             total += item_total;
 
             items.push(OrderItemData {
@@ -3005,7 +3141,7 @@ impl PurchaseOrders {
             po_number,
             supplier_id,
             status: "draft".to_string(),
-            total_amount: 0.0,
+            total_amount: Money::zero(),
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             created_at: now.clone(),
             updated_at: now,
@@ -3106,7 +3242,7 @@ impl Invoices {
         store.next_invoice_number += 1;
         let invoice_number = format!("INV-{}", store.next_invoice_number);
 
-        let tax_amount = input.tax_amount.unwrap_or(0.0);
+        let tax_amount = input.tax_amount.unwrap_or_default();
         let total = input.subtotal + tax_amount;
 
         let data = InvoiceData {
@@ -3118,7 +3254,7 @@ impl Invoices {
             subtotal: input.subtotal,
             tax_amount,
             total,
-            amount_paid: 0.0,
+            amount_paid: Money::zero(),
             due_date: input.due_date,
             created_at: now.clone(),
             updated_at: now,
@@ -3173,6 +3309,7 @@ impl Invoices {
             .get_mut(&uuid)
             .ok_or_else(|| JsValue::from_str("Invoice not found"))?;
 
+        let amount = Money::from_f64(amount);
         data.amount_paid += amount;
         data.updated_at = Utc::now().to_rfc3339();
 
@@ -3498,11 +3635,11 @@ impl Carts {
             customer_id,
             status: "active".to_string(),
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
-            subtotal: 0.0,
-            tax_amount: 0.0,
-            shipping_amount: 0.0,
-            discount_amount: 0.0,
-            grand_total: 0.0,
+            subtotal: Money::zero(),
+            tax_amount: Money::zero(),
+            shipping_amount: Money::zero(),
+            discount_amount: Money::zero(),
+            grand_total: Money::zero(),
             customer_email: input.customer_email,
             customer_name: input.customer_name,
             payment_method: None,
@@ -3610,7 +3747,7 @@ impl Carts {
         }
 
         let item_id = Uuid::new_v4();
-        let total = input.unit_price * input.quantity as f64;
+        let total = input.unit_price * input.quantity;
 
         let item = CartItemData {
             id: item_id,
@@ -3689,7 +3826,7 @@ impl Carts {
 
         // Now update cart totals
         let cart = store.carts.get_mut(&uuid).unwrap();
-        cart.subtotal = 0.0;
+        cart.subtotal = Money::zero();
         cart.grand_total = cart.tax_amount + cart.shipping_amount - cart.discount_amount;
         cart.updated_at = Utc::now().to_rfc3339();
 
@@ -3980,9 +4117,9 @@ impl Subscriptions {
             description: Option<String>,
             billing_interval: Option<String>,
             billing_interval_count: Option<i32>,
-            price: f64,
+            price: Money,
             currency: Option<String>,
-            setup_fee: Option<f64>,
+            setup_fee: Option<Money>,
             trial_days: Option<i32>,
         }
 
@@ -4002,7 +4139,7 @@ impl Subscriptions {
             billing_interval_count: input.billing_interval_count.unwrap_or(1),
             price: input.price,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
-            setup_fee: input.setup_fee.unwrap_or(0.0),
+            setup_fee: input.setup_fee.unwrap_or_default(),
             trial_days: input.trial_days.unwrap_or(0),
             status: "draft".to_string(),
             created_at: now.clone(),
@@ -4091,7 +4228,7 @@ impl Subscriptions {
             customer_id: String,
             plan_id: String,
             skip_trial: Option<bool>,
-            price: Option<f64>,
+            price: Option<Money>,
         }
 
         let input: SubscribeInput = serde_wasm_bindgen::from_value(input)
@@ -4810,10 +4947,10 @@ impl Promotions {
         let store = self.store.borrow();
         let coupon_codes = input.coupon_codes.unwrap_or_default();
         let subtotal = input.subtotal;
-        let shipping = input.shipping_amount.unwrap_or(0.0);
+        let shipping = input.shipping_amount.unwrap_or_default();
 
-        let mut total_discount = 0.0;
-        let mut shipping_discount = 0.0;
+        let mut total_discount = Money::zero();
+        let mut shipping_discount = Money::zero();
         let mut applied_promotions = Vec::new();
 
         // Find applicable promotions
@@ -4841,21 +4978,21 @@ impl Promotions {
 
             // Calculate discount
             let discount = if let Some(pct) = promo.percentage_off {
-                subtotal * pct
+                subtotal.mul_rate(pct)
             } else if let Some(fixed) = promo.fixed_amount_off {
                 fixed
             } else {
-                0.0
+                Money::zero()
             };
 
             // Apply max discount cap
             let final_discount = if let Some(max) = promo.max_discount_amount {
-                discount.min(max)
+                std::cmp::min(discount, max)
             } else {
                 discount
             };
 
-            if final_discount > 0.0 {
+            if final_discount > Money::zero() {
                 // Check if free shipping
                 if promo.promotion_type == "free_shipping" {
                     shipping_discount += shipping;
@@ -4882,11 +5019,14 @@ impl Promotions {
         let result = JsApplyPromotionsResult {
             original_subtotal: subtotal,
             total_discount,
-            discounted_subtotal: (subtotal - total_discount).max(0.0),
+            discounted_subtotal: std::cmp::max(subtotal - total_discount, Money::zero()),
             original_shipping: shipping,
             shipping_discount,
-            final_shipping: (shipping - shipping_discount).max(0.0),
-            grand_total: (subtotal - total_discount + shipping - shipping_discount).max(0.0),
+            final_shipping: std::cmp::max(shipping - shipping_discount, Money::zero()),
+            grand_total: std::cmp::max(
+                subtotal - total_discount + shipping - shipping_discount,
+                Money::zero(),
+            ),
             applied_promotions,
         };
 
@@ -4925,6 +5065,7 @@ impl Promotions {
             }
         }
 
+        let discount_amount = Money::from_f64(discount_amount);
         let usage = PromotionUsageData {
             id: Uuid::new_v4(),
             promotion_id: promo_uuid,
@@ -4990,9 +5131,9 @@ struct TaxRateData {
     description: Option<String>,
     is_compound: bool,
     priority: i32,
-    threshold_min: Option<f64>,
-    threshold_max: Option<f64>,
-    fixed_amount: Option<f64>,
+    threshold_min: Option<Money>,
+    threshold_max: Option<Money>,
+    fixed_amount: Option<Money>,
     effective_from: String,
     effective_to: Option<String>,
     active: bool,
@@ -5089,9 +5230,9 @@ struct JsTaxRate {
     description: Option<String>,
     is_compound: bool,
     priority: i32,
-    threshold_min: Option<f64>,
-    threshold_max: Option<f64>,
-    fixed_amount: Option<f64>,
+    threshold_min: Option<Money>,
+    threshold_max: Option<Money>,
+    fixed_amount: Option<Money>,
     effective_from: String,
     effective_to: Option<String>,
     active: bool,
@@ -5209,10 +5350,10 @@ impl From<&TaxSettingsData> for JsTaxSettings {
 #[serde(rename_all = "camelCase")]
 struct JsTaxCalculationResult {
     id: String,
-    total_tax: f64,
-    subtotal: f64,
-    total: f64,
-    shipping_tax: f64,
+    total_tax: Money,
+    subtotal: Money,
+    total: Money,
+    shipping_tax: Money,
     tax_breakdown: Vec<JsTaxBreakdown>,
     line_item_taxes: Vec<JsLineItemTax>,
     exemptions_applied: bool,
@@ -5228,8 +5369,8 @@ struct JsTaxBreakdown {
     tax_type: String,
     rate_name: String,
     rate: f64,
-    taxable_amount: f64,
-    tax_amount: f64,
+    taxable_amount: Money,
+    tax_amount: Money,
     is_compound: bool,
 }
 
@@ -5237,8 +5378,8 @@ struct JsTaxBreakdown {
 #[serde(rename_all = "camelCase")]
 struct JsLineItemTax {
     line_item_id: String,
-    taxable_amount: f64,
-    tax_amount: f64,
+    taxable_amount: Money,
+    tax_amount: Money,
     effective_rate: f64,
     is_exempt: bool,
     exemption_reason: Option<String>,
@@ -5308,9 +5449,9 @@ struct CreateTaxRateInput {
     description: Option<String>,
     is_compound: Option<bool>,
     priority: Option<i32>,
-    threshold_min: Option<f64>,
-    threshold_max: Option<f64>,
-    fixed_amount: Option<f64>,
+    threshold_min: Option<Money>,
+    threshold_max: Option<Money>,
+    fixed_amount: Option<Money>,
     effective_from: String,
     effective_to: Option<String>,
 }
@@ -5335,7 +5476,7 @@ struct TaxCalculationInput {
     line_items: Vec<TaxLineItemInput>,
     shipping_address: TaxAddressInput,
     customer_id: Option<String>,
-    shipping_amount: Option<f64>,
+    shipping_amount: Option<Money>,
     currency: Option<String>,
 }
 
@@ -5344,8 +5485,8 @@ struct TaxCalculationInput {
 struct TaxLineItemInput {
     id: String,
     quantity: f64,
-    unit_price: f64,
-    discount_amount: Option<f64>,
+    unit_price: Money,
+    discount_amount: Option<Money>,
     tax_category: Option<String>,
 }
 
@@ -5641,7 +5782,7 @@ impl Tax {
         let now = Utc::now();
 
         // Find applicable rates based on address
-        let applicable_rates: Vec<&TaxRateData> = store.tax_rates.values()
+        let mut applicable_rates: Vec<&TaxRateData> = store.tax_rates.values()
             .filter(|r| {
                 // Simple matching - in a real implementation this would be more sophisticated
                 if let Some(jurisdiction) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
@@ -5654,73 +5795,177 @@ impl Tax {
                 }
             })
             .collect();
+        applicable_rates.sort_by_key(|r| r.priority);
 
-        // Calculate total rate
-        let total_rate: f64 = applicable_rates.iter()
-            .filter(|r| !r.is_compound)
-            .map(|r| r.rate)
-            .sum();
+        let shipping_amount = input.shipping_amount.unwrap_or_default();
+        let has_shipping = input.shipping_amount.is_some();
+        let default_category = store
+            .tax_settings
+            .as_ref()
+            .map(|s| s.default_product_category.as_str())
+            .unwrap_or("standard");
 
-        // Calculate line item taxes
-        let mut subtotal = 0.0;
-        let mut total_tax = 0.0;
-        let mut line_item_taxes = Vec::new();
-        let mut tax_breakdown_map: std::collections::HashMap<Uuid, (String, String, f64)> = std::collections::HashMap::new();
-
-        for item in &input.line_items {
-            let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or(0.0);
-            subtotal += line_total;
-
-            let item_tax = line_total * total_rate;
-            total_tax += item_tax;
-
-            line_item_taxes.push(JsLineItemTax {
-                line_item_id: item.id.clone(),
-                taxable_amount: line_total,
-                tax_amount: item_tax,
-                effective_rate: total_rate,
-                is_exempt: false,
-                exemption_reason: None,
-            });
-
-            // Track breakdown by jurisdiction
-            for rate in &applicable_rates {
-                if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
-                    let entry = tax_breakdown_map.entry(rate.jurisdiction_id)
-                        .or_insert((j.name.clone(), rate.name.clone(), 0.0));
-                    entry.2 += line_total * rate.rate;
-                }
-            }
+        struct TaxBreakdownAccum {
+            jurisdiction_id: Uuid,
+            jurisdiction_name: String,
+            tax_type: String,
+            rate_name: String,
+            rate: f64,
+            taxable_amount: Money,
+            tax_amount: Money,
+            is_compound: bool,
         }
 
-        // Handle shipping tax
-        let shipping_tax = if let Some(shipping) = input.shipping_amount {
-            let settings = store.tax_settings.as_ref();
-            if settings.map_or(true, |s| s.tax_shipping) {
-                shipping * total_rate
-            } else {
-                0.0
+        let rate_base = |taxable: Money, min: Option<Money>, max: Option<Money>| -> Option<Money> {
+            if taxable <= Money::zero() {
+                return None;
             }
-        } else {
-            0.0
+            if let Some(min) = min {
+                if taxable < min {
+                    return None;
+                }
+            }
+            let capped = match max {
+                Some(max) if taxable > max => max,
+                _ => taxable,
+            };
+            if capped <= Money::zero() {
+                None
+            } else {
+                Some(capped)
+            }
         };
-        total_tax += shipping_tax;
 
-        let tax_breakdown: Vec<JsTaxBreakdown> = applicable_rates.iter()
-            .filter_map(|rate| {
-                store.tax_jurisdictions.get(&rate.jurisdiction_id).map(|j| {
-                    let taxable = subtotal + input.shipping_amount.unwrap_or(0.0);
-                    JsTaxBreakdown {
-                        jurisdiction_id: j.id.to_string(),
+        // Calculate line item taxes
+        let mut subtotal = Money::zero();
+        let mut total_tax = Money::zero();
+        let mut line_item_taxes = Vec::new();
+        let mut tax_breakdown_map: std::collections::HashMap<Uuid, TaxBreakdownAccum> =
+            std::collections::HashMap::new();
+
+        for item in &input.line_items {
+            let mut line_total =
+                item.unit_price.mul_rate(item.quantity) - item.discount_amount.unwrap_or_default();
+            if line_total < Money::zero() {
+                line_total = Money::zero();
+            }
+            subtotal += line_total;
+
+            let mut line_tax = Money::zero();
+            let item_category = item.tax_category.as_deref().unwrap_or(default_category);
+
+            for rate in applicable_rates.iter().filter(|r| r.product_category == item_category) {
+                let Some(capped_base) = rate_base(line_total, rate.threshold_min, rate.threshold_max) else {
+                    continue;
+                };
+                let taxable_amount = if rate.fixed_amount.is_some() {
+                    capped_base
+                } else if rate.is_compound {
+                    capped_base + line_tax
+                } else {
+                    capped_base
+                };
+                let rate_tax = if let Some(fixed) = rate.fixed_amount {
+                    fixed
+                } else {
+                    taxable_amount.mul_rate(rate.rate)
+                };
+                line_tax += rate_tax;
+                total_tax += rate_tax;
+
+                if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
+                    let entry = tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
+                        jurisdiction_id: j.id,
                         jurisdiction_name: j.name.clone(),
                         tax_type: rate.tax_type.clone(),
                         rate_name: rate.name.clone(),
                         rate: rate.rate,
-                        taxable_amount: taxable,
-                        tax_amount: taxable * rate.rate,
+                        taxable_amount: Money::zero(),
+                        tax_amount: Money::zero(),
                         is_compound: rate.is_compound,
+                    });
+                    entry.taxable_amount += taxable_amount;
+                    entry.tax_amount += rate_tax;
+                }
+            }
+
+            let effective_rate = if line_total > Money::zero() {
+                line_tax.to_f64() / line_total.to_f64()
+            } else {
+                0.0
+            };
+
+            line_item_taxes.push(JsLineItemTax {
+                line_item_id: item.id.clone(),
+                taxable_amount: line_total,
+                tax_amount: line_tax,
+                effective_rate,
+                is_exempt: false,
+                exemption_reason: None,
+            });
+        }
+
+        // Handle shipping tax
+        let mut shipping_tax = Money::zero();
+        if has_shipping {
+            let settings = store.tax_settings.as_ref();
+            if settings.map_or(true, |s| s.tax_shipping) {
+                let mut shipping_taxable = if shipping_amount > Money::zero() {
+                    shipping_amount
+                } else {
+                    Money::zero()
+                };
+                if shipping_taxable < Money::zero() {
+                    shipping_taxable = Money::zero();
+                }
+                for rate in applicable_rates.iter().filter(|r| r.product_category == "standard") {
+                    let Some(capped_base) = rate_base(shipping_taxable, rate.threshold_min, rate.threshold_max) else {
+                        continue;
+                    };
+                    let taxable_amount = if rate.fixed_amount.is_some() {
+                        capped_base
+                    } else if rate.is_compound {
+                        capped_base + shipping_tax
+                    } else {
+                        capped_base
+                    };
+                    let rate_tax = if let Some(fixed) = rate.fixed_amount {
+                        fixed
+                    } else {
+                        taxable_amount.mul_rate(rate.rate)
+                    };
+                    shipping_tax += rate_tax;
+                    total_tax += rate_tax;
+
+                    if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
+                        let entry = tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
+                            jurisdiction_id: j.id,
+                            jurisdiction_name: j.name.clone(),
+                            tax_type: rate.tax_type.clone(),
+                            rate_name: rate.name.clone(),
+                            rate: rate.rate,
+                            taxable_amount: Money::zero(),
+                            tax_amount: Money::zero(),
+                            is_compound: rate.is_compound,
+                        });
+                        entry.taxable_amount += taxable_amount;
+                        entry.tax_amount += rate_tax;
                     }
-                })
+                }
+            }
+        }
+
+        let tax_breakdown: Vec<JsTaxBreakdown> = tax_breakdown_map
+            .into_values()
+            .map(|b| JsTaxBreakdown {
+                jurisdiction_id: b.jurisdiction_id.to_string(),
+                jurisdiction_name: b.jurisdiction_name,
+                tax_type: b.tax_type,
+                rate_name: b.rate_name,
+                rate: b.rate,
+                taxable_amount: b.taxable_amount,
+                tax_amount: b.tax_amount,
+                is_compound: b.is_compound,
             })
             .collect();
 
@@ -5728,7 +5973,7 @@ impl Tax {
             id: Uuid::new_v4().to_string(),
             total_tax,
             subtotal,
-            total: subtotal + total_tax + input.shipping_amount.unwrap_or(0.0),
+            total: subtotal + total_tax + shipping_amount,
             shipping_tax,
             tax_breakdown,
             line_item_taxes,

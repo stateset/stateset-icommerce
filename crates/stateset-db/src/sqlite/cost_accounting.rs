@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
     parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    sum_decimal_query,
 };
 
 pub struct SqliteCostAccountingRepository {
@@ -325,20 +326,23 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
         // Calculate new weighted average
         // Get current quantity from inventory
-        let (current_qty, current_avg): (Decimal, Decimal) = conn.query_row(
-            "SELECT COALESCE(
-                (SELECT SUM(CAST(quantity_on_hand AS REAL)) FROM inventory_items WHERE sku = ?), 0),
-             COALESCE(average_cost, '0')
-             FROM item_costs WHERE sku = ?",
-            [sku, sku],
-            |row| {
-                let qty_str: String = row.get(0)?;
-                let avg_str: String = row.get(1)?;
-                let qty = parse_decimal_row(&qty_str, "item_cost", "current_quantity")?;
-                let avg = parse_decimal_row(&avg_str, "item_cost", "average_cost")?;
-                Ok((qty, avg))
-            },
-        ).map_err(map_db_error)?;
+        let sku_param = sku.to_string();
+        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+        let current_qty = sum_decimal_query(
+            &conn,
+            "SELECT quantity_on_hand FROM inventory_items WHERE sku = ?",
+            &sku_params,
+            "inventory_items",
+            "quantity_on_hand",
+        )?;
+        let avg_str: String = conn
+            .query_row(
+                "SELECT COALESCE(average_cost, '0') FROM item_costs WHERE sku = ?",
+                [sku],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        let current_avg = parse_decimal_strict(&avg_str, "item_cost", "average_cost")?;
 
         let total_qty = current_qty + quantity;
         let new_avg = if total_qty > Decimal::ZERO {
@@ -550,13 +554,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
     fn get_layers_remaining(&self, sku: &str) -> Result<Decimal> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let result: String = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(remaining_quantity AS REAL)), '0') FROM cost_layers WHERE sku = ?",
-            [sku],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let sku_param = sku.to_string();
+        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+        let result = sum_decimal_query(
+            &conn,
+            "SELECT remaining_quantity FROM cost_layers WHERE sku = ?",
+            &sku_params,
+            "cost_layers",
+            "remaining_quantity",
+        )?;
 
-        Ok(parse_decimal_strict(&result, "cost_layers", "remaining_quantity")?)
+        Ok(result)
     }
 
     fn record_cost_transaction(
@@ -738,14 +746,18 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
     fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Decimal> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let result: String = conn.query_row(
-            "SELECT COALESCE(SUM(CAST(total_variance AS REAL)), '0')
-             FROM cost_variances WHERE variance_date BETWEEN ? AND ?",
-            [from.to_rfc3339(), to.to_rfc3339()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let from_param = from.to_rfc3339();
+        let to_param = to.to_rfc3339();
+        let params: [&dyn rusqlite::ToSql; 2] = [&from_param, &to_param];
+        let result = sum_decimal_query(
+            &conn,
+            "SELECT total_variance FROM cost_variances WHERE variance_date BETWEEN ? AND ?",
+            &params,
+            "cost_variances",
+            "total_variance",
+        )?;
 
-        Ok(parse_decimal_strict(&result, "cost_variances", "total_variance")?)
+        Ok(result)
     }
 
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
@@ -901,16 +913,31 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         // Calculate from BOM components if bom_id provided
         let (material_cost, labor_cost, overhead_cost) = if let Some(bom_id) = bom_id {
             // Sum component costs
-            let material: String = conn.query_row(
-                "SELECT COALESCE(SUM(CAST(bc.quantity AS REAL) * COALESCE(CAST(ic.standard_cost AS REAL), 0)), '0')
-                 FROM bom_components bc
-                 LEFT JOIN item_costs ic ON bc.component_sku = ic.sku
-                 WHERE bc.bom_id = ?",
-                [bom_id.to_string()],
-                |row| row.get(0),
-            ).map_err(map_db_error)?;
-            let material_cost =
-                parse_decimal_strict(&material, "bom_components", "material_cost")?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT bc.quantity, ic.standard_cost
+                     FROM bom_components bc
+                     LEFT JOIN item_costs ic ON bc.component_sku = ic.sku
+                     WHERE bc.bom_id = ?",
+                )
+                .map_err(map_db_error)?;
+            let mut rows = stmt
+                .query([bom_id.to_string()])
+                .map_err(map_db_error)?;
+            let mut material_cost = Decimal::ZERO;
+
+            while let Some(row) = rows.next().map_err(map_db_error)? {
+                let qty_str: String = row.get(0).map_err(map_db_error)?;
+                let quantity = parse_decimal_strict(&qty_str, "bom_components", "quantity")?;
+                let cost_str: Option<String> = row.get(1).map_err(map_db_error)?;
+                let standard_cost = match cost_str {
+                    Some(value) if !value.is_empty() => {
+                        parse_decimal_strict(&value, "item_costs", "standard_cost")?
+                    }
+                    _ => Decimal::ZERO,
+                };
+                material_cost += quantity * standard_cost;
+            }
             (material_cost, Decimal::ZERO, Decimal::ZERO)
         } else {
             // Get from item cost
@@ -979,29 +1006,61 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        let cost_field = match cost_method {
-            CostMethod::Standard => "COALESCE(ic.standard_cost, '0')",
-            CostMethod::Average => "COALESCE(ic.average_cost, '0')",
-            CostMethod::Fifo | CostMethod::Lifo => "COALESCE(ic.average_cost, '0')",
-            CostMethod::Specific => "COALESCE(ic.last_cost, '0')",
-        };
-
-        let (total_qty, total_val): (String, String) = conn.query_row(
-            &format!(
-                "SELECT
-                    COALESCE(SUM(CAST(ii.quantity_on_hand AS REAL)), '0'),
-                    COALESCE(SUM(CAST(ii.quantity_on_hand AS REAL) * CAST({} AS REAL)), '0')
+        let mut stmt = conn
+            .prepare(
+                "SELECT ii.quantity_on_hand, ic.standard_cost, ic.average_cost, ic.last_cost
                  FROM inventory_items ii
                  LEFT JOIN item_costs ic ON ii.sku = ic.sku",
-                cost_field
-            ),
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
+        let mut rows = stmt.query([]).map_err(map_db_error)?;
 
-        let total_quantity =
-            parse_decimal_strict(&total_qty, "inventory_valuation", "total_quantity")?;
-        let total_value = parse_decimal_strict(&total_val, "inventory_valuation", "total_value")?;
+        let mut total_quantity = Decimal::ZERO;
+        let mut total_value = Decimal::ZERO;
+
+        while let Some(row) = rows.next().map_err(map_db_error)? {
+            let qty_raw: Option<String> = row.get(0).map_err(map_db_error)?;
+            let quantity = match qty_raw {
+                Some(value) if !value.is_empty() => {
+                    parse_decimal_strict(&value, "inventory_items", "quantity_on_hand")?
+                }
+                _ => Decimal::ZERO,
+            };
+
+            let standard_raw: Option<String> = row.get(1).map_err(map_db_error)?;
+            let average_raw: Option<String> = row.get(2).map_err(map_db_error)?;
+            let last_raw: Option<String> = row.get(3).map_err(map_db_error)?;
+
+            let standard_cost = match standard_raw {
+                Some(value) if !value.is_empty() => {
+                    parse_decimal_strict(&value, "item_costs", "standard_cost")?
+                }
+                _ => Decimal::ZERO,
+            };
+            let average_cost = match average_raw {
+                Some(value) if !value.is_empty() => {
+                    parse_decimal_strict(&value, "item_costs", "average_cost")?
+                }
+                _ => Decimal::ZERO,
+            };
+            let last_cost = match last_raw {
+                Some(value) if !value.is_empty() => {
+                    parse_decimal_strict(&value, "item_costs", "last_cost")?
+                }
+                _ => Decimal::ZERO,
+            };
+
+            let unit_cost = match cost_method {
+                CostMethod::Standard => standard_cost,
+                CostMethod::Average => average_cost,
+                CostMethod::Fifo | CostMethod::Lifo => average_cost,
+                CostMethod::Specific => last_cost,
+            };
+
+            total_quantity += quantity;
+            total_value += quantity * unit_cost;
+        }
+
         let average_unit_cost = if total_quantity > Decimal::ZERO {
             total_value / total_quantity
         } else {
@@ -1023,59 +1082,66 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let result = conn.query_row(
             "SELECT
                 ii.sku,
-                COALESCE(ii.quantity_on_hand, '0'),
-                COALESCE(ic.standard_cost, '0'),
-                COALESCE(ic.average_cost, '0'),
-                COALESCE(CAST(ii.quantity_on_hand AS REAL) * CAST(ic.average_cost AS REAL), '0'),
-                COALESCE((SELECT SUM(CAST(total_variance AS REAL)) FROM cost_variances
-                          WHERE sku = ii.sku AND strftime('%Y', variance_date) = strftime('%Y', 'now')), '0')
+                ii.quantity_on_hand,
+                ic.standard_cost,
+                ic.average_cost
              FROM inventory_items ii
              LEFT JOIN item_costs ic ON ii.sku = ic.sku
              WHERE ii.sku = ?",
             [sku],
-            |row| {
-                let quantity_on_hand = parse_decimal_row(
-                    &row.get::<_, String>(1)?,
-                    "sku_cost_summary",
-                    "quantity_on_hand",
-                )?;
-                let standard_cost = parse_decimal_row(
-                    &row.get::<_, String>(2)?,
-                    "sku_cost_summary",
-                    "standard_cost",
-                )?;
-                let average_cost = parse_decimal_row(
-                    &row.get::<_, String>(3)?,
-                    "sku_cost_summary",
-                    "average_cost",
-                )?;
-                let total_value = parse_decimal_row(
-                    &row.get::<_, String>(4)?,
-                    "sku_cost_summary",
-                    "total_value",
-                )?;
-                let variance_ytd = parse_decimal_row(
-                    &row.get::<_, String>(5)?,
-                    "sku_cost_summary",
-                    "variance_ytd",
-                )?;
-
-                Ok(SkuCostSummary {
-                    sku: row.get(0)?,
-                    quantity_on_hand,
-                    standard_cost,
-                    average_cost,
-                    total_value,
-                    variance_ytd,
-                })
-            },
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            )),
         );
 
-        match result {
-            Ok(summary) => Ok(Some(summary)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
-        }
+        let (sku_value, qty_raw, standard_raw, average_raw) = match result {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(map_db_error(e)),
+        };
+
+        let quantity_on_hand = match qty_raw {
+            Some(value) if !value.is_empty() => {
+                parse_decimal_strict(&value, "sku_cost_summary", "quantity_on_hand")?
+            }
+            _ => Decimal::ZERO,
+        };
+        let standard_cost = match standard_raw {
+            Some(value) if !value.is_empty() => {
+                parse_decimal_strict(&value, "sku_cost_summary", "standard_cost")?
+            }
+            _ => Decimal::ZERO,
+        };
+        let average_cost = match average_raw {
+            Some(value) if !value.is_empty() => {
+                parse_decimal_strict(&value, "sku_cost_summary", "average_cost")?
+            }
+            _ => Decimal::ZERO,
+        };
+        let total_value = quantity_on_hand * average_cost;
+
+        let sku_param = sku.to_string();
+        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+        let variance_ytd = sum_decimal_query(
+            &conn,
+            "SELECT total_variance FROM cost_variances
+             WHERE sku = ? AND strftime('%Y', variance_date) = strftime('%Y', 'now')",
+            &sku_params,
+            "cost_variances",
+            "total_variance",
+        )?;
+
+        Ok(Some(SkuCostSummary {
+            sku: sku_value,
+            quantity_on_hand,
+            standard_cost,
+            average_cost,
+            total_value,
+            variance_ytd,
+        }))
     }
 
     fn get_total_inventory_value(&self) -> Result<Decimal> {

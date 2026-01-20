@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row,
+    parse_json_opt_row, parse_uuid_row, sum_decimal_query,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -991,13 +991,15 @@ impl SqliteOrderRepository {
                 e => map_db_error(e),
             })?;
 
-        let total: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(total AS REAL)), 0) FROM order_items WHERE order_id = ?",
-                [order_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let order_id_param = order_id.to_string();
+        let order_params: [&dyn rusqlite::ToSql; 1] = [&order_id_param];
+        let total = sum_decimal_query(
+            conn,
+            "SELECT total FROM order_items WHERE order_id = ?",
+            &order_params,
+            "order_item",
+            "total",
+        )?;
         let total = format!("{:.2}", total);
 
         let rows_affected = conn

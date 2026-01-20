@@ -3,12 +3,14 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     Commerce, CreateCustomer,
+    // Product types
+    CreateProduct, CreateProductVariant,
     // Warehouse types
     CreateWarehouse, CreateLocation, CreateZone, WarehouseType, LocationType,
     // Lot types
     CreateLot,
     // Serial types
-    CreateSerialNumber, SerialStatus,
+    CreateSerialNumber, SerialStatus, UpdateSerialNumber,
     // Receiving types
     CreateReceipt, ReceiptType,
     // Accounts Payable types
@@ -22,7 +24,8 @@ use stateset_embedded::{
     // Shipment types
     CreateShipment, CreateShipmentItem, ShipmentStatus, ShippingCarrier,
     // Warranty types
-    ClaimResolution, ClaimStatus, CreateWarranty, CreateWarrantyClaim, WarrantyStatus, WarrantyType,
+    ClaimResolution, ClaimStatus, CreateWarranty, CreateWarrantyClaim, UpdateWarrantyClaim,
+    WarrantyStatus, WarrantyType,
     // Purchase Order types
     CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PaymentTerms, PurchaseOrderStatus,
     // Invoice types
@@ -146,6 +149,92 @@ fn test_serial_create() {
 
     assert_eq!(serial.serial, "SN-TEST-001");
     assert_eq!(serial.status, SerialStatus::Available);
+}
+
+#[test]
+fn test_serial_lookup_with_related_data() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    commerce
+        .products()
+        .create(CreateProduct {
+            name: "Lookup Widget".into(),
+            variants: Some(vec![CreateProductVariant {
+                sku: "SERIAL-LOOKUP-SKU".into(),
+                name: Some("Lookup Variant".into()),
+                price: dec!(99.99),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .expect("Failed to create product");
+
+    let lot = commerce
+        .lots()
+        .create(CreateLot {
+            lot_number: Some("LOT-LOOKUP-001".into()),
+            sku: "SERIAL-LOOKUP-SKU".into(),
+            quantity: dec!(10),
+            ..Default::default()
+        })
+        .expect("Failed to create lot");
+
+    let serial = commerce
+        .serials()
+        .create(CreateSerialNumber {
+            serial: Some("SN-LOOKUP-001".into()),
+            sku: "SERIAL-LOOKUP-SKU".into(),
+            lot_id: Some(lot.id),
+            ..Default::default()
+        })
+        .expect("Failed to create serial");
+
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "serial-lookup@example.com".into(),
+            first_name: "Serial".into(),
+            last_name: "Lookup".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
+
+    let warranty = commerce
+        .warranties()
+        .create(CreateWarranty {
+            customer_id: customer.id,
+            sku: Some("SERIAL-LOOKUP-SKU".into()),
+            serial_number: Some(serial.serial.clone()),
+            warranty_type: Some(WarrantyType::Standard),
+            duration_months: Some(12),
+            ..Default::default()
+        })
+        .expect("Failed to create warranty");
+
+    commerce
+        .serials()
+        .update(
+            serial.id,
+            UpdateSerialNumber {
+                warranty_id: Some(warranty.id),
+                ..Default::default()
+            },
+        )
+        .expect("Failed to update serial");
+
+    let lookup = commerce
+        .serials()
+        .lookup("SN-LOOKUP-001")
+        .expect("Failed to lookup serial")
+        .expect("Serial not found");
+
+    assert_eq!(lookup.product_name.as_deref(), Some("Lookup Widget"));
+    let lookup_lot = lookup.lot.expect("Lot not loaded");
+    assert_eq!(lookup_lot.id, lot.id);
+    let warranty_status = lookup.warranty_status.expect("Warranty status not loaded");
+    assert_eq!(warranty_status.warranty_id, warranty.id);
+    assert!(warranty_status.is_active);
+    assert_eq!(warranty_status.coverage_type.as_deref(), Some("standard"));
 }
 
 // ============================================================================
@@ -563,6 +652,218 @@ fn test_warranty_claim_lifecycle() {
         .expect("Failed to complete claim");
     assert_eq!(completed.status, ClaimStatus::Completed);
     assert_eq!(completed.resolution, ClaimResolution::Replacement);
+}
+
+#[test]
+fn test_warranty_claim_invalid_transitions() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "warranty-invalid@example.com".into(),
+        first_name: "Warranty".into(),
+        last_name: "Invalid".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let warranty = commerce.warranties().create(CreateWarranty {
+        customer_id: customer.id,
+        sku: Some("WRN-SKU-002".into()),
+        warranty_type: Some(WarrantyType::Standard),
+        duration_months: Some(12),
+        ..Default::default()
+    }).expect("Failed to create warranty");
+
+    let claim = commerce.warranties().create_claim(CreateWarrantyClaim {
+        warranty_id: warranty.id,
+        issue_description: "Battery failure".into(),
+        ..Default::default()
+    }).expect("Failed to create warranty claim");
+
+    let result = commerce.warranties().complete_claim(claim.id, ClaimResolution::Replacement);
+    assert!(result.is_err());
+
+    let result = commerce.warranties().deny_claim(claim.id, "");
+    assert!(result.is_err());
+
+    let approved = commerce.warranties().approve_claim(claim.id)
+        .expect("Failed to approve claim");
+    assert_eq!(approved.status, ClaimStatus::Approved);
+
+    let result = commerce.warranties().approve_claim(claim.id);
+    assert!(result.is_err());
+
+    let result = commerce.warranties().deny_claim(claim.id, "Late filing");
+    assert!(result.is_err());
+
+    let result = commerce.warranties().complete_claim(claim.id, ClaimResolution::None);
+    assert!(result.is_err());
+
+    let completed = commerce.warranties().complete_claim(claim.id, ClaimResolution::Repair)
+        .expect("Failed to complete claim");
+    assert_eq!(completed.status, ClaimStatus::Completed);
+
+    let result = commerce.warranties().cancel_claim(claim.id);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_warranty_status_transition_guards() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "warranty-transition@example.com".into(),
+        first_name: "Warranty".into(),
+        last_name: "Transition".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let new_customer = commerce.customers().create(CreateCustomer {
+        email: "warranty-new-owner@example.com".into(),
+        first_name: "New".into(),
+        last_name: "Owner".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let warranty = commerce.warranties().create(CreateWarranty {
+        customer_id: customer.id,
+        sku: Some("WRN-SKU-003".into()),
+        warranty_type: Some(WarrantyType::Standard),
+        duration_months: Some(12),
+        ..Default::default()
+    }).expect("Failed to create warranty");
+
+    let expired = commerce.warranties().expire(warranty.id)
+        .expect("Failed to expire warranty");
+    assert_eq!(expired.status, WarrantyStatus::Expired);
+
+    let result = commerce.warranties().void(warranty.id);
+    assert!(result.is_err());
+
+    let result = commerce.warranties().transfer(warranty.id, new_customer.id);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_warranty_update_claim_transitions() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+
+    let customer = commerce.customers().create(CreateCustomer {
+        email: "warranty-update@example.com".into(),
+        first_name: "Warranty".into(),
+        last_name: "Update".into(),
+        ..Default::default()
+    }).expect("Failed to create customer");
+
+    let warranty = commerce.warranties().create(CreateWarranty {
+        customer_id: customer.id,
+        sku: Some("WRN-SKU-004".into()),
+        warranty_type: Some(WarrantyType::Standard),
+        duration_months: Some(12),
+        ..Default::default()
+    }).expect("Failed to create warranty");
+
+    let claim = commerce.warranties().create_claim(CreateWarrantyClaim {
+        warranty_id: warranty.id,
+        issue_description: "Screen flicker".into(),
+        ..Default::default()
+    }).expect("Failed to create warranty claim");
+
+    let under_review = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::UnderReview),
+            ..Default::default()
+        },
+    ).expect("Failed to update claim to under_review");
+    assert_eq!(under_review.status, ClaimStatus::UnderReview);
+
+    let result = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Completed),
+            resolution: Some(ClaimResolution::Refund),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+
+    let approved = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Approved),
+            ..Default::default()
+        },
+    ).expect("Failed to update claim to approved");
+    assert_eq!(approved.status, ClaimStatus::Approved);
+    assert!(approved.approved_at.is_some());
+
+    let in_progress = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::InProgress),
+            ..Default::default()
+        },
+    ).expect("Failed to update claim to in_progress");
+    assert_eq!(in_progress.status, ClaimStatus::InProgress);
+
+    let result = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Completed),
+            resolution: Some(ClaimResolution::None),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+
+    let completed = commerce.warranties().update_claim(
+        claim.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Completed),
+            resolution: Some(ClaimResolution::Refund),
+            ..Default::default()
+        },
+    ).expect("Failed to complete claim");
+    assert_eq!(completed.status, ClaimStatus::Completed);
+    assert_eq!(completed.resolution, ClaimResolution::Refund);
+    assert!(completed.resolved_at.is_some());
+
+    let claim2 = commerce.warranties().create_claim(CreateWarrantyClaim {
+        warranty_id: warranty.id,
+        issue_description: "Battery drain".into(),
+        ..Default::default()
+    }).expect("Failed to create second claim");
+
+    let result = commerce.warranties().update_claim(
+        claim2.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::UnderReview),
+            resolution: Some(ClaimResolution::Denied),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+
+    let result = commerce.warranties().update_claim(
+        claim2.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Denied),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+
+    let denied = commerce.warranties().update_claim(
+        claim2.id,
+        UpdateWarrantyClaim {
+            status: Some(ClaimStatus::Denied),
+            denial_reason: Some("Out of coverage".into()),
+            ..Default::default()
+        },
+    ).expect("Failed to deny claim");
+    assert_eq!(denied.status, ClaimStatus::Denied);
+    assert_eq!(denied.resolution, ClaimResolution::Denied);
+    assert!(denied.resolved_at.is_some());
 }
 
 // ============================================================================

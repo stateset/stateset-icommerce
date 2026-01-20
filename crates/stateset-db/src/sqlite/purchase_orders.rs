@@ -5,7 +5,7 @@ use super::{
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
     parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
     // Non-row variants for Result-returning functions
-    parse_uuid,
+    parse_uuid, sum_decimal_query,
 };
 use super::parse_helpers::parse_decimal as parse_decimal_with_context;
 use r2d2::Pool;
@@ -171,13 +171,15 @@ impl SqlitePurchaseOrderRepository {
 
     fn recalculate_totals_with_conn(conn: &rusqlite::Connection, po_id: Uuid) -> Result<()> {
         // Calculate subtotal from items
-        let subtotal: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(CAST(line_total AS REAL)), 0) FROM purchase_order_items WHERE purchase_order_id = ?",
-                [po_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
+        let po_id_param = po_id.to_string();
+        let po_params: [&dyn rusqlite::ToSql; 1] = [&po_id_param];
+        let subtotal = sum_decimal_query(
+            conn,
+            "SELECT line_total FROM purchase_order_items WHERE purchase_order_id = ?",
+            &po_params,
+            "purchase_order_item",
+            "line_total",
+        )?;
 
         let (tax_amount, shipping_cost, discount_amount): (String, String, String) = conn
             .query_row(
@@ -187,8 +189,7 @@ impl SqlitePurchaseOrderRepository {
             )
             .map_err(map_db_error)?;
 
-        let subtotal_dec = Decimal::from_f64_retain(subtotal).unwrap_or_default();
-        let total = subtotal_dec
+        let total = subtotal
             + parse_decimal_with_context(&tax_amount, "purchase_order", "tax_amount")?
             + parse_decimal_with_context(&shipping_cost, "purchase_order", "shipping_cost")?
             - parse_decimal_with_context(&discount_amount, "purchase_order", "discount_amount")?;
@@ -196,7 +197,7 @@ impl SqlitePurchaseOrderRepository {
         conn.execute(
             "UPDATE purchase_orders SET subtotal = ?, total = ?, updated_at = ? WHERE id = ?",
             params![
-                subtotal_dec.to_string(),
+                subtotal.to_string(),
                 total.to_string(),
                 chrono::Utc::now().to_rfc3339(),
                 po_id.to_string()

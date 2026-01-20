@@ -14,7 +14,8 @@ use uuid::Uuid;
 
 use super::{
     map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    parse_enum_row, parse_uuid_opt_row, parse_uuid_row,
+    parse_datetime_opt, sum_decimal_query,
 };
 
 pub struct SqliteBackorderRepository {
@@ -525,17 +526,16 @@ impl BackorderRepository for SqliteBackorderRepository {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        let (total, total_qty, pending, allocated, critical): (i32, String, i32, i32, i32) =
-            conn.query_row(
+        let (total, pending, allocated, critical): (i32, i32, i32, i32) = conn
+            .query_row(
                 "SELECT
                     COUNT(*),
-                    COALESCE(SUM(CAST(quantity_remaining AS REAL)), '0'),
                     SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN priority = 'critical' THEN 1 ELSE 0 END)
                  FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .map_err(map_db_error)?;
 
@@ -549,8 +549,13 @@ impl BackorderRepository for SqliteBackorderRepository {
             )
             .map_err(map_db_error)?;
 
-        let total_quantity =
-            parse_decimal_strict(&total_qty, "backorder_summary", "total_quantity")?;
+        let total_quantity = sum_decimal_query(
+            &conn,
+            "SELECT quantity_remaining FROM backorders WHERE status NOT IN ('fulfilled', 'cancelled')",
+            &[],
+            "backorders",
+            "quantity_remaining",
+        )?;
 
         Ok(BackorderSummary {
             total_backorders: total,
@@ -565,49 +570,44 @@ impl BackorderRepository for SqliteBackorderRepository {
     fn get_sku_summary(&self, sku: &str) -> Result<Option<SkuBackorderSummary>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let result = conn.query_row(
-            "SELECT
-                sku,
-                COALESCE(SUM(CAST(quantity_remaining AS REAL)), '0'),
-                COUNT(*),
-                MIN(created_at),
-                MIN(expected_date)
-             FROM backorders
-             WHERE sku = ? AND status NOT IN ('fulfilled', 'cancelled')
-             GROUP BY sku",
-            [sku],
-            |row| {
-                let total_quantity = parse_decimal_row(
-                    &row.get::<_, String>(1)?,
-                    "sku_backorder_summary",
-                    "total_quantity",
-                )?;
-                let oldest_date = parse_datetime_opt_row(
-                    row.get::<_, Option<String>>(3)?,
-                    "sku_backorder_summary",
-                    "oldest_date",
-                )?;
-                let earliest_expected = parse_datetime_opt_row(
-                    row.get::<_, Option<String>>(4)?,
-                    "sku_backorder_summary",
-                    "earliest_expected",
-                )?;
+        let (count, oldest_date_raw, earliest_expected_raw): (i32, Option<String>, Option<String>) =
+            conn.query_row(
+                "SELECT COUNT(*), MIN(created_at), MIN(expected_date)
+                 FROM backorders
+                 WHERE sku = ? AND status NOT IN ('fulfilled', 'cancelled')",
+                [sku],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(map_db_error)?;
 
-                Ok(SkuBackorderSummary {
-                    sku: row.get(0)?,
-                    total_quantity,
-                    backorder_count: row.get(2)?,
-                    oldest_date,
-                    earliest_expected,
-                })
-            },
-        );
-
-        match result {
-            Ok(summary) => Ok(Some(summary)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
+        if count == 0 {
+            return Ok(None);
         }
+
+        let sku_param = sku.to_string();
+        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+        let total_quantity = sum_decimal_query(
+            &conn,
+            "SELECT quantity_remaining FROM backorders WHERE sku = ? AND status NOT IN ('fulfilled', 'cancelled')",
+            &sku_params,
+            "backorders",
+            "quantity_remaining",
+        )?;
+        let oldest_date =
+            parse_datetime_opt(oldest_date_raw, "sku_backorder_summary", "oldest_date")?;
+        let earliest_expected = parse_datetime_opt(
+            earliest_expected_raw,
+            "sku_backorder_summary",
+            "earliest_expected",
+        )?;
+
+        Ok(Some(SkuBackorderSummary {
+            sku: sku.to_string(),
+            total_quantity,
+            backorder_count: count,
+            oldest_date,
+            earliest_expected,
+        }))
     }
 
     fn get_overdue_backorders(&self) -> Result<Vec<Backorder>> {

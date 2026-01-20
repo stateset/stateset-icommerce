@@ -128,6 +128,87 @@ impl PgInventoryRepository {
         })
     }
 
+    async fn expire_reservation_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reservation_id: Uuid,
+        item_id: i64,
+        location_id: i32,
+        quantity: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let balance: (i32,) = sqlx::query_as(
+            "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        )
+        .bind(item_id)
+        .bind(location_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        let current_version = balance.0;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE inventory_balances
+            SET quantity_allocated = quantity_allocated - $1,
+                quantity_available = quantity_on_hand - quantity_allocated + $1,
+                version = version + 1,
+                updated_at = $2
+            WHERE item_id = $3 AND location_id = $4 AND version = $5
+            "#,
+        )
+        .bind(quantity)
+        .bind(now)
+        .bind(item_id)
+        .bind(location_id)
+        .bind(current_version)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(CommerceError::VersionConflict {
+                entity: "inventory_balance".to_string(),
+                id: format!("{}:{}", item_id, location_id),
+                expected_version: current_version,
+            });
+        }
+
+        sqlx::query("UPDATE inventory_reservations SET status = 'expired' WHERE id = $1")
+            .bind(reservation_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
+    async fn expire_reservations_for_item_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        item_id: i64,
+        location_id: i32,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let reservations: Vec<(Uuid, Decimal)> = sqlx::query_as(
+            "SELECT id, quantity FROM inventory_reservations
+             WHERE item_id = $1 AND location_id = $2
+               AND status IN ('pending', 'confirmed', 'allocated')
+               AND expires_at IS NOT NULL AND expires_at < $3",
+        )
+        .bind(item_id)
+        .bind(location_id)
+        .bind(now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        for (reservation_id, quantity) in reservations {
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now).await?;
+        }
+
+        Ok(())
+    }
+
     fn row_to_transaction(row: TransactionRow) -> Result<InventoryTransaction> {
         let transaction_type: TransactionType = row.transaction_type.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -154,6 +235,8 @@ impl PgInventoryRepository {
     pub async fn create_item_async(&self, input: CreateInventoryItem) -> Result<InventoryItem> {
         let now = Utc::now();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         let row: (i64,) = sqlx::query_as(
             r#"
             INSERT INTO inventory_items (sku, name, description, unit_of_measure, is_active, created_at, updated_at)
@@ -168,7 +251,7 @@ impl PgInventoryRepository {
         .bind(true)
         .bind(now)
         .bind(now)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut tx)
         .await
         .map_err(map_db_error)?;
 
@@ -191,9 +274,11 @@ impl PgInventoryRepository {
         .bind(input.reorder_point)
         .bind(input.safety_stock)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut tx)
         .await
         .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(InventoryItem {
             id,
@@ -306,9 +391,10 @@ impl PgInventoryRepository {
 
         let item_id = item.0;
 
-        // Get current version for optimistic locking
-        let balance: (i32,) = sqlx::query_as(
-            "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        // Get current quantities/version for optimistic locking
+        let balance: (Decimal, Decimal, i32) = sqlx::query_as(
+            "SELECT quantity_on_hand, quantity_allocated, version
+             FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
         )
         .bind(item_id)
         .bind(location_id)
@@ -316,7 +402,25 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        let current_version = balance.0;
+        let (quantity_on_hand, quantity_allocated, current_version) = balance;
+        let new_on_hand = quantity_on_hand + input.quantity;
+        let new_available = new_on_hand - quantity_allocated;
+
+        if new_on_hand < Decimal::ZERO {
+            return Err(CommerceError::InsufficientStock {
+                sku: input.sku.clone(),
+                requested: input.quantity.abs().to_string(),
+                available: quantity_on_hand.to_string(),
+            });
+        }
+        if new_available < Decimal::ZERO {
+            let available = quantity_on_hand - quantity_allocated;
+            return Err(CommerceError::InsufficientStock {
+                sku: input.sku.clone(),
+                requested: input.quantity.abs().to_string(),
+                available: available.to_string(),
+            });
+        }
 
         // Update balance with optimistic locking
         let result = sqlx::query(
@@ -396,14 +500,18 @@ impl PgInventoryRepository {
         let now = Utc::now();
         let location_id = input.location_id.unwrap_or(1);
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         // Get item ID
         let item: (i64,) = sqlx::query_as("SELECT id FROM inventory_items WHERE sku = $1")
             .bind(&input.sku)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await
             .map_err(|_| CommerceError::InventoryItemNotFound(input.sku.clone()))?;
 
         let item_id = item.0;
+
+        Self::expire_reservations_for_item_in_tx(&mut tx, item_id, location_id, now).await?;
 
         // Check availability and get current version for optimistic locking
         let balance: (Decimal, i32) = sqlx::query_as(
@@ -411,7 +519,7 @@ impl PgInventoryRepository {
         )
         .bind(item_id)
         .bind(location_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -446,7 +554,7 @@ impl PgInventoryRepository {
         .bind(&input.reference_id)
         .bind(expires_at)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -466,7 +574,7 @@ impl PgInventoryRepository {
         .bind(item_id)
         .bind(location_id)
         .bind(current_version)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -477,6 +585,8 @@ impl PgInventoryRepository {
                 expected_version: current_version,
             });
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(InventoryReservation {
             id,
@@ -496,11 +606,12 @@ impl PgInventoryRepository {
         let now = Utc::now();
 
         // Get reservation
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let res = sqlx::query_as::<_, ReservationRow>(
             "SELECT * FROM inventory_reservations WHERE id = $1",
         )
         .bind(reservation_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
@@ -511,8 +622,28 @@ impl PgInventoryRepository {
                 res.status, e
             ))
         })?;
-        if status == ReservationStatus::Released {
+        if status == ReservationStatus::Released
+            || status == ReservationStatus::Cancelled
+            || status == ReservationStatus::Expired
+        {
+            tx.commit().await.map_err(map_db_error)?;
             return Ok(());
+        }
+
+        if let Some(expires_at) = res.expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(
+                    &mut tx,
+                    reservation_id,
+                    res.item_id,
+                    res.location_id,
+                    res.quantity,
+                    now,
+                )
+                .await?;
+                tx.commit().await.map_err(map_db_error)?;
+                return Ok(());
+            }
         }
 
         // Get current version for optimistic locking
@@ -521,7 +652,7 @@ impl PgInventoryRepository {
         )
         .bind(res.item_id)
         .bind(res.location_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -543,7 +674,7 @@ impl PgInventoryRepository {
         .bind(res.item_id)
         .bind(res.location_id)
         .bind(current_version)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
@@ -558,20 +689,68 @@ impl PgInventoryRepository {
         // Update reservation status
         sqlx::query("UPDATE inventory_reservations SET status = 'released' WHERE id = $1")
             .bind(reservation_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
 
     /// Confirm a reservation (async)
     pub async fn confirm_reservation_async(&self, reservation_id: Uuid) -> Result<()> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let res = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE id = $1",
+        )
+        .bind(reservation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
+
+        let status: ReservationStatus = res.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                res.status, e
+            ))
+        })?;
+
+        if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(());
+        }
+        if status == ReservationStatus::Expired {
+            tx.commit().await.map_err(map_db_error)?;
+            return Err(CommerceError::ReservationExpired(reservation_id));
+        }
+
+        if let Some(expires_at) = res.expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(
+                    &mut tx,
+                    reservation_id,
+                    res.item_id,
+                    res.location_id,
+                    res.quantity,
+                    now,
+                )
+                .await?;
+                tx.commit().await.map_err(map_db_error)?;
+                return Err(CommerceError::ReservationExpired(reservation_id));
+            }
+        }
+
         sqlx::query("UPDATE inventory_reservations SET status = 'confirmed' WHERE id = $1")
             .bind(reservation_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
+
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(())
     }
@@ -770,9 +949,10 @@ impl PgInventoryRepository {
 
             let item_id = item.0;
 
-            // Get current version for optimistic locking
-            let balance: (i32,) = sqlx::query_as(
-                "SELECT version FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+            // Get current quantities/version for optimistic locking
+            let balance: (Decimal, Decimal, i32) = sqlx::query_as(
+                "SELECT quantity_on_hand, quantity_allocated, version
+                 FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
             )
             .bind(item_id)
             .bind(location_id)
@@ -780,7 +960,25 @@ impl PgInventoryRepository {
             .await
             .map_err(map_db_error)?;
 
-            let current_version = balance.0;
+            let (quantity_on_hand, quantity_allocated, current_version) = balance;
+            let new_on_hand = quantity_on_hand + input.quantity;
+            let new_available = new_on_hand - quantity_allocated;
+
+            if new_on_hand < Decimal::ZERO {
+                return Err(CommerceError::InsufficientStock {
+                    sku: input.sku.clone(),
+                    requested: input.quantity.abs().to_string(),
+                    available: quantity_on_hand.to_string(),
+                });
+            }
+            if new_available < Decimal::ZERO {
+                let available = quantity_on_hand - quantity_allocated;
+                return Err(CommerceError::InsufficientStock {
+                    sku: input.sku.clone(),
+                    requested: input.quantity.abs().to_string(),
+                    available: available.to_string(),
+                });
+            }
 
             // Update balance with optimistic locking
             let result = sqlx::query(

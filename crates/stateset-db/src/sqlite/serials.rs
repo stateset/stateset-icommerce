@@ -10,6 +10,7 @@ use stateset_core::{
     ReserveSerialNumber, SerialEventType, SerialFilter, SerialHistory, SerialHistoryFilter,
     SerialLookupResult, SerialNumber, SerialReservation, SerialRepository, SerialStatus,
     SerialValidation, TransferSerialOwnership, UpdateSerialNumber, WarrantyLookupStatus,
+    LotRepository, WarrantyRepository,
 };
 use stateset_core::CommerceError;
 use uuid::Uuid;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
     parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row, string_params,
-    uuid_params,
+    uuid_params, SqliteLotRepository, SqliteWarrantyRepository,
 };
 
 /// SQLite implementation of SerialRepository
@@ -1265,22 +1266,56 @@ impl SerialRepository for SqliteSerialRepository {
             },
         )?;
 
-        // Get lot if present (would need lot repository access)
-        let lot = None; // TODO: Integrate with LotRepository
-
-        // Get warranty status if present
-        let warranty_status = serial_number.warranty_id.map(|warranty_id| {
-            WarrantyLookupStatus {
-                warranty_id,
-                is_active: true, // TODO: Check actual warranty status
-                expires_at: None,
-                coverage_type: None,
+        let product_name = {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let result: rusqlite::Result<String> = conn.query_row(
+                "SELECT COALESCE(p.name, v.name)
+                 FROM product_variants v
+                 LEFT JOIN products p ON p.id = v.product_id
+                 WHERE v.sku = ?",
+                [serial_number.sku.as_str()],
+                |row| row.get(0),
+            );
+            match result {
+                Ok(name) => Some(name),
+                Err(rusqlite::Error::QueryReturnedNoRows) => None,
+                Err(e) => return Err(map_db_error(e)),
             }
-        });
+        };
+
+        let lot = {
+            let lot_repo = SqliteLotRepository::new(self.pool.clone());
+            match (serial_number.lot_id, serial_number.lot_number.as_deref()) {
+                (Some(lot_id), lot_number) => match lot_repo.get(lot_id)? {
+                    Some(lot) => Some(lot),
+                    None => match lot_number {
+                        Some(number) => lot_repo.get_by_number(number)?,
+                        None => None,
+                    },
+                },
+                (None, Some(lot_number)) => lot_repo.get_by_number(lot_number)?,
+                (None, None) => None,
+            }
+        };
+
+        let warranty_status = if let Some(warranty_id) = serial_number.warranty_id {
+            let warranty_repo = SqliteWarrantyRepository::new(self.pool.clone());
+            match warranty_repo.get(warranty_id)? {
+                Some(warranty) => Some(WarrantyLookupStatus {
+                    warranty_id,
+                    is_active: warranty.is_valid(),
+                    expires_at: warranty.end_date,
+                    coverage_type: Some(warranty.warranty_type.to_string()),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
 
         Ok(Some(SerialLookupResult {
             serial: serial_number,
-            product_name: None, // TODO: Get from product repository
+            product_name,
             lot,
             warranty_status,
             recent_history,
