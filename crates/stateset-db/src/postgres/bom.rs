@@ -455,7 +455,7 @@ impl PgBomRepository {
             .bind(input.created_by)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -483,7 +483,7 @@ impl PgBomRepository {
                     .bind(&comp_input.notes)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -554,7 +554,7 @@ impl PgBomRepository {
                 "SELECT * FROM manufacturing_boms WHERE id = $1"
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -563,7 +563,7 @@ impl PgBomRepository {
                 "SELECT * FROM manufacturing_bom_components WHERE bom_id = $1 ORDER BY position, created_at"
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -587,7 +587,7 @@ impl PgBomRepository {
             .bind(input.updated_by)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -596,7 +596,7 @@ impl PgBomRepository {
                 "SELECT * FROM manufacturing_boms WHERE id = $1"
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -604,7 +604,7 @@ impl PgBomRepository {
                 "SELECT * FROM manufacturing_bom_components WHERE bom_id = $1 ORDER BY position, created_at"
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

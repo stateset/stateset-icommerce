@@ -262,6 +262,63 @@ export const CHAINS = {
   },
 
   // ===========================================================================
+  // ARC (Circle's L1 for Stablecoin Finance)
+  // ===========================================================================
+  arc: {
+    name: 'Arc',
+    network: 'mainnet',
+    chainId: 5042001,
+    rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.arc.network',
+    explorerUrl: 'https://arcscan.app',
+    confirmations: 1,
+    blockTimeMs: 500, // Sub-second finality
+    derivationPath: "m/44'/60'/0'/0/0",
+    tokens: {
+      USDC: {
+        symbol: 'USDC',
+        name: 'USD Coin',
+        address: '0x79A02482A880bCE3F13e09Da970dC34db4CD24d1', // Arc USDC
+        decimals: 6,
+        type: 'erc20',
+      },
+      ETH: {
+        symbol: 'ETH',
+        name: 'Ether',
+        address: 'native',
+        decimals: 18,
+        type: 'native',
+      },
+    },
+  },
+
+  arc_testnet: {
+    name: 'Arc Testnet',
+    network: 'testnet',
+    chainId: 5042002,
+    rpcUrl: process.env.ARC_TESTNET_RPC_URL || 'https://rpc.testnet.arc.network',
+    explorerUrl: 'https://testnet.arcscan.app',
+    confirmations: 1,
+    blockTimeMs: 500,
+    derivationPath: "m/44'/60'/0'/0/0",
+    tokens: {
+      USDC: {
+        symbol: 'USDC',
+        name: 'USD Coin (Testnet)',
+        address: '0x3600000000000000000000000000000000000000', // Arc Testnet USDC (Circle FiatToken)
+        decimals: 6,
+        type: 'erc20',
+      },
+      ETH: {
+        symbol: 'ETH',
+        name: 'Ether',
+        address: 'native',
+        decimals: 18,
+        type: 'native',
+      },
+    },
+  },
+
+  // ===========================================================================
   // ZCASH
   // ===========================================================================
   zcash: {

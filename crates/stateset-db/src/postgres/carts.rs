@@ -346,7 +346,7 @@ impl PgCartRepository {
         .bind(expires_at)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -366,7 +366,7 @@ impl PgCartRepository {
             "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
         )
         .bind(id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -374,7 +374,7 @@ impl PgCartRepository {
             .bind(subtotal)
             .bind(subtotal)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -614,13 +614,13 @@ impl PgCartRepository {
 
         sqlx::query("DELETE FROM cart_items WHERE cart_id = $1")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM carts WHERE id = $1")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -638,7 +638,7 @@ impl PgCartRepository {
             "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -646,7 +646,7 @@ impl PgCartRepository {
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -659,7 +659,7 @@ impl PgCartRepository {
         .bind(grand_total)
         .bind(Utc::now())
         .bind(cart_id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -675,7 +675,7 @@ impl PgCartRepository {
         // Get cart_id for this item
         let cart_id: Uuid = sqlx::query_scalar("SELECT cart_id FROM cart_items WHERE id = $1")
             .bind(item_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -685,7 +685,7 @@ impl PgCartRepository {
                 .bind(qty)
                 .bind(now)
                 .bind(item_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -694,7 +694,7 @@ impl PgCartRepository {
                 .bind(price)
                 .bind(now)
                 .bind(item_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -703,7 +703,7 @@ impl PgCartRepository {
                 .bind(discount)
                 .bind(now)
                 .bind(item_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -712,7 +712,7 @@ impl PgCartRepository {
                 .bind(meta)
                 .bind(now)
                 .bind(item_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }
@@ -722,7 +722,7 @@ impl PgCartRepository {
             "SELECT quantity, unit_price, discount_amount, tax_amount FROM cart_items WHERE id = $1",
         )
         .bind(item_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -731,7 +731,7 @@ impl PgCartRepository {
         sqlx::query("UPDATE cart_items SET total = $1 WHERE id = $2")
             .bind(total)
             .bind(item_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -740,7 +740,7 @@ impl PgCartRepository {
             "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -748,7 +748,7 @@ impl PgCartRepository {
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -761,14 +761,14 @@ impl PgCartRepository {
         .bind(grand_total)
         .bind(now)
         .bind(cart_id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         // Fetch updated item
         let item: CartItemRow = sqlx::query_as("SELECT * FROM cart_items WHERE id = $1")
             .bind(item_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -783,13 +783,13 @@ impl PgCartRepository {
         // Get cart_id before deleting
         let cart_id: Uuid = sqlx::query_scalar("SELECT cart_id FROM cart_items WHERE id = $1")
             .bind(item_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM cart_items WHERE id = $1")
             .bind(item_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -798,7 +798,7 @@ impl PgCartRepository {
             "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -806,7 +806,7 @@ impl PgCartRepository {
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
         )
         .bind(cart_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -819,7 +819,7 @@ impl PgCartRepository {
         .bind(grand_total)
         .bind(Utc::now())
         .bind(cart_id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -837,7 +837,7 @@ impl PgCartRepository {
 
         sqlx::query("DELETE FROM cart_items WHERE cart_id = $1")
             .bind(cart_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -846,7 +846,7 @@ impl PgCartRepository {
         )
         .bind(Utc::now())
         .bind(cart_id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1310,7 +1310,7 @@ impl PgCartRepository {
             .bind(expires_at)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1355,7 +1355,7 @@ impl PgCartRepository {
                     .bind(&item_metadata_json)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -1390,7 +1390,7 @@ impl PgCartRepository {
                 .bind(subtotal)
                 .bind(subtotal)
                 .bind(id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -1510,7 +1510,7 @@ impl PgCartRepository {
             .bind(&input.metadata)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1553,14 +1553,14 @@ impl PgCartRepository {
         // Delete cart items first (foreign key constraint)
         sqlx::query("DELETE FROM cart_items WHERE cart_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete carts
         sqlx::query("DELETE FROM carts WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

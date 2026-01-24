@@ -713,7 +713,7 @@ impl PgWorkOrderRepository {
             .bind(&input.notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -739,7 +739,7 @@ impl PgWorkOrderRepository {
                     .bind(&task_input.notes)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -817,7 +817,7 @@ impl PgWorkOrderRepository {
                 "SELECT * FROM manufacturing_work_orders WHERE id = $1 FOR UPDATE",
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -854,7 +854,7 @@ impl PgWorkOrderRepository {
             .bind(&new_notes)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -863,7 +863,7 @@ impl PgWorkOrderRepository {
                 "SELECT * FROM manufacturing_work_orders WHERE id = $1",
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -871,7 +871,7 @@ impl PgWorkOrderRepository {
                 "SELECT * FROM manufacturing_work_order_tasks WHERE work_order_id = $1 ORDER BY sequence",
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -879,7 +879,7 @@ impl PgWorkOrderRepository {
                 "SELECT * FROM manufacturing_work_order_materials WHERE work_order_id = $1",
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -925,21 +925,21 @@ impl PgWorkOrderRepository {
         // Delete materials first (foreign key constraint)
         sqlx::query("DELETE FROM manufacturing_work_order_materials WHERE work_order_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete tasks (foreign key constraint)
         sqlx::query("DELETE FROM manufacturing_work_order_tasks WHERE work_order_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete work orders
         sqlx::query("DELETE FROM manufacturing_work_orders WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

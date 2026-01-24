@@ -141,7 +141,7 @@ impl PgInventoryRepository {
         )
         .bind(item_id)
         .bind(location_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -162,7 +162,7 @@ impl PgInventoryRepository {
         .bind(item_id)
         .bind(location_id)
         .bind(current_version)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -176,7 +176,7 @@ impl PgInventoryRepository {
 
         sqlx::query("UPDATE inventory_reservations SET status = 'expired' WHERE id = $1")
             .bind(reservation_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -198,7 +198,7 @@ impl PgInventoryRepository {
         .bind(item_id)
         .bind(location_id)
         .bind(now)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -251,7 +251,7 @@ impl PgInventoryRepository {
         .bind(true)
         .bind(now)
         .bind(now)
-        .fetch_one(&mut tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -274,7 +274,7 @@ impl PgInventoryRepository {
         .bind(input.reorder_point)
         .bind(input.safety_stock)
         .bind(now)
-        .execute(&mut tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -505,7 +505,7 @@ impl PgInventoryRepository {
         // Get item ID
         let item: (i64,) = sqlx::query_as("SELECT id FROM inventory_items WHERE sku = $1")
             .bind(&input.sku)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(|_| CommerceError::InventoryItemNotFound(input.sku.clone()))?;
 
@@ -519,7 +519,7 @@ impl PgInventoryRepository {
         )
         .bind(item_id)
         .bind(location_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -554,7 +554,7 @@ impl PgInventoryRepository {
         .bind(&input.reference_id)
         .bind(expires_at)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -574,7 +574,7 @@ impl PgInventoryRepository {
         .bind(item_id)
         .bind(location_id)
         .bind(current_version)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -601,6 +601,22 @@ impl PgInventoryRepository {
         })
     }
 
+    /// Get a reservation by ID (async)
+    pub async fn get_reservation_async(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+        let row = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE id = $1",
+        )
+        .bind(reservation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        match row {
+            Some(row) => Ok(Some(Self::row_to_reservation(row)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Release a reservation (async)
     pub async fn release_reservation_async(&self, reservation_id: Uuid) -> Result<()> {
         let now = Utc::now();
@@ -611,7 +627,7 @@ impl PgInventoryRepository {
             "SELECT * FROM inventory_reservations WHERE id = $1",
         )
         .bind(reservation_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
@@ -652,7 +668,7 @@ impl PgInventoryRepository {
         )
         .bind(res.item_id)
         .bind(res.location_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -674,7 +690,7 @@ impl PgInventoryRepository {
         .bind(res.item_id)
         .bind(res.location_id)
         .bind(current_version)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -689,7 +705,7 @@ impl PgInventoryRepository {
         // Update reservation status
         sqlx::query("UPDATE inventory_reservations SET status = 'released' WHERE id = $1")
             .bind(reservation_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -707,7 +723,7 @@ impl PgInventoryRepository {
             "SELECT * FROM inventory_reservations WHERE id = $1",
         )
         .bind(reservation_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
@@ -746,7 +762,7 @@ impl PgInventoryRepository {
 
         sqlx::query("UPDATE inventory_reservations SET status = 'confirmed' WHERE id = $1")
             .bind(reservation_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -863,7 +879,7 @@ impl PgInventoryRepository {
             .bind(true)
             .bind(now)
             .bind(now)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -886,7 +902,7 @@ impl PgInventoryRepository {
             .bind(input.reorder_point)
             .bind(input.safety_stock)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -943,7 +959,7 @@ impl PgInventoryRepository {
             // Get item ID
             let item: (i64,) = sqlx::query_as("SELECT id FROM inventory_items WHERE sku = $1")
                 .bind(&input.sku)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(|_| CommerceError::InventoryItemNotFound(input.sku.clone()))?;
 
@@ -956,7 +972,7 @@ impl PgInventoryRepository {
             )
             .bind(item_id)
             .bind(location_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -996,7 +1012,7 @@ impl PgInventoryRepository {
             .bind(item_id)
             .bind(location_id)
             .bind(current_version)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1024,7 +1040,7 @@ impl PgInventoryRepository {
             .bind(&input.reference_id)
             .bind(&input.reason)
             .bind(now)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1160,6 +1176,10 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation> {
         super::block_on(self.reserve_async(input))
+    }
+
+    fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+        super::block_on(self.get_reservation_async(reservation_id))
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {

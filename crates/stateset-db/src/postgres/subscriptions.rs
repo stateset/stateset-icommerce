@@ -455,6 +455,7 @@ impl PgSubscriptionRepository {
 
     async fn create_subscription_item_async(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         subscription_id: Uuid,
         input: CreateSubscriptionItem,
         plan: &SubscriptionPlan,
@@ -478,7 +479,7 @@ impl PgSubscriptionRepository {
         .bind(input.quantity)
         .bind(unit_price)
         .bind(line_total)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -495,7 +496,7 @@ impl PgSubscriptionRepository {
         })
     }
 
-    async fn record_event_async(
+    pub async fn record_event_async(
         &self,
         subscription_id: Uuid,
         event_type: SubscriptionEventType,
@@ -519,6 +520,45 @@ impl PgSubscriptionRepository {
         .bind(triggered_by)
         .bind(now)
         .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(SubscriptionEvent {
+            id,
+            subscription_id,
+            event_type,
+            description: description.to_string(),
+            data: event_data,
+            triggered_by: None,
+            created_at: now,
+        })
+    }
+
+    async fn record_event_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        subscription_id: Uuid,
+        event_type: SubscriptionEventType,
+        description: &str,
+        data: Option<serde_json::Value>,
+        triggered_by: Option<String>,
+    ) -> Result<SubscriptionEvent> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let event_data = data.clone();
+
+        sqlx::query(
+            "INSERT INTO subscription_events (id, subscription_id, event_type, description, data, triggered_by, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(id)
+        .bind(subscription_id)
+        .bind(event_type_str(event_type))
+        .bind(description)
+        .bind(data)
+        .bind(triggered_by)
+        .bind(now)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -863,6 +903,8 @@ impl PgSubscriptionRepository {
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
         sqlx::query(
             r#"
             INSERT INTO subscriptions (
@@ -908,25 +950,41 @@ impl PgSubscriptionRepository {
         .bind(input.metadata.as_ref().map(serde_json::to_value).transpose().unwrap_or_default())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         for item in items_to_create {
-            self.create_subscription_item_async(id, item, &plan).await?;
+            self.create_subscription_item_async(&mut tx, id, item, &plan).await?;
         }
 
-        self.record_event_async(id, SubscriptionEventType::Created, "Subscription created", None, None)
-            .await?;
+        self.record_event_tx(
+            &mut tx,
+            id,
+            SubscriptionEventType::Created,
+            "Subscription created",
+            None,
+            None,
+        )
+        .await?;
 
         if trial_ends_at.is_some() {
             let desc = format!("Trial started, ends on {}", trial_ends_at.unwrap().format("%Y-%m-%d"));
-            self.record_event_async(id, SubscriptionEventType::TrialStarted, &desc, None, None)
+            self.record_event_tx(&mut tx, id, SubscriptionEventType::TrialStarted, &desc, None, None)
                 .await?;
         } else {
-            self.record_event_async(id, SubscriptionEventType::Activated, "Subscription activated", None, None)
-                .await?;
+            self.record_event_tx(
+                &mut tx,
+                id,
+                SubscriptionEventType::Activated,
+                "Subscription activated",
+                None,
+                None,
+            )
+            .await?;
         }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_subscription_async(id)
             .await?

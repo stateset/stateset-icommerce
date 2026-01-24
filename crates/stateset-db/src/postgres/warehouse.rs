@@ -910,7 +910,7 @@ impl PgWarehouseRepository {
         .bind(input.from_location_id)
         .bind(&input.sku)
         .bind(lot_key)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
@@ -931,7 +931,7 @@ impl PgWarehouseRepository {
         .bind(input.from_location_id)
         .bind(&input.sku)
         .bind(lot_key)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -949,7 +949,7 @@ impl PgWarehouseRepository {
         .bind(lot_key)
         .bind(input.quantity)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -972,7 +972,7 @@ impl PgWarehouseRepository {
         .bind(input.reason.clone())
         .bind(input.performed_by.clone())
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 

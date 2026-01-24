@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, i64_params, map_db_error, params_refs, string_params,
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_decimal_strict, parse_enum_row, parse_uuid,
+    parse_decimal_strict, parse_enum_row, parse_uuid, parse_uuid_row,
 };
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
@@ -659,6 +659,51 @@ impl InventoryRepository for SqliteInventoryRepository {
         tx.commit().map_err(map_db_error)?;
 
         Ok(reservation)
+    }
+
+    fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+        let conn = self.conn()?;
+
+        let result = conn.query_row(
+            "SELECT id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at
+             FROM inventory_reservations WHERE id = ?",
+            [reservation_id.to_string()],
+            |row| {
+                Ok(InventoryReservation {
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "inventory_reservation", "id")?,
+                    item_id: row.get("item_id")?,
+                    location_id: row.get("location_id")?,
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>("quantity")?,
+                        "inventory_reservation",
+                        "quantity",
+                    )?,
+                    status: parse_enum_row(
+                        &row.get::<_, String>("status")?,
+                        "inventory_reservation",
+                        "status",
+                    )?,
+                    reference_type: row.get("reference_type")?,
+                    reference_id: row.get("reference_id")?,
+                    expires_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>("expires_at")?,
+                        "inventory_reservation",
+                        "expires_at",
+                    )?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>("created_at")?,
+                        "inventory_reservation",
+                        "created_at",
+                    )?,
+                })
+            },
+        );
+
+        match result {
+            Ok(reservation) => Ok(Some(reservation)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
     }
 
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {

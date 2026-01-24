@@ -461,7 +461,7 @@ impl PgReturnRepository {
             let order_info: (Uuid,) =
                 sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
                     .bind(input.order_id)
-                    .fetch_one(&mut *tx)
+                    .fetch_one(tx.as_mut())
                     .await
                     .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
 
@@ -482,7 +482,7 @@ impl PgReturnRepository {
             .bind(&input.notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -495,7 +495,7 @@ impl PgReturnRepository {
                 let item_info: (String, String, Decimal) =
                     sqlx::query_as("SELECT sku, name, unit_price FROM order_items WHERE id = $1")
                         .bind(item_input.order_item_id)
-                        .fetch_one(&mut *tx)
+                        .fetch_one(tx.as_mut())
                         .await
                         .map_err(map_db_error)?;
 
@@ -516,7 +516,7 @@ impl PgReturnRepository {
                 .bind(item_input.quantity)
                 .bind(condition.to_string())
                 .bind(refund)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -583,7 +583,7 @@ impl PgReturnRepository {
 
             let existing_row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
                 .bind(id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::ReturnNotFound(id))?;
@@ -592,7 +592,7 @@ impl PgReturnRepository {
                 "SELECT * FROM return_items WHERE return_id = $1",
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -623,14 +623,14 @@ impl PgReturnRepository {
             .bind(&new_notes)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
             // Fetch the updated return
             let updated_row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 

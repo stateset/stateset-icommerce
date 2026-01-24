@@ -9,14 +9,78 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use chrono::Utc;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Inventory operations interface.
 pub struct Inventory {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl Inventory {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
+    }
+
+    #[cfg(feature = "events")]
+    fn emit_adjustment_events(&self, transaction: &InventoryTransaction, sku: &str, reason: &str) {
+        if let Ok(Some(balance)) = self
+            .db
+            .inventory()
+            .get_balance(transaction.item_id, transaction.location_id)
+        {
+            self.emit(CommerceEvent::InventoryAdjusted {
+                item_id: transaction.item_id,
+                sku: sku.to_string(),
+                location_id: transaction.location_id,
+                quantity_change: transaction.quantity,
+                new_quantity: balance.quantity_on_hand,
+                reason: reason.to_string(),
+                timestamp: transaction.created_at,
+            });
+
+            if let Some(reorder_point) = balance.reorder_point {
+                if balance.quantity_available < reorder_point {
+                    self.emit(CommerceEvent::LowStockAlert {
+                        sku: sku.to_string(),
+                        location_id: transaction.location_id,
+                        current_quantity: balance.quantity_available,
+                        reorder_point,
+                        timestamp: transaction.created_at,
+                    });
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit_reservation_event(&self, reservation_id: Uuid, event: fn(InventoryReservation, String) -> CommerceEvent) {
+        let reservation = match self.db.inventory().get_reservation(reservation_id) {
+            Ok(Some(reservation)) => reservation,
+            _ => return,
+        };
+        let sku = match self.db.inventory().get_item(reservation.item_id) {
+            Ok(Some(item)) => item.sku,
+            _ => return,
+        };
+        self.emit(event(reservation, sku));
     }
 
     /// Create a new inventory item (SKU).
@@ -39,7 +103,17 @@ impl Inventory {
     #[tracing::instrument(skip(self, input), fields(sku = %input.sku, name = %input.name))]
     pub fn create_item(&self, input: CreateInventoryItem) -> Result<InventoryItem> {
         tracing::info!("creating inventory item");
-        self.db.inventory().create_item(input)
+        let item = self.db.inventory().create_item(input)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::InventoryItemCreated {
+                item_id: item.id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                timestamp: item.created_at,
+            });
+        }
+        Ok(item)
     }
 
     /// Get an inventory item by ID.
@@ -91,14 +165,19 @@ impl Inventory {
     #[tracing::instrument(skip(self), fields(sku = %sku, quantity = %quantity))]
     pub fn adjust(&self, sku: &str, quantity: Decimal, reason: &str) -> Result<InventoryTransaction> {
         tracing::info!("adjusting inventory");
-        self.db.inventory().adjust(stateset_core::AdjustInventory {
+        let transaction = self.db.inventory().adjust(stateset_core::AdjustInventory {
             sku: sku.to_string(),
             location_id: None,
             quantity,
             reason: reason.to_string(),
             reference_type: None,
             reference_id: None,
-        })
+        })?;
+        #[cfg(feature = "events")]
+        {
+            self.emit_adjustment_events(&transaction, sku, reason);
+        }
+        Ok(transaction)
     }
 
     /// Adjust inventory at a specific location.
@@ -109,14 +188,19 @@ impl Inventory {
         quantity: Decimal,
         reason: &str,
     ) -> Result<InventoryTransaction> {
-        self.db.inventory().adjust(stateset_core::AdjustInventory {
+        let transaction = self.db.inventory().adjust(stateset_core::AdjustInventory {
             sku: sku.to_string(),
             location_id: Some(location_id),
             quantity,
             reason: reason.to_string(),
             reference_type: None,
             reference_id: None,
-        })
+        })?;
+        #[cfg(feature = "events")]
+        {
+            self.emit_adjustment_events(&transaction, sku, reason);
+        }
+        Ok(transaction)
     }
 
     /// Reserve inventory for an order or other reference.
@@ -146,24 +230,60 @@ impl Inventory {
         expires_in_seconds: Option<i64>,
     ) -> Result<InventoryReservation> {
         tracing::info!("reserving inventory");
-        self.db.inventory().reserve(stateset_core::ReserveInventory {
+        let reservation = self.db.inventory().reserve(stateset_core::ReserveInventory {
             sku: sku.to_string(),
             location_id: None,
             quantity,
             reference_type: reference_type.to_string(),
             reference_id: reference_id.to_string(),
             expires_in_seconds,
-        })
+        })?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::InventoryReserved {
+                reservation_id: reservation.id,
+                sku: sku.to_string(),
+                quantity: reservation.quantity,
+                reference_type: reservation.reference_type.clone(),
+                reference_id: reservation.reference_id.clone(),
+                timestamp: reservation.created_at,
+            });
+        }
+        Ok(reservation)
     }
 
     /// Release a reservation.
     pub fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.inventory().release_reservation(reservation_id)
+        self.db.inventory().release_reservation(reservation_id)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit_reservation_event(reservation_id, |reservation, sku| {
+                CommerceEvent::InventoryReservationReleased {
+                    reservation_id: reservation.id,
+                    sku,
+                    quantity: reservation.quantity,
+                    timestamp: Utc::now(),
+                }
+            });
+        }
+        Ok(())
     }
 
     /// Confirm a reservation (marks as allocated).
     pub fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.inventory().confirm_reservation(reservation_id)
+        self.db.inventory().confirm_reservation(reservation_id)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit_reservation_event(reservation_id, |reservation, sku| {
+                CommerceEvent::InventoryReservationConfirmed {
+                    reservation_id: reservation.id,
+                    sku,
+                    quantity: reservation.quantity,
+                    timestamp: Utc::now(),
+                }
+            });
+        }
+        Ok(())
     }
 
     /// List inventory items with optional filtering.

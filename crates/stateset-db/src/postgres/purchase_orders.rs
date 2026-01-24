@@ -473,7 +473,7 @@ impl PgPurchaseOrderRepository {
         .bind(&input.supplier_notes)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -505,7 +505,7 @@ impl PgPurchaseOrderRepository {
             .bind(&item.notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -947,7 +947,7 @@ impl PgPurchaseOrderRepository {
             let supplier_exists: Option<(Uuid,)> =
                 sqlx::query_as("SELECT id FROM suppliers WHERE id = $1")
                     .bind(input.supplier_id)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -959,7 +959,7 @@ impl PgPurchaseOrderRepository {
             let (payment_terms, currency): (String, String) =
                 sqlx::query_as("SELECT payment_terms, currency FROM suppliers WHERE id = $1")
                     .bind(input.supplier_id)
-                    .fetch_one(&mut *tx)
+                    .fetch_one(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -1003,7 +1003,7 @@ impl PgPurchaseOrderRepository {
             .bind(&input.supplier_notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1037,7 +1037,7 @@ impl PgPurchaseOrderRepository {
                 .bind(&item.notes)
                 .bind(now)
                 .bind(now)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
             }
@@ -1047,7 +1047,7 @@ impl PgPurchaseOrderRepository {
                 "SELECT COALESCE(SUM(line_total), 0) FROM purchase_order_items WHERE purchase_order_id = $1",
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1064,7 +1064,7 @@ impl PgPurchaseOrderRepository {
             .bind(total)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1118,7 +1118,7 @@ impl PgPurchaseOrderRepository {
                 "SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE",
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -1149,7 +1149,7 @@ impl PgPurchaseOrderRepository {
             .bind(input.supplier_reference.or(existing.supplier_reference))
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1158,7 +1158,7 @@ impl PgPurchaseOrderRepository {
                 "SELECT COALESCE(SUM(line_total), 0) FROM purchase_order_items WHERE purchase_order_id = $1",
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1169,7 +1169,7 @@ impl PgPurchaseOrderRepository {
                     "SELECT tax_amount, shipping_cost, discount_amount FROM purchase_orders WHERE id = $1",
                 )
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -1182,7 +1182,7 @@ impl PgPurchaseOrderRepository {
             .bind(total)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1227,7 +1227,7 @@ impl PgPurchaseOrderRepository {
             "SELECT COUNT(*) FROM purchase_orders WHERE id = ANY($1) AND status != 'draft'",
         )
         .bind(&ids)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1240,14 +1240,14 @@ impl PgPurchaseOrderRepository {
         // Delete order items first (foreign key constraint)
         sqlx::query("DELETE FROM purchase_order_items WHERE purchase_order_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete purchase orders
         sqlx::query("DELETE FROM purchase_orders WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

@@ -8,14 +8,62 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Customer operations interface.
 pub struct Customers {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl Customers {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
+    }
+
+    #[cfg(feature = "events")]
+    fn fields_changed(input: &UpdateCustomer) -> Vec<String> {
+        let mut fields = Vec::new();
+        if input.email.is_some() {
+            fields.push("email".to_string());
+        }
+        if input.first_name.is_some() {
+            fields.push("first_name".to_string());
+        }
+        if input.last_name.is_some() {
+            fields.push("last_name".to_string());
+        }
+        if input.phone.is_some() {
+            fields.push("phone".to_string());
+        }
+        if input.status.is_some() {
+            fields.push("status".to_string());
+        }
+        if input.accepts_marketing.is_some() {
+            fields.push("accepts_marketing".to_string());
+        }
+        if input.tags.is_some() {
+            fields.push("tags".to_string());
+        }
+        if input.metadata.is_some() {
+            fields.push("metadata".to_string());
+        }
+        fields
     }
 
     /// Create a new customer.
@@ -35,7 +83,16 @@ impl Customers {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateCustomer) -> Result<Customer> {
-        self.db.customers().create(input)
+        let customer = self.db.customers().create(input)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::CustomerCreated {
+                customer_id: customer.id,
+                email: customer.email.clone(),
+                timestamp: customer.created_at,
+            });
+        }
+        Ok(customer)
     }
 
     /// Get a customer by ID.
@@ -50,7 +107,36 @@ impl Customers {
 
     /// Update a customer.
     pub fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
-        self.db.customers().update(id, input)
+        #[cfg(feature = "events")]
+        let previous = self.db.customers().get(id)?;
+        #[cfg(feature = "events")]
+        let fields_changed = Self::fields_changed(&input);
+
+        let updated = self.db.customers().update(id, input)?;
+
+        #[cfg(feature = "events")]
+        {
+            if !fields_changed.is_empty() {
+                self.emit(CommerceEvent::CustomerUpdated {
+                    customer_id: updated.id,
+                    fields_changed,
+                    timestamp: updated.updated_at,
+                });
+            }
+
+            if let Some(previous) = previous {
+                if previous.status != updated.status {
+                    self.emit(CommerceEvent::CustomerStatusChanged {
+                        customer_id: updated.id,
+                        from_status: previous.status,
+                        to_status: updated.status,
+                        timestamp: updated.updated_at,
+                    });
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     /// List customers with optional filtering.
@@ -65,7 +151,17 @@ impl Customers {
 
     /// Add an address for a customer.
     pub fn add_address(&self, input: CreateCustomerAddress) -> Result<CustomerAddress> {
-        self.db.customers().add_address(input)
+        let customer_id = input.customer_id;
+        let address = self.db.customers().add_address(input)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::CustomerAddressAdded {
+                customer_id,
+                address_id: address.id,
+                timestamp: address.created_at,
+            });
+        }
+        Ok(address)
     }
 
     /// Get all addresses for a customer.

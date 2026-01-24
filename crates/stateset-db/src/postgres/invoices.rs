@@ -279,7 +279,7 @@ impl PgInvoiceRepository {
         .bind(&input.footer)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -313,7 +313,7 @@ impl PgInvoiceRepository {
             .bind(sort_order)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -323,7 +323,7 @@ impl PgInvoiceRepository {
             "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
         )
         .bind(id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -340,7 +340,7 @@ impl PgInvoiceRepository {
         .bind(total)
         .bind(balance_due)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -580,13 +580,13 @@ impl PgInvoiceRepository {
 
         sqlx::query("DELETE FROM invoice_items WHERE invoice_id = $1")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM invoices WHERE id = $1")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -645,7 +645,7 @@ impl PgInvoiceRepository {
         let (total, amount_paid): (Decimal, Decimal) =
             sqlx::query_as("SELECT total, amount_paid FROM invoices WHERE id = $1")
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -676,7 +676,7 @@ impl PgInvoiceRepository {
         .bind(paid_at)
         .bind(now)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1001,7 +1001,7 @@ impl PgInvoiceRepository {
             .bind(&input.footer)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1036,7 +1036,7 @@ impl PgInvoiceRepository {
                 .bind(sort_order)
                 .bind(now)
                 .bind(now)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -1064,7 +1064,7 @@ impl PgInvoiceRepository {
                 "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1081,7 +1081,7 @@ impl PgInvoiceRepository {
             .bind(total)
             .bind(balance_due)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1145,7 +1145,7 @@ impl PgInvoiceRepository {
             let existing_row: InvoiceRow =
                 sqlx::query_as("SELECT * FROM invoices WHERE id = $1 FOR UPDATE")
                     .bind(id)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(tx.as_mut())
                     .await
                     .map_err(map_db_error)?
                     .ok_or(CommerceError::NotFound)?;
@@ -1179,7 +1179,7 @@ impl PgInvoiceRepository {
             .bind(input.footer.or(existing_row.footer.clone()))
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1188,7 +1188,7 @@ impl PgInvoiceRepository {
                 "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1201,7 +1201,7 @@ impl PgInvoiceRepository {
             let amount_paid: Decimal =
                 sqlx::query_scalar("SELECT amount_paid FROM invoices WHERE id = $1")
                     .bind(id)
-                    .fetch_one(&mut *tx)
+                    .fetch_one(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
             let balance_due = total - amount_paid;
@@ -1214,14 +1214,14 @@ impl PgInvoiceRepository {
             .bind(balance_due)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
             // Fetch updated invoice
             let updated_row: InvoiceRow = sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -1229,7 +1229,7 @@ impl PgInvoiceRepository {
                 "SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order",
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1250,7 +1250,7 @@ impl PgInvoiceRepository {
             "SELECT id, status FROM invoices WHERE id = ANY($1)",
         )
         .bind(&ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -1269,14 +1269,14 @@ impl PgInvoiceRepository {
         // Delete invoice items first (foreign key constraint)
         sqlx::query("DELETE FROM invoice_items WHERE invoice_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete invoices
         sqlx::query("DELETE FROM invoices WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

@@ -486,7 +486,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(input.serial_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -541,7 +541,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(input.serial_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -562,7 +562,7 @@ impl PgSerialRepository {
         )
         .bind(input.serial_id)
         .bind(now)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -645,7 +645,7 @@ impl PgSerialRepository {
             "SELECT * FROM serial_reservations WHERE id = $1",
         )
         .bind(reservation_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         let reservation = Self::row_to_reservation(reservation_row);
@@ -731,7 +731,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(input.serial_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -773,7 +773,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(input.serial_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -826,7 +826,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -879,7 +879,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -921,7 +921,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -1000,7 +1000,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -1042,7 +1042,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
@@ -1090,7 +1090,7 @@ impl PgSerialRepository {
 
         let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;

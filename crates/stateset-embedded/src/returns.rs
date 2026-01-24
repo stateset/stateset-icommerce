@@ -8,14 +8,46 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use rust_decimal::Decimal;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Return operations interface.
 pub struct Returns {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl Returns {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
+    }
+
+    #[cfg(feature = "events")]
+    fn emit_status_change(&self, previous: &Return, updated: &Return) {
+        if previous.status != updated.status {
+            self.emit(CommerceEvent::ReturnStatusChanged {
+                return_id: updated.id,
+                from_status: previous.status,
+                to_status: updated.status,
+                timestamp: updated.updated_at,
+            });
+        }
     }
 
     /// Create a new return request.
@@ -38,7 +70,19 @@ impl Returns {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateReturn) -> Result<Return> {
-        self.db.returns().create(input)
+        let ret = self.db.returns().create(input)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::ReturnRequested {
+                return_id: ret.id,
+                order_id: ret.order_id,
+                customer_id: ret.customer_id,
+                reason: ret.reason,
+                item_count: ret.items.len(),
+                timestamp: ret.created_at,
+            });
+        }
+        Ok(ret)
     }
 
     /// Get a return by ID.
@@ -48,7 +92,56 @@ impl Returns {
 
     /// Update a return.
     pub fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
-        self.db.returns().update(id, input)
+        #[cfg(feature = "events")]
+        let previous = self.db.returns().get(id)?;
+
+        let updated = self.db.returns().update(id, input)?;
+
+        #[cfg(feature = "events")]
+        if let Some(previous) = previous {
+            if previous.status != updated.status {
+                self.emit_status_change(&previous, &updated);
+                match updated.status {
+                    ReturnStatus::Approved => {
+                        self.emit(CommerceEvent::ReturnApproved {
+                            return_id: updated.id,
+                            order_id: updated.order_id,
+                            timestamp: updated.updated_at,
+                        });
+                    }
+                    ReturnStatus::Rejected => {
+                        self.emit(CommerceEvent::ReturnRejected {
+                            return_id: updated.id,
+                            order_id: updated.order_id,
+                            reason: updated.notes.clone().unwrap_or_default(),
+                            timestamp: updated.updated_at,
+                        });
+                    }
+                    ReturnStatus::Completed => {
+                        let refund_amount = updated.refund_amount.clone().unwrap_or(Decimal::ZERO);
+                        let refund_method = updated.refund_method.clone();
+                        self.emit(CommerceEvent::ReturnCompleted {
+                            return_id: updated.id,
+                            order_id: updated.order_id,
+                            refund_amount,
+                            timestamp: updated.updated_at,
+                        });
+                        if updated.refund_amount.is_some() && refund_method.is_some() {
+                            self.emit(CommerceEvent::RefundIssued {
+                                return_id: updated.id,
+                                order_id: updated.order_id,
+                                amount: refund_amount,
+                                method: refund_method.unwrap(),
+                                timestamp: updated.updated_at,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     /// List returns with optional filtering.
@@ -74,17 +167,52 @@ impl Returns {
 
     /// Approve a return request.
     pub fn approve(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().approve(id)
+        #[cfg(feature = "events")]
+        let previous = self.db.returns().get(id)?;
+
+        let ret = self.db.returns().approve(id)?;
+
+        #[cfg(feature = "events")]
+        {
+            if let Some(previous) = previous {
+                self.emit_status_change(&previous, &ret);
+            }
+            self.emit(CommerceEvent::ReturnApproved {
+                return_id: ret.id,
+                order_id: ret.order_id,
+                timestamp: ret.updated_at,
+            });
+        }
+
+        Ok(ret)
     }
 
     /// Reject a return request.
     pub fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
-        self.db.returns().reject(id, reason)
+        #[cfg(feature = "events")]
+        let previous = self.db.returns().get(id)?;
+
+        let ret = self.db.returns().reject(id, reason)?;
+
+        #[cfg(feature = "events")]
+        {
+            if let Some(previous) = previous {
+                self.emit_status_change(&previous, &ret);
+            }
+            self.emit(CommerceEvent::ReturnRejected {
+                return_id: ret.id,
+                order_id: ret.order_id,
+                reason: reason.to_string(),
+                timestamp: ret.updated_at,
+            });
+        }
+
+        Ok(ret)
     }
 
     /// Mark a return as received.
     pub fn mark_received(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().update(
+        self.update(
             id,
             UpdateReturn {
                 status: Some(ReturnStatus::Received),
@@ -95,12 +223,51 @@ impl Returns {
 
     /// Complete a return (process refund).
     pub fn complete(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().complete(id)
+        #[cfg(feature = "events")]
+        let previous = self.db.returns().get(id)?;
+
+        let ret = self.db.returns().complete(id)?;
+
+        #[cfg(feature = "events")]
+        {
+            if let Some(previous) = previous {
+                self.emit_status_change(&previous, &ret);
+            }
+            let refund_amount = ret.refund_amount.clone().unwrap_or(Decimal::ZERO);
+            let refund_method = ret.refund_method.clone();
+            self.emit(CommerceEvent::ReturnCompleted {
+                return_id: ret.id,
+                order_id: ret.order_id,
+                refund_amount,
+                timestamp: ret.updated_at,
+            });
+            if ret.refund_amount.is_some() && refund_method.is_some() {
+                self.emit(CommerceEvent::RefundIssued {
+                    return_id: ret.id,
+                    order_id: ret.order_id,
+                    amount: refund_amount,
+                    method: refund_method.unwrap(),
+                    timestamp: ret.updated_at,
+                });
+            }
+        }
+
+        Ok(ret)
     }
 
     /// Cancel a return.
     pub fn cancel(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().cancel(id)
+        #[cfg(feature = "events")]
+        let previous = self.db.returns().get(id)?;
+
+        let ret = self.db.returns().cancel(id)?;
+
+        #[cfg(feature = "events")]
+        if let Some(previous) = previous {
+            self.emit_status_change(&previous, &ret);
+        }
+
+        Ok(ret)
     }
 
     /// Count returns matching a filter.
@@ -110,7 +277,7 @@ impl Returns {
 
     /// Add tracking number to a return.
     pub fn add_tracking(&self, id: Uuid, tracking_number: &str) -> Result<Return> {
-        self.db.returns().update(
+        self.update(
             id,
             UpdateReturn {
                 tracking_number: Some(tracking_number.to_string()),

@@ -398,7 +398,7 @@ impl PgCustomerRepository {
         .bind(is_default)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -416,13 +416,13 @@ impl PgCustomerRepository {
             };
             sqlx::query(clear_sql)
                 .bind(input.customer_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
             sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
                 .bind(id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -434,7 +434,7 @@ impl PgCustomerRepository {
                     .bind(id)
                     .bind(now)
                     .bind(input.customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -445,7 +445,7 @@ impl PgCustomerRepository {
                     .bind(id)
                     .bind(now)
                     .bind(input.customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -456,7 +456,7 @@ impl PgCustomerRepository {
                     .bind(id)
                     .bind(now)
                     .bind(input.customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -574,7 +574,7 @@ impl PgCustomerRepository {
             "SELECT customer_id, address_type, is_default FROM customer_addresses WHERE id = $1",
         )
         .bind(address_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -597,7 +597,7 @@ impl PgCustomerRepository {
                     )
                     .bind(now)
                     .bind(customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -607,7 +607,7 @@ impl PgCustomerRepository {
                     )
                     .bind(now)
                     .bind(customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -617,7 +617,7 @@ impl PgCustomerRepository {
                     )
                     .bind(now)
                     .bind(customer_id)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -626,7 +626,7 @@ impl PgCustomerRepository {
 
         sqlx::query("DELETE FROM customer_addresses WHERE id = $1")
             .bind(address_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -648,7 +648,7 @@ impl PgCustomerRepository {
             "SELECT customer_id FROM customer_addresses WHERE id = $1",
         )
         .bind(address_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         match owner {
@@ -676,13 +676,13 @@ impl PgCustomerRepository {
         };
         sqlx::query(clear_sql)
             .bind(customer_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         sqlx::query("UPDATE customer_addresses SET is_default = true WHERE id = $1")
             .bind(address_id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -694,7 +694,7 @@ impl PgCustomerRepository {
                 .bind(address_id)
                 .bind(now)
                 .bind(customer_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
             }
@@ -705,7 +705,7 @@ impl PgCustomerRepository {
                 .bind(address_id)
                 .bind(now)
                 .bind(customer_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
             }
@@ -716,7 +716,7 @@ impl PgCustomerRepository {
                 .bind(address_id)
                 .bind(now)
                 .bind(customer_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
             }
@@ -778,7 +778,7 @@ impl PgCustomerRepository {
                 "SELECT COUNT(*) FROM customers WHERE email = $1"
             )
             .bind(&input.email)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -809,7 +809,7 @@ impl PgCustomerRepository {
             .bind(&metadata_json)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -863,7 +863,7 @@ impl PgCustomerRepository {
 
             let existing_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
                 .bind(id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::CustomerNotFound(id))?;
@@ -876,7 +876,7 @@ impl PgCustomerRepository {
                     "SELECT id FROM customers WHERE email = $1",
                 )
                 .bind(email)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
                 if let Some(existing_id) = existing_id {
@@ -925,7 +925,7 @@ impl PgCustomerRepository {
             .bind(now)
             .bind(id)
             .bind(current_version)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -940,7 +940,7 @@ impl PgCustomerRepository {
             // Fetch the updated customer
             let updated_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 

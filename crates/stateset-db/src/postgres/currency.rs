@@ -397,7 +397,7 @@ impl PgCurrencyRepository {
             .bind(now)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -411,7 +411,7 @@ impl PgCurrencyRepository {
             .bind(input.rate)
             .bind(&source)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -422,7 +422,7 @@ impl PgCurrencyRepository {
             )
             .bind(input.base_currency.code())
             .bind(input.quote_currency.code())
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -494,7 +494,7 @@ impl PgCurrencyRepository {
         for id in &ids {
             let result = sqlx::query("DELETE FROM exchange_rates WHERE id = $1")
                 .bind(id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 

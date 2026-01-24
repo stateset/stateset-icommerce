@@ -48,16 +48,20 @@ pub use store::SqliteEventStore;
 #[cfg(feature = "postgres")]
 pub use store::PostgresEventStore;
 
-use stateset_core::CommerceEvent;
+use stateset_core::{CommerceEvent, EventStore};
 use std::sync::Arc;
 
 /// Configuration for the event system
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EventConfig {
     /// Channel buffer size for broadcast
     pub channel_capacity: usize,
     /// Whether to persist events to the store
     pub persist_events: bool,
+    /// Optional event store for persistence
+    pub event_store: Option<Arc<dyn EventStore + Send + Sync>>,
+    /// Maximum events to keep in the default in-memory store
+    pub max_in_memory_events: usize,
     /// Whether to enable webhook delivery
     pub enable_webhooks: bool,
     /// Maximum retry attempts for webhook delivery
@@ -71,10 +75,29 @@ impl Default for EventConfig {
         Self {
             channel_capacity: 1024,
             persist_events: true,
+            event_store: None,
+            max_in_memory_events: 10_000,
             enable_webhooks: true,
             webhook_max_retries: 3,
             webhook_timeout_secs: 30,
         }
+    }
+}
+
+impl std::fmt::Debug for EventConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventConfig")
+            .field("channel_capacity", &self.channel_capacity)
+            .field("persist_events", &self.persist_events)
+            .field(
+                "event_store",
+                &self.event_store.as_ref().map(|_| "<custom>"),
+            )
+            .field("max_in_memory_events", &self.max_in_memory_events)
+            .field("enable_webhooks", &self.enable_webhooks)
+            .field("webhook_max_retries", &self.webhook_max_retries)
+            .field("webhook_timeout_secs", &self.webhook_timeout_secs)
+            .finish()
     }
 }
 
@@ -83,6 +106,7 @@ pub struct EventSystem {
     bus: Arc<EventBus>,
     emitter: EventEmitter,
     webhook_manager: Option<WebhookManager>,
+    event_store: Option<Arc<dyn EventStore + Send + Sync>>,
     config: EventConfig,
 }
 
@@ -104,11 +128,22 @@ impl EventSystem {
         } else {
             None
         };
+        let event_store = if config.persist_events {
+            Some(
+                config
+                    .event_store
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(InMemoryEventStore::new(config.max_in_memory_events))),
+            )
+        } else {
+            None
+        };
 
         Self {
             bus,
             emitter,
             webhook_manager,
+            event_store,
             config,
         }
     }
@@ -165,8 +200,23 @@ impl EventSystem {
         &self.config
     }
 
+    /// Access the configured event store, if enabled.
+    pub fn event_store(&self) -> Option<&(dyn EventStore + Send + Sync)> {
+        self.event_store.as_deref()
+    }
+
     /// Emit an event (async, non-blocking)
     pub fn emit(&self, event: CommerceEvent) {
+        if let Some(store) = &self.event_store {
+            if let Err(err) = store.append(&event) {
+                tracing::error!(
+                    error = %err,
+                    event_type = event.event_type(),
+                    "Failed to persist event"
+                );
+            }
+        }
+
         // Send to broadcast channel (non-blocking)
         self.emitter.emit(event.clone());
 

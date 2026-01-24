@@ -361,7 +361,7 @@ export class SyncEngine extends EventEmitter {
         };
       }
 
-      // Store pulled events
+      // Store pulled events (VES v1.0 format)
       const eventsToStore = result.events.map(e => ({
         sequenceNumber: e.sequenceNumber,
         eventId: e.envelope.eventId,
@@ -372,7 +372,14 @@ export class SyncEngine extends EventEmitter {
         entityId: e.envelope.entityId,
         eventType: e.envelope.eventType,
         payload: e.envelope.payload,
-        payloadHash: e.envelope.payloadHash,
+        // VES v1.0 fields
+        vesVersion: e.envelope.vesVersion || 1,
+        payloadKind: e.envelope.payloadKind || 0,
+        payloadEncrypted: e.envelope.payloadEncrypted,
+        payloadPlainHash: e.envelope.payloadPlainHash,
+        payloadCipherHash: e.envelope.payloadCipherHash,
+        agentKeyId: e.envelope.agentKeyId,
+        agentSignature: e.envelope.agentSignature,
         baseVersion: e.envelope.baseVersion,
         createdAt: e.envelope.createdAt,
         sequencedAt: e.sequencedAt,

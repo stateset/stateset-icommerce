@@ -31,7 +31,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/stateset/stateset-icommerce"
@@ -46,6 +46,10 @@ uuid = { version = "1.4", features = ["v4", "serde"] }
 rust_decimal = { version = "1.36", features = ["serde"] }
 rust_decimal_macros = "1.36"
 thiserror = "1.0"
+base64 = "0.22"
+hex = "0.4"
+serde_jcs = "0.1"
+sha2 = "0.10"
 
 # Database (SQLite)
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -57,8 +61,8 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chro
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # Internal crates
-stateset-core = { path = "crates/stateset-core", version = "0.2.0" }
-stateset-db = { path = "crates/stateset-db", version = "0.2.0" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "0.2.0" }
+stateset-core = { path = "crates/stateset-core", version = "0.2.2" }
+stateset-db = { path = "crates/stateset-db", version = "0.2.2" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.2.2" }
 
 # Note: Testing dependencies (criterion, proptest) are added to individual crates

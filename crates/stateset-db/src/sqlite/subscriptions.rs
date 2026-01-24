@@ -407,74 +407,96 @@ impl SqliteSubscriptionRepository {
             }).collect()
         };
 
-        // Insert subscription - connection scoped to this block
-        {
-            let conn = self.pool.get().map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
-            })?;
+        let mut conn = self.pool.get().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
+        })?;
+        let tx = conn.transaction().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Transaction error: {}", e))
+        })?;
 
-            conn.execute(
-                "INSERT INTO subscriptions (
-                    id, subscription_number, customer_id, plan_id, plan_name, status,
-                    billing_interval, custom_interval_days, price, currency, payment_method_id,
-                    started_at, current_period_start, current_period_end, next_billing_date, trial_ends_at,
-                    billing_cycle_count, failed_payment_attempts,
-                    shipping_address, billing_address,
-                    discount_percent, discount_amount, coupon_code,
-                    metadata, created_at, updated_at
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6,
-                    ?7, ?8, ?9, ?10, ?11,
-                    ?12, ?13, ?14, ?15, ?16,
-                    0, 0,
-                    ?17, ?18,
-                    ?19, ?20, ?21,
-                    ?22, ?23, ?24
-                )",
-                rusqlite::params![
-                    id.to_string(),
-                    subscription_number,
-                    input.customer_id.to_string(),
-                    input.plan_id.to_string(),
-                    plan.name,
-                    format!("{}", status),
-                    format!("{}", plan.billing_interval),
-                    plan.custom_interval_days,
-                    price.to_string(),
-                    plan.currency,
-                    input.payment_method_id,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    current_period_end.to_rfc3339(),
-                    next_billing_date.map(|d| d.to_rfc3339()),
-                    trial_ends_at.map(|d| d.to_rfc3339()),
-                    input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
-                    input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
-                    plan.discount_percent.map(|d| d.to_string()),
-                    plan.discount_amount.map(|d| d.to_string()),
-                    input.coupon_code,
-                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
-        } // Connection dropped here
+        tx.execute(
+            "INSERT INTO subscriptions (
+                id, subscription_number, customer_id, plan_id, plan_name, status,
+                billing_interval, custom_interval_days, price, currency, payment_method_id,
+                started_at, current_period_start, current_period_end, next_billing_date, trial_ends_at,
+                billing_cycle_count, failed_payment_attempts,
+                shipping_address, billing_address,
+                discount_percent, discount_amount, coupon_code,
+                metadata, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6,
+                ?7, ?8, ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, ?16,
+                0, 0,
+                ?17, ?18,
+                ?19, ?20, ?21,
+                ?22, ?23, ?24
+            )",
+            rusqlite::params![
+                id.to_string(),
+                subscription_number,
+                input.customer_id.to_string(),
+                input.plan_id.to_string(),
+                plan.name,
+                format!("{}", status),
+                format!("{}", plan.billing_interval),
+                plan.custom_interval_days,
+                price.to_string(),
+                plan.currency,
+                input.payment_method_id,
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+                current_period_end.to_rfc3339(),
+                next_billing_date.map(|d| d.to_rfc3339()),
+                trial_ends_at.map(|d| d.to_rfc3339()),
+                input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
+                input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
+                plan.discount_percent.map(|d| d.to_string()),
+                plan.discount_amount.map(|d| d.to_string()),
+                input.coupon_code,
+                input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+            ],
+        )
+        .map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
 
-        // Create subscription items (each gets its own connection)
         for item in items_to_create {
-            self.create_subscription_item(id, item, &plan)?;
+            self.create_subscription_item_with_conn(&tx, id, item, &plan)?;
         }
 
-        // Record creation event
-        self.record_event(id, SubscriptionEventType::Created, "Subscription created", None, None)?;
+        self.record_event_with_conn(
+            &tx,
+            id,
+            SubscriptionEventType::Created,
+            "Subscription created",
+            None,
+            None,
+        )?;
 
-        if trial_ends_at.is_some() {
-            self.record_event(id, SubscriptionEventType::TrialStarted,
-                &format!("Trial started, ends on {}", trial_ends_at.unwrap().format("%Y-%m-%d")),
-                None, None)?;
+        if let Some(trial_end) = trial_ends_at {
+            self.record_event_with_conn(
+                &tx,
+                id,
+                SubscriptionEventType::TrialStarted,
+                &format!("Trial started, ends on {}", trial_end.format("%Y-%m-%d")),
+                None,
+                None,
+            )?;
         } else {
-            self.record_event(id, SubscriptionEventType::Activated, "Subscription activated", None, None)?;
+            self.record_event_with_conn(
+                &tx,
+                id,
+                SubscriptionEventType::Activated,
+                "Subscription activated",
+                None,
+                None,
+            )?;
         }
+
+        tx.commit().map_err(|e| {
+            stateset_core::CommerceError::DatabaseError(format!("Commit error: {}", e))
+        })?;
 
         self.get_subscription(id)?
             .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created subscription".into()))
@@ -866,11 +888,13 @@ impl SqliteSubscriptionRepository {
     // Subscription Items
     // ========================================================================
 
-    fn create_subscription_item(&self, subscription_id: Uuid, input: CreateSubscriptionItem, plan: &SubscriptionPlan) -> Result<SubscriptionItem> {
-        let conn = self.pool.get().map_err(|e| {
-            stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
-        })?;
-
+    fn create_subscription_item_with_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        subscription_id: Uuid,
+        input: CreateSubscriptionItem,
+        plan: &SubscriptionPlan,
+    ) -> Result<SubscriptionItem> {
         let id = Uuid::new_v4();
         let unit_price = input.unit_price.unwrap_or(plan.price / Decimal::from(plan.items.len().max(1)));
         let line_total = unit_price * Decimal::from(input.quantity);
@@ -1095,6 +1119,18 @@ impl SqliteSubscriptionRepository {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
 
+        self.record_event_with_conn(&conn, subscription_id, event_type, description, data, triggered_by)
+    }
+
+    fn record_event_with_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        subscription_id: Uuid,
+        event_type: SubscriptionEventType,
+        description: &str,
+        data: Option<serde_json::Value>,
+        triggered_by: Option<&str>,
+    ) -> Result<SubscriptionEvent> {
         let id = Uuid::new_v4();
         let now = Utc::now();
 

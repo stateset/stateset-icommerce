@@ -196,7 +196,14 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn orders(&self) -> Orders {
-        Orders::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            return Orders::new(self.db.clone(), self.event_system.clone());
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            return Orders::new(self.db.clone());
+        }
     }
 
     /// Access inventory operations.
@@ -225,7 +232,14 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn inventory(&self) -> Inventory {
-        Inventory::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            return Inventory::new(self.db.clone(), self.event_system.clone());
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            return Inventory::new(self.db.clone());
+        }
     }
 
     /// Access customer operations.
@@ -246,7 +260,14 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn customers(&self) -> Customers {
-        Customers::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            return Customers::new(self.db.clone(), self.event_system.clone());
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            return Customers::new(self.db.clone());
+        }
     }
 
     /// Access product operations.
@@ -272,7 +293,14 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn products(&self) -> Products {
-        Products::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            return Products::new(self.db.clone(), self.event_system.clone());
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            return Products::new(self.db.clone());
+        }
     }
 
     /// Access return operations.
@@ -298,7 +326,14 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn returns(&self) -> Returns {
-        Returns::new(self.db.clone())
+        #[cfg(feature = "events")]
+        {
+            return Returns::new(self.db.clone(), self.event_system.clone());
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            return Returns::new(self.db.clone());
+        }
     }
 
     /// Access Bill of Materials (BOM) operations.

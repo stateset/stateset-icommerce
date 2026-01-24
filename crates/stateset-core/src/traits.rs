@@ -84,6 +84,9 @@ pub trait InventoryRepository {
     /// Reserve inventory
     fn reserve(&self, input: ReserveInventory) -> Result<InventoryReservation>;
 
+    /// Get a reservation by ID
+    fn get_reservation(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>>;
+
     /// Release reservation
     fn release_reservation(&self, reservation_id: Uuid) -> Result<()>;
 

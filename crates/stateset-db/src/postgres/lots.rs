@@ -473,7 +473,7 @@ impl PgLotRepository {
 
         let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(input.lot_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
@@ -521,7 +521,7 @@ impl PgLotRepository {
 
         let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(input.lot_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
@@ -578,7 +578,7 @@ impl PgLotRepository {
 
         let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(input.lot_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
@@ -656,7 +656,7 @@ impl PgLotRepository {
              WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL",
         )
         .bind(reservation_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
@@ -711,7 +711,7 @@ impl PgLotRepository {
              WHERE id = $1 AND released_at IS NULL AND confirmed_at IS NULL",
         )
         .bind(reservation_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
@@ -814,7 +814,7 @@ impl PgLotRepository {
 
         let original_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(input.lot_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
@@ -919,7 +919,7 @@ impl PgLotRepository {
         for lot_id in &input.source_lot_ids {
             let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
                 .bind(lot_id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?
                 .ok_or_else(|| {
@@ -950,7 +950,7 @@ impl PgLotRepository {
 
         let template_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(input.source_lot_ids[0])
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         let template = Self::row_to_lot(template_row)?;
@@ -1030,7 +1030,7 @@ impl PgLotRepository {
 
         let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1")
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -1077,7 +1077,7 @@ impl PgLotRepository {
             "SELECT quantity_quarantined FROM lots WHERE id = $1",
         )
         .bind(id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 

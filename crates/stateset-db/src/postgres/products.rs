@@ -535,7 +535,7 @@ impl PgProductRepository {
             .bind(&seo_json)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -569,7 +569,7 @@ impl PgProductRepository {
                     .bind(true)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
                 }
@@ -619,7 +619,7 @@ impl PgProductRepository {
 
             let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
                 .bind(id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::ProductNotFound(id))?;
@@ -653,7 +653,7 @@ impl PgProductRepository {
             .bind(now)
             .bind(id)
             .bind(current_version)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -711,7 +711,7 @@ impl PgProductRepository {
         sqlx::query("UPDATE products SET status = 'archived', updated_at = $1 WHERE id = ANY($2)")
             .bind(now)
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

@@ -296,11 +296,12 @@ export class SequencerClient {
         vesVersion: e.envelope.ves_version || 1,
         payloadKind: e.envelope.payload_kind || 0,
         payloadEncrypted: e.envelope.payload_encrypted,
-        payloadPlainHash: e.envelope.payload_plain_hash,
-        payloadCipherHash: e.envelope.payload_cipher_hash,
-        // VES v1.0 signature fields
-        agentKeyId: e.envelope.agent_key_id,
-        agentSignature: e.envelope.agent_signature,
+        // Backwards compat: use payload_hash if payload_plain_hash not present
+        payloadPlainHash: e.envelope.payload_plain_hash || e.envelope.payload_hash,
+        payloadCipherHash: e.envelope.payload_cipher_hash || '0000000000000000000000000000000000000000000000000000000000000000',
+        // VES v1.0 signature fields (may be null for legacy events)
+        agentKeyId: e.envelope.agent_key_id || 0,
+        agentSignature: e.envelope.agent_signature || '0000000000000000000000000000000000000000000000000000000000000000',
         // Metadata
         baseVersion: e.envelope.base_version,
         createdAt: e.envelope.created_at,

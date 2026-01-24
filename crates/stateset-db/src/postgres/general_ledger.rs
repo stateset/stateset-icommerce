@@ -763,7 +763,7 @@ impl PgGeneralLedgerRepository {
         .bind(JournalEntryStatus::Draft.to_string())
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -793,7 +793,7 @@ impl PgGeneralLedgerRepository {
             .bind(line.reference_type.clone())
             .bind(line.reference_id)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
         }
@@ -952,7 +952,7 @@ impl PgGeneralLedgerRepository {
         .bind(now)
         .bind(posted_by)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -987,7 +987,7 @@ impl PgGeneralLedgerRepository {
 
         sqlx::query("UPDATE gl_journal_entries SET status = 'voided' WHERE id = $1")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

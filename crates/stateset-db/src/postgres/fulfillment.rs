@@ -287,7 +287,7 @@ impl PgFulfillmentRepository {
         .bind(&input.notes)
         .bind(&input.created_by)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -295,7 +295,7 @@ impl PgFulfillmentRepository {
             sqlx::query("INSERT INTO wave_orders (wave_id, order_id) VALUES ($1,$2)")
                 .bind(id)
                 .bind(order_id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
         }

@@ -282,7 +282,7 @@ impl PgOrderRepository {
 
         // Get next order number
         let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
-            .fetch_one(&mut tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -332,7 +332,7 @@ impl PgOrderRepository {
         .bind(&billing_address_json)
         .bind(now)
         .bind(now)
-        .execute(&mut tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -363,7 +363,7 @@ impl PgOrderRepository {
             .bind(tax)
             .bind(item_total)
             .bind(now)
-            .execute(&mut tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -683,7 +683,7 @@ impl PgOrderRepository {
 
             // Get next order number
             let order_number: (i64,) = sqlx::query_as("SELECT nextval('order_number_seq')")
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -733,7 +733,7 @@ impl PgOrderRepository {
             .bind(&billing_address_json)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -764,7 +764,7 @@ impl PgOrderRepository {
                 .bind(tax)
                 .bind(item_total)
                 .bind(now)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -836,14 +836,14 @@ impl PgOrderRepository {
             // Get existing order
             let existing_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
                 .bind(id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(tx.as_mut())
                 .await
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::OrderNotFound(id))?;
 
             let existing_items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
                 .bind(id)
-                .fetch_all(&mut *tx)
+                .fetch_all(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -921,7 +921,7 @@ impl PgOrderRepository {
             .bind(now)
             .bind(id)
             .bind(expected_version)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -936,13 +936,13 @@ impl PgOrderRepository {
             // Fetch updated order
             let updated_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1")
                 .bind(id)
-                .fetch_one(&mut *tx)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
             let items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
                 .bind(id)
-                .fetch_all(&mut *tx)
+                .fetch_all(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -979,14 +979,14 @@ impl PgOrderRepository {
         // Delete order items first (foreign key constraint)
         sqlx::query("DELETE FROM order_items WHERE order_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete orders
         sqlx::query("DELETE FROM orders WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

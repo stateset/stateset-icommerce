@@ -874,7 +874,7 @@ impl PgPaymentRepository {
             .bind(&input.metadata)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -955,7 +955,7 @@ impl PgPaymentRepository {
                  FROM payments WHERE id = $1"
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .map(Self::row_to_payment)
@@ -975,7 +975,7 @@ impl PgPaymentRepository {
             .bind(input.metadata.or(payment.metadata))
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -988,7 +988,7 @@ impl PgPaymentRepository {
                  FROM payments WHERE id = $1"
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1028,14 +1028,14 @@ impl PgPaymentRepository {
         // Delete associated refunds first (foreign key constraint)
         sqlx::query("DELETE FROM refunds WHERE payment_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete payments
         sqlx::query("DELETE FROM payments WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

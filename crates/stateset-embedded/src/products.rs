@@ -8,14 +8,56 @@ use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[cfg(feature = "events")]
+use crate::events::EventSystem;
+#[cfg(feature = "events")]
+use stateset_core::CommerceEvent;
+
 /// Product operations interface.
 pub struct Products {
     db: Arc<dyn Database>,
+    #[cfg(feature = "events")]
+    event_system: Arc<EventSystem>,
 }
 
 impl Products {
+    #[cfg(feature = "events")]
+    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
+        Self { db, event_system }
+    }
+
+    #[cfg(not(feature = "events"))]
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
+    }
+
+    #[cfg(feature = "events")]
+    fn emit(&self, event: CommerceEvent) {
+        self.event_system.emit(event);
+    }
+
+    #[cfg(feature = "events")]
+    fn fields_changed(input: &UpdateProduct) -> Vec<String> {
+        let mut fields = Vec::new();
+        if input.name.is_some() {
+            fields.push("name".to_string());
+        }
+        if input.slug.is_some() {
+            fields.push("slug".to_string());
+        }
+        if input.description.is_some() {
+            fields.push("description".to_string());
+        }
+        if input.status.is_some() {
+            fields.push("status".to_string());
+        }
+        if input.attributes.is_some() {
+            fields.push("attributes".to_string());
+        }
+        if input.seo.is_some() {
+            fields.push("seo".to_string());
+        }
+        fields
     }
 
     /// Create a new product.
@@ -39,7 +81,17 @@ impl Products {
     /// # Ok::<(), CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateProduct) -> Result<Product> {
-        self.db.products().create(input)
+        let product = self.db.products().create(input)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::ProductCreated {
+                product_id: product.id,
+                name: product.name.clone(),
+                slug: product.slug.clone(),
+                timestamp: product.created_at,
+            });
+        }
+        Ok(product)
     }
 
     /// Get a product by ID.
@@ -54,7 +106,36 @@ impl Products {
 
     /// Update a product.
     pub fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
-        self.db.products().update(id, input)
+        #[cfg(feature = "events")]
+        let previous = self.db.products().get(id)?;
+        #[cfg(feature = "events")]
+        let fields_changed = Self::fields_changed(&input);
+
+        let updated = self.db.products().update(id, input)?;
+
+        #[cfg(feature = "events")]
+        {
+            if !fields_changed.is_empty() {
+                self.emit(CommerceEvent::ProductUpdated {
+                    product_id: updated.id,
+                    fields_changed,
+                    timestamp: updated.updated_at,
+                });
+            }
+
+            if let Some(previous) = previous {
+                if previous.status != updated.status {
+                    self.emit(CommerceEvent::ProductStatusChanged {
+                        product_id: updated.id,
+                        from_status: previous.status.to_string(),
+                        to_status: updated.status.to_string(),
+                        timestamp: updated.updated_at,
+                    });
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     /// List products with optional filtering.
@@ -77,7 +158,17 @@ impl Products {
 
     /// Add a variant to a product.
     pub fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
-        self.db.products().add_variant(product_id, variant)
+        let variant = self.db.products().add_variant(product_id, variant)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::ProductVariantAdded {
+                product_id,
+                variant_id: variant.id,
+                sku: variant.sku.clone(),
+                timestamp: variant.created_at,
+            });
+        }
+        Ok(variant)
     }
 
     /// Get a variant by ID.
@@ -92,7 +183,16 @@ impl Products {
 
     /// Update a variant.
     pub fn update_variant(&self, id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
-        self.db.products().update_variant(id, variant)
+        let variant = self.db.products().update_variant(id, variant)?;
+        #[cfg(feature = "events")]
+        {
+            self.emit(CommerceEvent::ProductVariantUpdated {
+                variant_id: variant.id,
+                sku: variant.sku.clone(),
+                timestamp: variant.updated_at,
+            });
+        }
+        Ok(variant)
     }
 
     /// Delete a variant.
@@ -112,7 +212,7 @@ impl Products {
 
     /// Activate a product (make it available for purchase).
     pub fn activate(&self, id: Uuid) -> Result<Product> {
-        self.db.products().update(
+        self.update(
             id,
             UpdateProduct {
                 status: Some(ProductStatus::Active),
@@ -123,7 +223,7 @@ impl Products {
 
     /// Archive a product.
     pub fn archive(&self, id: Uuid) -> Result<Product> {
-        self.db.products().update(
+        self.update(
             id,
             UpdateProduct {
                 status: Some(ProductStatus::Archived),

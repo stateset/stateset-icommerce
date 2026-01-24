@@ -19,6 +19,7 @@ serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time"] }
 futures = "0.3"
 tracing = "0.1"
+sqlx = { workspace = true, optional = true }
 
 # Event streaming dependencies
 reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
@@ -34,7 +35,7 @@ rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 [features]
 default = ["sqlite", "events"]
 sqlite = ["stateset-db/sqlite"]
-postgres = ["stateset-db/postgres"]
+postgres = ["stateset-db/postgres", "sqlx"]
 events = ["reqwest/rustls-tls", "hmac", "sha2", "hex"]
 sqlite-events = ["events", "r2d2", "r2d2_sqlite", "rusqlite"]
 

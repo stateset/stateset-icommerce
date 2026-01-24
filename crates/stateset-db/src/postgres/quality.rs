@@ -394,6 +394,11 @@ impl PgQualityRepository {
         Ok(rows.into_iter().map(Self::row_to_inspection_item).collect::<Result<Vec<_>>>()?)
     }
 
+
+    pub async fn get_inspection_items_async(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
+        self.load_inspection_items_async(inspection_id).await
+    }
+
     // ========================================================================
     // Inspection operations
     // ========================================================================
@@ -420,7 +425,7 @@ impl PgQualityRepository {
         .bind(&input.notes)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -441,7 +446,7 @@ impl PgQualityRepository {
             .bind(serde_json::json!([]))
             .bind(InspectionResult::Pending.to_string())
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

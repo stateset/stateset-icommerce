@@ -1047,7 +1047,7 @@ impl PgWarrantyRepository {
             .bind(&input.notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1114,7 +1114,7 @@ impl PgWarrantyRepository {
                  claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1 FOR UPDATE"
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -1133,7 +1133,7 @@ impl PgWarrantyRepository {
             .bind(input.notes.or(warranty.notes.clone()))
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1145,7 +1145,7 @@ impl PgWarrantyRepository {
                  claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1"
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1190,14 +1190,14 @@ impl PgWarrantyRepository {
         // Delete warranty claims first (foreign key constraint)
         sqlx::query("DELETE FROM warranty_claims WHERE warranty_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete warranties
         sqlx::query("DELETE FROM warranties WHERE id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

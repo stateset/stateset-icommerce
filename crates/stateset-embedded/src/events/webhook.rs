@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use stateset_core::CommerceEvent;
+use std::future::Future;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
@@ -79,6 +80,7 @@ pub struct WebhookConfig {
     pub max_retries: u32,
     pub timeout_secs: u64,
     pub retry_delay_ms: u64,
+    pub max_in_flight: usize,
 }
 
 impl Default for WebhookConfig {
@@ -87,6 +89,39 @@ impl Default for WebhookConfig {
             max_retries: 3,
             timeout_secs: 30,
             retry_delay_ms: 1000,
+            max_in_flight: 8,
+        }
+    }
+}
+
+enum WebhookRuntime {
+    Handle(tokio::runtime::Handle),
+    Owned(tokio::runtime::Runtime),
+}
+
+impl WebhookRuntime {
+    fn new() -> Self {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            Self::Handle(handle)
+        } else {
+            let runtime = tokio::runtime::Runtime::new()
+                .expect("Failed to create webhook runtime");
+            Self::Owned(runtime)
+        }
+    }
+
+    fn spawn<F>(&self, fut: F)
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        match self {
+            Self::Handle(handle) => {
+                handle.spawn(fut);
+            }
+            Self::Owned(runtime) => {
+                runtime.spawn(fut);
+            }
         }
     }
 }
@@ -122,6 +157,7 @@ pub struct WebhookManager {
     webhooks: Arc<RwLock<HashMap<Uuid, Webhook>>>,
     config: WebhookConfig,
     client: reqwest::Client,
+    runtime: WebhookRuntime,
 }
 
 impl WebhookManager {
@@ -131,6 +167,7 @@ impl WebhookManager {
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
             .expect("Failed to create HTTP client");
+        let runtime = WebhookRuntime::new();
 
         Self {
             webhooks: Arc::new(RwLock::new(HashMap::new())),
@@ -140,6 +177,7 @@ impl WebhookManager {
                 ..Default::default()
             },
             client,
+            runtime,
         }
     }
 
@@ -195,6 +233,8 @@ impl WebhookManager {
 
     /// Deliver an event to all matching webhooks (spawns async tasks)
     pub fn deliver(&self, event: CommerceEvent) {
+        use futures::stream::{self, StreamExt};
+
         let webhooks: Vec<Webhook> = self
             .webhooks
             .read()
@@ -210,17 +250,19 @@ impl WebhookManager {
 
         let client = self.client.clone();
         let config = self.config.clone();
+        let max_in_flight = config.max_in_flight.max(1);
 
-        tokio::spawn(async move {
-            for webhook in webhooks {
+        self.runtime.spawn(async move {
+            let deliveries = stream::iter(webhooks.into_iter().map(|webhook| {
                 let client = client.clone();
                 let event = event.clone();
                 let config = config.clone();
-
-                tokio::spawn(async move {
+                async move {
                     deliver_to_webhook(&client, &webhook, &event, &config).await;
-                });
-            }
+                }
+            }));
+
+            deliveries.for_each_concurrent(max_in_flight, |fut| fut).await;
         });
     }
 }

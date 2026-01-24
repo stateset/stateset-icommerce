@@ -31,6 +31,7 @@ pub mod subscription;
 pub mod tax;
 pub mod warehouse;
 pub mod warranty;
+pub mod x402;
 
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
@@ -63,6 +64,7 @@ pub use subscription::*;
 pub use tax::*;
 pub use warehouse::*;
 pub use warranty::*;
+pub use x402::*;
 
 /// Common ID type alias
 pub type Id = uuid::Uuid;

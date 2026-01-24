@@ -679,7 +679,7 @@ impl PgCostAccountingRepository {
              ORDER BY layer_date ASC",
         )
         .bind(&input.sku)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -694,7 +694,7 @@ impl PgCostAccountingRepository {
             sqlx::query("UPDATE cost_layers SET remaining_quantity = $1 WHERE id = $2")
                 .bind(new_remaining)
                 .bind(layer.id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -731,7 +731,7 @@ impl PgCostAccountingRepository {
              ORDER BY layer_date DESC",
         )
         .bind(&input.sku)
-        .fetch_all(&mut *tx)
+        .fetch_all(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -746,7 +746,7 @@ impl PgCostAccountingRepository {
             sqlx::query("UPDATE cost_layers SET remaining_quantity = $1 WHERE id = $2")
                 .bind(new_remaining)
                 .bind(layer.id)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 

@@ -1065,7 +1065,7 @@ stateset-icommerce/
 │   ├── stateset-db/           # Database layer
 │   │   ├── src/sqlite/        # 18 SQLite modules
 │   │   ├── src/postgres/      # 8 PostgreSQL modules
-│   │   └── migrations/        # 25 SQL migrations
+│   │   └── migrations/        # 26 SQL migrations
 │   └── stateset-embedded/     # High-level API
 │       └── src/               # 33 API modules
 ├── bindings/

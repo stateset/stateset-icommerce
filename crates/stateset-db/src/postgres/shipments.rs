@@ -265,7 +265,7 @@ impl PgShipmentRepository {
         .bind(&input.notes)
         .bind(now)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -287,7 +287,7 @@ impl PgShipmentRepository {
                 .bind(item_input.quantity)
                 .bind(now)
                 .bind(now)
-                .execute(&mut *tx)
+                .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
 
@@ -774,7 +774,7 @@ impl PgShipmentRepository {
             .bind(&input.notes)
             .bind(now)
             .bind(now)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -796,7 +796,7 @@ impl PgShipmentRepository {
                     .bind(item_input.quantity)
                     .bind(now)
                     .bind(now)
-                    .execute(&mut *tx)
+                    .execute(tx.as_mut())
                     .await
                     .map_err(map_db_error)?;
 
@@ -881,7 +881,7 @@ impl PgShipmentRepository {
                  FROM shipments WHERE id = $1 FOR UPDATE"
             )
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
@@ -938,7 +938,7 @@ impl PgShipmentRepository {
             .bind(&new_notes)
             .bind(now)
             .bind(id)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -952,7 +952,7 @@ impl PgShipmentRepository {
                  FROM shipments WHERE id = $1"
             )
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -962,7 +962,7 @@ impl PgShipmentRepository {
                  FROM shipment_items WHERE shipment_id = $1"
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -971,7 +971,7 @@ impl PgShipmentRepository {
                  FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC"
             )
             .bind(id)
-            .fetch_all(&mut *tx)
+            .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1008,14 +1008,14 @@ impl PgShipmentRepository {
         // Delete shipment events first (foreign key constraint)
         sqlx::query("DELETE FROM shipment_events WHERE shipment_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
         // Delete shipment items (foreign key constraint)
         sqlx::query("DELETE FROM shipment_items WHERE shipment_id = ANY($1)")
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
@@ -1023,7 +1023,7 @@ impl PgShipmentRepository {
         sqlx::query("UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = ANY($2)")
             .bind(Utc::now())
             .bind(&ids)
-            .execute(&mut *tx)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 

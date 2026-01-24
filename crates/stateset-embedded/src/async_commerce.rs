@@ -106,7 +106,7 @@ use stateset_core::{
     SerialValidation,
     // Warehouse types
     CreateWarehouse, Warehouse, UpdateWarehouse, WarehouseFilter, CreateZone, Zone, UpdateZone,
-    CreateLocation, Location, LocationFilter, LocationInventory, AdjustLocationInventory,
+    CreateLocation, UpdateLocation, Location, LocationFilter, LocationInventory, AdjustLocationInventory,
     MoveInventory, LocationMovement, LocationInventoryFilter, MovementFilter,
     // Receiving types
     CreateReceipt, Receipt, UpdateReceipt, ReceiptFilter, ReceiveItems, ReceiptItem,
@@ -2246,9 +2246,10 @@ impl AsyncSubscriptions {
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
+        let description = notes.unwrap_or_else(|| "Event".to_string());
         self.db
             .subscriptions()
-            .record_event_async(subscription_id, event_type, notes)
+            .record_event_async(subscription_id, event_type, &description, None, None)
             .await
     }
 
