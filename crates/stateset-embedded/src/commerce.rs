@@ -36,13 +36,18 @@ use crate::events::{EventSystem, EventConfig, EventSubscription, Webhook};
 /// let returns = commerce.returns();
 /// # Ok::<(), stateset_embedded::CommerceError>(())
 /// ```
-pub struct Commerce {
-    db: Arc<dyn Database>,
+pub struct Commerce<DB: Database = SqliteDatabase>
+where
+    DB: Clone + Send + Sync + 'static,
+{
+    db: Arc<DB>,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
 
-impl Commerce {
+impl<DB> Commerce<DB>
+where
+    DB: Database + Clone + Send + Sync + 'static,
     /// Create a new Commerce instance with a SQLite database.
     ///
     /// # Arguments

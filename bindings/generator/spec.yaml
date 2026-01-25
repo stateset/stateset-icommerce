@@ -1,0 +1,377 @@
+# Binding Generator Specification
+# This declarative spec generates 11 language bindings from a single source of truth
+
+# ============================================================================
+# Metadata
+# ============================================================================
+name: "stateset-icommerce"
+version: "0.2.3"
+description: "The SQLite of commerce operations"
+
+# ============================================================================
+# Domain Modules
+# ============================================================================
+domains:
+  # Commerce Core
+  - name: orders
+    model: Order
+    methods:
+      - create: CreateOrder -> Order
+      - get: id -> Option<Order>
+      - list: OrderFilter -> Vec<Order>
+      - update_status: (id, OrderStatus) -> Order
+      - ship: (id, tracking_number?) -> Order
+      - cancel: id -> Order
+
+  - name: customers
+    model: Customer
+    methods:
+      - create: CreateCustomer -> Customer
+      - get: id -> Option<Customer>
+      - list: CustomerFilter -> Vec<Customer>
+      - update: (id, UpdateCustomer) -> Customer
+
+  - name: products
+    model: Product
+    methods:
+      - create: CreateProduct -> Product
+      - get: id -> Option<Product>
+      - list: ProductFilter -> Vec<Product>
+
+  - name: inventory
+    methods:
+      - create_item: CreateInventoryItem -> InventoryItem
+      - get_stock: sku -> i32
+      - adjust: (sku, delta, reason) -> ()
+      - reserve: ReserveInventory -> InventoryReservation
+      - confirm_reservation: reservation_id -> ()
+      - release_reservation: reservation_id -> ()
+
+  - name: carts
+    model: Cart
+    methods:
+      - create: CreateCart -> Cart
+      - get: id -> Option<Cart>
+      - add_item: (cart_id, AddCartItem) -> CartItem
+      - update_item: (cart_id, item_id, UpdateCartItem) -> CartItem
+      - remove_item: (cart_id, item_id) -> ()
+      - set_shipping: (cart_id, SetCartShipping) -> ()
+      - set_payment: (cart_id, SetCartPayment) -> ()
+      - apply_discount: (cart_id, ApplyCartDiscount) -> Result
+      - complete_checkout: cart_id -> CheckoutResult
+      - get_shipping_rates: (cart_id, CartAddress) -> Vec<ShippingRate>
+
+  # Financial Operations
+  - name: payments
+    methods:
+      - create: CreatePayment -> Payment
+      - list: PaymentFilter -> Vec<Payment>
+      - get: id -> Option<Payment>
+      - complete: payment_id -> Payment
+      - create_refund: CreateRefund -> Refund
+
+  - name: returns
+    model: Return
+    methods:
+      - create: CreateReturn -> Return
+      - list: ReturnFilter -> Vec<Return>
+      - get: id -> Option<Return>
+      - approve: return_id -> Return
+      - reject: (return_id, reason) -> Return
+
+  - name: subscriptions
+    methods:
+      - create_plan: CreateSubscriptionPlan -> SubscriptionPlan
+      - create: CreateSubscription -> Subscription
+      - list_plans: SubscriptionPlanFilter -> Vec<SubscriptionPlan>
+      - list: SubscriptionFilter -> Vec<Subscription>
+      - get: id -> Option<Subscription>
+      - pause: (id, PauseSubscription) -> Subscription
+      - resume: id -> Subscription
+      - cancel: (id, CancelSubscription) -> Subscription
+      - skip_billing: (id, SkipBillingCycle) -> Subscription
+
+  # Supply Chain
+  - name: shipments
+    model: Shipment
+    methods:
+      - create: CreateShipment -> Shipment
+      - list: ShipmentFilter -> Vec<Shipment>
+      - get: id -> Option<Shipment>
+      - deliver: shipment_id -> Shipment
+
+  - name: purchase_orders
+    model: PurchaseOrder
+    methods:
+      - create_supplier: CreateSupplier -> Supplier
+      - create_po: CreatePurchaseOrder -> PurchaseOrder
+      - list_suppliers: SupplierFilter -> Vec<Supplier>
+      - list_pos: PurchaseOrderFilter -> Vec<PurchaseOrder>
+      - approve: po_id -> PurchaseOrder
+      - send: po_id -> PurchaseOrder
+
+  - name: invoices
+    model: Invoice
+    methods:
+      - create: CreateInvoice -> Invoice
+      - send: invoice_id -> Invoice
+      - record_payment: RecordInvoicePayment -> Invoice
+      - list_overdue: () -> Vec<Invoice>
+      - list: InvoiceFilter -> Vec<Invoice>
+
+  - name: warranties
+    model: Warranty
+    methods:
+      - create: CreateWarranty -> Warranty
+      - list: WarrantyFilter -> Vec<Warranty>
+      - create_claim: CreateWarrantyClaim -> WarrantyClaim
+      - approve_claim: claim_id -> WarrantyClaim
+
+  - name: manufacturing
+    methods:
+      - create_bom: CreateBom -> BillOfMaterials
+      - list_boms: BomFilter -> Vec<BillOfMaterials>
+      - add_component: (bom_id, CreateBomComponent) -> BomComponent
+      - activate_bom: bom_id -> BillOfMaterials
+      - create_work_order: CreateWorkOrder -> WorkOrder
+      - list_work_orders: WorkOrderFilter -> Vec<WorkOrder>
+      - start_work_order: work_order_id -> WorkOrder
+      - complete_work_order: (work_order_id, units_produced) -> WorkOrder
+      - cancel_work_order: work_order_id -> WorkOrder
+
+  # Operations & Analytics
+  - name: analytics
+    methods:
+      - sales_summary: (period, granularity) -> SalesSummary
+      - top_products: (limit, period) -> Vec<TopProduct>
+      - customer_metrics: (customer_id, period) -> CustomerMetrics
+      - top_customers: (limit, period) -> Vec<TopCustomer>
+      - inventory_health: () -> InventoryHealth
+      - low_stock_items: (threshold) -> Vec<LowStockItem>
+      - demand_forecast: (days_ahead) -> Vec<DemandForecast>
+      - revenue_forecast: (days_ahead) -> RevenueForecast
+      - order_status_breakdown: (period) -> OrderStatusBreakdown
+      - return_metrics: (period) -> ReturnMetrics
+
+  - name: currency
+    methods:
+      - convert: ConvertCurrency -> ConversionResult
+      - get_rate: (base, quote) -> ExchangeRate
+      - list_rates: ExchangeRateFilter -> Vec<ExchangeRate>
+      - set_rate: SetExchangeRate -> ExchangeRate
+      - get_settings: () -> StoreCurrencySettings
+      - set_base_currency: currency_code -> StoreCurrencySettings
+      - enable_currencies: Vec<currency_code> -> StoreCurrencySettings
+      - format_currency: (amount, currency_code) -> String
+
+  - name: tax
+    methods:
+      - calculate: TaxCalculationRequest -> TaxCalculationResult
+      - calculate_cart_tax: (cart_id, shipping_address) -> TaxCalculationResult
+      - get_rate: jurisdiction_id -> TaxRate
+      - list_rates: TaxRateFilter -> Vec<TaxRate>
+      - list_jurisdictions: TaxJurisdictionFilter -> Vec<TaxJurisdiction>
+      - get_settings: () -> TaxSettings
+      - get_us_state_tax: (state_code) -> UsStateTaxInfo
+      - get_eu_vat: (country_code) -> EuVatInfo
+      - get_canadian_tax: (province_code) -> CanadianTaxInfo
+      - create_exemption: CreateTaxExemption -> TaxExemption
+
+  - name: promotions
+    model: Promotion
+    methods:
+      - create: CreatePromotion -> Promotion
+      - list: PromotionFilter -> Vec<Promotion>
+      - get: id -> Option<Promotion>
+      - activate: promotion_id -> Promotion
+      - deactivate: promotion_id -> Promotion
+      - create_coupon: CreateCouponCode -> CouponCode
+      - validate_coupon: code -> CouponValidation
+      - list_coupons: CouponFilter -> Vec<CouponCode>
+      - get_active: () -> Vec<Promotion>
+      - apply_to_cart: ApplyPromotionsRequest -> ApplyPromotionsResult
+
+# ============================================================================
+# Target Languages
+# ============================================================================
+targets:
+  # Rust (native)
+  - name: rust
+    type: native
+    output: crated/stateset-embedded/src/
+    features: ["static_dispatch", "metrics", "tracing"]
+
+  # Node.js (NAPI)
+  - name: node
+    type: ffi
+    binding: napi
+    runtime: node
+    output: bindings/node/
+    package: "@stateset/embedded"
+    dependencies:
+      - "@neon-rs/neon": "^0.10"
+
+  # Python (PyO3)
+  - name: python
+    type: ffi
+    binding: pyo3
+    runtime: python
+    output: bindings/python/
+    package: stateset-embedded
+    dependencies:
+      - pyo3: "^0.20"
+      - maturin: "^1.0"
+
+  # Ruby (Magnus)
+  - name: ruby
+    type: ffi
+    binding: magnus
+    runtime: ruby
+    output: bindings/ruby/
+    package: stateset_embedded
+    dependencies:
+      - magnus: "^0.6"
+
+  # PHP (ext-php-rs)
+  - name: php
+    type: ffi
+    binding: ext-php-rs
+    runtime: php
+    output: bindings/php/
+    package: stateset/embedded
+    dependencies:
+      - ext-php-rs: "^0.11"
+
+  # Java (JNI)
+  - name: java
+    type: ffi
+    binding: jni
+    runtime: jvm
+    output: bindings/java/
+    package: com.stateset:embedded
+    extensions: [kotlin]
+
+  # Kotlin (JNI)
+  - name: kotlin
+    type: ffi
+    binding: jni
+    runtime: jvm
+    output: bindings/kotlin/
+    package: com.stateset:embedded-kotlin
+
+  # Swift (C FFI)
+  - name: swift
+    type: ffi
+    binding: c_ffi
+    runtime: swift
+    output: bindings/swift/
+    package: StateSet
+    platforms: [ios, macos]
+
+  # C# (P/Invoke)
+  - name: dotnet
+    type: ffi
+    binding: p/invoke
+    runtime: dotnet
+    output: bindings/dotnet/
+    package: StateSet.Embedded
+    extensions: [vb, fsharp]
+
+  # Go (cgo)
+  - name: go
+    type: ffi
+    binding: cgo
+    runtime: go
+    output: bindings/go/
+    package: github.com/stateset/stateset-icommerce/bindings/go/stateset
+
+  # WebAssembly
+  - name: wasm
+    type: wasm
+    runtime: browser
+    output: bindings/wasm/
+    package: @stateset/embedded-wasm
+    features: ["browser", "node"]
+
+# ============================================================================
+# Type Mappings
+# ============================================================================
+type_mappings:
+  # Rust
+  rust:
+    string: String
+    int: i32
+    float: rust_decimal::Decimal
+    bool: bool
+    uuid: uuid::Uuid
+    datetime: chrono::DateTime<chrono::Utc>
+    option: Option<T>
+
+  # Node.js
+  node:
+    string: string
+    int: number
+    float: string | number
+    bool: boolean
+    uuid: string
+    datetime: Date
+    option: T | null | undefined
+
+  # Python
+  python:
+    string: str
+    int: int
+    float: Decimal
+    bool: bool
+    uuid: str
+    datetime: datetime.datetime
+    option: Optional[T]
+
+  # Go
+  go:
+    string: string
+    int: int32
+    float: string (use custom Decimal type)
+    bool: bool
+    uuid: string
+    datetime: time.Time
+    option: *T
+
+  # Java/Kotlin
+  java:
+    string: String
+    int: Integer
+    float: String (use BigDecimal)
+    bool: Boolean
+    uuid: String
+    datetime: Instant
+    option: Optional<T>
+
+# ============================================================================
+# Error Handling
+# ============================================================================
+errors:
+  # Map CommerceError to language-specific exceptions
+  validation: InvalidInputError
+  not_found: NotFoundError
+  conflict: ConflictError
+  insufficient_stock: InsufficientStockError
+  permission_denied: PermissionDeniedError
+  internal: InternalError
+
+# ============================================================================
+# Async Support
+# ============================================================================
+async:
+  supported: [node, python, java, kotlin, dotnet]
+  blocking: [ruby, php, swift, go]
+  wasm_promises: true
+
+# ============================================================================
+# Feature Flags
+# ============================================================================
+features:
+  default: ["sqlite", "metrics", "tracing"]
+  postgres: ["postgres", "async"]
+  events: ["events"]
+  full: ["sqlite", "postgres", "events", "metrics", "tracing"]

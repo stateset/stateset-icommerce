@@ -29,6 +29,8 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+pub mod saga;
+
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteDatabase;
 
@@ -141,251 +143,140 @@ pub trait DatabaseExt {
         F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>;
 }
 
-#[cfg(feature = "sqlite")]
-impl Database for SqliteDatabase {
-    fn orders(&self) -> Box<dyn OrderRepository + '_> {
-        Box::new(self.orders())
-    }
+/// Macro to eliminate duplicate Database implementations
+/// Generates all 32 repository accessor methods for any concrete Database type
+macro_rules! impl_database_accessors {
+    ($db_type:ty) => {
+        impl Database for $db_type {
+            fn orders(&self) -> Box<dyn OrderRepository + '_> {
+                Box::new(self.orders())
+            }
 
-    fn inventory(&self) -> Box<dyn InventoryRepository + '_> {
-        Box::new(self.inventory())
-    }
+            fn inventory(&self) -> Box<dyn InventoryRepository + '_> {
+                Box::new(self.inventory())
+            }
 
-    fn customers(&self) -> Box<dyn CustomerRepository + '_> {
-        Box::new(self.customers())
-    }
+            fn customers(&self) -> Box<dyn CustomerRepository + '_> {
+                Box::new(self.customers())
+            }
 
-    fn products(&self) -> Box<dyn ProductRepository + '_> {
-        Box::new(self.products())
-    }
+            fn products(&self) -> Box<dyn ProductRepository + '_> {
+                Box::new(self.products())
+            }
 
-    fn returns(&self) -> Box<dyn ReturnRepository + '_> {
-        Box::new(self.returns())
-    }
+            fn returns(&self) -> Box<dyn ReturnRepository + '_> {
+                Box::new(self.returns())
+            }
 
-    fn bom(&self) -> Box<dyn BomRepository + '_> {
-        Box::new(self.bom())
-    }
+            fn bom(&self) -> Box<dyn BomRepository + '_> {
+                Box::new(self.bom())
+            }
 
-    fn work_orders(&self) -> Box<dyn WorkOrderRepository + '_> {
-        Box::new(self.work_orders())
-    }
+            fn work_orders(&self) -> Box<dyn WorkOrderRepository + '_> {
+                Box::new(self.work_orders())
+            }
 
-    fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
-        Box::new(self.shipments())
-    }
+            fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
+                Box::new(self.shipments())
+            }
 
-    fn payments(&self) -> Box<dyn PaymentRepository + '_> {
-        Box::new(self.payments())
-    }
+            fn payments(&self) -> Box<dyn PaymentRepository + '_> {
+                Box::new(self.payments())
+            }
 
-    fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
-        Box::new(self.warranties())
-    }
+            fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
+                Box::new(self.warranties())
+            }
 
-    fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
-        Box::new(self.purchase_orders())
-    }
+            fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
+                Box::new(self.purchase_orders())
+            }
 
-    fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
-        Box::new(self.invoices())
-    }
+            fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
+                Box::new(self.invoices())
+            }
 
-    fn carts(&self) -> Box<dyn CartRepository + '_> {
-        Box::new(self.carts())
-    }
+            fn carts(&self) -> Box<dyn CartRepository + '_> {
+                Box::new(self.carts())
+            }
 
-    fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
-        Box::new(self.analytics())
-    }
+            fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
+                Box::new(self.analytics())
+            }
 
-    fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
-        Box::new(self.currency())
-    }
+            fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
+                Box::new(self.currency())
+            }
 
-    fn tax(&self) -> Box<dyn TaxRepository + '_> {
-        Box::new(self.tax())
-    }
+            fn tax(&self) -> Box<dyn TaxRepository + '_> {
+                Box::new(self.tax())
+            }
 
-    fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
-        Box::new(self.promotions())
-    }
+            fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
+                Box::new(self.promotions())
+            }
 
-    fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
-        Box::new(self.subscriptions())
-    }
+            fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
+                Box::new(self.subscriptions())
+            }
 
-    fn quality(&self) -> Box<dyn QualityRepository + '_> {
-        Box::new(self.quality())
-    }
+            fn quality(&self) -> Box<dyn QualityRepository + '_> {
+                Box::new(self.quality())
+            }
 
-    fn lots(&self) -> Box<dyn LotRepository + '_> {
-        Box::new(self.lots())
-    }
+            fn lots(&self) -> Box<dyn LotRepository + '_> {
+                Box::new(self.lots())
+            }
 
-    fn serials(&self) -> Box<dyn SerialRepository + '_> {
-        Box::new(self.serials())
-    }
+            fn serials(&self) -> Box<dyn SerialRepository + '_> {
+                Box::new(self.serials())
+            }
 
-    fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
-        Box::new(self.warehouse())
-    }
+            fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
+                Box::new(self.warehouse())
+            }
 
-    fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
-        Box::new(self.receiving())
-    }
+            fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
+                Box::new(self.receiving())
+            }
 
-    fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
-        Box::new(self.fulfillment())
-    }
+            fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
+                Box::new(self.fulfillment())
+            }
 
-    fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
-        Box::new(self.accounts_payable())
-    }
+            fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
+                Box::new(self.accounts_payable())
+            }
 
-    fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
-        Box::new(self.cost_accounting())
-    }
+            fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
+                Box::new(self.cost_accounting())
+            }
 
-    fn credit(&self) -> Box<dyn CreditRepository + '_> {
-        Box::new(self.credit())
-    }
+            fn credit(&self) -> Box<dyn CreditRepository + '_> {
+                Box::new(self.credit())
+            }
 
-    fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
-        Box::new(self.backorder())
-    }
+            fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
+                Box::new(self.backorder())
+            }
 
-    fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
-        Box::new(self.accounts_receivable())
-    }
+            fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
+                Box::new(self.accounts_receivable())
+            }
 
-    fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
-        Box::new(self.general_ledger())
-    }
+            fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
+                Box::new(self.general_ledger())
+            }
+        }
+    };
 }
+
+// Apply the macro to generate Database implementations
+#[cfg(feature = "sqlite")]
+impl_database_accessors!(SqliteDatabase);
 
 #[cfg(feature = "postgres")]
-impl Database for PostgresDatabase {
-    fn orders(&self) -> Box<dyn OrderRepository + '_> {
-        Box::new(self.orders())
-    }
-
-    fn inventory(&self) -> Box<dyn InventoryRepository + '_> {
-        Box::new(self.inventory())
-    }
-
-    fn customers(&self) -> Box<dyn CustomerRepository + '_> {
-        Box::new(self.customers())
-    }
-
-    fn products(&self) -> Box<dyn ProductRepository + '_> {
-        Box::new(self.products())
-    }
-
-    fn returns(&self) -> Box<dyn ReturnRepository + '_> {
-        Box::new(self.returns())
-    }
-
-    fn bom(&self) -> Box<dyn BomRepository + '_> {
-        Box::new(self.bom())
-    }
-
-    fn work_orders(&self) -> Box<dyn WorkOrderRepository + '_> {
-        Box::new(self.work_orders())
-    }
-
-    fn shipments(&self) -> Box<dyn ShipmentRepository + '_> {
-        Box::new(self.shipments())
-    }
-
-    fn payments(&self) -> Box<dyn PaymentRepository + '_> {
-        Box::new(self.payments())
-    }
-
-    fn warranties(&self) -> Box<dyn WarrantyRepository + '_> {
-        Box::new(self.warranties())
-    }
-
-    fn purchase_orders(&self) -> Box<dyn PurchaseOrderRepository + '_> {
-        Box::new(self.purchase_orders())
-    }
-
-    fn invoices(&self) -> Box<dyn InvoiceRepository + '_> {
-        Box::new(self.invoices())
-    }
-
-    fn carts(&self) -> Box<dyn CartRepository + '_> {
-        Box::new(self.carts())
-    }
-
-    fn analytics(&self) -> Box<dyn AnalyticsRepository + '_> {
-        Box::new(self.analytics())
-    }
-
-    fn currency(&self) -> Box<dyn CurrencyRepository + '_> {
-        Box::new(self.currency())
-    }
-
-    fn tax(&self) -> Box<dyn TaxRepository + '_> {
-        Box::new(self.tax())
-    }
-
-    fn promotions(&self) -> Box<dyn PromotionRepository + '_> {
-        Box::new(self.promotions())
-    }
-
-    fn subscriptions(&self) -> Box<dyn SubscriptionRepository + '_> {
-        Box::new(self.subscriptions())
-    }
-
-    fn quality(&self) -> Box<dyn QualityRepository + '_> {
-        Box::new(self.quality())
-    }
-
-    fn lots(&self) -> Box<dyn LotRepository + '_> {
-        Box::new(self.lots())
-    }
-
-    fn serials(&self) -> Box<dyn SerialRepository + '_> {
-        Box::new(self.serials())
-    }
-
-    fn warehouse(&self) -> Box<dyn WarehouseRepository + '_> {
-        Box::new(self.warehouse())
-    }
-
-    fn receiving(&self) -> Box<dyn ReceivingRepository + '_> {
-        Box::new(self.receiving())
-    }
-
-    fn fulfillment(&self) -> Box<dyn FulfillmentRepository + '_> {
-        Box::new(self.fulfillment())
-    }
-
-    fn accounts_payable(&self) -> Box<dyn AccountsPayableRepository + '_> {
-        Box::new(self.accounts_payable())
-    }
-
-    fn cost_accounting(&self) -> Box<dyn CostAccountingRepository + '_> {
-        Box::new(self.cost_accounting())
-    }
-
-    fn credit(&self) -> Box<dyn CreditRepository + '_> {
-        Box::new(self.credit())
-    }
-
-    fn backorder(&self) -> Box<dyn BackorderRepository + '_> {
-        Box::new(self.backorder())
-    }
-
-    fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_> {
-        Box::new(self.accounts_receivable())
-    }
-
-    fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
-        Box::new(self.general_ledger())
-    }
-}
+impl_database_accessors!(PostgresDatabase);
 
 /// Database configuration
 #[derive(Debug, Clone)]
