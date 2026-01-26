@@ -14,6 +14,9 @@ use stateset_db::PostgresDatabase;
 #[cfg(feature = "events")]
 use crate::events::{EventSystem, EventConfig, EventSubscription, Webhook};
 
+#[cfg(feature = "vector")]
+use crate::Vector;
+
 
 /// The main commerce interface.
 ///
@@ -40,6 +43,8 @@ pub struct Commerce {
     db: Arc<dyn Database>,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
+    #[cfg(all(feature = "sqlite", feature = "vector"))]
+    sqlite_db: Option<Arc<SqliteDatabase>>,
 }
 
 impl Commerce {
@@ -69,12 +74,15 @@ impl Commerce {
             DatabaseConfig::sqlite(path)
         };
 
-        let db: Arc<dyn Database> = Arc::new(SqliteDatabase::new(&config)?);
+        let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
+        let db: Arc<dyn Database> = sqlite_db.clone();
 
         Ok(Self {
             db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
+            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            sqlite_db: Some(sqlite_db),
         })
     }
 
@@ -107,6 +115,8 @@ impl Commerce {
             db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
+            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            sqlite_db: None,
         })
     }
 
@@ -150,18 +160,22 @@ impl Commerce {
             db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
+            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            sqlite_db: None,
         })
     }
 
     /// Create a Commerce instance with a pre-connected database.
     ///
     /// This is useful when you want to manage the database connection yourself.
-    /// Note: Tax operations will not be available when using this method.
+    /// Note: Tax operations and vector search will not be available when using this method.
     pub fn with_database(db: Arc<dyn Database>) -> Self {
         Self {
             db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
+            #[cfg(all(feature = "sqlite", feature = "vector"))]
+            sqlite_db: None,
         }
     }
 
@@ -1534,6 +1548,46 @@ impl Commerce {
     pub fn database(&self) -> &dyn Database {
         &*self.db
     }
+
+    /// Access vector search operations.
+    ///
+    /// Requires the `vector` feature and an OpenAI API key for embedding generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key` - OpenAI API key for generating embeddings
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// let commerce = Commerce::new("./store.db")?;
+    /// let api_key = std::env::var("OPENAI_API_KEY")?;
+    ///
+    /// let vector = commerce.vector(api_key)?;
+    ///
+    /// // Index products for search
+    /// for product in commerce.products().list(Default::default())? {
+    ///     vector.index_product(&product)?;
+    /// }
+    ///
+    /// // Semantic search
+    /// let results = vector.search_products("wireless bluetooth headphones", 10)?;
+    /// for result in results {
+    ///     println!("{}: {} (score: {:.2})", result.entity.name, result.entity.id, result.score);
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[cfg(all(feature = "sqlite", feature = "vector"))]
+    pub fn vector(&self, api_key: String) -> Result<Vector, CommerceError> {
+        match &self.sqlite_db {
+            Some(db) => Ok(Vector::new(db.vector(), api_key)),
+            None => Err(CommerceError::NotPermitted(
+                "Vector search requires SQLite database. Use Commerce::new() instead of with_database() or with_postgres().".to_string()
+            )),
+        }
+    }
 }
 
 /// Builder for creating a Commerce instance with custom configuration.
@@ -1636,6 +1690,8 @@ impl CommerceBuilder {
                 db,
                 #[cfg(feature = "events")]
                 event_system,
+                #[cfg(all(feature = "sqlite", feature = "vector"))]
+                sqlite_db: None,
             });
         }
 
@@ -1653,11 +1709,14 @@ impl CommerceBuilder {
                 config.max_connections = max;
             }
 
-            let db: Arc<dyn Database> = Arc::new(SqliteDatabase::new(&config)?);
+            let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
+            let db: Arc<dyn Database> = sqlite_db.clone();
             Ok(Commerce {
                 db,
                 #[cfg(feature = "events")]
                 event_system,
+                #[cfg(all(feature = "sqlite", feature = "vector"))]
+                sqlite_db: Some(sqlite_db),
             })
         }
 

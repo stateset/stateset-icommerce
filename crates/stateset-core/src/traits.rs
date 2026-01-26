@@ -2562,3 +2562,67 @@ pub trait GeneralLedgerRepository {
     fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>>;
     fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>>;
 }
+
+// ============================================================================
+// Vector Search Repository
+// ============================================================================
+
+/// Vector search repository trait for semantic similarity search
+pub trait VectorRepository {
+    /// Store embedding for an entity
+    fn store_embedding(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+        embedding: &[f32],
+        text_hash: &str,
+        model: &str,
+    ) -> Result<()>;
+
+    /// Search similar products by embedding vector
+    fn search_products(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<VectorSearchResult<Product>>>;
+
+    /// Search similar customers by embedding vector
+    fn search_customers(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<VectorSearchResult<Customer>>>;
+
+    /// Search similar orders by embedding vector
+    fn search_orders(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<VectorSearchResult<Order>>>;
+
+    /// Search similar inventory items by embedding vector
+    fn search_inventory(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<VectorSearchResult<InventoryItem>>>;
+
+    /// Delete embedding for an entity
+    fn delete_embedding(&self, entity_type: EntityType, entity_id: &str) -> Result<()>;
+
+    /// Check if entity has an embedding stored
+    fn has_embedding(&self, entity_type: EntityType, entity_id: &str) -> Result<bool>;
+
+    /// Get embedding metadata for an entity
+    fn get_embedding_metadata(
+        &self,
+        entity_type: EntityType,
+        entity_id: &str,
+    ) -> Result<Option<EmbeddingMetadata>>;
+
+    /// Get embedding statistics
+    fn get_stats(&self) -> Result<EmbeddingStats>;
+
+    /// Delete all embeddings for an entity type
+    fn clear_embeddings(&self, entity_type: EntityType) -> Result<u64>;
+}

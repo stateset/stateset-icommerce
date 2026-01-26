@@ -86,6 +86,7 @@ print(f"$100 USD = €{conversion.converted_amount} EUR")
 - **Type Safe**: Full type hints and IDE support
 - **Fast**: Native Rust performance
 - **Analytics + Currency**: Built-in reporting/forecasting and multi-currency operations
+- **Vector Search**: Semantic search for products/customers (opt-in, OpenAI embeddings)
 
 ## API Reference
 
@@ -224,6 +225,25 @@ commerce.inventory.confirm_reservation(reservation.id)
 
 # Or release reservation (returns to available)
 commerce.inventory.release_reservation(reservation.id)
+```
+
+### Vector Search
+
+```python
+# Initialize vector search (requires OpenAI API key)
+vector = commerce.vector("sk-...")
+
+# Index a product or customer
+vector.index_product(product.id)
+
+# Semantic search
+results = vector.search_products("wireless bluetooth headphones", limit=10)
+for r in results:
+    print(r.id, r.score, r.name)
+
+# Stats/maintenance
+stats = vector.stats()
+vector.clear("products")
 ```
 
 ### Returns

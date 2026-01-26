@@ -14,6 +14,18 @@ def commerce():
     """Create an in-memory Commerce instance for testing."""
     return Commerce(":memory:")
 
+def create_product(commerce, sku: str, price: float, name: str):
+    return commerce.products.create(
+        name=name,
+        variants=[
+            CreateProductVariantInput(
+                sku=sku,
+                price=price,
+                name=name,
+            )
+        ],
+    )
+
 
 class TestCustomers:
     """Customer API tests."""
@@ -124,6 +136,7 @@ class TestOrders:
             first_name="Order",
             last_name="Customer",
         )
+        product = create_product(commerce, "SKU-001", 29.99, "Test Product")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -133,6 +146,7 @@ class TestOrders:
                     name="Test Product",
                     quantity=2,
                     unit_price=29.99,
+                    product_id=product.id,
                 )
             ],
         )
@@ -151,6 +165,8 @@ class TestOrders:
             first_name="Total",
             last_name="Test",
         )
+        product_a = create_product(commerce, "SKU-A", 10.00, "Product A")
+        product_b = create_product(commerce, "SKU-B", 15.00, "Product B")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -160,12 +176,14 @@ class TestOrders:
                     name="Product A",
                     quantity=2,
                     unit_price=10.00,
+                    product_id=product_a.id,
                 ),
                 CreateOrderItemInput(
                     sku="SKU-B",
                     name="Product B",
                     quantity=1,
                     unit_price=15.00,
+                    product_id=product_b.id,
                 ),
             ],
         )
@@ -180,6 +198,7 @@ class TestOrders:
             first_name="Ship",
             last_name="Test",
         )
+        product = create_product(commerce, "SKU-001", 10.00, "Test")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -189,6 +208,7 @@ class TestOrders:
                     name="Test",
                     quantity=1,
                     unit_price=10.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -204,6 +224,7 @@ class TestOrders:
             first_name="Cancel",
             last_name="Test",
         )
+        product = create_product(commerce, "SKU-001", 10.00, "Test")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -213,6 +234,7 @@ class TestOrders:
                     name="Test",
                     quantity=1,
                     unit_price=10.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -227,6 +249,7 @@ class TestOrders:
             first_name="Status",
             last_name="Test",
         )
+        product = create_product(commerce, "SKU-001", 10.00, "Test")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -236,12 +259,13 @@ class TestOrders:
                     name="Test",
                     quantity=1,
                     unit_price=10.00,
+                    product_id=product.id,
                 )
             ],
         )
 
-        updated = commerce.orders.update_status(order.id, "processing")
-        assert updated.status == "processing"
+        updated = commerce.orders.update_status(order.id, "confirmed")
+        assert updated.status == "confirmed"
 
 
 class TestProducts:
@@ -287,7 +311,7 @@ class TestProducts:
         assert small.price == 19.99
 
         assert large is not None
-        assert large.price == 29.99
+        assert large.price == pytest.approx(29.99)
 
 
 class TestInventory:
@@ -422,6 +446,7 @@ class TestReturns:
             first_name="Return",
             last_name="Test",
         )
+        product = create_product(commerce, "RET-001", 25.00, "Return Item")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -431,6 +456,7 @@ class TestReturns:
                     name="Return Item",
                     quantity=2,
                     unit_price=25.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -460,6 +486,7 @@ class TestReturns:
             first_name="Approve",
             last_name="Test",
         )
+        product = create_product(commerce, "APP-001", 50.00, "Approve Item")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -469,6 +496,7 @@ class TestReturns:
                     name="Approve Item",
                     quantity=1,
                     unit_price=50.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -494,6 +522,7 @@ class TestReturns:
             first_name="Reject",
             last_name="Test",
         )
+        product = create_product(commerce, "REJ-001", 30.00, "Reject Item")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -503,6 +532,7 @@ class TestReturns:
                     name="Reject Item",
                     quantity=1,
                     unit_price=30.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -528,6 +558,7 @@ class TestReturns:
             first_name="List",
             last_name="Returns",
         )
+        product = create_product(commerce, "LIST-001", 20.00, "List Item")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -537,6 +568,7 @@ class TestReturns:
                     name="List Item",
                     quantity=1,
                     unit_price=20.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -579,6 +611,7 @@ class TestRepr:
             first_name="Order",
             last_name="Repr",
         )
+        product = create_product(commerce, "REPR-001", 10.00, "Test")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -588,6 +621,7 @@ class TestRepr:
                     name="Test",
                     quantity=1,
                     unit_price=10.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -626,6 +660,7 @@ class TestRepr:
             first_name="Return",
             last_name="Repr",
         )
+        product = create_product(commerce, "RR-001", 10.00, "Test")
 
         order = commerce.orders.create(
             customer_id=customer.id,
@@ -635,6 +670,7 @@ class TestRepr:
                     name="Test",
                     quantity=1,
                     unit_price=10.00,
+                    product_id=product.id,
                 )
             ],
         )
@@ -703,3 +739,10 @@ class TestCartsExtended:
         assert shipped.shipping_address is not None
         assert shipped.shipping_address.city == "San Francisco"
         assert abs(shipped.shipping_amount - 9.99) < 1e-6
+
+
+class TestVectorSearch:
+    def test_vector_is_available(self, commerce):
+        vector = commerce.vector("sk-test")
+        assert vector is not None
+        assert hasattr(vector, "search_products")

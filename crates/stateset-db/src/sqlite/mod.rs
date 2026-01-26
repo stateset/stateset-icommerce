@@ -32,12 +32,17 @@ mod credit;
 mod backorder;
 mod general_ledger;
 
+#[cfg(feature = "vector")]
+mod vector;
+
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use backorder::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use general_ledger::*;
+#[cfg(feature = "vector")]
+pub use vector::*;
 pub use analytics::*;
 pub use bom::*;
 pub use carts::*;
@@ -123,11 +128,12 @@ impl SqliteDatabase {
             .build(manager)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        // Run migrations
+        // Get connection for setup
         let conn = pool
             .get()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        // Run migrations
         migrations::run_migrations(&conn)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
@@ -294,6 +300,12 @@ impl SqliteDatabase {
     /// Get general ledger repository
     pub fn general_ledger(&self) -> SqliteGeneralLedgerRepository {
         SqliteGeneralLedgerRepository::new(self.pool.clone())
+    }
+
+    /// Get vector search repository (requires `vector` feature)
+    #[cfg(feature = "vector")]
+    pub fn vector(&self) -> SqliteVectorRepository {
+        SqliteVectorRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

@@ -303,6 +303,20 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Get the vector search API for semantic search operations.
+    ///
+    /// Requires OPENAI_API_KEY environment variable to be set.
+    ///
+    /// Example:
+    ///     vector = commerce.vector("sk-...")
+    ///     results = vector.search_products("wireless bluetooth headphones", limit=10)
+    fn vector(&self, openai_api_key: String) -> PyResult<VectorSearch> {
+        Ok(VectorSearch {
+            commerce: self.inner.clone(),
+            api_key: openai_api_key,
+        })
+    }
 }
 
 // ============================================================================
@@ -9217,6 +9231,309 @@ impl GeneralLedgerApi {
 }
 
 // ============================================================================
+// Vector Search Types
+// ============================================================================
+
+/// Vector search API for semantic similarity search.
+///
+/// Uses OpenAI text-embedding-3-small for generating embeddings.
+#[pyclass]
+pub struct VectorSearch {
+    commerce: Arc<Mutex<RustCommerce>>,
+    api_key: String,
+}
+
+/// Product search result with similarity score.
+#[pyclass]
+#[derive(Clone)]
+pub struct ProductSearchResult {
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub description: String,
+    #[pyo3(get)]
+    pub distance: f64,
+    #[pyo3(get)]
+    pub score: f64,
+}
+
+/// Customer search result with similarity score.
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomerSearchResult {
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub email: String,
+    #[pyo3(get)]
+    pub distance: f64,
+    #[pyo3(get)]
+    pub score: f64,
+}
+
+/// Embedding statistics.
+#[pyclass]
+#[derive(Clone)]
+pub struct EmbeddingStats {
+    #[pyo3(get)]
+    pub product_count: u64,
+    #[pyo3(get)]
+    pub customer_count: u64,
+    #[pyo3(get)]
+    pub order_count: u64,
+    #[pyo3(get)]
+    pub inventory_count: u64,
+    #[pyo3(get)]
+    pub total_count: u64,
+    #[pyo3(get)]
+    pub model: String,
+    #[pyo3(get)]
+    pub dimensions: u32,
+}
+
+#[pymethods]
+impl VectorSearch {
+    /// Search products using natural language query.
+    ///
+    /// Args:
+    ///     query: Natural language search query (e.g., "wireless bluetooth headphones")
+    ///     limit: Maximum number of results to return (default: 10)
+    ///
+    /// Returns:
+    ///     List of ProductSearchResult sorted by relevance
+    #[pyo3(signature = (query, limit=None))]
+    fn search_products(&self, query: String, limit: Option<usize>) -> PyResult<Vec<ProductSearchResult>> {
+        let vector = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
+        };
+        let results = vector.search_products(&query, limit.unwrap_or(10))
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
+
+        Ok(results.into_iter().map(|r| {
+            ProductSearchResult {
+                id: r.entity.id.to_string(),
+                name: r.entity.name.clone(),
+                description: r.entity.description.clone(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            }
+        }).collect())
+    }
+
+    /// Search customers using natural language query.
+    ///
+    /// Args:
+    ///     query: Natural language search query (e.g., "enterprise customers in tech")
+    ///     limit: Maximum number of results to return (default: 10)
+    ///
+    /// Returns:
+    ///     List of CustomerSearchResult sorted by relevance
+    #[pyo3(signature = (query, limit=None))]
+    fn search_customers(&self, query: String, limit: Option<usize>) -> PyResult<Vec<CustomerSearchResult>> {
+        let vector = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
+        };
+        let results = vector.search_customers(&query, limit.unwrap_or(10))
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
+
+        Ok(results.into_iter().map(|r| {
+            CustomerSearchResult {
+                id: r.entity.id.to_string(),
+                name: format!("{} {}", r.entity.first_name, r.entity.last_name),
+                email: r.entity.email.clone(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            }
+        }).collect())
+    }
+
+    /// Index a product for vector search.
+    ///
+    /// Args:
+    ///     product_id: UUID of the product to index
+    fn index_product(&self, product_id: String) -> PyResult<()> {
+        let uuid: uuid::Uuid = product_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let (product, vector) = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            let product = commerce.products().get(uuid)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to get product: {}", e)))?
+                .ok_or_else(|| PyValueError::new_err("Product not found"))?;
+
+            let vector = commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?;
+
+            (product, vector)
+        };
+        vector.index_product(&product)
+            .map_err(|e| PyRuntimeError::new_err(format!("Indexing failed: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Index a customer for vector search.
+    ///
+    /// Args:
+    ///     customer_id: UUID of the customer to index
+    fn index_customer(&self, customer_id: String) -> PyResult<()> {
+        let uuid: uuid::Uuid = customer_id.parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let (customer, vector) = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            let customer = commerce.customers().get(uuid)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to get customer: {}", e)))?
+                .ok_or_else(|| PyValueError::new_err("Customer not found"))?;
+
+            let vector = commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?;
+
+            (customer, vector)
+        };
+        vector.index_customer(&customer)
+            .map_err(|e| PyRuntimeError::new_err(format!("Indexing failed: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Index all products for vector search.
+    ///
+    /// Returns:
+    ///     Number of products indexed
+    fn index_all_products(&self) -> PyResult<u64> {
+        let (products, vector) = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            let products = commerce.products().list(Default::default())
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to list products: {}", e)))?;
+
+            let vector = commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?;
+
+            (products, vector)
+        };
+        let count = vector.index_products(&products)
+            .map_err(|e| PyRuntimeError::new_err(format!("Indexing failed: {}", e)))?;
+
+        Ok(count as u64)
+    }
+
+    /// Index all customers for vector search.
+    ///
+    /// Returns:
+    ///     Number of customers indexed
+    fn index_all_customers(&self) -> PyResult<u64> {
+        let (customers, vector) = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            let customers = commerce.customers().list(Default::default())
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to list customers: {}", e)))?;
+
+            let vector = commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?;
+
+            (customers, vector)
+        };
+        let count = vector.index_customers(&customers)
+            .map_err(|e| PyRuntimeError::new_err(format!("Indexing failed: {}", e)))?;
+
+        Ok(count as u64)
+    }
+
+    /// Get embedding statistics.
+    ///
+    /// Returns:
+    ///     EmbeddingStats with counts by entity type
+    fn stats(&self) -> PyResult<EmbeddingStats> {
+        let vector = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
+        };
+        let stats = vector.stats()
+            .map_err(|e| PyRuntimeError::new_err(format!("Stats failed: {}", e)))?;
+
+        let product_count = *stats.counts.get(&stateset_core::EntityType::Product).unwrap_or(&0);
+        let customer_count = *stats.counts.get(&stateset_core::EntityType::Customer).unwrap_or(&0);
+        let order_count = *stats.counts.get(&stateset_core::EntityType::Order).unwrap_or(&0);
+        let inventory_count = *stats.counts.get(&stateset_core::EntityType::InventoryItem).unwrap_or(&0);
+
+        Ok(EmbeddingStats {
+            product_count,
+            customer_count,
+            order_count,
+            inventory_count,
+            total_count: product_count + customer_count + order_count + inventory_count,
+            model: stats.model,
+            dimensions: stats.dimensions as u32,
+        })
+    }
+
+    /// Clear all embeddings for a specific entity type.
+    ///
+    /// Args:
+    ///     entity_type: One of "products", "customers", "orders", "inventory"
+    ///
+    /// Returns:
+    ///     Number of embeddings cleared
+    fn clear(&self, entity_type: String) -> PyResult<u64> {
+        let et: stateset_core::EntityType = entity_type.parse()
+            .map_err(|e: String| PyValueError::new_err(e))?;
+
+        let vector = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
+        };
+        let count = vector.clear(et)
+            .map_err(|e| PyRuntimeError::new_err(format!("Clear failed: {}", e)))?;
+
+        Ok(count)
+    }
+
+    /// Clear all embeddings.
+    ///
+    /// Returns:
+    ///     Total number of embeddings cleared
+    fn clear_all(&self) -> PyResult<u64> {
+        let vector = {
+            let commerce = self.commerce.lock()
+                .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+            commerce.vector(self.api_key.clone())
+                .map_err(|e| PyRuntimeError::new_err(format!("Vector init failed: {}", e)))?
+        };
+        let count = vector.clear_all()
+            .map_err(|e| PyRuntimeError::new_err(format!("Clear failed: {}", e)))?;
+
+        Ok(count)
+    }
+}
+
+// ============================================================================
 // Module Definition
 // ============================================================================
 
@@ -9403,6 +9720,12 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GlAccount>()?;
     m.add_class::<JournalEntry>()?;
     m.add_class::<TrialBalance>()?;
+
+    // Vector Search
+    m.add_class::<VectorSearch>()?;
+    m.add_class::<ProductSearchResult>()?;
+    m.add_class::<CustomerSearchResult>()?;
+    m.add_class::<EmbeddingStats>()?;
 
     Ok(())
 }

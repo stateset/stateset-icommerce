@@ -153,6 +153,9 @@ mod credit;
 mod backorder;
 mod general_ledger;
 
+#[cfg(feature = "vector")]
+mod vector;
+
 #[cfg(feature = "postgres")]
 mod async_commerce;
 
@@ -201,6 +204,9 @@ pub use cost_accounting::CostAccounting;
 pub use credit::Credit;
 pub use backorder::Backorders;
 pub use general_ledger::GeneralLedger;
+
+#[cfg(feature = "vector")]
+pub use vector::Vector;
 
 // Async API for PostgreSQL (feature-gated)
 #[cfg(feature = "postgres")]
@@ -817,4 +823,15 @@ pub use stateset_core::{
     from_smallest_unit,
     generate_x402_intent_id,
     to_smallest_unit,
+};
+
+// Vector search types (feature-gated)
+#[cfg(feature = "vector")]
+pub use stateset_core::{
+    EmbeddingConfig,
+    EmbeddingMetadata,
+    EmbeddingStats,
+    EntityType,
+    VectorSearchQuery,
+    VectorSearchResult,
 };

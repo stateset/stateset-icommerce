@@ -19,6 +19,9 @@ hex = { workspace = true }
 serde_jcs = { workspace = true }
 sha2 = { workspace = true }
 
+# Optional embedding service dependencies
+reqwest = { workspace = true, optional = true }
+
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -27,3 +30,7 @@ proptest = "1.4"
 [[bench]]
 name = "core_benchmarks"
 harness = false
+
+[features]
+default = []
+embeddings = ["dep:reqwest"]

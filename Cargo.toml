@@ -60,6 +60,9 @@ r2d2_sqlite = "0.24"
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
+# HTTP client (for embeddings service)
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
 # Internal crates
 stateset-core = { path = "crates/stateset-core", version = "0.2.3" }
 stateset-db = { path = "crates/stateset-db", version = "0.2.3" }

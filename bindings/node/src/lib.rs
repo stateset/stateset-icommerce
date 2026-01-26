@@ -281,6 +281,18 @@ impl Commerce {
             commerce: self.inner.clone(),
         }
     }
+
+    /// Create a vector search instance with the given OpenAI API key
+    ///
+    /// Vector search enables semantic similarity search across products,
+    /// customers, orders, and inventory items using OpenAI embeddings.
+    #[napi]
+    pub fn vector(&self, api_key: String) -> VectorSearch {
+        VectorSearch {
+            commerce: self.inner.clone(),
+            api_key,
+        }
+    }
 }
 
 // ============================================================================
@@ -9557,5 +9569,271 @@ impl GeneralLedger {
         let balance = commerce.general_ledger().get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
         Ok(to_f64_or_nan(balance))
+    }
+}
+
+// ============================================================================
+// Vector Search API
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct VectorSearchResultOutput {
+    pub id: String,
+    pub name: String,
+    pub distance: f64,
+    pub score: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct ProductSearchResultOutput {
+    pub product: ProductOutput,
+    pub distance: f64,
+    pub score: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct CustomerSearchResultOutput {
+    pub customer: CustomerOutput,
+    pub distance: f64,
+    pub score: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct EmbeddingStatsOutput {
+    pub product_count: u32,
+    pub customer_count: u32,
+    pub order_count: u32,
+    pub inventory_count: u32,
+    pub model: String,
+    pub dimensions: u32,
+}
+
+/// Vector search operations for semantic similarity search
+#[napi]
+pub struct VectorSearch {
+    commerce: Arc<Mutex<RustCommerce>>,
+    api_key: String,
+}
+
+#[napi]
+impl VectorSearch {
+    /// Search products using natural language query
+    #[napi]
+    pub async fn search_products(&self, query: String, limit: Option<u32>) -> Result<Vec<ProductSearchResultOutput>> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let results = vector
+            .search_products(&query, limit.unwrap_or(10) as usize)
+            .map_err(|e| Error::from_reason(format!("Failed to search products: {}", e)))?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| ProductSearchResultOutput {
+                product: r.entity.into(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            })
+            .collect())
+    }
+
+    /// Search customers using natural language query
+    #[napi]
+    pub async fn search_customers(&self, query: String, limit: Option<u32>) -> Result<Vec<CustomerSearchResultOutput>> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let results = vector
+            .search_customers(&query, limit.unwrap_or(10) as usize)
+            .map_err(|e| Error::from_reason(format!("Failed to search customers: {}", e)))?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| CustomerSearchResultOutput {
+                customer: r.entity.into(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            })
+            .collect())
+    }
+
+    /// Index a product for vector search
+    #[napi]
+    pub async fn index_product(&self, product_id: String) -> Result<()> {
+        let uuid = product_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let (product, vector) = {
+            let commerce = self.commerce.lock().await;
+            let product = commerce
+                .products()
+                .get(uuid)
+                .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?
+                .ok_or_else(|| Error::from_reason("Product not found"))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (product, vector)
+        };
+
+        vector
+            .index_product(&product)
+            .map_err(|e| Error::from_reason(format!("Failed to index product: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Index a customer for vector search
+    #[napi]
+    pub async fn index_customer(&self, customer_id: String) -> Result<()> {
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let (customer, vector) = {
+            let commerce = self.commerce.lock().await;
+            let customer = commerce
+                .customers()
+                .get(uuid)
+                .map_err(|e| Error::from_reason(format!("Failed to get customer: {}", e)))?
+                .ok_or_else(|| Error::from_reason("Customer not found"))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (customer, vector)
+        };
+
+        vector
+            .index_customer(&customer)
+            .map_err(|e| Error::from_reason(format!("Failed to index customer: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Index all products for vector search
+    #[napi]
+    pub async fn index_all_products(&self) -> Result<u32> {
+        let (products, vector) = {
+            let commerce = self.commerce.lock().await;
+            let products = commerce
+                .products()
+                .list(Default::default())
+                .map_err(|e| Error::from_reason(format!("Failed to list products: {}", e)))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (products, vector)
+        };
+
+        let count = vector
+            .index_products(&products)
+            .map_err(|e| Error::from_reason(format!("Failed to index products: {}", e)))?;
+
+        Ok(count as u32)
+    }
+
+    /// Index all customers for vector search
+    #[napi]
+    pub async fn index_all_customers(&self) -> Result<u32> {
+        let (customers, vector) = {
+            let commerce = self.commerce.lock().await;
+            let customers = commerce
+                .customers()
+                .list(Default::default())
+                .map_err(|e| Error::from_reason(format!("Failed to list customers: {}", e)))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (customers, vector)
+        };
+
+        let count = vector
+            .index_customers(&customers)
+            .map_err(|e| Error::from_reason(format!("Failed to index customers: {}", e)))?;
+
+        Ok(count as u32)
+    }
+
+    /// Get embedding statistics
+    #[napi]
+    pub async fn stats(&self) -> Result<EmbeddingStatsOutput> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let stats = vector
+            .stats()
+            .map_err(|e| Error::from_reason(format!("Failed to get stats: {}", e)))?;
+
+        Ok(EmbeddingStatsOutput {
+            product_count: *stats.counts.get(&stateset_core::EntityType::Product).unwrap_or(&0) as u32,
+            customer_count: *stats.counts.get(&stateset_core::EntityType::Customer).unwrap_or(&0) as u32,
+            order_count: *stats.counts.get(&stateset_core::EntityType::Order).unwrap_or(&0) as u32,
+            inventory_count: *stats.counts.get(&stateset_core::EntityType::InventoryItem).unwrap_or(&0) as u32,
+            model: stats.model,
+            dimensions: stats.dimensions as u32,
+        })
+    }
+
+    /// Clear all embeddings for a specific entity type
+    #[napi]
+    pub async fn clear(&self, entity_type: String) -> Result<u32> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let et: stateset_core::EntityType = entity_type
+            .parse()
+            .map_err(|e: String| Error::from_reason(e))?;
+
+        let count = vector
+            .clear(et)
+            .map_err(|e| Error::from_reason(format!("Failed to clear embeddings: {}", e)))?;
+
+        Ok(count as u32)
+    }
+
+    /// Clear all embeddings
+    #[napi]
+    pub async fn clear_all(&self) -> Result<u32> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let count = vector
+            .clear_all()
+            .map_err(|e| Error::from_reason(format!("Failed to clear all embeddings: {}", e)))?;
+
+        Ok(count as u32)
     }
 }

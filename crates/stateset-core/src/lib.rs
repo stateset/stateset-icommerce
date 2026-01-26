@@ -17,10 +17,16 @@ pub mod events;
 pub mod models;
 pub mod traits;
 
+#[cfg(feature = "embeddings")]
+pub mod services;
+
 pub use errors::*;
 pub use events::*;
 pub use models::*;
 pub use traits::*;
+
+#[cfg(feature = "embeddings")]
+pub use services::*;
 
 /// Re-export common types for convenience
 pub mod prelude {

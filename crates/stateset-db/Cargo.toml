@@ -38,3 +38,4 @@ harness = false
 default = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite"]
 postgres = ["dep:sqlx", "dep:tokio"]
+vector = ["sqlite", "stateset-core/embeddings"]

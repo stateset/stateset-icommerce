@@ -94,6 +94,10 @@ class Commerce:
         """Get the currency API."""
         ...
 
+    def vector(self, openai_api_key: str) -> VectorSearch:
+        """Get the vector search API for semantic search operations."""
+        ...
+
 # ============================================================================
 # Customers
 # ============================================================================
@@ -1159,3 +1163,49 @@ class CurrencyOperations:
     def enabled_currencies(self) -> List[str]: ...
 
     def format(self, amount: float, currency_code: str) -> str: ...
+
+# ============================================================================
+# Vector Search
+# ============================================================================
+
+class ProductSearchResult:
+    id: str
+    name: str
+    description: str
+    distance: float
+    score: float
+
+class CustomerSearchResult:
+    id: str
+    name: str
+    email: str
+    distance: float
+    score: float
+
+class EmbeddingStats:
+    product_count: int
+    customer_count: int
+    order_count: int
+    inventory_count: int
+    total_count: int
+    model: str
+    dimensions: int
+
+class VectorSearch:
+    def search_products(self, query: str, limit: Optional[int] = None) -> List[ProductSearchResult]: ...
+
+    def search_customers(self, query: str, limit: Optional[int] = None) -> List[CustomerSearchResult]: ...
+
+    def index_product(self, product_id: str) -> None: ...
+
+    def index_customer(self, customer_id: str) -> None: ...
+
+    def index_all_products(self) -> int: ...
+
+    def index_all_customers(self) -> int: ...
+
+    def stats(self) -> EmbeddingStats: ...
+
+    def clear(self, entity_type: str) -> int: ...
+
+    def clear_all(self) -> int: ...

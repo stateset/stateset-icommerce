@@ -1627,6 +1627,30 @@ export interface IncomeStatementOutput {
   totalExpenses: number
   netIncome: number
 }
+export interface VectorSearchResultOutput {
+  id: string
+  name: string
+  distance: number
+  score: number
+}
+export interface ProductSearchResultOutput {
+  product: ProductOutput
+  distance: number
+  score: number
+}
+export interface CustomerSearchResultOutput {
+  customer: CustomerOutput
+  distance: number
+  score: number
+}
+export interface EmbeddingStatsOutput {
+  productCount: number
+  customerCount: number
+  orderCount: number
+  inventoryCount: number
+  model: string
+  dimensions: number
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -1694,6 +1718,13 @@ export declare class Commerce {
   get backorder(): Backorders
   /** Get the general ledger API */
   get generalLedger(): GeneralLedger
+  /**
+   * Create a vector search instance with the given OpenAI API key
+   *
+   * Vector search enables semantic similarity search across products,
+   * customers, orders, and inventory items using OpenAI embeddings.
+   */
+  vector(apiKey: string): VectorSearch
 }
 export declare class Customers {
   create(input: CreateCustomerInput): Promise<CustomerOutput>
@@ -2330,4 +2361,25 @@ export declare class GeneralLedger {
   getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatementOutput>
   /** Get account balance */
   getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>
+}
+/** Vector search operations for semantic similarity search */
+export declare class VectorSearch {
+  /** Search products using natural language query */
+  searchProducts(query: string, limit?: number | undefined | null): Promise<Array<ProductSearchResultOutput>>
+  /** Search customers using natural language query */
+  searchCustomers(query: string, limit?: number | undefined | null): Promise<Array<CustomerSearchResultOutput>>
+  /** Index a product for vector search */
+  indexProduct(productId: string): Promise<void>
+  /** Index a customer for vector search */
+  indexCustomer(customerId: string): Promise<void>
+  /** Index all products for vector search */
+  indexAllProducts(): Promise<number>
+  /** Index all customers for vector search */
+  indexAllCustomers(): Promise<number>
+  /** Get embedding statistics */
+  stats(): Promise<EmbeddingStatsOutput>
+  /** Clear all embeddings for a specific entity type */
+  clear(entityType: string): Promise<number>
+  /** Clear all embeddings */
+  clearAll(): Promise<number>
 }

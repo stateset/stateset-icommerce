@@ -7,6 +7,7 @@
 
 import { customerTools } from './customers.js';
 import { orderTools } from './orders.js';
+import { vectorTools } from './vector.js';
 
 /**
  * Tool categories for lazy loading
@@ -14,6 +15,7 @@ import { orderTools } from './orders.js';
 const TOOL_MODULES = {
   customers: () => customerTools,
   orders: () => orderTools,
+  vector: () => vectorTools,
   // Additional categories loaded on demand
   products: () => import('./products.js').then(m => m.default),
   inventory: () => import('./inventory.js').then(m => m.default),
@@ -170,14 +172,15 @@ export class ToolRegistry {
  * Agent to tool category mappings
  */
 export const AGENT_TOOL_CATEGORIES = {
-  'customer-service': ['customers', 'orders', 'products', 'inventory', 'returns', 'carts', 'analytics', 'currency', 'tax', 'promotions', 'subscriptions'],
-  'checkout': ['carts', 'products', 'inventory', 'promotions', 'tax', 'currency'],
+  'customer-service': ['customers', 'orders', 'products', 'inventory', 'returns', 'carts', 'analytics', 'currency', 'tax', 'promotions', 'subscriptions', 'vector'],
+  'checkout': ['carts', 'products', 'inventory', 'promotions', 'tax', 'currency', 'vector'],
   'orders': ['orders', 'customers', 'inventory'],
-  'inventory': ['inventory', 'products'],
+  'inventory': ['inventory', 'products', 'vector'],
   'returns': ['returns', 'orders', 'customers', 'inventory'],
-  'analytics': ['analytics'],
-  'promotions': ['promotions', 'products'],
-  'subscriptions': ['subscriptions', 'customers']
+  'analytics': ['analytics', 'vector'],
+  'promotions': ['promotions', 'products', 'vector'],
+  'subscriptions': ['subscriptions', 'customers'],
+  'vector': ['vector', 'products', 'customers']
 };
 
 /**
@@ -202,7 +205,8 @@ export async function getToolsForAgent(agentName) {
  */
 export const immediateTools = {
   customers: customerTools,
-  orders: orderTools
+  orders: orderTools,
+  vector: vectorTools
 };
 
 export default {

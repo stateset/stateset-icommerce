@@ -33,7 +33,8 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    assert_eq!(applied, 26, "expected all embedded migrations to apply");
+    let expected = if cfg!(feature = "vector") { 27 } else { 26 };
+    assert_eq!(applied, expected, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",
@@ -42,6 +43,18 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
         "exchange_rate_history",
     ] {
         assert!(has_table(&conn, table), "missing table `{table}`");
+    }
+
+    if cfg!(feature = "vector") {
+        for table in [
+            "product_embeddings",
+            "customer_embeddings",
+            "order_embeddings",
+            "inventory_embeddings",
+            "embedding_metadata",
+        ] {
+            assert!(has_table(&conn, table), "missing table `{table}`");
+        }
     }
 
     let orders = column_names(&conn, "orders");
@@ -68,4 +81,3 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
         .expect("query store_currency_settings default row");
     assert_eq!(defaults, 1, "expected a default store_currency_settings row");
 }
-

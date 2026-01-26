@@ -80,6 +80,10 @@ from stateset_embedded.stateset_embedded import (
     ConversionResult,
     StoreCurrencySettings,
     SetExchangeRateInput,
+    VectorSearch,
+    ProductSearchResult,
+    CustomerSearchResult,
+    EmbeddingStats,
 )
 
 __version__ = "0.2.0"
@@ -164,6 +168,11 @@ __all__ = [
     "ConversionResult",
     "StoreCurrencySettings",
     "SetExchangeRateInput",
+    # Vector Search
+    "VectorSearch",
+    "ProductSearchResult",
+    "CustomerSearchResult",
+    "EmbeddingStats",
     # Version
     "__version__",
 ]

@@ -52,7 +52,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MigrationError> {
 
 /// Get list of migrations in order
 fn get_migrations() -> Vec<(&'static str, &'static str)> {
-    vec![
+    let mut migrations = vec![
         ("001_initial_schema", include_str!("../migrations/001_initial_schema.sql")),
         ("002_inventory", include_str!("../migrations/002_inventory.sql")),
         ("003_returns", include_str!("../migrations/003_returns.sql")),
@@ -79,5 +79,11 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("024_general_ledger", include_str!("../migrations/024_general_ledger.sql")),
         ("025_performance_indexes", include_str!("../migrations/025_performance_indexes.sql")),
         ("026_idempotency_keys", include_str!("../migrations/026_idempotency_keys.sql")),
-    ]
+    ];
+
+    // Vector search migration (requires sqlite-vec extension to be loaded first)
+    #[cfg(feature = "vector")]
+    migrations.push(("027_vector_search", include_str!("../migrations/027_vector_search.sql")));
+
+    migrations
 }

@@ -103,6 +103,10 @@ pub enum CommerceError {
         expected_version: i32,
     },
 
+    // External service errors
+    #[error("External service error: {0}")]
+    ExternalServiceError(String),
+
     // General errors
     #[error("Internal error: {0}")]
     Internal(String),
