@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 # napi-rs for Node.js bindings
 napi = { version = "2", features = ["async", "napi9", "serde-json"] }
-napi-derive = "2"
+napi-derive = "3"
 
 # Our commerce library
 stateset-embedded = { path = "../../crates/stateset-embedded", features = ["vector"] }
