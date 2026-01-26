@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.2.0",
+  "version": "0.2.4",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {

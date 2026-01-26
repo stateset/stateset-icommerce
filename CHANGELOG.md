@@ -6,6 +6,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-01-26
+
+### Added
+- Vector search models and APIs across core, db, and embedded crates.
+- Embeddings service wiring for generating/querying vectors.
+- SQLite vector search migration and query helpers.
+- CLI vector tooling for embedding and search workflows.
+
 ## [0.2.0] - 2026-01-16
 
 ### Added

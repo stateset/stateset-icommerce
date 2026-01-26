@@ -3,7 +3,7 @@
     "description": "Local-first commerce engine for PHP - embedded SQLite-powered commerce operations",
     "type": "library",
     "license": "MIT",
-    "version": "0.2.0",
+    "version": "0.2.4",
     "keywords": [
         "commerce",
         "ecommerce",

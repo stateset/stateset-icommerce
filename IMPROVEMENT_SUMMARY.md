@@ -257,7 +257,7 @@ $ stateset doctor
 ✅ Connection pool: 4/5 active
 ⚠️  Query latency: orders.create() p95 = 150ms (threshold: 100ms)
 ✅ Data integrity: No orphaned records detected
-✅ Version: 0.2.3 (latest: 0.2.3)
+✅ Version: 0.2.4 (latest: 0.2.4)
 
 Overall Health: 92% (Good)
 ```

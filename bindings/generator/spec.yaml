@@ -5,7 +5,7 @@
 # Metadata
 # ============================================================================
 name: "stateset-icommerce"
-version: "0.2.3"
+version: "0.2.4"
 description: "The SQLite of commerce operations"
 
 # ============================================================================

@@ -23,7 +23,7 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **CLI Programs** | 25 |
 | **AI Agents** | 8 |
 | **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
-| **Current Version** | 0.2.0 |
+| **Current Version** | 0.2.4 |
 
 ---
 
@@ -42,9 +42,9 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.2.0    # Python
-gem install stateset_embedded -v 0.2.0  # Ruby
-npm install @stateset/embedded@0.2.0    # Node.js
+pip install stateset-embedded==0.2.4    # Python
+gem install stateset_embedded -v 0.2.4  # Ruby
+npm install @stateset/embedded@0.2.4    # Node.js
 cargo add stateset-embedded             # Rust
 ```
 
@@ -819,14 +819,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.4</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.2.0'
+implementation 'com.stateset:embedded:0.2.4'
 ```
 
 ### Kotlin (Gradle)
@@ -834,7 +834,7 @@ implementation 'com.stateset:embedded:0.2.0'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.2.0")
+    implementation("com.stateset:embedded-kotlin:0.2.4")
 }
 ```
 
@@ -843,32 +843,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.0")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.4")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.2.0'
+pod 'StateSet', '~> 0.2.4'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.2.0
+dotnet add package StateSet.Embedded --version 0.2.4
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.2.0" />
+<PackageReference Include="StateSet.Embedded" Version="0.2.4" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.0
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.4
 ```
 
 ### CLI
