@@ -29,6 +29,7 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+#[cfg(feature = "postgres")]
 pub mod saga;
 
 #[cfg(feature = "sqlite")]
@@ -309,6 +310,8 @@ impl DatabaseConfig {
     pub fn in_memory() -> Self {
         Self {
             url: ":memory:".to_string(),
+            // Shared-cache in-memory SQLite returns SQLITE_LOCKED under write contention.
+            // Default to a single connection to keep tests stable.
             max_connections: 1,
         }
     }

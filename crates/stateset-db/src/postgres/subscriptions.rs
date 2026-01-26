@@ -606,7 +606,7 @@ impl PgSubscriptionRepository {
         .bind(code)
         .bind(&input.name)
         .bind(&input.description)
-        .bind("draft")
+        .bind(plan_status_str(PlanStatus::Draft))
         .bind(input.billing_interval.to_string())
         .bind(input.custom_interval_days)
         .bind(input.price)

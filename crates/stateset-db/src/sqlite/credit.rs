@@ -208,31 +208,33 @@ impl SqliteCreditRepository {
 
 impl CreditRepository for SqliteCreditRepository {
     fn create_credit_account(&self, input: CreateCreditAccount) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let currency = input.currency.unwrap_or_else(|| "USD".to_string());
 
-        conn.execute(
-            "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
-                hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                input.customer_id.to_string(),
-                input.credit_limit.to_string(),
-                input.credit_limit.to_string(), // available = limit initially
-                "0",
-                "0",
-                &currency,
-                CreditAccountStatus::Active.to_string(),
-                input.payment_terms,
-                input.risk_rating.map(|r| r.to_string()),
-                input.notes,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
+                    hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    input.customer_id.to_string(),
+                    input.credit_limit.to_string(),
+                    input.credit_limit.to_string(), // available = limit initially
+                    "0",
+                    "0",
+                    &currency,
+                    CreditAccountStatus::Active.to_string(),
+                    input.payment_terms,
+                    input.risk_rating.map(|r| r.to_string()),
+                    input.notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)
     }
@@ -274,30 +276,32 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
 
-        conn.execute(
-            "UPDATE credit_accounts SET
-                credit_limit = COALESCE(?, credit_limit),
-                status = COALESCE(?, status),
-                payment_terms = COALESCE(?, payment_terms),
-                risk_rating = COALESCE(?, risk_rating),
-                notes = COALESCE(?, notes),
-                updated_at = ?
-             WHERE id = ?",
-            rusqlite::params![
-                input.credit_limit.map(|l| l.to_string()),
-                input.status.map(|s| s.to_string()),
-                input.payment_terms,
-                input.risk_rating.map(|r| r.to_string()),
-                input.notes,
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE credit_accounts SET
+                    credit_limit = COALESCE(?, credit_limit),
+                    status = COALESCE(?, status),
+                    payment_terms = COALESCE(?, payment_terms),
+                    risk_rating = COALESCE(?, risk_rating),
+                    notes = COALESCE(?, notes),
+                    updated_at = ?
+                 WHERE id = ?",
+                rusqlite::params![
+                    input.credit_limit.map(|l| l.to_string()),
+                    input.status.map(|s| s.to_string()),
+                    input.payment_terms,
+                    input.risk_rating.map(|r| r.to_string()),
+                    input.notes,
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.recalculate_available_credit(account.customer_id)?;
         self.get_credit_account(id)?.ok_or(CommerceError::NotFound)

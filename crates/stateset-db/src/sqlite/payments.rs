@@ -165,44 +165,46 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
         }
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let payment_number = generate_payment_number();
 
-        conn.execute(
-            "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
-             payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
-             card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
-             billing_address, description, metadata, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                payment_number,
-                input.order_id.map(|id| id.to_string()),
-                input.invoice_id.map(|id| id.to_string()),
-                input.customer_id.map(|id| id.to_string()),
-                PaymentTransactionStatus::Pending.to_string(),
-                input.payment_method.to_string(),
-                input.amount.to_string(),
-                input.currency.unwrap_or_else(|| "USD".to_string()),
-                "0",
-                input.external_id,
-                input.idempotency_key,
-                input.processor,
-                input.card_brand.map(|b| b.to_string()),
-                input.card_last4,
-                input.card_exp_month,
-                input.card_exp_year,
-                input.billing_email,
-                input.billing_name,
-                input.billing_address,
-                input.description,
-                input.metadata,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO payments (id, payment_number, order_id, invoice_id, customer_id, status,
+                 payment_method, amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                 card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
+                 billing_address, description, metadata, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    payment_number,
+                    input.order_id.map(|id| id.to_string()),
+                    input.invoice_id.map(|id| id.to_string()),
+                    input.customer_id.map(|id| id.to_string()),
+                    PaymentTransactionStatus::Pending.to_string(),
+                    input.payment_method.to_string(),
+                    input.amount.to_string(),
+                    input.currency.unwrap_or_else(|| "USD".to_string()),
+                    "0",
+                    input.external_id,
+                    input.idempotency_key,
+                    input.processor,
+                    input.card_brand.map(|b| b.to_string()),
+                    input.card_last4,
+                    input.card_exp_month,
+                    input.card_exp_year,
+                    input.billing_email,
+                    input.billing_name,
+                    input.billing_address,
+                    input.description,
+                    input.metadata,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -241,24 +243,25 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let payment = self.get(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
-        let payment = self.get(id)?.ok_or(CommerceError::NotFound)?;
-
-        conn.execute(
-            "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
-             failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
-            params![
-                input.status.unwrap_or(payment.status).to_string(),
-                input.external_id.or(payment.external_id),
-                input.failure_reason.or(payment.failure_reason),
-                input.failure_code.or(payment.failure_code),
-                input.metadata.or(payment.metadata),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE payments SET status = ?, external_id = ?, failure_reason = ?,
+                 failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                params![
+                    input.status.unwrap_or(payment.status).to_string(),
+                    input.external_id.or(payment.external_id),
+                    input.failure_reason.or(payment.failure_reason),
+                    input.failure_code.or(payment.failure_code),
+                    input.metadata.or(payment.metadata),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -315,25 +318,29 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn mark_completed(&self, id: Uuid) -> Result<Payment> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
 
-        conn.execute(
-            "UPDATE payments SET status = ?, paid_at = ?, updated_at = ? WHERE id = ?",
-            params![PaymentTransactionStatus::Completed.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE payments SET status = ?, paid_at = ?, updated_at = ? WHERE id = ?",
+                params![PaymentTransactionStatus::Completed.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
 
-        conn.execute(
-            "UPDATE payments SET status = ?, failure_reason = ?, failure_code = ?, updated_at = ? WHERE id = ?",
-            params![PaymentTransactionStatus::Failed.to_string(), reason, code, now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE payments SET status = ?, failure_reason = ?, failure_code = ?, updated_at = ? WHERE id = ?",
+                params![PaymentTransactionStatus::Failed.to_string(), reason, code, now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -349,8 +356,6 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
         }
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
         // Get payment to determine refund amount
         let payment = self.get(input.payment_id)?.ok_or(CommerceError::NotFound)?;
         let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
@@ -359,24 +364,27 @@ impl PaymentRepository for SqlitePaymentRepository {
         let now = chrono::Utc::now();
         let refund_number = generate_refund_number();
 
-        conn.execute(
-            "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                refund_number,
-                input.payment_id.to_string(),
-                RefundStatus::Pending.to_string(),
-                refund_amount.to_string(),
-                payment.currency,
-                input.reason,
-                input.external_id,
-                input.idempotency_key,
-                input.notes,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO refunds (id, refund_number, payment_id, status, amount, currency, reason, external_id, idempotency_key, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    refund_number,
+                    input.payment_id.to_string(),
+                    RefundStatus::Pending.to_string(),
+                    refund_amount.to_string(),
+                    payment.currency,
+                    input.reason,
+                    input.external_id,
+                    input.idempotency_key,
+                    input.notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }
@@ -405,35 +413,38 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn complete_refund(&self, id: Uuid) -> Result<Refund> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
-        let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
+                params![RefundStatus::Completed.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
 
-        conn.execute(
-            "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
-            params![RefundStatus::Completed.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
-
-        // Update payment amount_refunded
-        conn.execute(
-            "UPDATE payments SET amount_refunded = amount_refunded + ?, status = CASE
-             WHEN amount_refunded + ? >= amount THEN 'refunded' ELSE 'partially_refunded' END,
-             updated_at = ? WHERE id = ?",
-            params![refund.amount.to_string(), refund.amount.to_string(), now.to_rfc3339(), refund.payment_id.to_string()],
-        ).map_err(map_db_error)?;
+            // Update payment amount_refunded
+            conn.execute(
+                "UPDATE payments SET amount_refunded = amount_refunded + ?, status = CASE
+                 WHEN amount_refunded + ? >= amount THEN 'refunded' ELSE 'partially_refunded' END,
+                 updated_at = ? WHERE id = ?",
+                params![refund.amount.to_string(), refund.amount.to_string(), now.to_rfc3339(), refund.payment_id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
 
-        conn.execute(
-            "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ?",
-            params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ?",
+                params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }

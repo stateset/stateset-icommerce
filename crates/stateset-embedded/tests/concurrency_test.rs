@@ -2,10 +2,7 @@
 //! Tests behavior under concurrent access, race conditions, and deadlocks
 
 use rust_decimal_macros::dec;
-use stateset_embedded::{
-    Commerce, CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    InventoryReservation, ReservationStatus, ReserveInventory,
-};
+use stateset_embedded::{Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
@@ -15,7 +12,7 @@ use uuid::Uuid;
 // ============================================================================
 
 /// Setup test database with inventory
-fn setup_concurrent_test() -> (Commerce, Uuid) {
+fn setup_concurrent_test() -> Commerce {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create inventory with limited quantity
@@ -30,7 +27,7 @@ fn setup_concurrent_test() -> (Commerce, Uuid) {
         })
         .expect("Failed to create inventory");
 
-    (commerce, sku.into())
+    commerce
 }
 
 /// Create a test customer
@@ -53,7 +50,7 @@ fn create_test_customer(commerce: &Commerce) -> Uuid {
 
 #[test]
 fn test_concurrent_reservations_same_quantity() {
-    let commerce = Arc::new(setup_concurrent_test().0);
+    let commerce = Arc::new(setup_concurrent_test());
 
     // Try to reserve the same item simultaneously from multiple threads
     let barrier = Arc::new(Barrier::new(10));
@@ -68,13 +65,11 @@ fn test_concurrent_reservations_same_quantity() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
 
-            let result = commerce_clone.inventory().reserve(ReserveInventory {
-                sku: sku_clone.clone(),
-                quantity: 1,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            });
+            let reference_id = Uuid::new_v4().to_string();
+            let result =
+                commerce_clone
+                    .inventory()
+                    .reserve(&sku_clone, dec!(1), "order", &reference_id, None);
 
             result
         });
@@ -97,7 +92,7 @@ fn test_concurrent_reservations_same_quantity() {
 
 #[test]
 fn test_concurrent_reservations_exceed_stock() {
-    let commerce = Arc::new(setup_concurrent_test().0);
+    let commerce = Arc::new(setup_concurrent_test());
 
     let barrier = Arc::new(Barrier::new(15));
     let mut handles = vec![];
@@ -112,13 +107,11 @@ fn test_concurrent_reservations_exceed_stock() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
 
-            let result = commerce_clone.inventory().reserve(ReserveInventory {
-                sku: sku_clone.clone(),
-                quantity: 1,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            });
+            let reference_id = Uuid::new_v4().to_string();
+            let result =
+                commerce_clone
+                    .inventory()
+                    .reserve(&sku_clone, dec!(1), "order", &reference_id, None);
 
             result
         });
@@ -126,51 +119,38 @@ fn test_concurrent_reservations_exceed_stock() {
         handles.push(handle);
     }
 
-    let successful: Vec<_> = handles
+    let results: Vec<_> = handles
         .into_iter()
         .map(|h| h.join().expect("Thread panicked"))
-        .filter(|r| r.is_ok())
         .collect();
-
-    let failed: Vec<_> = handles
-        .into_iter()
-        .map(|h| h.join().expect("Thread panicked"))
-        .filter(|r| r.is_err())
-        .collect();
+    let successful = results.iter().filter(|r| r.is_ok()).count();
+    let failed = results.iter().filter(|r| r.is_err()).count();
 
     assert_eq!(
-        successful.len(),
+        successful,
         10,
         "Only first 10 reservations should succeed"
     );
-    assert_eq!(failed.len(), 5, "Last 5 reservations should fail");
+    assert_eq!(failed, 5, "Last 5 reservations should fail");
 }
 
 #[test]
 fn test_reservation_expiration_race() {
-    let commerce = Arc::new(setup_concurrent_test().0);
+    let commerce = Arc::new(setup_concurrent_test());
     let sku = "CONCURRENT-SKU-001".to_string();
 
     // Reserve all items with short expiry
+    let reference_id = Uuid::new_v4().to_string();
     commerce
         .inventory()
-        .reserve(ReserveInventory {
-            sku: sku.clone(),
-            quantity: 10,
-            reference_type: "order".into(),
-            reference_id: Uuid::new_v4().to_string(),
-            expiry_seconds: Some(1), // Expire in 1 second
-        })
+        .reserve(&sku, dec!(10), "order", &reference_id, Some(1))
         .expect("Failed to reserve");
 
     // Try to reserve again immediately (should fail)
-    let result = commerce.inventory().reserve(ReserveInventory {
-        sku: sku.clone(),
-        quantity: 1,
-        reference_type: "order".into(),
-        reference_id: Uuid::new_v4().to_string(),
-        expiry_seconds: None,
-    });
+    let reference_id = Uuid::new_v4().to_string();
+    let result = commerce
+        .inventory()
+        .reserve(&sku, dec!(1), "order", &reference_id, None);
 
     assert!(
         result.is_err(),
@@ -181,20 +161,17 @@ fn test_reservation_expiration_race() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Now it should succeed
-    let result = commerce.inventory().reserve(ReserveInventory {
-        sku: sku.clone(),
-        quantity: 1,
-        reference_type: "order".into(),
-        reference_id: Uuid::new_v4().to_string(),
-        expiry_seconds: None,
-    });
+    let reference_id = Uuid::new_v4().to_string();
+    let result = commerce
+        .inventory()
+        .reserve(&sku, dec!(1), "order", &reference_id, None);
 
     assert!(result.is_ok(), "Reservation should succeed after expiry");
 }
 
 #[test]
 fn test_concurrent_reservation_confirm() {
-    let commerce = Arc::new(setup_concurrent_test().0);
+    let commerce = Arc::new(setup_concurrent_test());
     let sku = "CONCURRENT-SKU-001".to_string();
 
     let barrier = Arc::new(Barrier::new(5));
@@ -211,15 +188,10 @@ fn test_concurrent_reservation_confirm() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
 
+            let reference_id = format!("order-{}", i);
             let reservation = commerce_clone
                 .inventory()
-                .reserve(ReserveInventory {
-                    sku: sku_clone.clone(),
-                    quantity: 1,
-                    reference_type: "order".into(),
-                    reference_id: format!("order-{}", i),
-                    expiry_seconds: None,
-                })
+                .reserve(&sku_clone, dec!(1), "order", &reference_id, None)
                 .expect("Failed to reserve");
 
             let mut ids = reservation_ids_clone.lock().unwrap();
@@ -274,7 +246,7 @@ fn test_concurrent_reservation_confirm() {
 
 #[test]
 fn test_concurrent_order_creation_same_inventory() {
-    let (commerce, _) = setup_concurrent_test();
+    let commerce = setup_concurrent_test();
     let commerce = Arc::new(commerce);
 
     let barrier = Arc::new(Barrier::new(3));
@@ -339,7 +311,7 @@ fn test_no_deadlock_with_circular_dependencies() {
         .create_item(CreateInventoryItem {
             sku: sku1.into(),
             name: "Item 1".into(),
-            initial_quantity: Some(dec!(5)),
+            initial_quantity: Some(dec!(6)),
             ..Default::default()
         })
         .expect("Failed to create item 1");
@@ -349,7 +321,7 @@ fn test_no_deadlock_with_circular_dependencies() {
         .create_item(CreateInventoryItem {
             sku: sku2.into(),
             name: "Item 2".into(),
-            initial_quantity: Some(dec!(5)),
+            initial_quantity: Some(dec!(6)),
             ..Default::default()
         })
         .expect("Failed to create item 2");
@@ -367,27 +339,17 @@ fn test_no_deadlock_with_circular_dependencies() {
         barrier1.wait();
 
         // Reserve item 1 first
+        let reference_id = Uuid::new_v4().to_string();
         commerce1
             .inventory()
-            .reserve(ReserveInventory {
-                sku: sku1_clone.clone(),
-                quantity: 3,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            })
+            .reserve(&sku1_clone, dec!(3), "order", &reference_id, None)
             .expect("Failed to reserve item 1");
 
         // Then try to reserve item 2
+        let reference_id = Uuid::new_v4().to_string();
         commerce1
             .inventory()
-            .reserve(ReserveInventory {
-                sku: sku2_clone.clone(),
-                quantity: 3,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            })
+            .reserve(&sku2_clone, dec!(3), "order", &reference_id, None)
             .expect("Failed to reserve item 2");
     });
 
@@ -400,27 +362,17 @@ fn test_no_deadlock_with_circular_dependencies() {
         barrier2.wait();
 
         // Reserve item 2 first (opposite order)
+        let reference_id = Uuid::new_v4().to_string();
         commerce2
             .inventory()
-            .reserve(ReserveInventory {
-                sku: sku2_clone2.clone(),
-                quantity: 3,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            })
+            .reserve(&sku2_clone2, dec!(3), "order", &reference_id, None)
             .expect("Failed to reserve item 2");
 
         // Then try to reserve item 1
+        let reference_id = Uuid::new_v4().to_string();
         commerce2
             .inventory()
-            .reserve(ReserveInventory {
-                sku: sku1_clone2.clone(),
-                quantity: 3,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            })
+            .reserve(&sku1_clone2, dec!(3), "order", &reference_id, None)
             .expect("Failed to reserve item 1");
     });
 
@@ -461,9 +413,10 @@ fn test_transaction_isolation() {
     let handle1 = thread::spawn(move || {
         // In a real transaction, this adjustment would not be visible
         // until commitment
-        commerce1.inventory()/*.in_transaction(|db| {
-            db.adjust(&sku1, dec!(-5), "Test adjustment")
-        })*/;
+        commerce1
+            .inventory()
+            .adjust(&sku1, dec!(-5), "Test adjustment")
+            .expect("Failed to adjust inventory");
     });
 
     handle1.join().expect("Thread panicked");
@@ -474,7 +427,7 @@ fn test_transaction_isolation() {
         .get_stock(sku)
         .expect("Failed to get stock");
     assert_eq!(
-        stock.quantity_on_hand,
+        stock.expect("Stock missing").total_on_hand,
         dec!(5),
         "Stock should be atomically decremented"
     );
@@ -511,13 +464,10 @@ fn test_high_concurrency_reservation() {
         let handle = thread::spawn(move || {
             barrier_clone.wait();
 
-            commerce_clone.inventory().reserve(ReserveInventory {
-                sku: sku_clone.clone(),
-                quantity: 1,
-                reference_type: "order".into(),
-                reference_id: Uuid::new_v4().to_string(),
-                expiry_seconds: None,
-            })
+            let reference_id = Uuid::new_v4().to_string();
+            commerce_clone
+                .inventory()
+                .reserve(&sku_clone, dec!(1), "order", &reference_id, None)
         });
 
         handles.push(handle);
@@ -554,23 +504,13 @@ fn test_reservation_release_and_reuse() {
     // Reserve all items
     let reservation = commerce
         .inventory()
-        .reserve(ReserveInventory {
-            sku: sku.to_string(),
-            quantity: 5,
-            reference_type: "order".into(),
-            reference_id: Uuid::new_v4().to_string(),
-            expiry_seconds: None,
-        })
+        .reserve(&sku, dec!(5), "order", &Uuid::new_v4().to_string(), None)
         .expect("Failed to reserve");
 
     // Try to reserve again (should fail)
-    let result = commerce.inventory().reserve(ReserveInventory {
-        sku: sku.to_string(),
-        quantity: 1,
-        reference_type: "order".into(),
-        reference_id: Uuid::new_v4().to_string(),
-        expiry_seconds: None,
-    });
+    let result = commerce
+        .inventory()
+        .reserve(&sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
     assert!(
         result.is_err(),
@@ -584,13 +524,9 @@ fn test_reservation_release_and_reuse() {
         .expect("Failed to release reservation");
 
     // Now reservation should succeed
-    let result = commerce.inventory().reserve(ReserveInventory {
-        sku: sku.to_string(),
-        quantity: 1,
-        reference_type: "order".into(),
-        reference_id: Uuid::new_v4().to_string(),
-        expiry_seconds: None,
-    });
+    let result = commerce
+        .inventory()
+        .reserve(&sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
     assert!(result.is_ok(), "Reservation should succeed after release");
 }

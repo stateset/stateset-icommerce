@@ -245,6 +245,8 @@ impl SqliteTaxRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
+
         self.get_jurisdiction(id)?.ok_or(CommerceError::NotFound)
     }
 }
@@ -484,6 +486,8 @@ impl SqliteTaxRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
+
         self.get_rate(id)?.ok_or(CommerceError::NotFound)
     }
 }
@@ -691,6 +695,8 @@ impl SqliteTaxRepository {
                 now.to_rfc3339()
             ],
         ).map_err(map_db_error)?;
+
+        drop(conn);
 
         self.get_exemption(id)?.ok_or(CommerceError::NotFound)
     }

@@ -1,8 +1,9 @@
 //! Order operations
 
+use rust_decimal::Decimal;
 use stateset_core::{
-    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus,
-    Result, UpdateOrder,
+    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, PaymentStatus,
+    ReserveInventory, Result, UpdateOrder,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -100,7 +101,54 @@ impl Orders {
     #[tracing::instrument(skip(self, input), fields(customer_id = %input.customer_id, items = input.items.len()))]
     pub fn create(&self, input: CreateOrder) -> Result<Order> {
         tracing::info!("creating order");
-        let order = self.db.orders().create(input)?;
+        let inventory = self.db.inventory();
+        let mut reservation_ids = Vec::new();
+        let reservation_reference_id = Uuid::new_v4().to_string();
+        let release_reservations = |ids: &[Uuid]| {
+            for reservation_id in ids {
+                let _ = inventory.release_reservation(*reservation_id);
+            }
+        };
+
+        for item in &input.items {
+            if item.quantity <= 0 {
+                continue;
+            }
+
+            let has_inventory = match inventory.get_item_by_sku(&item.sku) {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(err) => {
+                    release_reservations(&reservation_ids);
+                    return Err(err);
+                }
+            };
+
+            if has_inventory {
+                match inventory.reserve(ReserveInventory {
+                    sku: item.sku.clone(),
+                    location_id: None,
+                    quantity: Decimal::from(item.quantity),
+                    reference_type: "order".to_string(),
+                    reference_id: reservation_reference_id.clone(),
+                    expires_in_seconds: None,
+                }) {
+                    Ok(reservation) => reservation_ids.push(reservation.id),
+                    Err(err) => {
+                        release_reservations(&reservation_ids);
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let order = match self.db.orders().create(input) {
+            Ok(order) => order,
+            Err(err) => {
+                release_reservations(&reservation_ids);
+                return Err(err);
+            }
+        };
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::OrderCreated {
@@ -143,10 +191,24 @@ impl Orders {
     #[tracing::instrument(skip(self), fields(order_id = %id, status = ?status))]
     pub fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
         tracing::info!("updating order status");
+        let mut tracking_number = None;
+        let mut payment_status = None;
+        if status == OrderStatus::Shipped {
+            if let Some(order) = self.get(id)? {
+                if order.tracking_number.is_none() {
+                    tracking_number = Some(format!("AUTO-{}", id));
+                }
+            }
+        }
+        if status == OrderStatus::Refunded {
+            payment_status = Some(PaymentStatus::Refunded);
+        }
         self.update(
             id,
             UpdateOrder {
                 status: Some(status),
+                payment_status,
+                tracking_number,
                 ..Default::default()
             },
         )
@@ -216,6 +278,18 @@ impl Orders {
     #[tracing::instrument(skip(self), fields(order_id = %id, has_tracking = tracking_number.is_some()))]
     pub fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
         tracing::info!("shipping order");
+        if let Some(order) = self.get(id)? {
+            match order.status {
+                OrderStatus::Pending => {
+                    self.update_status(id, OrderStatus::Confirmed)?;
+                    self.update_status(id, OrderStatus::Processing)?;
+                }
+                OrderStatus::Confirmed => {
+                    self.update_status(id, OrderStatus::Processing)?;
+                }
+                _ => {}
+            }
+        }
         self.update(
             id,
             UpdateOrder {

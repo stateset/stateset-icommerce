@@ -219,32 +219,34 @@ impl SqliteSerialRepository {
 
 impl SerialRepository for SqliteSerialRepository {
     fn create(&self, input: CreateSerialNumber) -> stateset_core::Result<SerialNumber> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
         let serial = input.serial.unwrap_or_else(|| self.generate_serial(None));
         let attributes = input.attributes.unwrap_or(serde_json::Value::Null);
 
-        conn.execute(
-            "INSERT INTO serial_numbers (
-                id, serial, sku, status, lot_id, lot_number, current_location_id,
-                manufactured_at, notes, attributes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                serial,
-                input.sku,
-                SerialStatus::Available.to_string(),
-                input.lot_id.map(|id| id.to_string()),
-                input.lot_number,
-                input.location_id,
-                input.manufactured_at.map(|dt| dt.to_rfc3339()),
-                input.notes,
-                serde_json::to_string(&attributes).ok(),
-                now,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO serial_numbers (
+                    id, serial, sku, status, lot_id, lot_number, current_location_id,
+                    manufactured_at, notes, attributes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    serial,
+                    input.sku,
+                    SerialStatus::Available.to_string(),
+                    input.lot_id.map(|id| id.to_string()),
+                    input.lot_number,
+                    input.location_id,
+                    input.manufactured_at.map(|dt| dt.to_rfc3339()),
+                    input.notes,
+                    serde_json::to_string(&attributes).ok(),
+                    now,
+                    now,
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -358,7 +360,6 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateSerialNumber) -> stateset_core::Result<SerialNumber> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now().to_rfc3339();
 
         let mut updates = vec!["updated_at = ?".to_string()];
@@ -396,8 +397,11 @@ impl SerialRepository for SqliteSerialRepository {
             updates.join(", ")
         );
 
-        conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
-            .map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
+                .map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -555,65 +559,68 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn change_status(&self, input: ChangeSerialStatus) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-        let now = Utc::now().to_rfc3339();
+        {
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(map_db_error)?;
+            let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx.query_row(
-            "SELECT * FROM serial_numbers WHERE id = ?",
-            params![input.serial_id.to_string()],
-            Self::map_serial_row,
-        ).map_err(map_db_error)?;
+            // Get current serial
+            let serial: SerialNumber = tx.query_row(
+                "SELECT * FROM serial_numbers WHERE id = ?",
+                params![input.serial_id.to_string()],
+                Self::map_serial_row,
+            ).map_err(map_db_error)?;
 
-        let old_status = serial.status;
+            let old_status = serial.status;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET
-                status = ?,
-                current_location_id = COALESCE(?, current_location_id),
-                current_owner_id = COALESCE(?, current_owner_id),
-                current_owner_type = COALESCE(?, current_owner_type),
-                updated_at = ?
-            WHERE id = ?",
-            params![
-                input.new_status.to_string(),
-                input.location_id,
-                input.owner_id.map(|id| id.to_string()),
-                input.owner_type,
-                now,
-                input.serial_id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+            // Update serial
+            tx.execute(
+                "UPDATE serial_numbers SET
+                    status = ?,
+                    current_location_id = COALESCE(?, current_location_id),
+                    current_owner_id = COALESCE(?, current_owner_id),
+                    current_owner_type = COALESCE(?, current_owner_type),
+                    updated_at = ?
+                WHERE id = ?",
+                params![
+                    input.new_status.to_string(),
+                    input.location_id,
+                    input.owner_id.map(|id| id.to_string()),
+                    input.owner_type,
+                    now,
+                    input.serial_id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, from_location_id, to_location_id,
-                from_owner_id, to_owner_id, performed_by, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                input.serial_id.to_string(),
-                SerialEventType::StatusChanged.to_string(),
-                input.reference_type,
-                input.reference_id.map(|id| id.to_string()),
-                old_status.to_string(),
-                input.new_status.to_string(),
-                serial.current_location_id,
-                input.location_id,
-                serial.current_owner_id.map(|id| id.to_string()),
-                input.owner_id.map(|id| id.to_string()),
-                input.performed_by,
-                input.notes,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+            // Record history
+            let history_id = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO serial_history (
+                    id, serial_id, event_type, reference_type, reference_id,
+                    from_status, to_status, from_location_id, to_location_id,
+                    from_owner_id, to_owner_id, performed_by, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    history_id.to_string(),
+                    input.serial_id.to_string(),
+                    SerialEventType::StatusChanged.to_string(),
+                    input.reference_type,
+                    input.reference_id.map(|id| id.to_string()),
+                    old_status.to_string(),
+                    input.new_status.to_string(),
+                    serial.current_location_id,
+                    input.location_id,
+                    serial.current_owner_id.map(|id| id.to_string()),
+                    input.owner_id.map(|id| id.to_string()),
+                    input.performed_by,
+                    input.notes,
+                    now,
+                ],
+            ).map_err(map_db_error)?;
 
-        tx.commit().map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
+        }
         self.get(input.serial_id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -804,157 +811,166 @@ impl SerialRepository for SqliteSerialRepository {
     }
 
     fn move_serial(&self, input: MoveSerial) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-        let now = Utc::now().to_rfc3339();
+        {
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(map_db_error)?;
+            let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx.query_row(
-            "SELECT * FROM serial_numbers WHERE id = ?",
-            params![input.serial_id.to_string()],
-            Self::map_serial_row,
-        ).map_err(map_db_error)?;
+            // Get current serial
+            let serial: SerialNumber = tx.query_row(
+                "SELECT * FROM serial_numbers WHERE id = ?",
+                params![input.serial_id.to_string()],
+                Self::map_serial_row,
+            ).map_err(map_db_error)?;
 
-        let from_location = serial.current_location_id;
+            let from_location = serial.current_location_id;
 
-        // Update location
-        tx.execute(
-            "UPDATE serial_numbers SET current_location_id = ?, updated_at = ? WHERE id = ?",
-            params![input.to_location_id, now, input.serial_id.to_string()],
-        ).map_err(map_db_error)?;
+            // Update location
+            tx.execute(
+                "UPDATE serial_numbers SET current_location_id = ?, updated_at = ? WHERE id = ?",
+                params![input.to_location_id, now, input.serial_id.to_string()],
+            ).map_err(map_db_error)?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, from_status, to_status,
-                from_location_id, to_location_id, performed_by, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                input.serial_id.to_string(),
-                SerialEventType::LocationChanged.to_string(),
-                serial.status.to_string(),
-                serial.status.to_string(),
-                from_location,
-                input.to_location_id,
-                input.performed_by,
-                input.notes,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+            // Record history
+            let history_id = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO serial_history (
+                    id, serial_id, event_type, from_status, to_status,
+                    from_location_id, to_location_id, performed_by, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    history_id.to_string(),
+                    input.serial_id.to_string(),
+                    SerialEventType::LocationChanged.to_string(),
+                    serial.status.to_string(),
+                    serial.status.to_string(),
+                    from_location,
+                    input.to_location_id,
+                    input.performed_by,
+                    input.notes,
+                    now,
+                ],
+            ).map_err(map_db_error)?;
 
-        tx.commit().map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
+        }
         self.get(input.serial_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn transfer_ownership(&self, input: TransferSerialOwnership) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-        let now = Utc::now().to_rfc3339();
+        {
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(map_db_error)?;
+            let now = Utc::now().to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx.query_row(
-            "SELECT * FROM serial_numbers WHERE id = ?",
-            params![input.serial_id.to_string()],
-            Self::map_serial_row,
-        ).map_err(map_db_error)?;
+            // Get current serial
+            let serial: SerialNumber = tx.query_row(
+                "SELECT * FROM serial_numbers WHERE id = ?",
+                params![input.serial_id.to_string()],
+                Self::map_serial_row,
+            ).map_err(map_db_error)?;
 
-        // Update ownership
-        tx.execute(
-            "UPDATE serial_numbers SET
-                current_owner_id = ?,
-                current_owner_type = ?,
-                status = ?,
-                updated_at = ?
-            WHERE id = ?",
-            params![
-                input.new_owner_id.to_string(),
-                input.new_owner_type,
-                SerialStatus::Transferred.to_string(),
-                now,
-                input.serial_id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+            // Update ownership
+            tx.execute(
+                "UPDATE serial_numbers SET
+                    current_owner_id = ?,
+                    current_owner_type = ?,
+                    status = ?,
+                    updated_at = ?
+                WHERE id = ?",
+                params![
+                    input.new_owner_id.to_string(),
+                    input.new_owner_type,
+                    SerialStatus::Transferred.to_string(),
+                    now,
+                    input.serial_id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, from_owner_id, to_owner_id, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                input.serial_id.to_string(),
-                SerialEventType::Transferred.to_string(),
-                input.reference_type,
-                input.reference_id.map(|id| id.to_string()),
-                serial.status.to_string(),
-                SerialStatus::Transferred.to_string(),
-                serial.current_owner_id.map(|id| id.to_string()),
-                input.new_owner_id.to_string(),
-                input.notes,
-                now,
-            ],
-        ).map_err(map_db_error)?;
+            // Record history
+            let history_id = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO serial_history (
+                    id, serial_id, event_type, reference_type, reference_id,
+                    from_status, to_status, from_owner_id, to_owner_id, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    history_id.to_string(),
+                    input.serial_id.to_string(),
+                    SerialEventType::Transferred.to_string(),
+                    input.reference_type,
+                    input.reference_id.map(|id| id.to_string()),
+                    serial.status.to_string(),
+                    SerialStatus::Transferred.to_string(),
+                    serial.current_owner_id.map(|id| id.to_string()),
+                    input.new_owner_id.to_string(),
+                    input.notes,
+                    now,
+                ],
+            ).map_err(map_db_error)?;
 
-        tx.commit().map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
+        }
         self.get(input.serial_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> stateset_core::Result<SerialNumber> {
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
-        let now = Utc::now();
-        let now_str = now.to_rfc3339();
+        {
+            let mut conn =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let tx = conn.transaction().map_err(map_db_error)?;
+            let now = Utc::now();
+            let now_str = now.to_rfc3339();
 
-        // Get current serial
-        let serial: SerialNumber = tx.query_row(
-            "SELECT * FROM serial_numbers WHERE id = ?",
-            params![id.to_string()],
-            Self::map_serial_row,
-        ).map_err(map_db_error)?;
+            // Get current serial
+            let serial: SerialNumber = tx.query_row(
+                "SELECT * FROM serial_numbers WHERE id = ?",
+                params![id.to_string()],
+                Self::map_serial_row,
+            ).map_err(map_db_error)?;
 
-        // Update serial
-        tx.execute(
-            "UPDATE serial_numbers SET
-                status = ?,
-                current_owner_id = ?,
-                current_owner_type = 'customer',
-                sold_at = ?,
-                updated_at = ?
-            WHERE id = ?",
-            params![
-                SerialStatus::Sold.to_string(),
-                customer_id.to_string(),
-                now_str,
-                now_str,
-                id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+            // Update serial
+            tx.execute(
+                "UPDATE serial_numbers SET
+                    status = ?,
+                    current_owner_id = ?,
+                    current_owner_type = 'customer',
+                    sold_at = ?,
+                    updated_at = ?
+                WHERE id = ?",
+                params![
+                    SerialStatus::Sold.to_string(),
+                    customer_id.to_string(),
+                    now_str,
+                    now_str,
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
 
-        // Record history
-        let history_id = Uuid::new_v4();
-        tx.execute(
-            "INSERT INTO serial_history (
-                id, serial_id, event_type, reference_type, reference_id,
-                from_status, to_status, to_owner_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                history_id.to_string(),
-                id.to_string(),
-                SerialEventType::Sold.to_string(),
-                order_id.map(|_| "order"),
-                order_id.map(|id| id.to_string()),
-                serial.status.to_string(),
-                SerialStatus::Sold.to_string(),
-                customer_id.to_string(),
-                now_str,
-            ],
-        ).map_err(map_db_error)?;
+            // Record history
+            let history_id = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO serial_history (
+                    id, serial_id, event_type, reference_type, reference_id,
+                    from_status, to_status, to_owner_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    history_id.to_string(),
+                    id.to_string(),
+                    SerialEventType::Sold.to_string(),
+                    order_id.map(|_| "order"),
+                    order_id.map(|id| id.to_string()),
+                    serial.status.to_string(),
+                    SerialStatus::Sold.to_string(),
+                    customer_id.to_string(),
+                    now_str,
+                ],
+            ).map_err(map_db_error)?;
 
-        tx.commit().map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
+        }
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 

@@ -211,7 +211,6 @@ impl SqliteReceivingRepository {
 
 impl ReceivingRepository for SqliteReceivingRepository {
     fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
         let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
@@ -219,54 +218,57 @@ impl ReceivingRepository for SqliteReceivingRepository {
         // Calculate expected quantity from items
         let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
 
-        conn.execute(
-            "INSERT INTO receipts (id, receipt_number, receipt_type, status, reference_type, reference_id,
-             supplier_id, warehouse_id, carrier, tracking_number, expected_date, expected_quantity,
-             notes, created_by, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
-            params![
-                id.to_string(),
-                receipt_number,
-                input.receipt_type.to_string(),
-                ReceiptStatus::Expected.to_string(),
-                input.reference_type,
-                input.reference_id.map(|id| id.to_string()),
-                input.supplier_id.map(|id| id.to_string()),
-                input.warehouse_id,
-                input.carrier,
-                input.tracking_number,
-                input.expected_date.map(|d| d.to_rfc3339()),
-                expected_total.to_string(),
-                input.notes,
-                input.created_by,
-                now,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        // Create receipt items
-        for (idx, item) in input.items.iter().enumerate() {
-            let item_id = Uuid::new_v4();
+        {
+            let conn = self.conn()?;
             conn.execute(
-                "INSERT INTO receipt_items (id, receipt_id, line_number, sku, description, po_line_id,
-                 expected_quantity, unit_cost, lot_number, expiration_date, notes, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                "INSERT INTO receipts (id, receipt_number, receipt_type, status, reference_type, reference_id,
+                 supplier_id, warehouse_id, carrier, tracking_number, expected_date, expected_quantity,
+                 notes, created_by, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
                 params![
-                    item_id.to_string(),
                     id.to_string(),
-                    (idx + 1) as i32,
-                    item.sku,
-                    item.description,
-                    item.po_line_id.map(|id| id.to_string()),
-                    item.expected_quantity.to_string(),
-                    item.unit_cost.map(|d| d.to_string()),
-                    item.lot_number,
-                    item.expiration_date.map(|d| d.to_rfc3339()),
-                    item.notes,
+                    receipt_number,
+                    input.receipt_type.to_string(),
+                    ReceiptStatus::Expected.to_string(),
+                    input.reference_type,
+                    input.reference_id.map(|id| id.to_string()),
+                    input.supplier_id.map(|id| id.to_string()),
+                    input.warehouse_id,
+                    input.carrier,
+                    input.tracking_number,
+                    input.expected_date.map(|d| d.to_rfc3339()),
+                    expected_total.to_string(),
+                    input.notes,
+                    input.created_by,
                     now,
                 ],
             )
             .map_err(map_db_error)?;
+
+            // Create receipt items
+            for (idx, item) in input.items.iter().enumerate() {
+                let item_id = Uuid::new_v4();
+                conn.execute(
+                    "INSERT INTO receipt_items (id, receipt_id, line_number, sku, description, po_line_id,
+                     expected_quantity, unit_cost, lot_number, expiration_date, notes, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                    params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        (idx + 1) as i32,
+                        item.sku,
+                        item.description,
+                        item.po_line_id.map(|id| id.to_string()),
+                        item.expected_quantity.to_string(),
+                        item.unit_cost.map(|d| d.to_string()),
+                        item.lot_number,
+                        item.expiration_date.map(|d| d.to_rfc3339()),
+                        item.notes,
+                        now,
+                    ],
+                )
+                .map_err(map_db_error)?;
+            }
         }
 
         self.get_receipt(id)?

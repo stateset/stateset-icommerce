@@ -279,7 +279,6 @@ impl SqliteWarrantyRepository {
 
 impl WarrantyRepository for SqliteWarrantyRepository {
     fn create(&self, input: CreateWarranty) -> Result<Warranty> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let warranty_number = generate_warranty_number();
@@ -293,39 +292,42 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             })
         });
 
-        conn.execute(
-            "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
-             product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
-             purchase_date, start_date, end_date, duration_months, max_coverage_amount, deductible,
-             max_claims, claims_used, terms, notes, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                warranty_number,
-                input.customer_id.to_string(),
-                input.order_id.map(|id| id.to_string()),
-                input.order_item_id.map(|id| id.to_string()),
-                input.product_id.map(|id| id.to_string()),
-                input.sku,
-                input.serial_number,
-                WarrantyStatus::Active.to_string(),
-                input.warranty_type.unwrap_or_default().to_string(),
-                input.provider,
-                input.coverage_description,
-                purchase_date.to_rfc3339(),
-                start_date.to_rfc3339(),
-                end_date.map(|d| d.to_rfc3339()),
-                input.duration_months,
-                input.max_coverage_amount.map(|d| d.to_string()),
-                input.deductible.map(|d| d.to_string()),
-                input.max_claims,
-                0,
-                input.terms,
-                input.notes,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
+                 product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
+                 purchase_date, start_date, end_date, duration_months, max_coverage_amount, deductible,
+                 max_claims, claims_used, terms, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    warranty_number,
+                    input.customer_id.to_string(),
+                    input.order_id.map(|id| id.to_string()),
+                    input.order_item_id.map(|id| id.to_string()),
+                    input.product_id.map(|id| id.to_string()),
+                    input.sku,
+                    input.serial_number,
+                    WarrantyStatus::Active.to_string(),
+                    input.warranty_type.unwrap_or_default().to_string(),
+                    input.provider,
+                    input.coverage_description,
+                    purchase_date.to_rfc3339(),
+                    start_date.to_rfc3339(),
+                    end_date.map(|d| d.to_rfc3339()),
+                    input.duration_months,
+                    input.max_coverage_amount.map(|d| d.to_string()),
+                    input.deductible.map(|d| d.to_string()),
+                    input.max_claims,
+                    0,
+                    input.terms,
+                    input.notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -364,24 +366,26 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
-        conn.execute(
-            "UPDATE warranties SET status = ?, serial_number = ?, end_date = ?,
-             coverage_description = ?, terms = ?, notes = ?, updated_at = ? WHERE id = ?",
-            params![
-                input.status.unwrap_or(warranty.status).to_string(),
-                input.serial_number.or(warranty.serial_number),
-                input.end_date.map(|d| d.to_rfc3339()).or(warranty.end_date.map(|d| d.to_rfc3339())),
-                input.coverage_description.or(warranty.coverage_description),
-                input.terms.or(warranty.terms),
-                input.notes.or(warranty.notes),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranties SET status = ?, serial_number = ?, end_date = ?,
+                 coverage_description = ?, terms = ?, notes = ?, updated_at = ? WHERE id = ?",
+                params![
+                    input.status.unwrap_or(warranty.status).to_string(),
+                    input.serial_number.or(warranty.serial_number),
+                    input.end_date.map(|d| d.to_rfc3339()).or(warranty.end_date.map(|d| d.to_rfc3339())),
+                    input.coverage_description.or(warranty.coverage_description),
+                    input.terms.or(warranty.terms),
+                    input.notes.or(warranty.notes),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
@@ -447,20 +451,20 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
         let warranty = self.get(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_transfer(&warranty, new_customer_id)?;
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
 
-        conn.execute(
-            "UPDATE warranties SET customer_id = ?, status = ?, updated_at = ? WHERE id = ?",
-            params![new_customer_id.to_string(), WarrantyStatus::Transferred.to_string(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranties SET customer_id = ?, status = ?, updated_at = ? WHERE id = ?",
+                params![new_customer_id.to_string(), WarrantyStatus::Transferred.to_string(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn create_claim(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
         // Get warranty to get customer_id and validate
         let warranty = self.get(input.warranty_id)?.ok_or(CommerceError::NotFound)?;
 
@@ -472,36 +476,39 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let now = chrono::Utc::now();
         let claim_number = generate_claim_number();
 
-        conn.execute(
-            "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
-             resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
-             shipping_address, customer_notes, submitted_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                id.to_string(),
-                claim_number,
-                input.warranty_id.to_string(),
-                warranty.customer_id.to_string(),
-                ClaimStatus::Submitted.to_string(),
-                ClaimResolution::None.to_string(),
-                input.issue_description,
-                input.issue_category,
-                input.issue_date.map(|d| d.to_rfc3339()),
-                input.contact_phone,
-                input.contact_email,
-                input.shipping_address,
-                input.customer_notes,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO warranty_claims (id, claim_number, warranty_id, customer_id, status,
+                 resolution, issue_description, issue_category, issue_date, contact_phone, contact_email,
+                 shipping_address, customer_notes, submitted_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id.to_string(),
+                    claim_number,
+                    input.warranty_id.to_string(),
+                    warranty.customer_id.to_string(),
+                    ClaimStatus::Submitted.to_string(),
+                    ClaimResolution::None.to_string(),
+                    input.issue_description,
+                    input.issue_category,
+                    input.issue_date.map(|d| d.to_rfc3339()),
+                    input.contact_phone,
+                    input.contact_email,
+                    input.shipping_address,
+                    input.customer_notes,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
 
-        // Increment claims_used on warranty
-        conn.execute(
-            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ? WHERE id = ?",
-            params![now.to_rfc3339(), input.warranty_id.to_string()],
-        ).map_err(map_db_error)?;
+            // Increment claims_used on warranty
+            conn.execute(
+                "UPDATE warranties SET claims_used = claims_used + 1, updated_at = ? WHERE id = ?",
+                params![now.to_rfc3339(), input.warranty_id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
@@ -529,7 +536,6 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
 
@@ -595,33 +601,36 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             ));
         }
 
-        conn.execute(
-            "UPDATE warranty_claims SET status = ?, resolution = ?, repair_cost = ?,
-             replacement_product_id = ?, refund_amount = ?, denial_reason = ?,
-             internal_notes = ?, customer_notes = ?, approved_at = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-            params![
-                status.to_string(),
-                resolution.to_string(),
-                input.repair_cost
-                    .map(|d| d.to_string())
-                    .or(claim.repair_cost.map(|d| d.to_string())),
-                input
-                    .replacement_product_id
-                    .map(|id| id.to_string())
-                    .or(claim.replacement_product_id.map(|id| id.to_string())),
-                input
-                    .refund_amount
-                    .map(|d| d.to_string())
-                    .or(claim.refund_amount.map(|d| d.to_string())),
-                denial_reason,
-                input.internal_notes.or(claim.internal_notes),
-                input.customer_notes.or(claim.customer_notes),
-                approved_at.map(|d| d.to_rfc3339()),
-                resolved_at.map(|d| d.to_rfc3339()),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?, resolution = ?, repair_cost = ?,
+                 replacement_product_id = ?, refund_amount = ?, denial_reason = ?,
+                 internal_notes = ?, customer_notes = ?, approved_at = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                params![
+                    status.to_string(),
+                    resolution.to_string(),
+                    input.repair_cost
+                        .map(|d| d.to_string())
+                        .or(claim.repair_cost.map(|d| d.to_string())),
+                    input
+                        .replacement_product_id
+                        .map(|id| id.to_string())
+                        .or(claim.replacement_product_id.map(|id| id.to_string())),
+                    input
+                        .refund_amount
+                        .map(|d| d.to_string())
+                        .or(claim.refund_amount.map(|d| d.to_string())),
+                    denial_reason,
+                    input.internal_notes.or(claim.internal_notes),
+                    input.customer_notes.or(claim.customer_notes),
+                    approved_at.map(|d| d.to_rfc3339()),
+                    resolved_at.map(|d| d.to_rfc3339()),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
@@ -670,21 +679,22 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     }
 
     fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_approve(&claim)?;
 
-        conn.execute(
-            "UPDATE warranty_claims SET status = ?, approved_at = ?, updated_at = ? WHERE id = ?",
-            params![ClaimStatus::Approved.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?, approved_at = ?, updated_at = ? WHERE id = ?",
+                params![ClaimStatus::Approved.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_deny(&claim)?;
@@ -694,44 +704,51 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             ));
         }
 
-        conn.execute(
-            "UPDATE warranty_claims SET status = ?, resolution = ?, denial_reason = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-            params![ClaimStatus::Denied.to_string(), ClaimResolution::Denied.to_string(), reason, now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?, resolution = ?, denial_reason = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                params![ClaimStatus::Denied.to_string(), ClaimResolution::Denied.to_string(), reason, now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_complete(&claim, resolution)?;
 
-        conn.execute(
-            "UPDATE warranty_claims SET status = ?, resolution = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-            params![ClaimStatus::Completed.to_string(), resolution.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?, resolution = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                params![ClaimStatus::Completed.to_string(), resolution.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
         let claim = self.get_claim(id)?.ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_cancel(&claim)?;
 
-        conn.execute(
-            "UPDATE warranty_claims SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
-            params![
-                ClaimStatus::Cancelled.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-                id.to_string(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE warranty_claims SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                params![
+                    ClaimStatus::Cancelled.to_string(),
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                    id.to_string(),
+                ],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
     }

@@ -99,7 +99,8 @@ impl SqliteDatabase {
                     | OpenFlags::SQLITE_OPEN_FULL_MUTEX
                     | OpenFlags::SQLITE_OPEN_URI,
             );
-            (manager, 5) // Allow up to 5 connections for in-memory databases
+            // Respect configured pool size; ensure at least one connection.
+            (manager, config.max_connections.max(1))
         } else {
             let manager = SqliteConnectionManager::file(&config.url).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE

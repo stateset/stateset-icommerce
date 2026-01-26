@@ -33,7 +33,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use stateset_core::{
     // Order types
-    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, UpdateOrder,
+    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, PaymentStatus,
+    UpdateOrder,
     // Inventory types
     AdjustInventory, CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem,
     InventoryReservation, InventoryTransaction, ReserveInventory, StockLevel,
@@ -399,12 +400,26 @@ impl AsyncOrders {
 
     /// Update order status.
     pub async fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
+        let mut tracking_number = None;
+        let mut payment_status = None;
+        if status == OrderStatus::Shipped {
+            if let Some(order) = self.get(id).await? {
+                if order.tracking_number.is_none() {
+                    tracking_number = Some(format!("AUTO-{}", id));
+                }
+            }
+        }
+        if status == OrderStatus::Refunded {
+            payment_status = Some(PaymentStatus::Refunded);
+        }
         self.db
             .orders()
             .update_async(
                 id,
                 UpdateOrder {
                     status: Some(status),
+                    payment_status,
+                    tracking_number,
                     ..Default::default()
                 },
             )
@@ -454,6 +469,18 @@ impl AsyncOrders {
 
     /// Mark an order as shipped.
     pub async fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
+        if let Some(order) = self.get(id).await? {
+            match order.status {
+                OrderStatus::Pending => {
+                    self.update_status(id, OrderStatus::Confirmed).await?;
+                    self.update_status(id, OrderStatus::Processing).await?;
+                }
+                OrderStatus::Confirmed => {
+                    self.update_status(id, OrderStatus::Processing).await?;
+                }
+                _ => {}
+            }
+        }
         self.db
             .orders()
             .update_async(

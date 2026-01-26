@@ -230,6 +230,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ).map_err(map_db_error)?;
         }
 
+        drop(conn);
         self.get_wave(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create wave".into()))
     }
@@ -299,6 +300,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![WaveStatus::Released.to_string(), now, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_wave(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to release wave".into()))
     }
@@ -312,6 +314,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![WaveStatus::Completed.to_string(), now, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_wave(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete wave".into()))
     }
@@ -324,6 +327,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![WaveStatus::Cancelled.to_string(), id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_wave(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel wave".into()))
     }
@@ -389,6 +393,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pick(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create pick".into()))
     }
@@ -460,6 +465,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![assigned_to, PickStatus::Assigned.to_string(), id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pick(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pick".into()))
     }
@@ -473,6 +479,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PickStatus::InProgress.to_string(), now, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pick(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to start pick".into()))
     }
@@ -498,8 +505,21 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ],
         ).map_err(map_db_error)?;
 
-        // Update wave completed count
-        let pick = self.get_pick(input.pick_id)?.ok_or(CommerceError::NotFound)?;
+        let pick = {
+            let mut stmt = conn
+                .prepare("SELECT * FROM pick_tasks WHERE id = ?1")
+                .map_err(map_db_error)?;
+            let mut rows = stmt
+                .query(params![input.pick_id.to_string()])
+                .map_err(map_db_error)?;
+
+            if let Some(row) = rows.next().map_err(map_db_error)? {
+                Self::row_to_pick(row).map_err(map_db_error)?
+            } else {
+                return Err(CommerceError::NotFound);
+            }
+        };
+
         if let Some(wave_id) = pick.wave_id {
             conn.execute(
                 "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = ?1",
@@ -507,8 +527,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ).map_err(map_db_error)?;
         }
 
-        self.get_pick(input.pick_id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pick".into()))
+        Ok(pick)
     }
 
     fn report_short(&self, id: Uuid, short_qty: Decimal, reason: &str) -> Result<PickTask> {
@@ -519,6 +538,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PickStatus::Short.to_string(), short_qty.to_string(), reason, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pick(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to report short".into()))
     }
@@ -531,6 +551,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PickStatus::Cancelled.to_string(), id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pick(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pick".into()))
     }
@@ -585,6 +606,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pack(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create pack".into()))
     }
@@ -641,6 +663,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![assigned_to, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pack(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to assign pack".into()))
     }
@@ -654,6 +677,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PackStatus::InProgress.to_string(), now, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pack(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to start pack".into()))
     }
@@ -667,6 +691,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PackStatus::Completed.to_string(), now, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pack(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pack".into()))
     }
@@ -786,6 +811,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![PackStatus::Cancelled.to_string(), id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_pack(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel pack".into()))
     }
@@ -830,6 +856,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_ship(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create ship task".into()))
     }
@@ -886,6 +913,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![assigned_to, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_ship(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to assign ship".into()))
     }
@@ -898,6 +926,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![ShipStatus::LabelPrinted.to_string(), label_url, id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_ship(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to update ship".into()))
     }
@@ -917,6 +946,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             ],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_ship(input.ship_task_id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete ship".into()))
     }
@@ -929,6 +959,7 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
             params![ShipStatus::Cancelled.to_string(), id.to_string()],
         ).map_err(map_db_error)?;
 
+        drop(conn);
         self.get_ship(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel ship".into()))
     }
@@ -955,45 +986,53 @@ impl FulfillmentRepository for SqliteFulfillmentRepository {
     fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
         let conn = self.conn()?;
 
-        // Get order items
-        let mut stmt = conn.prepare(
-            "SELECT id, sku, name, quantity FROM order_items WHERE order_id = ?1"
-        ).map_err(map_db_error)?;
+        let mut inputs = Vec::new();
+        {
+            // Get order items
+            let mut stmt = conn.prepare(
+                "SELECT id, sku, name, quantity FROM order_items WHERE order_id = ?1"
+            ).map_err(map_db_error)?;
 
-        let mut rows = stmt.query(params![order_id.to_string()]).map_err(map_db_error)?;
+            let mut rows = stmt.query(params![order_id.to_string()]).map_err(map_db_error)?;
 
-        let mut picks = Vec::new();
-        while let Some(row) = rows.next().map_err(map_db_error)? {
-            let item_id_str: String = row.get(0).map_err(map_db_error)?;
-            let sku: String = row.get(1).map_err(map_db_error)?;
-            let name: Option<String> = row.get(2).map_err(map_db_error)?;
-            let qty: i32 = row.get(3).map_err(map_db_error)?;
+            while let Some(row) = rows.next().map_err(map_db_error)? {
+                let item_id_str: String = row.get(0).map_err(map_db_error)?;
+                let sku: String = row.get(1).map_err(map_db_error)?;
+                let name: Option<String> = row.get(2).map_err(map_db_error)?;
+                let qty: i32 = row.get(3).map_err(map_db_error)?;
 
-            // Find a location with inventory
-            let location_id: i32 = conn.query_row(
-                "SELECT l.id FROM locations l
-                 JOIN location_inventory li ON l.id = li.location_id
-                 WHERE l.warehouse_id = ?1 AND li.sku = ?2 AND l.is_pickable = 1
-                 LIMIT 1",
-                params![warehouse_id, sku],
-                |row| row.get(0),
-            ).unwrap_or(1); // Default to location 1 if not found
+                // Find a location with inventory
+                let location_id: i32 = conn.query_row(
+                    "SELECT l.id FROM locations l
+                     JOIN location_inventory li ON l.id = li.location_id
+                     WHERE l.warehouse_id = ?1 AND li.sku = ?2 AND l.is_pickable = 1
+                     LIMIT 1",
+                    params![warehouse_id, sku],
+                    |row| row.get(0),
+                ).unwrap_or(1); // Default to location 1 if not found
 
-            let pick = self.create_pick(CreatePickTask {
-                wave_id: None,
-                order_id,
-                order_item_id: parse_uuid(&item_id_str, "order_item", "id")?,
-                warehouse_id,
-                sku,
-                product_name: name,
-                source_location_id: location_id,
-                quantity_requested: Decimal::from(qty),
-                lot_id: None,
-                serial_number: None,
-                priority: None,
-                notes: None,
-            })?;
-            picks.push(pick);
+                inputs.push(CreatePickTask {
+                    wave_id: None,
+                    order_id,
+                    order_item_id: parse_uuid(&item_id_str, "order_item", "id")?,
+                    warehouse_id,
+                    sku,
+                    product_name: name,
+                    source_location_id: location_id,
+                    quantity_requested: Decimal::from(qty),
+                    lot_id: None,
+                    serial_number: None,
+                    priority: None,
+                    notes: None,
+                });
+            }
+        }
+
+        drop(conn);
+
+        let mut picks = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            picks.push(self.create_pick(input)?);
         }
 
         Ok(picks)

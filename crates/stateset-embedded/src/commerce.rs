@@ -36,18 +36,13 @@ use crate::events::{EventSystem, EventConfig, EventSubscription, Webhook};
 /// let returns = commerce.returns();
 /// # Ok::<(), stateset_embedded::CommerceError>(())
 /// ```
-pub struct Commerce<DB: Database = SqliteDatabase>
-where
-    DB: Clone + Send + Sync + 'static,
-{
-    db: Arc<DB>,
+pub struct Commerce {
+    db: Arc<dyn Database>,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
 
-impl<DB> Commerce<DB>
-where
-    DB: Database + Clone + Send + Sync + 'static,
+impl Commerce {
     /// Create a new Commerce instance with a SQLite database.
     ///
     /// # Arguments
@@ -74,10 +69,10 @@ where
             DatabaseConfig::sqlite(path)
         };
 
-        let db = Arc::new(SqliteDatabase::new(&config)?);
+        let db: Arc<dyn Database> = Arc::new(SqliteDatabase::new(&config)?);
 
         Ok(Self {
-            db: db.clone(),
+            db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -106,9 +101,10 @@ where
             .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {}", e)))?;
 
         let db = rt.block_on(PostgresDatabase::connect(url))?;
+        let db: Arc<dyn Database> = Arc::new(db);
 
         Ok(Self {
-            db: Arc::new(db),
+            db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -148,9 +144,10 @@ where
             max_connections,
             acquire_timeout_secs,
         ))?;
+        let db: Arc<dyn Database> = Arc::new(db);
 
         Ok(Self {
-            db: Arc::new(db),
+            db,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
         })
@@ -1633,9 +1630,10 @@ impl CommerceBuilder {
                 self.max_connections.unwrap_or(10),
                 self.acquire_timeout_secs.unwrap_or(30),
             ))?;
+            let db: Arc<dyn Database> = Arc::new(db);
 
             return Ok(Commerce {
-                db: Arc::new(db),
+                db,
                 #[cfg(feature = "events")]
                 event_system,
             });
@@ -1646,19 +1644,18 @@ impl CommerceBuilder {
         {
             let path = self.sqlite_path.unwrap_or_else(|| "stateset.db".to_string());
 
-            let config = if path == ":memory:" {
+            let mut config = if path == ":memory:" {
                 DatabaseConfig::in_memory()
             } else {
-                let mut config = DatabaseConfig::sqlite(&path);
-                if let Some(max) = self.max_connections {
-                    config.max_connections = max;
-                }
-                config
+                DatabaseConfig::sqlite(&path)
             };
+            if let Some(max) = self.max_connections {
+                config.max_connections = max;
+            }
 
-            let db = Arc::new(SqliteDatabase::new(&config)?);
+            let db: Arc<dyn Database> = Arc::new(SqliteDatabase::new(&config)?);
             Ok(Commerce {
-                db: db.clone(),
+                db,
                 #[cfg(feature = "events")]
                 event_system,
             })

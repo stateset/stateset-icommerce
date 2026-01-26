@@ -425,23 +425,24 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     // ========================================================================
 
     fn create_zone(&self, input: CreateZone) -> Result<Zone> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
+        let id = {
+            let conn = self.conn()?;
+            conn.execute(
+                "INSERT INTO warehouse_zones (warehouse_id, code, name, description, is_active, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+                params![
+                    input.warehouse_id,
+                    input.code,
+                    input.name,
+                    input.description,
+                    now,
+                ],
+            )
+            .map_err(map_db_error)?;
 
-        conn.execute(
-            "INSERT INTO warehouse_zones (warehouse_id, code, name, description, is_active, created_at)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
-            params![
-                input.warehouse_id,
-                input.code,
-                input.name,
-                input.description,
-                now,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        let id = conn.last_insert_rowid() as i32;
+            conn.last_insert_rowid() as i32
+        };
         self.get_zone(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve created zone".into()))
     }
@@ -478,7 +479,6 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn update_zone(&self, id: i32, input: UpdateZone) -> Result<Zone> {
-        let conn = self.conn()?;
         let existing = self.get_zone(id)?
             .ok_or(CommerceError::NotFound)?;
 
@@ -486,11 +486,14 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let description = input.description.or(existing.description);
         let is_active = input.is_active.unwrap_or(existing.is_active);
 
-        conn.execute(
-            "UPDATE warehouse_zones SET name = ?1, description = ?2, is_active = ?3 WHERE id = ?4",
-            params![name, description, is_active as i32, id],
-        )
-        .map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "UPDATE warehouse_zones SET name = ?1, description = ?2, is_active = ?3 WHERE id = ?4",
+                params![name, description, is_active as i32, id],
+            )
+            .map_err(map_db_error)?;
+        }
 
         self.get_zone(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve updated zone".into()))
@@ -535,6 +538,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         .map_err(map_db_error)?;
 
         let id = conn.last_insert_rowid() as i32;
+        drop(conn);
         self.get_location(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve created location".into()))
     }

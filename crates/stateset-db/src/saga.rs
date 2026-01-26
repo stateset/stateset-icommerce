@@ -1,8 +1,6 @@
-use crate::Database;
+use crate::PostgresDatabase;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Execute, Pool};
-use std::collections::HashMap;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -82,12 +80,12 @@ impl Saga {
     }
 }
 
-pub struct SagaCoordinator<DB: Database> {
-    db: std::sync::Arc<DB>,
+pub struct SagaCoordinator {
+    db: std::sync::Arc<PostgresDatabase>,
 }
 
-impl<DB: Database> SagaCoordinator<DB> {
-    pub fn new(db: std::sync::Arc<DB>) -> Self {
+impl SagaCoordinator {
+    pub fn new(db: std::sync::Arc<PostgresDatabase>) -> Self {
         Self { db }
     }
 
@@ -99,7 +97,7 @@ impl<DB: Database> SagaCoordinator<DB> {
     ) -> Result<Saga, SagaError> {
         let saga = Saga::new(name, idempotency_key.clone(), total_steps);
 
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
         sqlx::query!(
             r#"
             INSERT INTO sagas (id, name, idempotency_key, status, current_step, total_steps,
@@ -145,7 +143,7 @@ impl<DB: Database> SagaCoordinator<DB> {
             rollback_at: None,
         };
 
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
         sqlx::query!(
             r#"
             INSERT INTO saga_steps (id, saga_id, name, step_order, payload, status,
@@ -180,7 +178,7 @@ impl<DB: Database> SagaCoordinator<DB> {
         F: FnOnce(serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>>,
     {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         let step = sqlx::query!(
             r#"
@@ -230,7 +228,7 @@ impl<DB: Database> SagaCoordinator<DB> {
         step_id: Uuid,
         compensation_step_id: Uuid,
     ) -> Result<(), SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         sqlx::query!(
             r#"
@@ -250,7 +248,7 @@ impl<DB: Database> SagaCoordinator<DB> {
     }
 
     pub async fn start_saga(&self, saga_id: Uuid) -> Result<(), SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         sqlx::query!(
             r#"
@@ -270,7 +268,7 @@ impl<DB: Database> SagaCoordinator<DB> {
     }
 
     pub async fn mark_saga_completed(&self, saga_id: Uuid) -> Result<(), SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         sqlx::query!(
             r#"
@@ -298,7 +296,7 @@ impl<DB: Database> SagaCoordinator<DB> {
         F: FnOnce(Uuid, serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
     {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         let steps = sqlx::query!(
             r#"
@@ -353,7 +351,7 @@ impl<DB: Database> SagaCoordinator<DB> {
     }
 
     pub async fn get_saga(&self, saga_id: Uuid) -> Result<Saga, SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         let row = sqlx::query!(
             r#"
@@ -389,7 +387,7 @@ impl<DB: Database> SagaCoordinator<DB> {
         &self,
         key: &str,
     ) -> Result<Option<Saga>, SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         let row = sqlx::query!(
             r#"
@@ -424,7 +422,7 @@ impl<DB: Database> SagaCoordinator<DB> {
     }
 
     pub async fn get_saga_steps(&self, saga_id: Uuid) -> Result<Vec<SagaStep>, SagaError> {
-        let pool = self.db.get_pool();
+        let pool = self.db.pool();
 
         let rows = sqlx::query!(
             r#"

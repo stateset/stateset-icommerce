@@ -910,25 +910,27 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {
-        let conn = self.conn()?;
+        let skus = {
+            let conn = self.conn()?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT DISTINCT i.sku FROM inventory_items i
+                     JOIN inventory_balances b ON i.id = b.item_id
+                     WHERE b.reorder_point IS NOT NULL
+                     AND CAST(b.quantity_available AS REAL) < CAST(b.reorder_point AS REAL)
+                     AND i.is_active = 1",
+                )
+                .map_err(map_db_error)?;
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT DISTINCT i.sku FROM inventory_items i
-                 JOIN inventory_balances b ON i.id = b.item_id
-                 WHERE b.reorder_point IS NOT NULL
-                 AND CAST(b.quantity_available AS REAL) < CAST(b.reorder_point AS REAL)
-                 AND i.is_active = 1",
-            )
-            .map_err(map_db_error)?;
+            let skus = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?;
+            skus
+        };
 
-        let skus: Vec<String> = stmt
-            .query_map([], |row| row.get(0))
-            .map_err(map_db_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)?;
-
-        let mut result = vec![];
+        let mut result = Vec::with_capacity(skus.len());
         for sku in skus {
             if let Some(stock) = self.get_stock(&sku)? {
                 result.push(stock);

@@ -190,34 +190,36 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_account(&self, input: CreateGlAccount) -> Result<GlAccount> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let normal_balance = input.account_type.normal_balance();
 
-        conn.execute(
-            "INSERT INTO gl_accounts (id, account_number, name, description, account_type,
-             account_sub_type, parent_account_id, is_header, is_posting, normal_balance,
-             currency, status, current_balance, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                id.to_string(),
-                input.account_number,
-                input.name,
-                input.description,
-                input.account_type.to_string(),
-                input.account_sub_type.map(|s| s.to_string()),
-                input.parent_account_id.map(|id| id.to_string()),
-                input.is_header.unwrap_or(false) as i32,
-                input.is_posting.unwrap_or(true) as i32,
-                normal_balance.to_string(),
-                input.currency.unwrap_or_else(|| "USD".to_string()),
-                AccountStatus::Active.to_string(),
-                "0",
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO gl_accounts (id, account_number, name, description, account_type,
+                 account_sub_type, parent_account_id, is_header, is_posting, normal_balance,
+                 currency, status, current_balance, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    id.to_string(),
+                    input.account_number,
+                    input.name,
+                    input.description,
+                    input.account_type.to_string(),
+                    input.account_sub_type.map(|s| s.to_string()),
+                    input.parent_account_id.map(|id| id.to_string()),
+                    input.is_header.unwrap_or(false) as i32,
+                    input.is_posting.unwrap_or(true) as i32,
+                    normal_balance.to_string(),
+                    input.currency.unwrap_or_else(|| "USD".to_string()),
+                    AccountStatus::Active.to_string(),
+                    "0",
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }

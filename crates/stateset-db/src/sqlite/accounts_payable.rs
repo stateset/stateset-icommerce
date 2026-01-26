@@ -165,32 +165,47 @@ impl SqliteAccountsPayableRepository {
 
 impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     fn create_bill(&self, input: CreateBill) -> Result<Bill> {
-        let conn = self.conn()?;
         let now = Utc::now();
         let id = Uuid::new_v4();
-        let bill_number = input.bill_number.unwrap_or_else(generate_bill_number);
+        let CreateBill {
+            bill_number,
+            supplier_id,
+            purchase_order_id,
+            bill_date,
+            due_date,
+            payment_terms,
+            currency,
+            reference_number,
+            memo,
+            items,
+            ..
+        } = input;
+        let bill_number = bill_number.unwrap_or_else(generate_bill_number);
 
-        conn.execute(
-            "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
-             payment_terms, currency, reference_number, memo, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
-            params![
-                id.to_string(),
-                bill_number,
-                input.supplier_id.to_string(),
-                input.purchase_order_id.map(|id| id.to_string()),
-                BillStatus::Draft.to_string(),
-                input.bill_date.unwrap_or(now).to_rfc3339(),
-                input.due_date.to_rfc3339(),
-                input.payment_terms,
-                input.currency.unwrap_or_else(|| "USD".to_string()),
-                input.reference_number,
-                input.memo,
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.conn()?;
+            conn.execute(
+                "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
+                 payment_terms, currency, reference_number, memo, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                params![
+                    id.to_string(),
+                    bill_number,
+                    supplier_id.to_string(),
+                    purchase_order_id.map(|id| id.to_string()),
+                    BillStatus::Draft.to_string(),
+                    bill_date.unwrap_or(now).to_rfc3339(),
+                    due_date.to_rfc3339(),
+                    payment_terms,
+                    currency.unwrap_or_else(|| "USD".to_string()),
+                    reference_number,
+                    memo,
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
-        for item in input.items.iter() {
+        for item in items.iter() {
             self.add_bill_item(id, CreateBillItem {
                 description: item.description.clone(),
                 account_code: item.account_code.clone(),
@@ -336,60 +351,64 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
-        let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
+        let created = {
+            let conn = self.conn()?;
+            let line_number: i32 = conn.query_row(
+                "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
+                params![bill_id.to_string()],
+                |row| row.get(0),
+            ).map_err(map_db_error)?;
 
-        let line_number: i32 = conn.query_row(
-            "SELECT COALESCE(MAX(line_number), 0) + 1 FROM ap_bill_items WHERE bill_id = ?1",
-            params![bill_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+            let amount = item.quantity * item.unit_price;
+            let tax_amount = item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
 
-        let amount = item.quantity * item.unit_price;
-        let tax_amount = item.tax_rate.map(|r| amount * r / Decimal::from(100)).unwrap_or(Decimal::ZERO);
+            conn.execute(
+                "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    id.to_string(),
+                    bill_id.to_string(),
+                    line_number,
+                    item.description,
+                    item.account_code,
+                    item.quantity.to_string(),
+                    item.unit_price.to_string(),
+                    amount.to_string(),
+                    item.tax_rate.map(|r| r.to_string()),
+                    tax_amount.to_string(),
+                    item.po_line_id.map(|id| id.to_string()),
+                    now,
+                ],
+            ).map_err(map_db_error)?;
 
-        conn.execute(
-            "INSERT INTO ap_bill_items (id, bill_id, line_number, description, account_code, quantity, unit_price, amount, tax_rate, tax_amount, po_line_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                id.to_string(),
-                bill_id.to_string(),
-                line_number,
-                item.description,
-                item.account_code,
-                item.quantity.to_string(),
-                item.unit_price.to_string(),
-                amount.to_string(),
-                item.tax_rate.map(|r| r.to_string()),
-                tax_amount.to_string(),
-                item.po_line_id.map(|id| id.to_string()),
-                now,
-            ],
-        ).map_err(map_db_error)?;
+            let mut stmt = conn.prepare("SELECT * FROM ap_bill_items WHERE id = ?1").map_err(map_db_error)?;
+            let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
+
+            if let Some(row) = rows.next().map_err(map_db_error)? {
+                Self::row_to_bill_item(row).map_err(map_db_error)?
+            } else {
+                return Err(CommerceError::DatabaseError("Failed to create bill item".into()));
+            }
+        };
 
         self.recalculate_bill(bill_id)?;
-
-        let mut stmt = conn.prepare("SELECT * FROM ap_bill_items WHERE id = ?1").map_err(map_db_error)?;
-        let mut rows = stmt.query(params![id.to_string()]).map_err(map_db_error)?;
-
-        if let Some(row) = rows.next().map_err(map_db_error)? {
-            Ok(Self::row_to_bill_item(row).map_err(map_db_error)?)
-        } else {
-            Err(CommerceError::DatabaseError("Failed to create bill item".into()))
-        }
+        Ok(created)
     }
 
     fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self.conn()?;
+        let bill_id: String = {
+            let conn = self.conn()?;
+            let bill_id: String = conn.query_row(
+                "SELECT bill_id FROM ap_bill_items WHERE id = ?1",
+                params![item_id.to_string()],
+                |row| row.get(0),
+            ).map_err(map_db_error)?;
 
-        let bill_id: String = conn.query_row(
-            "SELECT bill_id FROM ap_bill_items WHERE id = ?1",
-            params![item_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
-
-        conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()]).map_err(map_db_error)?;
+            conn.execute("DELETE FROM ap_bill_items WHERE id = ?1", params![item_id.to_string()]).map_err(map_db_error)?;
+            bill_id
+        };
 
         self.recalculate_bill(parse_uuid(&bill_id, "bill_item", "bill_id")?)?;
         Ok(())

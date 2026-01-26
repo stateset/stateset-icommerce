@@ -202,72 +202,82 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn set_item_cost(&self, input: SetItemCost) -> Result<ItemCost> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
+        let SetItemCost {
+            sku,
+            cost_method,
+            standard_cost,
+            material_cost,
+            labor_cost,
+            overhead_cost,
+            currency,
+            ..
+        } = input;
 
         // Check if exists
-        let existing = self.get_item_cost(&input.sku)?;
+        let existing = self.get_item_cost(&sku)?;
 
-        if let Some(_existing) = existing {
-            // Update existing
-            conn.execute(
-                "UPDATE item_costs SET
-                    cost_method = COALESCE(?, cost_method),
-                    standard_cost = COALESCE(?, standard_cost),
-                    material_cost = COALESCE(?, material_cost),
-                    labor_cost = COALESCE(?, labor_cost),
-                    overhead_cost = COALESCE(?, overhead_cost),
-                    currency = COALESCE(?, currency),
-                    effective_date = ?,
-                    updated_at = ?
-                 WHERE sku = ?",
-                rusqlite::params![
-                    input.cost_method.map(|m| m.to_string()),
-                    input.standard_cost.map(|c| c.to_string()),
-                    input.material_cost.map(|c| c.to_string()),
-                    input.labor_cost.map(|c| c.to_string()),
-                    input.overhead_cost.map(|c| c.to_string()),
-                    input.currency,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    &input.sku,
-                ],
-            ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            if existing.is_some() {
+                // Update existing
+                conn.execute(
+                    "UPDATE item_costs SET
+                        cost_method = COALESCE(?, cost_method),
+                        standard_cost = COALESCE(?, standard_cost),
+                        material_cost = COALESCE(?, material_cost),
+                        labor_cost = COALESCE(?, labor_cost),
+                        overhead_cost = COALESCE(?, overhead_cost),
+                        currency = COALESCE(?, currency),
+                        effective_date = ?,
+                        updated_at = ?
+                     WHERE sku = ?",
+                    rusqlite::params![
+                        cost_method.as_ref().map(|m| m.to_string()),
+                        standard_cost.as_ref().map(|c| c.to_string()),
+                        material_cost.as_ref().map(|c| c.to_string()),
+                        labor_cost.as_ref().map(|c| c.to_string()),
+                        overhead_cost.as_ref().map(|c| c.to_string()),
+                        currency.clone(),
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                        &sku,
+                    ],
+                ).map_err(map_db_error)?;
+            } else {
+                // Insert new
+                let id = Uuid::new_v4();
+                let cost_method = cost_method.unwrap_or_default();
+                let standard_cost = standard_cost.unwrap_or_default();
+                let material_cost = material_cost.unwrap_or_default();
+                let labor_cost = labor_cost.unwrap_or_default();
+                let overhead_cost = overhead_cost.unwrap_or_default();
+                let currency = currency.unwrap_or_else(|| "USD".to_string());
 
-            self.get_item_cost(&input.sku)?.ok_or(CommerceError::NotFound)
-        } else {
-            // Insert new
-            let id = Uuid::new_v4();
-            let cost_method = input.cost_method.unwrap_or_default();
-            let standard_cost = input.standard_cost.unwrap_or_default();
-            let material_cost = input.material_cost.unwrap_or_default();
-            let labor_cost = input.labor_cost.unwrap_or_default();
-            let overhead_cost = input.overhead_cost.unwrap_or_default();
-            let currency = input.currency.unwrap_or_else(|| "USD".to_string());
-
-            conn.execute(
-                "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
-                    material_cost, labor_cost, overhead_cost, currency, effective_date, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    &input.sku,
-                    cost_method.to_string(),
-                    standard_cost.to_string(),
-                    standard_cost.to_string(), // average_cost starts as standard
-                    standard_cost.to_string(), // last_cost starts as standard
-                    material_cost.to_string(),
-                    labor_cost.to_string(),
-                    overhead_cost.to_string(),
-                    &currency,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            ).map_err(map_db_error)?;
-
-            self.get_item_cost(&input.sku)?.ok_or(CommerceError::NotFound)
+                conn.execute(
+                    "INSERT INTO item_costs (id, sku, cost_method, standard_cost, average_cost, last_cost,
+                        material_cost, labor_cost, overhead_cost, currency, effective_date, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        id.to_string(),
+                        &sku,
+                        cost_method.to_string(),
+                        standard_cost.to_string(),
+                        standard_cost.to_string(), // average_cost starts as standard
+                        standard_cost.to_string(), // last_cost starts as standard
+                        material_cost.to_string(),
+                        labor_cost.to_string(),
+                        overhead_cost.to_string(),
+                        &currency,
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                        now.to_rfc3339(),
+                    ],
+                ).map_err(map_db_error)?;
+            }
         }
+
+        self.get_item_cost(&sku)?.ok_or(CommerceError::NotFound)
     }
 
     fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
@@ -311,7 +321,6 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn update_average_cost(&self, sku: &str, quantity: Decimal, unit_cost: Decimal) -> Result<ItemCost> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         // Ensure item cost exists
@@ -324,83 +333,90 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             })?;
         }
 
-        // Calculate new weighted average
-        // Get current quantity from inventory
-        let sku_param = sku.to_string();
-        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
-        let current_qty = sum_decimal_query(
-            &conn,
-            "SELECT quantity_on_hand FROM inventory_items WHERE sku = ?",
-            &sku_params,
-            "inventory_items",
-            "quantity_on_hand",
-        )?;
-        let avg_str: String = conn
-            .query_row(
-                "SELECT COALESCE(average_cost, '0') FROM item_costs WHERE sku = ?",
-                [sku],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-        let current_avg = parse_decimal_strict(&avg_str, "item_cost", "average_cost")?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            // Calculate new weighted average
+            // Get current quantity from inventory
+            let sku_param = sku.to_string();
+            let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
+            let current_qty = sum_decimal_query(
+                &conn,
+                "SELECT quantity_on_hand FROM inventory_items WHERE sku = ?",
+                &sku_params,
+                "inventory_items",
+                "quantity_on_hand",
+            )?;
+            let avg_str: String = conn
+                .query_row(
+                    "SELECT COALESCE(average_cost, '0') FROM item_costs WHERE sku = ?",
+                    [sku],
+                    |row| row.get(0),
+                )
+                .map_err(map_db_error)?;
+            let current_avg = parse_decimal_strict(&avg_str, "item_cost", "average_cost")?;
 
-        let total_qty = current_qty + quantity;
-        let new_avg = if total_qty > Decimal::ZERO {
-            ((current_avg * current_qty) + (unit_cost * quantity)) / total_qty
-        } else {
-            unit_cost
-        };
+            let total_qty = current_qty + quantity;
+            let new_avg = if total_qty > Decimal::ZERO {
+                ((current_avg * current_qty) + (unit_cost * quantity)) / total_qty
+            } else {
+                unit_cost
+            };
 
-        conn.execute(
-            "UPDATE item_costs SET average_cost = ?, last_cost = ?, updated_at = ? WHERE sku = ?",
-            rusqlite::params![
-                new_avg.to_string(),
-                unit_cost.to_string(),
-                now.to_rfc3339(),
-                sku,
-            ],
-        ).map_err(map_db_error)?;
+            conn.execute(
+                "UPDATE item_costs SET average_cost = ?, last_cost = ?, updated_at = ? WHERE sku = ?",
+                rusqlite::params![
+                    new_avg.to_string(),
+                    unit_cost.to_string(),
+                    now.to_rfc3339(),
+                    sku,
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_item_cost(sku)?.ok_or(CommerceError::NotFound)
     }
 
     fn update_last_cost(&self, sku: &str, unit_cost: Decimal) -> Result<ItemCost> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        conn.execute(
-            "UPDATE item_costs SET last_cost = ?, updated_at = ? WHERE sku = ?",
-            rusqlite::params![unit_cost.to_string(), now.to_rfc3339(), sku],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "UPDATE item_costs SET last_cost = ?, updated_at = ? WHERE sku = ?",
+                rusqlite::params![unit_cost.to_string(), now.to_rfc3339(), sku],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_item_cost(sku)?.ok_or(CommerceError::NotFound)
     }
 
     fn create_cost_layer(&self, input: CreateCostLayer) -> Result<CostLayer> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let total_cost = input.quantity * input.unit_cost;
 
-        conn.execute(
-            "INSERT INTO cost_layers (id, sku, layer_date, quantity, remaining_quantity,
-                unit_cost, total_cost, source_type, source_id, lot_id, location_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                &input.sku,
-                now.to_rfc3339(),
-                input.quantity.to_string(),
-                input.quantity.to_string(),
-                input.unit_cost.to_string(),
-                total_cost.to_string(),
-                input.source_type.to_string(),
-                input.source_id.map(|id| id.to_string()),
-                input.lot_id.map(|id| id.to_string()),
-                input.location_id,
-                now.to_rfc3339(),
-            ],
-        ).map_err(map_db_error)?;
+        {
+            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            conn.execute(
+                "INSERT INTO cost_layers (id, sku, layer_date, quantity, remaining_quantity,
+                    unit_cost, total_cost, source_type, source_id, lot_id, location_id, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    id.to_string(),
+                    &input.sku,
+                    now.to_rfc3339(),
+                    input.quantity.to_string(),
+                    input.quantity.to_string(),
+                    input.unit_cost.to_string(),
+                    total_cost.to_string(),
+                    input.source_type.to_string(),
+                    input.source_id.map(|id| id.to_string()),
+                    input.lot_id.map(|id| id.to_string()),
+                    input.location_id,
+                    now.to_rfc3339(),
+                ],
+            ).map_err(map_db_error)?;
+        }
 
         self.get_cost_layer(id)?.ok_or(CommerceError::NotFound)
     }
