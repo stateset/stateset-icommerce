@@ -19,6 +19,7 @@ hex = { workspace = true }
 serde_jcs = { workspace = true }
 sha2 = { workspace = true }
 ed25519-dalek = { workspace = true }
+rs_merkle = "1"
 
 # Optional embedding service dependencies
 reqwest = { workspace = true, optional = true }

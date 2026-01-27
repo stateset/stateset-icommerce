@@ -26,6 +26,9 @@ const NETWORK_CHAIN_ID = {
   base: 8453,
   base_sepolia: 84532,
   ethereum: 1,
+  ethereum_sepolia: 11155111,
+  arbitrum: 42161,
+  optimism: 10,
 };
 
 const NETWORK_ALIASES = {
@@ -40,6 +43,12 @@ const NETWORK_ALIASES = {
   base_sepolia: 'base_sepolia',
   ethereum: 'ethereum',
   eth: 'ethereum',
+  ethereum_sepolia: 'ethereum_sepolia',
+  sepolia: 'ethereum_sepolia',
+  arbitrum: 'arbitrum',
+  arb: 'arbitrum',
+  optimism: 'optimism',
+  op: 'optimism',
 };
 
 const ASSET_ALIASES = {
@@ -47,7 +56,10 @@ const ASSET_ALIASES = {
   usdt: 'usdt',
   ssusd: 'ssusd',
   ss_usd: 'ssusd',
+  wssusd: 'wssusd',
+  wss_usd: 'wssusd',
   dai: 'dai',
+  eth: 'eth',
 };
 
 function toU64(value, name) {

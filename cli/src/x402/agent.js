@@ -192,13 +192,23 @@ export function decodeReceiptHeader(value) {
 }
 
 export function verifyPaymentHeader(payload) {
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.valid_until && Number(payload.valid_until) < now) {
+    return { ok: false, reason: 'Payment intent expired' };
+  }
+
+  const expectedChainId = networkChainId(payload.network);
+  if (payload.chain_id && Number(payload.chain_id) !== expectedChainId) {
+    return { ok: false, reason: 'Chain id mismatch' };
+  }
+
   const signingHash = computeX402SigningHash({
     payerAddress: payload.payer_address,
     payeeAddress: payload.payee_address,
     amount: payload.amount,
     asset: payload.asset,
     network: payload.network,
-    chainId: payload.chain_id ?? networkChainId(payload.network),
+    chainId: payload.chain_id ?? expectedChainId,
     validUntil: payload.valid_until,
     nonce: payload.nonce,
   });

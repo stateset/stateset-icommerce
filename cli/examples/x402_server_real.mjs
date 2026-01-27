@@ -136,6 +136,15 @@ const server = http.createServer(async (req, res) => {
       if (payload.amount !== PAYMENT_AMOUNT) {
         return sendJson(res, 403, { error: 'Amount mismatch' });
       }
+      if (payload.asset !== PAYMENT_ASSET) {
+        return sendJson(res, 403, { error: 'Asset mismatch' });
+      }
+      if (!PAYMENT_NETWORKS.includes(payload.network)) {
+        return sendJson(res, 403, { error: 'Network mismatch' });
+      }
+      if (payload.valid_until && payload.valid_until < Math.floor(Date.now() / 1000)) {
+        return sendJson(res, 403, { error: 'Payment intent expired' });
+      }
 
       const response = await sequencer.submitPaymentIntent(payload);
 

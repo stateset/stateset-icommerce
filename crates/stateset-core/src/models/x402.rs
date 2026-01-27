@@ -38,6 +38,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use rs_merkle::{algorithms::Sha256 as MerkleSha256, MerkleProof};
 use uuid::Uuid;
 use thiserror::Error;
 use ed25519_dalek::{Signer, Verifier, SigningKey, VerifyingKey, Signature};
@@ -162,8 +163,10 @@ pub enum X402Asset {
     /// Tether (USDT)
     Usdt,
     /// StateSet USD (ssUSD) - yield-bearing stablecoin
+    #[serde(rename = "ssusd", alias = "ss_usd")]
     SsUsd,
     /// Wrapped StateSet USD (ERC-4626)
+    #[serde(rename = "wssusd", alias = "wss_usd")]
     WssUsd,
     /// DAI stablecoin
     Dai,
@@ -750,7 +753,8 @@ impl X402PaymentRequired {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct X402PaymentReceipt {
     /// Receipt ID
-    pub id: Uuid,
+    #[serde(alias = "id")]
+    pub receipt_id: Uuid,
 
     /// Original payment intent ID
     pub intent_id: Uuid,
@@ -770,6 +774,9 @@ pub struct X402PaymentReceipt {
     /// Leaf index in the Merkle tree
     pub leaf_index: u32,
 
+    /// Total leaves in the Merkle tree
+    pub total_leaves: u32,
+
     /// On-chain transaction hash (if settled)
     pub tx_hash: Option<String>,
 
@@ -782,6 +789,13 @@ pub struct X402PaymentReceipt {
     pub amount: u64,
     pub asset: X402Asset,
     pub network: X402Network,
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub valid_until: u64,
+    /// Sequencer signing hash (hex-encoded, 32 bytes)
+    pub signing_hash: String,
+    /// Ed25519 signature (hex-encoded, 64 bytes)
+    pub payer_signature: String,
 
     /// Timestamp
     pub created_at: DateTime<Utc>,
@@ -794,21 +808,35 @@ impl X402PaymentReceipt {
             return false;
         }
 
-        let root_bytes = match decode_hex_bytes(&self.merkle_root) {
+        if self.total_leaves == 0 || self.leaf_index as u32 >= self.total_leaves {
+            return false;
+        }
+
+        let root = match decode_hex_array::<32>(&self.merkle_root) {
             Ok(bytes) => bytes,
             Err(_) => return false,
         };
 
-        let mut hash = payment_leaf_hash(self);
+        let leaf = match payment_leaf_hash(self) {
+            Ok(hash) => hash,
+            Err(_) => return false,
+        };
+
+        let mut proof_hashes = Vec::with_capacity(self.inclusion_proof.len());
         for proof_hash in &self.inclusion_proof {
-            let sibling = match decode_hex_bytes(proof_hash) {
-                Ok(bytes) => bytes,
+            match decode_hex_array::<32>(proof_hash) {
+                Ok(hash) => proof_hashes.push(hash),
                 Err(_) => return false,
-            };
-            hash = hash_pair(&hash, &sibling);
+            }
         }
 
-        hash == root_bytes
+        let proof = MerkleProof::<MerkleSha256>::new(proof_hashes);
+        proof.verify(
+            root,
+            &[self.leaf_index as usize],
+            &[leaf],
+            self.total_leaves as usize,
+        )
     }
 }
 
@@ -1102,14 +1130,15 @@ mod tests {
 
     #[test]
     fn test_x402_merkle_inclusion_verification() {
-        let receipt = X402PaymentReceipt {
-            id: Uuid::new_v4(),
+        let mut receipt = X402PaymentReceipt {
+            receipt_id: Uuid::new_v4(),
             intent_id: Uuid::new_v4(),
             sequence_number: 42,
             batch_id: Uuid::new_v4(),
             merkle_root: String::new(),
             inclusion_proof: vec![],
             leaf_index: 0,
+            total_leaves: 0,
             tx_hash: None,
             block_number: None,
             payer_address: "0xpayer".to_string(),
@@ -1117,50 +1146,64 @@ mod tests {
             amount: 1_000_000,
             asset: X402Asset::Usdc,
             network: X402Network::SetChain,
+            chain_id: X402Network::SetChain.chain_id(),
+            nonce: 7,
+            valid_until: 1_705_320_000,
+            signing_hash: format!("0x{}", "11".repeat(32)),
+            payer_signature: format!("0x{}", "22".repeat(64)),
             created_at: Utc::now(),
         };
 
-        let leaf = payment_leaf_hash(&receipt);
-        let sibling = sha256_bytes(b"dummy");
-        let root = hash_pair(&leaf, &sibling);
+        let mut other = receipt.clone();
+        other.intent_id = Uuid::new_v4();
+        other.sequence_number = 43;
+        other.nonce = 8;
+        other.signing_hash = format!("0x{}", "33".repeat(32));
+        other.payer_signature = format!("0x{}", "44".repeat(64));
 
-        let mut updated = receipt;
-        updated.inclusion_proof = vec![hex::encode(sibling)];
-        updated.merkle_root = hex::encode(root);
+        let leaf = payment_leaf_hash(&receipt).unwrap();
+        let other_leaf = payment_leaf_hash(&other).unwrap();
 
-        assert!(updated.verify_inclusion());
+        let leaves = vec![leaf, other_leaf];
+        let tree = rs_merkle::MerkleTree::<MerkleSha256>::from_leaves(&leaves);
+        let root = tree.root().expect("merkle root");
+        let proof = tree.proof(&[0]);
+
+        receipt.inclusion_proof = proof
+            .proof_hashes()
+            .iter()
+            .map(|h| format!("0x{}", hex::encode(h)))
+            .collect();
+        receipt.merkle_root = format!("0x{}", hex::encode(root));
+        receipt.total_leaves = leaves.len() as u32;
+        receipt.leaf_index = 0;
+
+        assert!(receipt.verify_inclusion());
     }
 }
 
-fn sha256_bytes(data: &[u8]) -> Vec<u8> {
+fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402CryptoError> {
     let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().to_vec()
-}
 
-fn hash_pair(left: &[u8], right: &[u8]) -> Vec<u8> {
-    if left <= right {
-        sha256_bytes(&[left, right].concat())
-    } else {
-        sha256_bytes(&[right, left].concat())
-    }
-}
+    hasher.update(receipt.intent_id.as_bytes());
+    hasher.update(&receipt.sequence_number.to_be_bytes());
 
-fn decode_hex_bytes(value: &str) -> Result<Vec<u8>, hex::FromHexError> {
-    let trimmed = value.strip_prefix("0x").unwrap_or(value);
-    hex::decode(trimmed)
-}
+    hasher.update(receipt.payer_address.as_bytes());
+    hasher.update(receipt.payee_address.as_bytes());
+    hasher.update(&receipt.amount.to_be_bytes());
+    hasher.update(receipt.asset.to_string().to_lowercase().as_bytes());
+    hasher.update(receipt.network.to_string().as_bytes());
+    hasher.update(&receipt.chain_id.to_be_bytes());
+    hasher.update(&receipt.nonce.to_be_bytes());
+    hasher.update(&receipt.valid_until.to_be_bytes());
 
-fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Vec<u8> {
-    let payload = serde_json::json!({
-        "intentId": receipt.intent_id,
-        "sequenceNumber": receipt.sequence_number,
-        "payer": receipt.payer_address,
-        "payee": receipt.payee_address,
-        "amount": receipt.amount.to_string(),
-        "asset": receipt.asset.to_string(),
-        "network": receipt.network.to_string(),
-    });
-    let canonical = serde_jcs::to_string(&payload).unwrap_or_default();
-    sha256_bytes(canonical.as_bytes())
+    let signing_hash = decode_hex_array::<32>(&receipt.signing_hash)?;
+    let signature = decode_hex_array::<64>(&receipt.payer_signature)?;
+    hasher.update(signing_hash);
+    hasher.update(signature);
+
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    Ok(hash)
 }
