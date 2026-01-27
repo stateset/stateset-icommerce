@@ -9568,7 +9568,7 @@ impl GeneralLedger {
         let date = as_of_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
         let balance = commerce.general_ledger().get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
-        Ok(to_f64_or_nan(balance))
+        Ok(balance.map(to_f64_or_nan).unwrap_or(f64::NAN))
     }
 }
 
