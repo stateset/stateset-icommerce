@@ -9603,6 +9603,22 @@ pub struct CustomerSearchResultOutput {
 
 #[napi(object)]
 #[derive(Serialize, Clone)]
+pub struct OrderSearchResultOutput {
+    pub order: OrderOutput,
+    pub distance: f64,
+    pub score: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
+pub struct InventorySearchResultOutput {
+    pub item: InventoryItemOutput,
+    pub distance: f64,
+    pub score: f64,
+}
+
+#[napi(object)]
+#[derive(Serialize, Clone)]
 pub struct EmbeddingStatsOutput {
     pub product_count: u32,
     pub customer_count: u32,
@@ -9669,6 +9685,54 @@ impl VectorSearch {
             .collect())
     }
 
+    /// Search orders using natural language query
+    #[napi]
+    pub async fn search_orders(&self, query: String, limit: Option<u32>) -> Result<Vec<OrderSearchResultOutput>> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let results = vector
+            .search_orders(&query, limit.unwrap_or(10) as usize)
+            .map_err(|e| Error::from_reason(format!("Failed to search orders: {}", e)))?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| OrderSearchResultOutput {
+                order: r.entity.into(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            })
+            .collect())
+    }
+
+    /// Search inventory items using natural language query
+    #[napi]
+    pub async fn search_inventory(&self, query: String, limit: Option<u32>) -> Result<Vec<InventorySearchResultOutput>> {
+        let vector = {
+            let commerce = self.commerce.lock().await;
+            commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+        };
+
+        let results = vector
+            .search_inventory(&query, limit.unwrap_or(10) as usize)
+            .map_err(|e| Error::from_reason(format!("Failed to search inventory: {}", e)))?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| InventorySearchResultOutput {
+                item: r.entity.into(),
+                distance: r.distance as f64,
+                score: r.score as f64,
+            })
+            .collect())
+    }
+
     /// Index a product for vector search
     #[napi]
     pub async fn index_product(&self, product_id: String) -> Result<()> {
@@ -9727,6 +9791,64 @@ impl VectorSearch {
         Ok(())
     }
 
+    /// Index an order for vector search
+    #[napi]
+    pub async fn index_order(&self, order_id: String) -> Result<()> {
+        let uuid = order_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+
+        let (order, vector) = {
+            let commerce = self.commerce.lock().await;
+            let order = commerce
+                .orders()
+                .get(uuid)
+                .map_err(|e| Error::from_reason(format!("Failed to get order: {}", e)))?
+                .ok_or_else(|| Error::from_reason("Order not found"))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (order, vector)
+        };
+
+        vector
+            .index_order(&order)
+            .map_err(|e| Error::from_reason(format!("Failed to index order: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Index an inventory item for vector search
+    #[napi]
+    pub async fn index_inventory_item(&self, item_id: String) -> Result<()> {
+        let item_id = item_id
+            .parse::<i64>()
+            .map_err(|_| Error::from_reason("Invalid inventory item ID"))?;
+
+        let (item, vector) = {
+            let commerce = self.commerce.lock().await;
+            let item = commerce
+                .inventory()
+                .get_item(item_id)
+                .map_err(|e| Error::from_reason(format!("Failed to get inventory item: {}", e)))?
+                .ok_or_else(|| Error::from_reason("Inventory item not found"))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (item, vector)
+        };
+
+        vector
+            .index_inventory_item(&item)
+            .map_err(|e| Error::from_reason(format!("Failed to index inventory item: {}", e)))?;
+
+        Ok(())
+    }
+
     /// Index all products for vector search
     #[napi]
     pub async fn index_all_products(&self) -> Result<u32> {
@@ -9771,6 +9893,54 @@ impl VectorSearch {
         let count = vector
             .index_customers(&customers)
             .map_err(|e| Error::from_reason(format!("Failed to index customers: {}", e)))?;
+
+        Ok(count as u32)
+    }
+
+    /// Index all orders for vector search
+    #[napi]
+    pub async fn index_all_orders(&self) -> Result<u32> {
+        let (orders, vector) = {
+            let commerce = self.commerce.lock().await;
+            let orders = commerce
+                .orders()
+                .list(Default::default())
+                .map_err(|e| Error::from_reason(format!("Failed to list orders: {}", e)))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (orders, vector)
+        };
+
+        let count = vector
+            .index_orders(&orders)
+            .map_err(|e| Error::from_reason(format!("Failed to index orders: {}", e)))?;
+
+        Ok(count as u32)
+    }
+
+    /// Index all inventory items for vector search
+    #[napi]
+    pub async fn index_all_inventory(&self) -> Result<u32> {
+        let (items, vector) = {
+            let commerce = self.commerce.lock().await;
+            let items = commerce
+                .inventory()
+                .list(Default::default())
+                .map_err(|e| Error::from_reason(format!("Failed to list inventory items: {}", e)))?;
+
+            let vector = commerce
+                .vector(self.api_key.clone())
+                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+
+            (items, vector)
+        };
+
+        let count = vector
+            .index_inventory_items(&items)
+            .map_err(|e| Error::from_reason(format!("Failed to index inventory items: {}", e)))?;
 
         Ok(count as u32)
     }

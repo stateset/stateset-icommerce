@@ -15,7 +15,7 @@ use stateset_core::{
     validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
     CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
     CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder, CreateOrderItem,
-    CustomerRepository, FulfillmentType, OrderRepository, Result, SetCartPayment, SetCartShipping,
+    CustomerRepository, OrderRepository, Result, SetCartPayment, SetCartShipping,
     ShippingRate, UpdateCart, UpdateCartItem,
 };
 use uuid::Uuid;

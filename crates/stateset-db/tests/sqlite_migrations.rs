@@ -1,5 +1,7 @@
 #[cfg(feature = "sqlite")]
 use stateset_db::SqliteDatabase;
+#[cfg(feature = "sqlite")]
+use rusqlite::OptionalExtension;
 
 #[cfg(feature = "sqlite")]
 fn column_names(conn: &rusqlite::Connection, table: &str) -> Vec<String> {
@@ -25,6 +27,20 @@ fn has_table(conn: &rusqlite::Connection, table: &str) -> bool {
 }
 
 #[cfg(feature = "sqlite")]
+fn fts5_available(conn: &rusqlite::Connection) -> bool {
+    conn.query_row(
+        "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
+        [],
+        |row| row.get::<_, i32>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+        == 1
+}
+
+#[cfg(feature = "sqlite")]
 #[test]
 fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
@@ -33,7 +49,11 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    let expected = if cfg!(feature = "vector") { 27 } else { 26 };
+    let expected = if cfg!(feature = "vector") {
+        if fts5_available(&conn) { 28 } else { 27 }
+    } else {
+        26
+    };
     assert_eq!(applied, expected, "expected all embedded migrations to apply");
 
     for table in [
@@ -54,6 +74,16 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
             "embedding_metadata",
         ] {
             assert!(has_table(&conn, table), "missing table `{table}`");
+        }
+        if fts5_available(&conn) {
+            for table in [
+                "product_fts",
+                "customer_fts",
+                "order_fts",
+                "inventory_fts",
+            ] {
+                assert!(has_table(&conn, table), "missing table `{table}`");
+            }
         }
     }
 

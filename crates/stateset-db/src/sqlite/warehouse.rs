@@ -16,9 +16,9 @@ use uuid::Uuid;
 use stateset_core::{
     AdjustLocationInventory, BatchResult, CommerceError, CreateLocation, CreateWarehouse,
     CreateZone, Location, LocationFilter, LocationInventory, LocationInventoryFilter,
-    LocationMovement, LocationType, MoveInventory, MovementFilter, MovementType, Result,
-    UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseAddress, WarehouseFilter,
-    WarehouseRepository, WarehouseType, Zone,
+    LocationMovement, MoveInventory, MovementFilter, MovementType, Result,
+    UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter,
+    WarehouseRepository, Zone,
 };
 
 /// SQLite warehouse repository

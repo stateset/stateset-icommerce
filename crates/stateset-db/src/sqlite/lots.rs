@@ -1174,7 +1174,7 @@ impl LotRepository for SqliteLotRepository {
         Ok(transactions)
     }
 
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
+    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
         let conn = self.conn()?;
 
         let result = conn.query_row(
@@ -1184,8 +1184,8 @@ impl LotRepository for SqliteLotRepository {
         );
 
         match result {
-            Ok(qty) => Ok(parse_decimal_strict(&qty, "lot_location", "quantity")?),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Decimal::ZERO),
+            Ok(qty) => Ok(Some(parse_decimal_strict(&qty, "lot_location", "quantity")?)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(map_db_error(e)),
         }
     }

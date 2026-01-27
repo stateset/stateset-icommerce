@@ -39,6 +39,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use thiserror::Error;
+use ed25519_dalek::{Signer, Verifier, SigningKey, VerifyingKey, Signature};
 
 // =============================================================================
 // x402 Protocol Constants
@@ -71,6 +73,10 @@ pub enum X402Network {
     SetChainTestnet,
     /// Base L2 (Coinbase)
     Base,
+    /// Arc L2 (Circle stablecoin-native)
+    Arc,
+    /// Arc testnet
+    ArcTestnet,
     /// Base Sepolia testnet
     BaseSepolia,
     /// Ethereum mainnet
@@ -89,6 +95,8 @@ impl X402Network {
         match self {
             Self::SetChain => 84532001,        // Set Chain mainnet
             Self::SetChainTestnet => 84532002, // Set Chain testnet
+            Self::Arc => 5042001,        // Arc mainnet
+            Self::ArcTestnet => 5042002, // Arc testnet
             Self::Base => 8453,
             Self::BaseSepolia => 84532,
             Self::Ethereum => 1,
@@ -102,7 +110,7 @@ impl X402Network {
     pub fn is_testnet(&self) -> bool {
         matches!(
             self,
-            Self::SetChainTestnet | Self::BaseSepolia | Self::EthereumSepolia
+            Self::SetChainTestnet | Self::ArcTestnet | Self::BaseSepolia | Self::EthereumSepolia
         )
     }
 }
@@ -112,6 +120,8 @@ impl std::fmt::Display for X402Network {
         match self {
             Self::SetChain => write!(f, "set_chain"),
             Self::SetChainTestnet => write!(f, "set_chain_testnet"),
+            Self::Arc => write!(f, "arc"),
+            Self::ArcTestnet => write!(f, "arc_testnet"),
             Self::Base => write!(f, "base"),
             Self::BaseSepolia => write!(f, "base_sepolia"),
             Self::Ethereum => write!(f, "ethereum"),
@@ -129,6 +139,8 @@ impl std::str::FromStr for X402Network {
         match s.to_lowercase().as_str() {
             "set_chain" | "set" | "ssc" => Ok(Self::SetChain),
             "set_chain_testnet" | "set_testnet" => Ok(Self::SetChainTestnet),
+            "arc" => Ok(Self::Arc),
+            "arc_testnet" | "arc-testnet" => Ok(Self::ArcTestnet),
             "base" => Ok(Self::Base),
             "base_sepolia" => Ok(Self::BaseSepolia),
             "ethereum" | "eth" | "mainnet" => Ok(Self::Ethereum),
@@ -177,6 +189,10 @@ impl X402Asset {
             }
             (Self::SsUsd, X402Network::SetChain) => {
                 Some("0x0000000000000000000000000000000000001001")
+            }
+            // Arc addresses
+            (Self::Usdc, X402Network::Arc | X402Network::ArcTestnet) => {
+                Some("0x3600000000000000000000000000000000000000")
             }
             // Base addresses
             (Self::Usdc, X402Network::Base) => {
@@ -542,6 +558,68 @@ impl X402PaymentIntent {
             "resourceUri": self.resource_uri,
         });
         serde_jcs::to_string(&payload).unwrap_or_default()
+    }
+
+    /// Compute sequencer-compatible signing hash (X402_PAYMENT_V1)
+    pub fn sequencer_signing_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+
+        hasher.update(X402_DOMAIN_SEPARATOR.as_bytes());
+        hasher.update(self.payer_address.as_bytes());
+        hasher.update(self.payee_address.as_bytes());
+        hasher.update(self.amount.to_be_bytes());
+        hasher.update(format!("{:?}", self.asset).to_lowercase().as_bytes());
+        hasher.update(self.network.to_string().as_bytes());
+        hasher.update(self.chain_id.to_be_bytes());
+        hasher.update(self.valid_until.to_be_bytes());
+        hasher.update(self.nonce.to_be_bytes());
+
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
+
+    /// Sign the intent using Ed25519 (sequencer-compatible hash)
+    pub fn sign_with_ed25519(&mut self, private_key: &[u8; 32]) -> Result<(), X402CryptoError> {
+        let signing_hash = self.sequencer_signing_hash();
+        let signing_key = SigningKey::from_bytes(private_key);
+        let signature = signing_key.sign(&signing_hash);
+        let public_key = signing_key.verifying_key();
+
+        self.signing_hash = Some(hex0x(&signing_hash));
+        self.payer_signature = Some(hex0x(signature.to_bytes()));
+        self.payer_public_key = Some(hex0x(public_key.to_bytes()));
+        self.status = X402IntentStatus::Signed;
+        Ok(())
+    }
+
+    /// Verify Ed25519 signature against sequencer-compatible hash
+    pub fn verify_signature(&self) -> Result<bool, X402CryptoError> {
+        let signing_hash = self.sequencer_signing_hash();
+
+        let stored_hash = self
+            .signing_hash
+            .as_deref()
+            .ok_or(X402CryptoError::MissingField("signing_hash"))?;
+        if decode_hex_array::<32>(stored_hash)? != signing_hash {
+            return Ok(false);
+        }
+
+        let signature_hex = self
+            .payer_signature
+            .as_deref()
+            .ok_or(X402CryptoError::MissingField("payer_signature"))?;
+        let public_key_hex = self
+            .payer_public_key
+            .as_deref()
+            .ok_or(X402CryptoError::MissingField("payer_public_key"))?;
+
+        let signature = Signature::from_bytes(&decode_hex_array::<64>(signature_hex)?);
+        let public_key = VerifyingKey::from_bytes(&decode_hex_array::<32>(public_key_hex)?)
+            .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
+
+        Ok(public_key.verify(&signing_hash, &signature).is_ok())
     }
 }
 
@@ -924,6 +1002,38 @@ pub fn from_smallest_unit(amount: u64, asset: X402Asset) -> Decimal {
     let decimals = asset.decimals();
     let divisor = Decimal::from(10u64.pow(decimals as u32));
     Decimal::from(amount) / divisor
+}
+
+
+// =============================================================================
+// x402 Crypto Helpers
+// =============================================================================
+
+#[derive(Debug, Error)]
+pub enum X402CryptoError {
+    #[error("missing field: {0}")]
+    MissingField(&'static str),
+    #[error("invalid hex: {0}")]
+    InvalidHex(String),
+    #[error("invalid length: expected {expected}, got {got}")]
+    InvalidLength { expected: usize, got: usize },
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
+}
+
+fn hex0x(bytes: impl AsRef<[u8]>) -> String {
+    format!("0x{}", hex::encode(bytes))
+}
+
+fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N], X402CryptoError> {
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    let bytes = hex::decode(trimmed).map_err(|e| X402CryptoError::InvalidHex(e.to_string()))?;
+    if bytes.len() != N {
+        return Err(X402CryptoError::InvalidLength { expected: N, got: bytes.len() });
+    }
+    let mut arr = [0u8; N];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
 }
 
 #[cfg(test)]

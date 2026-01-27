@@ -203,6 +203,41 @@ await commerce.inventory.confirmReservation(reservationId: string);
 await commerce.inventory.releaseReservation(reservationId: string);
 ```
 
+### Vector Search (Hybrid Semantic + BM25)
+
+Vector search uses OpenAI embeddings with optional SQLite FTS5 (BM25) for lexical matches.
+Set `OPENAI_API_KEY` in your environment.
+
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+```typescript
+const vector = commerce.vector(process.env.OPENAI_API_KEY!);
+
+// Search products/customers/orders/inventory
+const products = await vector.searchProducts('wireless earbuds', 10);
+const customers = await vector.searchCustomers('enterprise retail buyers', 10);
+const orders = await vector.searchOrders('late shipment', 10);
+const inventory = await vector.searchInventory('outdoor gear', 10);
+
+// Index entities (single + bulk)
+await vector.indexProduct('<product-id>');
+await vector.indexCustomer('<customer-id>');
+await vector.indexOrder('<order-id>');
+await vector.indexInventoryItem('<inventory-id>');
+
+await vector.indexAllProducts();
+await vector.indexAllCustomers();
+await vector.indexAllOrders();
+await vector.indexAllInventory();
+
+// Stats + maintenance
+const stats = await vector.stats();
+await vector.clear('products');
+await vector.clearAll();
+```
+
 ### Returns
 
 ```typescript

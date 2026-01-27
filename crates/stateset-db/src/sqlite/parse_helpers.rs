@@ -86,6 +86,7 @@ pub fn parse_datetime_opt(
 }
 
 /// Parse a required NaiveDate from a string (YYYY-MM-DD format).
+#[allow(dead_code)]
 pub fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
         CommerceError::DatabaseError(format!(
@@ -96,6 +97,7 @@ pub fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
 }
 
 /// Parse an optional NaiveDate from an Option<String>.
+#[allow(dead_code)]
 pub fn parse_date_opt(s: Option<String>, entity: &str, field: &str) -> Result<Option<NaiveDate>> {
     match s {
         Some(ref val) if !val.is_empty() => Ok(Some(parse_date(val, entity, field)?)),
@@ -137,6 +139,7 @@ pub fn parse_decimal_opt(s: Option<String>, entity: &str, field: &str) -> Result
 /// Parse required JSON into a deserializable type.
 ///
 /// Returns an error with context if parsing fails.
+#[allow(dead_code)]
 pub fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Result<T> {
     serde_json::from_str(s).map_err(|e| {
         // Truncate long JSON strings in error messages
@@ -151,6 +154,7 @@ pub fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Re
 /// Parse optional JSON from an Option<String>.
 ///
 /// Returns Ok(None) if the input is None or empty.
+#[allow(dead_code)]
 pub fn parse_json_opt<T: DeserializeOwned>(
     s: Option<String>,
     entity: &str,
@@ -166,6 +170,7 @@ pub fn parse_json_opt<T: DeserializeOwned>(
 ///
 /// This should only be used for non-critical fields where an empty default is acceptable.
 /// For critical data, use `parse_json` instead.
+#[allow(dead_code)]
 pub fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T {
     if s.is_empty() {
         return T::default();
@@ -198,6 +203,7 @@ where
 }
 
 /// Parse an optional enum from an Option<String>.
+#[allow(dead_code)]
 pub fn parse_enum_opt<T>(s: Option<String>, entity: &str, field: &str) -> Result<Option<T>>
 where
     T: std::str::FromStr,
@@ -243,6 +249,7 @@ where
 // ============================================================================
 
 /// Parse a required i32 from a string.
+#[allow(dead_code)]
 pub fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
     s.parse::<i32>().map_err(|e| {
         CommerceError::DatabaseError(format!(
@@ -253,6 +260,7 @@ pub fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
 }
 
 /// Parse a required i64 from a string.
+#[allow(dead_code)]
 pub fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
     s.parse::<i64>().map_err(|e| {
         CommerceError::DatabaseError(format!(
@@ -284,6 +292,7 @@ macro_rules! parse_ctx {
 
 /// Legacy parse_decimal for backward compatibility during migration.
 /// Logs a warning on parse failure instead of silently returning default.
+#[allow(dead_code)]
 #[deprecated(note = "Use parse_decimal_row for proper error handling")]
 pub fn parse_decimal_legacy(s: &str) -> Decimal {
     match s.parse::<Decimal>() {

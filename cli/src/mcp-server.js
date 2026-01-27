@@ -1,14 +1,15 @@
 /**
  * MCP Server for StateSet Commerce operations
- * Exposes tools for customers, orders, products, inventory, returns, and sync
+ * Exposes tools for customers, orders, products, inventory, returns, vector search, and sync
  */
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from './sync/config.js';
 import { createOutbox } from './sync/outbox.js';
 import { createSyncEngine } from './sync/engine.js';
 import { createSequencerClient } from './sync/client.js';
+import { handleVectorTool } from './tools/vector.js';
 
 /**
  * Create the StateSet Commerce MCP server
@@ -39,6 +40,8 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       'get_demand_forecast', 'get_revenue_forecast', 'get_order_status_breakdown',
       'get_return_metrics', 'get_exchange_rate', 'list_exchange_rates',
       'convert_currency', 'get_currency_settings', 'format_currency',
+      // Vector search (read-only)
+      'vector_search_products', 'vector_search_customers', 'vector_search_orders', 'vector_search_inventory', 'vector_stats',
       // Tax tools
       'calculate_tax', 'get_tax_rate', 'list_tax_jurisdictions', 'list_tax_rates',
       'get_tax_settings', 'get_us_state_tax_info', 'get_customer_tax_exemptions',
@@ -85,6 +88,30 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
         throw error;
       }
     };
+  };
+
+  // Wrap tool registration with permission and telemetry enforcement
+  const tool = (name, description, schema, handler) => {
+    return sdkTool(name, description, schema, async (args) => {
+      if (permissionGate) {
+        const permission = await checkPermission(name, args);
+        if (!permission.allowed) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: permission.reason || 'Permission denied',
+                tool: name
+              })
+            }],
+            isError: true
+          };
+        }
+      }
+
+      const wrapped = wrapWithTelemetry(name, handler);
+      return wrapped(args);
+    });
   };
 
   return createSdkMcpServer({
@@ -5481,6 +5508,236 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
         }
+      ),
+
+      // ============================================================================
+      // Vector Search Tools (Hybrid semantic + BM25)
+      // ============================================================================
+      tool(
+        'vector_search_products',
+        'Search products using natural language query with hybrid semantic + BM25 ranking.',
+        {
+          query: z.string().describe('Natural language search query'),
+          limit: z.number().optional().describe('Maximum number of results to return')
+        },
+        async (args) => {
+          try {
+            return await handleVectorTool('vector_search_products', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_search_customers',
+        'Search customers using natural language query with hybrid semantic + BM25 ranking.',
+        {
+          query: z.string().describe('Natural language search query'),
+          limit: z.number().optional().describe('Maximum number of results to return')
+        },
+        async (args) => {
+          try {
+            return await handleVectorTool('vector_search_customers', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_search_orders',
+        'Search orders using natural language query with hybrid semantic + BM25 ranking.',
+        {
+          query: z.string().describe('Natural language search query'),
+          limit: z.number().optional().describe('Maximum number of results to return')
+        },
+        async (args) => {
+          try {
+            return await handleVectorTool('vector_search_orders', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_search_inventory',
+        'Search inventory items using natural language query with hybrid semantic + BM25 ranking.',
+        {
+          query: z.string().describe('Natural language search query'),
+          limit: z.number().optional().describe('Maximum number of results to return')
+        },
+        async (args) => {
+          try {
+            return await handleVectorTool('vector_search_inventory', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_product',
+        'Index a single product for vector search by its ID.',
+        {
+          product_id: z.string().describe('Product ID (UUID) to index')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_product', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_customer',
+        'Index a single customer for vector search by their ID.',
+        {
+          customer_id: z.string().describe('Customer ID (UUID) to index')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_customer', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_order',
+        'Index a single order for vector search by its ID.',
+        {
+          order_id: z.string().describe('Order ID (UUID) to index')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_order', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_inventory',
+        'Index a single inventory item for vector search by its ID.',
+        {
+          item_id: z.string().describe('Inventory item ID to index')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_inventory', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_all_products',
+        'Index all products for vector search.',
+        {},
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_all_products', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_all_customers',
+        'Index all customers for vector search.',
+        {},
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_all_customers', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_all_orders',
+        'Index all orders for vector search.',
+        {},
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_all_orders', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_index_all_inventory',
+        'Index all inventory items for vector search.',
+        {},
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector indexing requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_index_all_inventory', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_stats',
+        'Get statistics about vector embeddings.',
+        {},
+        async (args) => {
+          try {
+            return await handleVectorTool('vector_stats', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_clear',
+        'Clear all vector embeddings for a specific entity type.',
+        {
+          entity_type: z.enum(['products', 'customers', 'orders', 'inventory']).describe('Entity type to clear embeddings for')
+        },
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector clear requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_clear', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'vector_clear_all',
+        'Clear all vector embeddings across all entity types.',
+        {},
+        async (args) => {
+          if (!allowApply) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Vector clear requires --apply flag.' }) }] };
+          try {
+            return await handleVectorTool('vector_clear_all', args, commerce);
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
       )
     ]
   });
@@ -5639,5 +5896,21 @@ export const TOOL_NAMES = [
   'mcp__stateset-commerce__list_warranties',
   'mcp__stateset-commerce__create_warranty',
   'mcp__stateset-commerce__create_warranty_claim',
-  'mcp__stateset-commerce__approve_warranty_claim'
+  'mcp__stateset-commerce__approve_warranty_claim',
+  // Vector Search
+  'mcp__stateset-commerce__vector_search_products',
+  'mcp__stateset-commerce__vector_search_customers',
+  'mcp__stateset-commerce__vector_search_orders',
+  'mcp__stateset-commerce__vector_search_inventory',
+  'mcp__stateset-commerce__vector_index_product',
+  'mcp__stateset-commerce__vector_index_customer',
+  'mcp__stateset-commerce__vector_index_order',
+  'mcp__stateset-commerce__vector_index_inventory',
+  'mcp__stateset-commerce__vector_index_all_products',
+  'mcp__stateset-commerce__vector_index_all_customers',
+  'mcp__stateset-commerce__vector_index_all_orders',
+  'mcp__stateset-commerce__vector_index_all_inventory',
+  'mcp__stateset-commerce__vector_stats',
+  'mcp__stateset-commerce__vector_clear',
+  'mcp__stateset-commerce__vector_clear_all'
 ];

@@ -11,6 +11,28 @@
 //! - **Products**: Product catalog with variants
 //! - **Returns**: Return processing and refunds
 //! - **Manufacturing**: Bill of Materials (BOM) and Work Orders
+//!
+//! ## Example
+//!
+//! ```rust
+//! use stateset_core::prelude::*;
+//! use rust_decimal_macros::dec;
+//!
+//! // Create an order input
+//! let order = CreateOrder {
+//!     customer_id: uuid::Uuid::new_v4(),
+//!     items: vec![CreateOrderItem {
+//!         sku: "SKU-001".to_string(),
+//!         name: "Widget".to_string(),
+//!         quantity: 2,
+//!         unit_price: dec!(29.99),
+//!         ..Default::default()
+//!     }],
+//!     ..Default::default()
+//! };
+//! ```
+
+#![warn(missing_docs)]
 
 pub mod errors;
 pub mod events;

@@ -40,6 +40,7 @@ pub enum TaxType {
 }
 
 impl TaxType {
+    /// Return the canonical string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             TaxType::SalesTax => "sales_tax",
@@ -178,6 +179,7 @@ pub enum ProductTaxCategory {
 }
 
 impl ProductTaxCategory {
+    /// Return the canonical string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             ProductTaxCategory::Standard => "standard",

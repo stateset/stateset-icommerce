@@ -112,6 +112,32 @@ const INTENT_PATTERNS = {
     /who\s*(are\s*my|spends?\s*the\s*most)/i
   ],
 
+  // Vector search intents
+  'vector_search_products': [
+    /find\s+similar\s+products?/i,
+    /search\s+products?\s+like\s+(.+)/i,
+    /semantic\s+search\s+products?/i,
+    /vector\s+search\s+products?/i
+  ],
+  'vector_search_customers': [
+    /find\s+similar\s+customers?/i,
+    /search\s+customers?\s+like\s+(.+)/i,
+    /semantic\s+search\s+customers?/i,
+    /vector\s+search\s+customers?/i
+  ],
+  'vector_search_orders': [
+    /find\s+similar\s+orders?/i,
+    /search\s+orders?\s+like\s+(.+)/i,
+    /semantic\s+search\s+orders?/i,
+    /vector\s+search\s+orders?/i
+  ],
+  'vector_search_inventory': [
+    /find\s+similar\s+inventory/i,
+    /search\s+inventory\s+like\s+(.+)/i,
+    /semantic\s+search\s+inventory/i,
+    /vector\s+search\s+inventory/i
+  ],
+
   // Cart intents
   'create_cart': [
     /create\s*(a\s*)?(new\s*)?cart/i,
@@ -291,6 +317,26 @@ export class SuggestionEngine {
         command: 'stateset "who are my top customers"',
         direct: 'stateset-analytics "top customers"',
         description: 'Get top customers'
+      },
+      'vector_search_products': {
+        command: 'stateset "find products similar to <query>"',
+        direct: 'stateset "find products similar to <query>"',
+        description: 'Semantic + BM25 product search'
+      },
+      'vector_search_customers': {
+        command: 'stateset "find customers similar to <query>"',
+        direct: 'stateset "find customers similar to <query>"',
+        description: 'Semantic + BM25 customer search'
+      },
+      'vector_search_orders': {
+        command: 'stateset "find orders mentioning <query>"',
+        direct: 'stateset "find orders mentioning <query>"',
+        description: 'Semantic + BM25 order search'
+      },
+      'vector_search_inventory': {
+        command: 'stateset "find inventory items like <query>"',
+        direct: 'stateset "find inventory items like <query>"',
+        description: 'Semantic + BM25 inventory search'
       },
       'create_cart': {
         command: 'stateset --apply "create a cart for <email>"',

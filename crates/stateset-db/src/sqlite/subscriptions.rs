@@ -1,6 +1,6 @@
 //! SQLite repository for subscriptions
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;

@@ -4,6 +4,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_decimal_macros::dec;
+use std::sync::Arc;
+use std::thread;
+use tempfile::TempDir;
 use uuid::Uuid;
 
 use stateset_embedded::{
@@ -14,6 +17,28 @@ use stateset_embedded::{
 
 fn setup_commerce() -> Commerce {
     Commerce::new(":memory:").expect("Failed to create in-memory commerce instance")
+}
+
+struct BenchCommerce {
+    _dir: TempDir,
+    commerce: Arc<Commerce>,
+}
+
+fn setup_commerce_with_max_connections(max_connections: u32) -> BenchCommerce {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let path = dir.path().join("bench.db");
+    let commerce = Commerce::builder()
+        .database(
+            path.to_str().expect("Temp path is not valid UTF-8"),
+        )
+        .max_connections(max_connections)
+        .build()
+        .expect("Failed to create benchmark commerce instance");
+
+    BenchCommerce {
+        _dir: dir,
+        commerce: Arc::new(commerce),
+    }
 }
 
 fn create_test_customer(idx: usize) -> CreateCustomer {
@@ -268,6 +293,63 @@ fn benchmark_inventory_reservation_api(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_inventory_concurrent_reservations_api(c: &mut Criterion) {
+    let mut group = c.benchmark_group("inventory_reservation_concurrent");
+    let reservations_per_thread = 25;
+
+    for thread_count in [2, 4, 8].iter() {
+        let bench = setup_commerce_with_max_connections(*thread_count as u32);
+        let commerce = bench.commerce.clone();
+        let item_count = thread_count * 2;
+
+        for i in 0..item_count {
+            let mut item = create_test_inventory_item(i);
+            item.initial_quantity = Some(dec!(1000));
+            commerce.inventory().create_item(item).unwrap();
+        }
+
+        let skus: Arc<Vec<String>> =
+            Arc::new((0..item_count).map(|i| format!("INV-{:06}", i)).collect());
+        let commerce = commerce.clone();
+
+        group.bench_with_input(
+            BenchmarkId::new("threads", thread_count),
+            thread_count,
+            |b, &threads| {
+                b.iter(|| {
+                    let mut handles = Vec::with_capacity(threads);
+                    for t in 0..threads {
+                        let commerce = commerce.clone();
+                        let skus = skus.clone();
+                        handles.push(thread::spawn(move || {
+                            let inventory = commerce.inventory();
+                            for i in 0..reservations_per_thread {
+                                let sku = &skus[(t + i) % skus.len()];
+                                let reservation = inventory
+                                    .reserve(
+                                        sku,
+                                        dec!(1),
+                                        "benchmark",
+                                        &format!("bench-{}-{}", t, i),
+                                        Some(3600),
+                                    )
+                                    .unwrap();
+                                inventory.release_reservation(reservation.id).unwrap();
+                            }
+                        }));
+                    }
+
+                    for handle in handles {
+                        handle.join().unwrap();
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn benchmark_order_api(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_api");
 
@@ -518,6 +600,7 @@ criterion_group!(
     benchmark_product_api,
     benchmark_inventory_api,
     benchmark_inventory_reservation_api,
+    benchmark_inventory_concurrent_reservations_api,
     benchmark_order_api,
     benchmark_order_lifecycle,
     benchmark_tax_calculation,

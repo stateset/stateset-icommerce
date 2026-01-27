@@ -1401,9 +1401,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         })
     }
 
-    fn get_account_balance(&self, account_id: Uuid, _as_of_date: Option<NaiveDate>) -> Result<Decimal> {
-        let account = self.get_account(account_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-        Ok(account.current_balance)
+    fn get_account_balance(&self, account_id: Uuid, _as_of_date: Option<NaiveDate>) -> Result<Option<Decimal>> {
+        Ok(self
+            .get_account(account_id)?
+            .map(|account| account.current_balance))
     }
 
     fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>> {

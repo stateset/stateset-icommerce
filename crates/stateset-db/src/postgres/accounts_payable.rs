@@ -1072,7 +1072,19 @@ impl PgAccountsPayableRepository {
         })
     }
 
-    pub async fn get_supplier_summary_async(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    pub async fn get_supplier_summary_async(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
+        let supplier_exists: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM suppliers WHERE id = $1",
+        )
+        .bind(supplier_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if supplier_exists.is_none() {
+            return Ok(None);
+        }
+
         let row: (Decimal, Decimal, i32) = sqlx::query_as(
             "SELECT COALESCE(SUM(amount_due), 0), COALESCE(SUM(CASE WHEN due_date < CURRENT_DATE THEN amount_due ELSE 0 END), 0), COUNT(*) FROM ap_bills WHERE supplier_id = $1 AND status NOT IN ('paid', 'cancelled')",
         )
@@ -1081,13 +1093,13 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(SupplierApSummary {
+        Ok(Some(SupplierApSummary {
             supplier_id,
             supplier_name: None,
             total_outstanding: row.0,
             total_overdue: row.1,
             bill_count: row.2,
-        })
+        }))
     }
 
     pub async fn get_total_outstanding_async(&self) -> Result<Decimal> {
@@ -1267,7 +1279,7 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.get_aging_summary_async())
     }
 
-    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         block_on(self.get_supplier_summary_async(supplier_id))
     }
 

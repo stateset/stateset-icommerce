@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use stateset_core::{
     BatchResult, CompletePutAway, CommerceError, CreatePutAway, CreateReceipt, CreateReceiptItem,
-    PutAway, PutAwayFilter, PutAwayStatus, Receipt, ReceiptFilter, ReceiptItem, ReceiptItemStatus,
+    PutAway, PutAwayFilter, PutAwayStatus, Receipt, ReceiptFilter, ReceiptItem,
     ReceiptStatus, ReceiptType, ReceiveItems, ReceivingRepository, Result, UpdateReceipt,
     generate_receipt_number,
 };

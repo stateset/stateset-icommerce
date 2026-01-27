@@ -389,15 +389,18 @@ pub struct AnalyticsQuery {
 }
 
 impl AnalyticsQuery {
+    /// Create a new analytics query with defaults
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set a predefined time period
     pub fn period(mut self, period: TimePeriod) -> Self {
         self.period = Some(period);
         self
     }
 
+    /// Set a custom date range and switch to custom period
     pub fn date_range(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self {
         self.period = Some(TimePeriod::Custom);
         self.date_range = Some(DateRange {
@@ -407,16 +410,19 @@ impl AnalyticsQuery {
         self
     }
 
+    /// Set the time granularity for time-series results
     pub fn granularity(mut self, granularity: TimeGranularity) -> Self {
         self.granularity = Some(granularity);
         self
     }
 
+    /// Limit the number of results returned
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = Some(limit);
         self
     }
 
+    /// Enable or disable comparison to the previous period
     pub fn compare_previous(mut self, compare: bool) -> Self {
         self.compare_previous = Some(compare);
         self

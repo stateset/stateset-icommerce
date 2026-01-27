@@ -363,6 +363,7 @@ pub struct ArAgingSummary {
 }
 
 impl ArAgingSummary {
+    /// Create an empty aging summary as of now
     pub fn new() -> Self {
         Self {
             current: Decimal::ZERO,
@@ -472,6 +473,7 @@ pub struct WriteOff {
 }
 
 impl WriteOff {
+    /// Returns true if the write-off has been reversed
     pub fn is_reversed(&self) -> bool {
         self.reversed_at.is_some()
     }
@@ -497,6 +499,7 @@ pub struct CreditMemo {
 }
 
 impl CreditMemo {
+    /// Returns true if the credit memo can be applied to invoices
     pub fn can_apply(&self) -> bool {
         self.status != CreditMemoStatus::Voided &&
         self.status != CreditMemoStatus::FullyApplied &&
@@ -578,6 +581,7 @@ pub struct CustomerStatement {
 // Input Types
 // ============================================================================
 
+/// Input for logging a collection activity
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateCollectionActivity {
     pub invoice_id: Uuid,
@@ -591,6 +595,7 @@ pub struct CreateCollectionActivity {
     pub performed_by: Option<String>,
 }
 
+/// Input for creating a write-off
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWriteOff {
     pub invoice_id: Uuid,
@@ -600,6 +605,7 @@ pub struct CreateWriteOff {
     pub approved_by: Option<String>,
 }
 
+/// Input for creating a credit memo
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCreditMemo {
     pub customer_id: Uuid,
@@ -609,18 +615,21 @@ pub struct CreateCreditMemo {
     pub notes: Option<String>,
 }
 
+/// Input for applying a payment across invoices
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyPaymentToInvoices {
     pub payment_id: Uuid,
     pub applications: Vec<PaymentApplicationLine>,
 }
 
+/// Payment allocation to a single invoice
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentApplicationLine {
     pub invoice_id: Uuid,
     pub amount: Decimal,
 }
 
+/// Input for applying a credit memo to an invoice
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyCreditMemo {
     pub credit_memo_id: Uuid,
@@ -628,6 +637,7 @@ pub struct ApplyCreditMemo {
     pub amount: Decimal,
 }
 
+/// Request to generate a customer statement
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GenerateStatementRequest {
     pub customer_id: Uuid,
@@ -640,6 +650,7 @@ pub struct GenerateStatementRequest {
 // Filter Types
 // ============================================================================
 
+/// Filter for AR aging queries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArAgingFilter {
     pub customer_id: Option<Uuid>,
@@ -650,6 +661,7 @@ pub struct ArAgingFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for collection activity queries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectionActivityFilter {
     pub invoice_id: Option<Uuid>,
@@ -661,6 +673,7 @@ pub struct CollectionActivityFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for write-off queries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WriteOffFilter {
     pub customer_id: Option<Uuid>,
@@ -673,6 +686,7 @@ pub struct WriteOffFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for credit memo queries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreditMemoFilter {
     pub customer_id: Option<Uuid>,
@@ -689,12 +703,14 @@ pub struct CreditMemoFilter {
 // Helper Functions
 // ============================================================================
 
+/// Generate a write-off reference number
 pub fn generate_write_off_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();
     format!("WO-{}-{}", timestamp, random)
 }
 
+/// Generate a credit memo reference number
 pub fn generate_credit_memo_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
     let random = &uuid::Uuid::new_v4().to_string()[..6].to_uppercase();

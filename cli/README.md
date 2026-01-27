@@ -29,6 +29,7 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 - **Natural Language Interface** - Ask Claude to perform commerce operations
 - **Multi-Agent System** - 17 specialized agents auto-route to the best handler
 - **90+ MCP Tools** - Full commerce API exposed to Claude
+- **Hybrid Vector Search** - Semantic + BM25 search for products, customers, orders, and inventory (requires `OPENAI_API_KEY`)
 - **Multi-turn Sessions** - Resume conversations for complex workflows
 - **Preview Mode** - See what would happen before making changes
 - **Direct Commands** - Fast, non-AI mode for scripting
@@ -68,6 +69,8 @@ npm link
 ```
 
 ## Quick Start
+
+Tip: `ss` is a shorthand alias for `stateset`.
 
 ### Run the Tutorial
 
@@ -121,6 +124,9 @@ stateset-direct orders ship <order-id> TRACK123
 # Inventory operations
 stateset-direct inventory stock WIDGET-001
 stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
+
+# Vector search (hybrid semantic + BM25)
+stateset-direct vector search products "wireless earbuds" 5
 ```
 
 ### Batch Processing

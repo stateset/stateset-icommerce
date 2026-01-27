@@ -6,6 +6,7 @@
 //!
 //! - `sqlite` (default): SQLite database support via rusqlite
 //! - `postgres`: PostgreSQL database support via sqlx (async)
+//! - `vector`: Vector search support via sqlite-vec extension
 //!
 //! ## Usage
 //!

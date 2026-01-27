@@ -9,6 +9,7 @@ Quick reference for all StateSet Commerce CLI commands.
 - [Getting Started](#getting-started)
 - [Customers](#customers)
 - [Products](#products)
+- [Vector Search](#vector-search)
 - [Inventory](#inventory)
 - [Orders](#orders)
 - [Carts](#carts)
@@ -116,6 +117,21 @@ stateset --apply "activate product PROD-123"
 
 # Delete product
 stateset --apply "delete product PROD-123"
+```
+
+---
+
+## Vector Search
+
+Hybrid semantic + BM25 search is available when `OPENAI_API_KEY` is set. If SQLite
+FTS5 isn't available, it falls back to embedding-only search.
+
+```bash
+# Find similar products/customers/orders/inventory
+stateset "find products similar to wireless earbuds"
+stateset "search customers like enterprise retail buyers"
+stateset "find orders mentioning backorder or late shipment"
+stateset "find inventory items like outdoor gear"
 ```
 
 ---
@@ -562,6 +578,7 @@ stateset-sync groups:list
 | `STATESET_STORE_ID` | Store ID | - |
 | `STATESET_API_KEY` | API key | - |
 | `ANTHROPIC_API_KEY` | Claude API key (for AI mode) | - |
+| `OPENAI_API_KEY` | OpenAI API key (for vector search embeddings) | - |
 | `STATESET_TIMEOUT` | Request timeout (ms) | `30000` |
 | `DEBUG` | Enable debug logging | - |
 
@@ -570,6 +587,7 @@ stateset-sync groups:list
 export STATESET_DB=./store.db
 export STATESET_SEQUENCER_URL=http://localhost:8080
 export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
 
 # Now commands use these defaults
 stateset "list products"

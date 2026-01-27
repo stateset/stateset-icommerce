@@ -1643,6 +1643,16 @@ export interface CustomerSearchResultOutput {
   distance: number
   score: number
 }
+export interface OrderSearchResultOutput {
+  order: OrderOutput
+  distance: number
+  score: number
+}
+export interface InventorySearchResultOutput {
+  item: InventoryItemOutput
+  distance: number
+  score: number
+}
 export interface EmbeddingStatsOutput {
   productCount: number
   customerCount: number
@@ -2368,14 +2378,26 @@ export declare class VectorSearch {
   searchProducts(query: string, limit?: number | undefined | null): Promise<Array<ProductSearchResultOutput>>
   /** Search customers using natural language query */
   searchCustomers(query: string, limit?: number | undefined | null): Promise<Array<CustomerSearchResultOutput>>
+  /** Search orders using natural language query */
+  searchOrders(query: string, limit?: number | undefined | null): Promise<Array<OrderSearchResultOutput>>
+  /** Search inventory items using natural language query */
+  searchInventory(query: string, limit?: number | undefined | null): Promise<Array<InventorySearchResultOutput>>
   /** Index a product for vector search */
   indexProduct(productId: string): Promise<void>
   /** Index a customer for vector search */
   indexCustomer(customerId: string): Promise<void>
+  /** Index an order for vector search */
+  indexOrder(orderId: string): Promise<void>
+  /** Index an inventory item for vector search */
+  indexInventoryItem(itemId: string): Promise<void>
   /** Index all products for vector search */
   indexAllProducts(): Promise<number>
   /** Index all customers for vector search */
   indexAllCustomers(): Promise<number>
+  /** Index all orders for vector search */
+  indexAllOrders(): Promise<number>
+  /** Index all inventory items for vector search */
+  indexAllInventory(): Promise<number>
   /** Get embedding statistics */
   stats(): Promise<EmbeddingStatsOutput>
   /** Clear all embeddings for a specific entity type */

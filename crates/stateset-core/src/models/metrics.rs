@@ -23,6 +23,7 @@ pub struct Counter {
 }
 
 impl Counter {
+    /// Create a new counter metric
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
@@ -32,10 +33,12 @@ impl Counter {
         }
     }
 
+    /// Increment the counter by 1 for the given label values
     pub fn inc(&self, label_values: &[&str]) {
         self.add(label_values, 1);
     }
 
+    /// Add a value to the counter for the given label values
     pub fn add(&self, label_values: &[&str], value: u64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let mut values = self.values.write().unwrap();
@@ -45,6 +48,7 @@ impl Counter {
             .fetch_add(value, Ordering::SeqCst);
     }
 
+    /// Get the current counter value for the given label values
     pub fn get(&self, label_values: &[&str]) -> u64 {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let values = self.values.read().unwrap();
@@ -54,6 +58,7 @@ impl Counter {
             .unwrap_or(0)
     }
 
+    /// Render the counter in Prometheus exposition format
     pub fn render_prometheus(&self) -> String {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} counter\n", self.name));
@@ -93,6 +98,7 @@ pub struct Gauge {
 }
 
 impl Gauge {
+    /// Create a new gauge metric
     pub fn new(name: &str, help: &str, labels: Vec<&str>) -> Self {
         Self {
             name: name.to_string(),
@@ -102,20 +108,24 @@ impl Gauge {
         }
     }
 
+    /// Set the gauge to an absolute value
     pub fn set(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let mut values = self.values.write().unwrap();
         values.insert(key, value);
     }
 
+    /// Increment the gauge by 1
     pub fn inc(&self, label_values: &[&str]) {
         self.add(label_values, 1.0);
     }
 
+    /// Decrement the gauge by 1
     pub fn dec(&self, label_values: &[&str]) {
         self.add(label_values, -1.0);
     }
 
+    /// Add a delta to the gauge
     pub fn add(&self, label_values: &[&str], delta: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let mut values = self.values.write().unwrap();
@@ -123,12 +133,14 @@ impl Gauge {
         values.insert(key, current + delta);
     }
 
+    /// Get the current gauge value for the given labels
     pub fn get(&self, label_values: &[&str]) -> f64 {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let values = self.values.read().unwrap();
         values.get(&key).copied().unwrap_or(0.0)
     }
 
+    /// Render the gauge in Prometheus exposition format
     pub fn render_prometheus(&self) -> String {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} gauge\n", self.name));
@@ -171,6 +183,7 @@ struct HistogramData {
 }
 
 impl Histogram {
+    /// Create a new histogram metric
     pub fn new(name: &str, help: &str, labels: Vec<&str>, buckets: Vec<f64>) -> Self {
         Self {
             name: name.to_string(),
@@ -186,6 +199,7 @@ impl Histogram {
         vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
     }
 
+    /// Record an observation value for the histogram
     pub fn observe(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
         let mut observations = self.observations.write().unwrap();
@@ -217,6 +231,7 @@ impl Histogram {
         data.count.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// Render the histogram in Prometheus exposition format
     pub fn render_prometheus(&self) -> String {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} histogram\n", self.name));
@@ -301,6 +316,7 @@ pub struct CommerceMetrics {
 }
 
 impl CommerceMetrics {
+    /// Create a registry of commerce-specific metrics
     pub fn new() -> Self {
         Self {
             orders_created: Counter::new(
@@ -447,6 +463,7 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
+    /// Create a new log entry with level and message
     pub fn new(level: LogLevel, message: &str) -> Self {
         Self {
             timestamp: Utc::now(),
@@ -459,21 +476,25 @@ impl LogEntry {
         }
     }
 
+    /// Set the log target/module
     pub fn with_target(mut self, target: &str) -> Self {
         self.target = Some(target.to_string());
         self
     }
 
+    /// Attach a trace ID for distributed tracing
     pub fn with_trace_id(mut self, trace_id: &str) -> Self {
         self.trace_id = Some(trace_id.to_string());
         self
     }
 
+    /// Attach a span ID for distributed tracing
     pub fn with_span_id(mut self, span_id: &str) -> Self {
         self.span_id = Some(span_id.to_string());
         self
     }
 
+    /// Add an arbitrary structured field
     pub fn with_field<V: Serialize>(mut self, key: &str, value: V) -> Self {
         if let Ok(json_value) = serde_json::to_value(value) {
             self.fields.insert(key.to_string(), json_value);
@@ -516,6 +537,7 @@ impl LogEntry {
 pub struct CommerceLogger;
 
 impl CommerceLogger {
+    /// Build a log entry for order creation
     pub fn order_created(order_id: &str, customer_id: &str, total: Decimal) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Order created")
             .with_target("stateset::orders")
@@ -524,6 +546,7 @@ impl CommerceLogger {
             .with_field("total", total.to_string())
     }
 
+    /// Build a log entry for inventory adjustments
     pub fn inventory_adjusted(sku: &str, quantity: Decimal, reason: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Inventory adjusted")
             .with_target("stateset::inventory")
@@ -532,6 +555,7 @@ impl CommerceLogger {
             .with_field("reason", reason)
     }
 
+    /// Build a log entry for payment processing
     pub fn payment_processed(payment_id: &str, amount: Decimal, status: &str) -> LogEntry {
         LogEntry::new(LogLevel::Info, "Payment processed")
             .with_target("stateset::payments")
@@ -540,6 +564,7 @@ impl CommerceLogger {
             .with_field("status", status)
     }
 
+    /// Build a log entry for an operation error
     pub fn error(operation: &str, error: &str) -> LogEntry {
         LogEntry::new(LogLevel::Error, &format!("Operation failed: {}", error))
             .with_target("stateset::error")
@@ -547,6 +572,7 @@ impl CommerceLogger {
             .with_field("error", error)
     }
 
+    /// Build a log entry for database queries
     pub fn database_query(query_type: &str, table: &str, duration_ms: u64) -> LogEntry {
         LogEntry::new(LogLevel::Debug, "Database query executed")
             .with_target("stateset::database")

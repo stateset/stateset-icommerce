@@ -73,7 +73,7 @@ impl AccountsReceivable {
     }
 
     /// Get AR aging for a specific customer.
-    pub fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
+    pub fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
         self.db.accounts_receivable().get_customer_aging(customer_id)
     }
 
@@ -310,7 +310,7 @@ impl AccountsReceivable {
     // ========================================================================
 
     /// Get AR summary for a customer.
-    pub fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
+    pub fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
         self.db.accounts_receivable().get_customer_summary(customer_id)
     }
 

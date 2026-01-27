@@ -9,13 +9,13 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
 use stateset_core::{
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem, BillPayment,
     BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem, CreateBillPayment,
-    CreatePaymentRun, PaymentAllocation, PaymentMethodAP, PaymentRun, PaymentRunFilter,
+    CreatePaymentRun, PaymentAllocation, PaymentRun, PaymentRunFilter,
     PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
     generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
 };
@@ -801,10 +801,23 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         })
     }
 
-    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         let conn = self.conn()?;
         let now = Utc::now();
         let supplier_id_param = supplier_id.to_string();
+
+        let supplier_exists: Option<String> = conn
+            .query_row(
+                "SELECT id FROM suppliers WHERE id = ?1",
+                params![&supplier_id_param],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_db_error)?;
+
+        if supplier_exists.is_none() {
+            return Ok(None);
+        }
 
         let mut stmt = conn.prepare(
             "SELECT due_date, amount_due FROM ap_bills WHERE supplier_id = ?1 AND status NOT IN ('paid', 'cancelled')",
@@ -828,13 +841,13 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             }
         }
 
-        Ok(SupplierApSummary {
+        Ok(Some(SupplierApSummary {
             supplier_id,
             supplier_name: None,
             total_outstanding: outstanding,
             total_overdue: overdue,
             bill_count: count,
-        })
+        }))
     }
 
     fn get_total_outstanding(&self) -> Result<Decimal> {

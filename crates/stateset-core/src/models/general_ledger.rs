@@ -629,6 +629,7 @@ pub struct TrialBalance {
 }
 
 impl TrialBalance {
+    /// Returns true if debits equal credits
     pub fn is_balanced(&self) -> bool {
         self.total_debits == self.total_credits
     }
@@ -659,7 +660,7 @@ pub struct BalanceSheet {
 }
 
 impl BalanceSheet {
-    /// Returns true if Assets = Liabilities + Equity
+    /// Returns true if assets equal liabilities plus equity
     pub fn is_balanced(&self) -> bool {
         self.total_assets == self.total_liabilities + self.total_equity
     }
@@ -693,6 +694,7 @@ pub struct IncomeStatement {
 // Input Types
 // ============================================================================
 
+/// Input for creating a general ledger account
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGlAccount {
     pub account_number: String,
@@ -706,6 +708,7 @@ pub struct CreateGlAccount {
     pub currency: Option<String>,
 }
 
+/// Input for updating a general ledger account
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateGlAccount {
     pub name: Option<String>,
@@ -714,6 +717,7 @@ pub struct UpdateGlAccount {
     pub status: Option<AccountStatus>,
 }
 
+/// Input for creating a fiscal period
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGlPeriod {
     pub period_name: String,
@@ -723,6 +727,7 @@ pub struct CreateGlPeriod {
     pub end_date: NaiveDate,
 }
 
+/// Input for creating a journal entry with lines
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJournalEntry {
     pub entry_date: NaiveDate,
@@ -734,6 +739,7 @@ pub struct CreateJournalEntry {
     pub auto_post: Option<bool>,
 }
 
+/// Input for a journal entry line
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJournalEntryLine {
     pub account_id: Uuid,
@@ -745,6 +751,7 @@ pub struct CreateJournalEntryLine {
 }
 
 impl CreateJournalEntryLine {
+    /// Create a debit line for an account
     pub fn debit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
@@ -756,6 +763,7 @@ impl CreateJournalEntryLine {
         }
     }
 
+    /// Create a credit line for an account
     pub fn credit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
         Self {
             account_id,
@@ -768,6 +776,7 @@ impl CreateJournalEntryLine {
     }
 }
 
+/// Configuration for automatic postings between accounts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAutoPostingConfig {
     pub config_name: String,
@@ -786,6 +795,7 @@ pub struct CreateAutoPostingConfig {
 // Filter Types
 // ============================================================================
 
+/// Filter for listing general ledger accounts
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlAccountFilter {
     pub account_type: Option<AccountType>,
@@ -799,6 +809,7 @@ pub struct GlAccountFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for listing fiscal periods
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlPeriodFilter {
     pub fiscal_year: Option<i32>,
@@ -807,6 +818,7 @@ pub struct GlPeriodFilter {
     pub offset: Option<u32>,
 }
 
+/// Filter for listing journal entries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JournalEntryFilter {
     pub period_id: Option<Uuid>,
@@ -827,11 +839,13 @@ pub struct JournalEntryFilter {
 // Helper Functions
 // ============================================================================
 
+/// Generate a journal entry number using a timestamp
 pub fn generate_journal_entry_number() -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
     format!("JE-{}", timestamp)
 }
 
+/// Generate a period name in YYYY-MM format
 pub fn generate_period_name(year: i32, month: i32) -> String {
     format!("{}-{:02}", year, month)
 }

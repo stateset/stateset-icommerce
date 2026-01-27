@@ -10,8 +10,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateReturn, ItemCondition, Result, Return,
-    ReturnFilter, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus, UpdateReturn,
+    validate_batch_size, BatchResult, CommerceError, CreateReturn, Result, Return,
+    ReturnFilter, ReturnItem, ReturnRepository, ReturnStatus, UpdateReturn,
 };
 use uuid::Uuid;
 

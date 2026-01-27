@@ -4,6 +4,7 @@
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
+    "ss": "./bin/stateset.js",
     "stateset": "./bin/stateset.js",
     "stateset-chat": "./bin/stateset-chat.js",
     "stateset-direct": "./bin/stateset-direct.js",

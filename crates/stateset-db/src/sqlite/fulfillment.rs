@@ -14,7 +14,7 @@ use chrono::Utc;
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CompletePick, CompleteShip,
     CommerceError, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentRepository,
-    PackStatus, PackTask, PackTaskFilter, PackageType, PickStatus, PickTask, PickTaskFilter,
+    PackStatus, PackTask, PackTaskFilter, PickStatus, PickTask, PickTaskFilter,
     Result, ShipStatus, ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
     generate_carton_number, generate_wave_number,
 };

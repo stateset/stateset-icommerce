@@ -296,7 +296,7 @@ impl Lots {
     }
 
     /// Get quantity at a specific location.
-    pub fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
+    pub fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
         self.db.lots().get_quantity_at_location(lot_id, location_id)
     }
 

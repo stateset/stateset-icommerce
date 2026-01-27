@@ -581,6 +581,7 @@ pub struct CreateSubscriptionPlan {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Item definition for creating a subscription plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubscriptionPlanItem {
     pub product_id: Uuid,
@@ -650,6 +651,7 @@ impl Default for CreateSubscription {
     }
 }
 
+/// Item override when creating a subscription
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSubscriptionItem {
     pub product_id: Uuid,
@@ -729,6 +731,7 @@ pub struct ModifySubscriptionItems {
     pub update_quantities: Option<Vec<UpdateItemQuantity>>,
 }
 
+/// Update quantity for an existing subscription item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateItemQuantity {
     pub item_id: Uuid,

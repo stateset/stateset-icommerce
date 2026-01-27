@@ -174,7 +174,7 @@ export class ToolRegistry {
 export const AGENT_TOOL_CATEGORIES = {
   'customer-service': ['customers', 'orders', 'products', 'inventory', 'returns', 'carts', 'analytics', 'currency', 'tax', 'promotions', 'subscriptions', 'vector'],
   'checkout': ['carts', 'products', 'inventory', 'promotions', 'tax', 'currency', 'vector'],
-  'orders': ['orders', 'customers', 'inventory'],
+  'orders': ['orders', 'customers', 'inventory', 'vector'],
   'inventory': ['inventory', 'products', 'vector'],
   'returns': ['returns', 'orders', 'customers', 'inventory'],
   'analytics': ['analytics', 'vector'],

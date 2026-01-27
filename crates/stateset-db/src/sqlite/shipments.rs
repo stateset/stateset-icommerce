@@ -11,7 +11,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use stateset_core::{
     validate_batch_size, AddShipmentEvent, BatchResult, CommerceError, CreateShipment,
     CreateShipmentItem, Result, Shipment, ShipmentEvent, ShipmentFilter, ShipmentItem,
-    ShipmentRepository, ShipmentStatus, ShippingCarrier, ShippingMethod, UpdateShipment,
+    ShipmentRepository, ShipmentStatus, ShippingCarrier, UpdateShipment,
 };
 use uuid::Uuid;
 

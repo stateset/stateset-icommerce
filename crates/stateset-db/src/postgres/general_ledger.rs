@@ -1602,12 +1602,11 @@ impl PgGeneralLedgerRepository {
         &self,
         account_id: Uuid,
         _as_of_date: Option<NaiveDate>,
-    ) -> Result<Decimal> {
-        let account = self
+    ) -> Result<Option<Decimal>> {
+        Ok(self
             .get_account_async(account_id)
             .await?
-            .ok_or(CommerceError::NotFound)?;
-        Ok(account.current_balance)
+            .map(|account| account.current_balance))
     }
 
     pub async fn get_account_transactions_async(
@@ -1912,7 +1911,7 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.get_income_statement_async(start_date, end_date))
     }
 
-    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Decimal> {
+    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Option<Decimal>> {
         block_on(self.get_account_balance_async(account_id, as_of_date))
     }
 

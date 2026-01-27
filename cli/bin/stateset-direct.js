@@ -28,12 +28,14 @@ const RESOURCE_ALIASES = {
   'p': 'products',
   'i': 'inventory',
   'r': 'returns',
+  'v': 'vector',
   // Common abbreviations
   'cust': 'customers',
   'ord': 'orders',
   'prod': 'products',
   'inv': 'inventory',
   'ret': 'returns',
+  'vec': 'vector',
   'stock': 'inventory'  // natural alias
 };
 
@@ -111,8 +113,17 @@ RESOURCES & ACTIONS:
     reject <id> <reason>          Reject a return
     count                         Count returns
 
+  vector
+    search <scope> <query> [limit]  Vector search (products|customers|orders|inventory)
+    index <scope> <id>              Index a single entity
+    index-all <scope>               Index all entities for a scope
+    stats                           Show embedding stats
+    clear <scope>                   Clear embeddings for a scope
+    clear-all                       Clear all embeddings
+    (requires OPENAI_API_KEY)
+
 SHORTCUTS:
-  Resources: c=customers, o=orders, p=products, i/inv=inventory, r=returns
+  Resources: c=customers, o=orders, p=products, i/inv=inventory, r=returns, v=vector
   Actions:   l/ls=list, g=get, s=ship, x=cancel, a=adjust, n/#=count
 
 EXAMPLES:
@@ -124,6 +135,7 @@ EXAMPLES:
   stateset-direct i stock WIDGET              # Fuzzy SKU match
   stateset-direct inv a WIDGET -5 "Sold"      # inventory adjust
   stateset-direct o #                         # orders count
+  stateset-direct v search products "wireless earbuds" 5
   stateset-direct --json p l                  # products list as JSON
 
 SMART MATCHING:
@@ -306,6 +318,40 @@ async function main() {
     );
 
     return [header, separator, ...rows].join('\n');
+  };
+
+  const normalizeVectorScope = (scope) => {
+    if (!scope) return null;
+    switch (scope.toLowerCase()) {
+      case 'product':
+      case 'products':
+        return 'products';
+      case 'customer':
+      case 'customers':
+        return 'customers';
+      case 'order':
+      case 'orders':
+        return 'orders';
+      case 'inventory':
+      case 'item':
+      case 'items':
+        return 'inventory';
+      default:
+        return null;
+    }
+  };
+
+  const parseSearchArgs = (args) => {
+    if (args.length === 0) {
+      return { query: '', limit: undefined };
+    }
+    let limit;
+    const last = args[args.length - 1];
+    if (/^\d+$/.test(last)) {
+      limit = parseInt(last, 10);
+      args = args.slice(0, -1);
+    }
+    return { query: args.join(' ').trim(), limit };
   };
 
   try {
@@ -607,6 +653,190 @@ Created: ${ret.createdAt}
             throw new Error(`Unknown action: returns ${action}`);
         }
         break;
+
+      // ============================================================================
+      // Vector Search
+      // ============================================================================
+      case 'vector': {
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+          throw new Error('OPENAI_API_KEY not set. Vector search requires an OpenAI API key.');
+        }
+
+        const vector = commerce.vector(apiKey);
+
+        switch (action) {
+          case 'search': {
+            const scope = normalizeVectorScope(actionArgs[0]);
+            if (!scope) {
+              throw new Error('Usage: vector search <products|customers|orders|inventory> <query> [limit]');
+            }
+
+            const { query, limit } = parseSearchArgs(actionArgs.slice(1));
+            if (!query) {
+              throw new Error('Usage: vector search <products|customers|orders|inventory> <query> [limit]');
+            }
+
+            let results = [];
+            switch (scope) {
+              case 'products':
+                results = await vector.searchProducts(query, limit ?? 10);
+                if (jsonOutput) {
+                  output({ scope, query, count: results.length, results });
+                } else {
+                  output(formatTable(results.map(r => ({
+                    id: r.product.id.slice(0, 8) + '...',
+                    name: r.product.name,
+                    score: r.score.toFixed(3),
+                    distance: r.distance.toFixed(4)
+                  })), ['id', 'name', 'score', 'distance']));
+                }
+                break;
+              case 'customers':
+                results = await vector.searchCustomers(query, limit ?? 10);
+                if (jsonOutput) {
+                  output({ scope, query, count: results.length, results });
+                } else {
+                  output(formatTable(results.map(r => ({
+                    id: r.customer.id.slice(0, 8) + '...',
+                    name: `${r.customer.firstName} ${r.customer.lastName}`,
+                    email: r.customer.email,
+                    score: r.score.toFixed(3)
+                  })), ['id', 'name', 'email', 'score']));
+                }
+                break;
+              case 'orders':
+                results = await vector.searchOrders(query, limit ?? 10);
+                if (jsonOutput) {
+                  output({ scope, query, count: results.length, results });
+                } else {
+                  output(formatTable(results.map(r => ({
+                    id: r.order.id.slice(0, 8) + '...',
+                    number: r.order.orderNumber,
+                    status: r.order.status,
+                    total: `${r.order.currency} ${r.order.totalAmount.toFixed(2)}`,
+                    score: r.score.toFixed(3)
+                  })), ['id', 'number', 'status', 'total', 'score']));
+                }
+                break;
+              case 'inventory':
+                results = await vector.searchInventory(query, limit ?? 10);
+                if (jsonOutput) {
+                  output({ scope, query, count: results.length, results });
+                } else {
+                  output(formatTable(results.map(r => ({
+                    id: String(r.item.id),
+                    sku: r.item.sku,
+                    name: r.item.name,
+                    score: r.score.toFixed(3)
+                  })), ['id', 'sku', 'name', 'score']));
+                }
+                break;
+            }
+            break;
+          }
+
+          case 'index': {
+            const scope = normalizeVectorScope(actionArgs[0]);
+            const id = actionArgs[1];
+            if (!scope || !id) {
+              throw new Error('Usage: vector index <products|customers|orders|inventory> <id>');
+            }
+
+            const resolvedId = scope === 'inventory' ? id : await resolveId(id, scope);
+
+            switch (scope) {
+              case 'products':
+                await vector.indexProduct(resolvedId);
+                break;
+              case 'customers':
+                await vector.indexCustomer(resolvedId);
+                break;
+              case 'orders':
+                await vector.indexOrder(resolvedId);
+                break;
+              case 'inventory':
+                await vector.indexInventoryItem(resolvedId);
+                break;
+            }
+
+            output(jsonOutput ? { scope, id: resolvedId, indexed: true } : `Indexed ${scope} ${resolvedId}`);
+            break;
+          }
+
+          case 'index-all': {
+            const scope = normalizeVectorScope(actionArgs[0]);
+            if (!scope) {
+              throw new Error('Usage: vector index-all <products|customers|orders|inventory>');
+            }
+
+            let count = 0;
+            switch (scope) {
+              case 'products':
+                count = await vector.indexAllProducts();
+                break;
+              case 'customers':
+                count = await vector.indexAllCustomers();
+                break;
+              case 'orders':
+                count = await vector.indexAllOrders();
+                break;
+              case 'inventory':
+                count = await vector.indexAllInventory();
+                break;
+            }
+
+            output(jsonOutput ? { scope, count } : `Indexed ${count} ${scope}`);
+            break;
+          }
+
+          case 'stats': {
+            const stats = await vector.stats();
+            if (jsonOutput) {
+              output(stats);
+            } else {
+              output([
+                `Model: ${stats.model}`,
+                `Dimensions: ${stats.dimensions}`,
+                `Products: ${stats.productCount}`,
+                `Customers: ${stats.customerCount}`,
+                `Orders: ${stats.orderCount}`,
+                `Inventory: ${stats.inventoryCount}`
+              ].join('\n'));
+            }
+            break;
+          }
+
+          case 'clear': {
+            const scope = normalizeVectorScope(actionArgs[0]);
+            if (!scope) {
+              throw new Error('Usage: vector clear <products|customers|orders|inventory>');
+            }
+            const count = await vector.clear(scope);
+            output(jsonOutput ? { scope, cleared: count } : `Cleared ${count} ${scope} embeddings`);
+            break;
+          }
+
+          case 'clear-all': {
+            const count = await vector.clearAll();
+            output(jsonOutput ? { cleared: count } : `Cleared ${count} embeddings`);
+            break;
+          }
+
+          default:
+            throw new Error(
+              `Unknown action: vector ${action}\n\n` +
+              'Available actions:\n' +
+              '  search <scope> <query> [limit]\n' +
+              '  index <scope> <id>\n' +
+              '  index-all <scope>\n' +
+              '  stats\n' +
+              '  clear <scope>\n' +
+              '  clear-all'
+            );
+        }
+        break;
+      }
 
       default:
         throw new Error(`Unknown resource: ${resource}\nUse --help for available commands.`);

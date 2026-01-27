@@ -8,9 +8,10 @@ use super::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use stateset_core::{
     validate_batch_size, validate_sku, BatchResult, CommerceError, CreateProduct, CreateProductVariant,
-    Product, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
+    Product, ProductFilter, ProductRepository, ProductStatus, ProductVariant,
     Result, UpdateProduct,
 };
 use uuid::Uuid;
@@ -233,6 +234,19 @@ impl ProductRepository for SqliteProductRepository {
             params.push(Box::new(name.clone()));
         }
         if let Some(slug) = &input.slug {
+            let existing_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM products WHERE slug = ?",
+                    [slug],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_db_error)?;
+            if let Some(existing_id) = existing_id {
+                if existing_id != id.to_string() {
+                    return Err(CommerceError::DuplicateSlug(slug.clone()));
+                }
+            }
             updates.push("slug = ?");
             params.push(Box::new(slug.clone()));
         }
@@ -711,6 +725,19 @@ impl ProductRepository for SqliteProductRepository {
                 params.push(Box::new(name.clone()));
             }
             if let Some(slug) = &input.slug {
+                let existing_id: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM products WHERE slug = ?",
+                        [slug],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(map_db_error)?;
+                if let Some(existing_id) = existing_id {
+                    if existing_id != id.to_string() {
+                        return Err(CommerceError::DuplicateSlug(slug.clone()));
+                    }
+                }
                 update_parts.push("slug = ?");
                 params.push(Box::new(slug.clone()));
             }

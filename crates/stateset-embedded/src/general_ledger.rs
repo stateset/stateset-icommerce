@@ -412,7 +412,7 @@ impl GeneralLedger {
     }
 
     /// Get the current balance of an account.
-    pub fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Decimal> {
+    pub fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Option<Decimal>> {
         self.db.general_ledger().get_account_balance(account_id, as_of_date)
     }
 

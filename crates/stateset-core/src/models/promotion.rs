@@ -589,6 +589,7 @@ pub struct CouponCode {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Status of an individual coupon code
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CouponStatus {
@@ -725,6 +726,7 @@ pub struct RejectedPromotion {
     pub reason_code: RejectionReason,
 }
 
+/// Reason a promotion or coupon was rejected during evaluation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectionReason {
@@ -812,6 +814,7 @@ pub struct CreatePromotion {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Condition input used when creating a promotion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePromotionCondition {
     pub condition_type: ConditionType,

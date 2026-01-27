@@ -197,6 +197,26 @@ export {
   getCommerce
 } from './database.js';
 
+// x402 Payments
+export {
+  X402SequencerClient,
+  computeX402SigningHash,
+  normalizeAsset,
+  normalizeNetwork,
+  networkChainId,
+  signX402Hash,
+  verifyX402Signature,
+  encodeBase64Json,
+  decodeBase64Json,
+  hashToHex,
+  hexToBytes,
+  x402Fetch,
+  createX402Agent,
+  decodePaymentHeader,
+  decodeReceiptHeader,
+  verifyPaymentHeader
+} from './x402/index.js';
+
 // Tutorial System
 export {
   TUTORIALS,

@@ -1061,7 +1061,7 @@ impl LotRepository for UnsupportedPostgresRepository {
     fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
         self.not_supported()
     }
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<rust_decimal::Decimal> {
+    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<rust_decimal::Decimal>> {
         self.not_supported()
     }
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
@@ -1601,7 +1601,7 @@ impl AccountsPayableRepository for UnsupportedPostgresRepository {
     fn get_aging_summary(&self) -> Result<ApAgingSummary> {
         self.not_supported()
     }
-    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         self.not_supported()
     }
     fn get_total_outstanding(&self) -> Result<rust_decimal::Decimal> {
@@ -1859,7 +1859,7 @@ impl AccountsReceivableRepository for UnsupportedPostgresRepository {
     fn get_aging_summary(&self) -> Result<ArAgingSummary> {
         self.not_supported()
     }
-    fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
+    fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
         self.not_supported()
     }
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
@@ -1922,7 +1922,7 @@ impl AccountsReceivableRepository for UnsupportedPostgresRepository {
     fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
         self.not_supported()
     }
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
         self.not_supported()
     }
     fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
@@ -2051,7 +2051,7 @@ impl GeneralLedgerRepository for UnsupportedPostgresRepository {
     fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement> {
         self.not_supported()
     }
-    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<rust_decimal::Decimal> {
+    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Option<rust_decimal::Decimal>> {
         self.not_supported()
     }
     fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>> {

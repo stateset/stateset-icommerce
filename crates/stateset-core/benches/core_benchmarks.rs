@@ -2,15 +2,17 @@
 //!
 //! Run with: cargo bench --package stateset-core
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use std::thread;
 use chrono::Utc;
 use uuid::Uuid;
 
+use stateset_core::{BatchResult, CommerceError};
 use stateset_core::models::{
-    Order, OrderItem, OrderStatus, PaymentStatus, FulfillmentStatus, Address,
-    Cart, CartItem, CartStatus, CartPaymentStatus,
+    Address, Cart, CartItem, CartPaymentStatus, CartStatus, FulfillmentStatus, InventoryReservation,
+    Order, OrderItem, OrderStatus, PaymentStatus, ReservationStatus,
 };
 
 fn create_test_order_item(idx: usize) -> OrderItem {
@@ -198,6 +200,114 @@ fn benchmark_order_serialization(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_order_lifecycle(c: &mut Criterion) {
+    let mut group = c.benchmark_group("order_lifecycle");
+
+    let transitions = [
+        (OrderStatus::Pending, OrderStatus::Confirmed),
+        (OrderStatus::Confirmed, OrderStatus::Processing),
+        (OrderStatus::Processing, OrderStatus::Shipped),
+        (OrderStatus::Shipped, OrderStatus::Delivered),
+    ];
+
+    group.bench_function("status_transition_checks", |b| {
+        b.iter(|| {
+            for (from, to) in transitions.iter() {
+                black_box(from.can_transition_to(*to));
+            }
+        });
+    });
+
+    let order = create_test_order(3);
+    group.bench_function("eligibility_checks", |b| {
+        b.iter(|| {
+            black_box(order.can_cancel());
+            black_box(order.can_refund());
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_inventory_concurrent_reservations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("inventory_reservation_concurrent");
+    let reservations_per_thread = 100;
+
+    for thread_count in [2, 4, 8].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("threads", thread_count),
+            thread_count,
+            |b, &threads| {
+                b.iter(|| {
+                    let mut handles = Vec::with_capacity(threads);
+                    for t in 0..threads {
+                        handles.push(thread::spawn(move || {
+                            let mut reservations = Vec::with_capacity(reservations_per_thread);
+                            for i in 0..reservations_per_thread {
+                                reservations.push(InventoryReservation {
+                                    id: Uuid::new_v4(),
+                                    item_id: i as i64,
+                                    location_id: 1,
+                                    quantity: dec!(1),
+                                    status: ReservationStatus::Pending,
+                                    reference_type: "benchmark".to_string(),
+                                    reference_id: format!("ref-{}-{}", t, i),
+                                    expires_at: None,
+                                    created_at: Utc::now(),
+                                });
+                            }
+                            black_box(reservations.len())
+                        }));
+                    }
+
+                    for handle in handles {
+                        handle.join().unwrap();
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn benchmark_batch_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch_operations");
+    let error = CommerceError::ValidationError("invalid".to_string());
+
+    for batch_size in [10, 100, 1000].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("record_success", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut result = BatchResult::with_capacity(size);
+                    for i in 0..size {
+                        result.record_success(black_box(i));
+                    }
+                    black_box(result.success_count)
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("record_failure", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut result: BatchResult<u64> = BatchResult::with_capacity(size);
+                    for i in 0..size {
+                        result.record_failure(i, None, &error);
+                    }
+                    black_box(result.failure_count)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn benchmark_decimal_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("decimal_operations");
 
@@ -253,6 +363,9 @@ criterion_group!(
     benchmark_order_creation,
     benchmark_cart_creation,
     benchmark_order_serialization,
+    benchmark_order_lifecycle,
+    benchmark_inventory_concurrent_reservations,
+    benchmark_batch_operations,
     benchmark_decimal_operations,
     benchmark_uuid_generation,
 );

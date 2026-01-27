@@ -1127,7 +1127,7 @@ impl PgLotRepository {
         Ok(transactions)
     }
 
-    pub async fn get_quantity_at_location_async(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
+    pub async fn get_quantity_at_location_async(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
         let row = sqlx::query_as::<_, (Decimal,)>(
             "SELECT quantity FROM lot_locations WHERE lot_id = $1 AND location_id = $2",
         )
@@ -1137,7 +1137,7 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(|r| r.0).unwrap_or(Decimal::ZERO))
+        Ok(row.map(|r| r.0))
     }
 
     pub async fn get_lot_locations_async(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
@@ -1475,7 +1475,7 @@ impl LotRepository for PgLotRepository {
         block_on(self.get_transactions_async(lot_id, limit))
     }
 
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
+    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
         block_on(self.get_quantity_at_location_async(lot_id, location_id))
     }
 

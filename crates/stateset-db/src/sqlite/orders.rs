@@ -815,21 +815,54 @@ impl OrderRepository for SqliteOrderRepository {
 
         for (id, input) in updates {
             let now = Utc::now();
-            let current_version: i32 = tx
+            let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = tx
                 .query_row(
-                    "SELECT version FROM orders WHERE id = ?",
+                    "SELECT version, status, payment_status FROM orders WHERE id = ?",
                     [id.to_string()],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
                     e => map_db_error(e),
                 })?;
+            let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
+            let current_payment_status: PaymentStatus =
+                parse_enum(&current_payment_status_raw, "order", "payment_status")?;
 
             let mut update_parts = vec!["updated_at = ?"];
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
             if let Some(status) = &input.status {
+                let next_status = *status;
+                if !current_status.can_transition_to(next_status) {
+                    if next_status == OrderStatus::Cancelled {
+                        return Err(CommerceError::OrderCannotBeCancelled(
+                            current_status.to_string(),
+                        ));
+                    }
+
+                    return Err(CommerceError::InvalidOrderStatusTransition {
+                        from: current_status.to_string(),
+                        to: next_status.to_string(),
+                    });
+                }
+
+                if next_status == OrderStatus::Refunded {
+                    let effective_payment_status =
+                        input.payment_status.unwrap_or(current_payment_status);
+                    if !matches!(
+                        effective_payment_status,
+                        PaymentStatus::Paid
+                            | PaymentStatus::PartiallyPaid
+                            | PaymentStatus::Refunded
+                            | PaymentStatus::PartiallyRefunded
+                    ) {
+                        return Err(CommerceError::OrderCannotBeRefunded(
+                            effective_payment_status.to_string(),
+                        ));
+                    }
+                }
+
                 update_parts.push("status = ?");
                 params.push(Box::new(status.to_string()));
             }
@@ -850,10 +883,12 @@ impl OrderRepository for SqliteOrderRepository {
                 params.push(Box::new(notes.clone()));
             }
             if let Some(addr) = &input.shipping_address {
+                Self::validate_address_input(addr, "order.shipping_address")?;
                 update_parts.push("shipping_address = ?");
                 params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
             }
             if let Some(addr) = &input.billing_address {
+                Self::validate_address_input(addr, "order.billing_address")?;
                 update_parts.push("billing_address = ?");
                 params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
             }

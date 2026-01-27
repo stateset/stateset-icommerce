@@ -816,6 +816,7 @@ pub use stateset_core::{
     X402PaymentIntentFilter,
     X402PaymentReceipt,
     X402PaymentRequired,
+    X402CryptoError,
     X402_DEFAULT_VALIDITY_SECONDS,
     X402_DOMAIN_SEPARATOR,
     X402_MAX_VALIDITY_SECONDS,

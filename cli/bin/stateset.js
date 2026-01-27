@@ -10,6 +10,8 @@
  *   stateset --resume <session-id> "now ship that order"
  *   stateset --verbose "debug agent routing"
  *   stateset --agent inventory "check stock levels"
+ *
+ * Tip: `ss` is a shorthand alias for `stateset`.
  */
 
 import { parseArgs } from 'node:util';
@@ -45,6 +47,7 @@ StateSet iCommerce CLI - AI-powered commerce operations
 
 USAGE:
   stateset [options] "<request>"
+  ss [options] "<request>"
 
 OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
@@ -97,6 +100,7 @@ AGENTS:
 EXAMPLES:
   # List customers (read-only)
   stateset "show me all customers"
+  ss "show me all customers"
 
   # Use a specific agent
   stateset --agent inventory "check all stock levels"

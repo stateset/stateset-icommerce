@@ -106,7 +106,13 @@ impl Orders {
         let reservation_reference_id = Uuid::new_v4().to_string();
         let release_reservations = |ids: &[Uuid]| {
             for reservation_id in ids {
-                let _ = inventory.release_reservation(*reservation_id);
+                if let Err(err) = inventory.release_reservation(*reservation_id) {
+                    tracing::warn!(
+                        reservation_id = %reservation_id,
+                        error = ?err,
+                        "failed to release inventory reservation"
+                    );
+                }
             }
         };
 

@@ -22,6 +22,7 @@ struct OpenAIEmbeddingRequest {
 #[derive(Deserialize)]
 struct OpenAIEmbeddingResponse {
     data: Vec<EmbeddingData>,
+    #[allow(dead_code)]
     model: String,
     usage: EmbeddingUsage,
 }
@@ -34,6 +35,7 @@ struct EmbeddingData {
 
 #[derive(Deserialize)]
 struct EmbeddingUsage {
+    #[allow(dead_code)]
     prompt_tokens: u32,
     total_tokens: u32,
 }

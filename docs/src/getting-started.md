@@ -30,6 +30,8 @@ let commerce = Commerce::new("./store.db")?;
 
 ## Use the CLI
 
+Tip: `ss` is a shorthand alias for `stateset`.
+
 Read-only by default:
 
 ```bash
@@ -40,6 +42,13 @@ Apply writes explicitly:
 
 ```bash
 stateset --apply "ship order #12345 with tracking FEDEX123"
+```
+
+Optional: enable hybrid vector search (semantic + BM25):
+
+```bash
+export OPENAI_API_KEY=sk-...
+stateset "find products similar to wireless earbuds"
 ```
 
 Next steps:

@@ -1138,6 +1138,12 @@ impl InventoryRepository for SqliteInventoryRepository {
         let now = Utc::now();
 
         for input in adjustments {
+            validate_sku(&input.sku)?;
+            if input.quantity.is_zero() {
+                return Err(CommerceError::ValidationError(
+                    "Adjustment quantity cannot be zero".into()
+                ));
+            }
             // Get item directly with this connection
             let item = tx.query_row(
                 "SELECT * FROM inventory_items WHERE sku = ?",

@@ -29,6 +29,8 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 ## Recent Highlights
 
+**Hybrid Vector Search** — Semantic + BM25 (SQLite FTS5) relevance ranking for products, customers, orders, and inventory.
+
 **34 new MCP tools** expanding full commerce coverage:
 
 | New API | Tools | Description |
@@ -479,6 +481,8 @@ func main() {
 ```
 
 ### CLI (AI-Powered)
+
+Tip: `ss` is a shorthand alias for `stateset`.
 
 ```bash
 # Natural language interface

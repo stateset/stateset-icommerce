@@ -831,18 +831,35 @@ impl CustomerRepository for SqliteCustomerRepository {
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
             if let Some(email) = &input.email {
+                validate_email(email)?;
+                let existing_id: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM customers WHERE email = ?",
+                        [email],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(map_db_error)?;
+                if let Some(existing_id) = existing_id {
+                    if existing_id != id.to_string() {
+                        return Err(CommerceError::EmailAlreadyExists(email.clone()));
+                    }
+                }
                 update_parts.push("email = ?");
                 params.push(Box::new(email.clone()));
             }
             if let Some(first_name) = &input.first_name {
+                validate_required_text("customer.first_name", first_name, 100)?;
                 update_parts.push("first_name = ?");
                 params.push(Box::new(first_name.clone()));
             }
             if let Some(last_name) = &input.last_name {
+                validate_required_text("customer.last_name", last_name, 100)?;
                 update_parts.push("last_name = ?");
                 params.push(Box::new(last_name.clone()));
             }
             if let Some(phone) = &input.phone {
+                validate_phone(phone)?;
                 update_parts.push("phone = ?");
                 params.push(Box::new(phone.clone()));
             }

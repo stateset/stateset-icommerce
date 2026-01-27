@@ -69,7 +69,15 @@ export class ToolDiscoveryEngine {
       'handle_payments': ['list_payments', 'get_payment', 'process_payment', 'refund_payment'],
       'manage_subscriptions': ['list_subscriptions', 'create_subscription', 'cancel_subscription'],
       'apply_promotions': ['list_promotions', 'validate_coupon', 'apply_discount'],
-      'calculate_taxes': ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'apply_tax_to_cart']
+      'calculate_taxes': ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'apply_tax_to_cart'],
+      'semantic_search_products': ['vector_search_products'],
+      'semantic_search_customers': ['vector_search_customers'],
+      'semantic_search_orders': ['vector_search_orders'],
+      'semantic_search_inventory': ['vector_search_inventory'],
+      'vector_index_products': ['vector_index_product', 'vector_index_all_products'],
+      'vector_index_customers': ['vector_index_customer', 'vector_index_all_customers'],
+      'vector_index_orders': ['vector_index_order', 'vector_index_all_orders'],
+      'vector_index_inventory': ['vector_index_inventory', 'vector_index_all_inventory']
     };
 
     return 意图Mapping[intent] || [];

@@ -480,46 +480,54 @@ impl PgAccountsReceivableRepository {
         })
     }
 
-    pub async fn get_customer_aging_async(&self, customer_id: Uuid) -> Result<CustomerArAging> {
-        let row: CustomerAgingRow = sqlx::query_as(
+    pub async fn get_customer_aging_async(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
+        let customer_row: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT first_name, last_name, email FROM customers WHERE id = $1",
+        )
+        .bind(customer_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let (first_name, last_name, email) = match customer_row {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        let (current, days_1_30, days_31_60, days_61_90, days_over_90, total_outstanding, invoice_count, oldest_invoice_date): (Decimal, Decimal, Decimal, Decimal, Decimal, Decimal, i64, Option<DateTime<Utc>>) = sqlx::query_as(
             "SELECT
-                i.customer_id,
-                c.first_name || ' ' || c.last_name AS customer_name,
-                c.email AS customer_email,
-                COALESCE(SUM(CASE WHEN i.due_date >= NOW() THEN i.balance_due ELSE 0 END), 0) AS current_amount,
-                COALESCE(SUM(CASE WHEN i.due_date < NOW() AND i.due_date >= NOW() - INTERVAL '30 days' THEN i.balance_due ELSE 0 END), 0) AS days_1_30,
-                COALESCE(SUM(CASE WHEN i.due_date < NOW() - INTERVAL '30 days' AND i.due_date >= NOW() - INTERVAL '60 days' THEN i.balance_due ELSE 0 END), 0) AS days_31_60,
-                COALESCE(SUM(CASE WHEN i.due_date < NOW() - INTERVAL '60 days' AND i.due_date >= NOW() - INTERVAL '90 days' THEN i.balance_due ELSE 0 END), 0) AS days_61_90,
-                COALESCE(SUM(CASE WHEN i.due_date < NOW() - INTERVAL '90 days' THEN i.balance_due ELSE 0 END), 0) AS days_over_90,
-                COALESCE(SUM(i.balance_due), 0) AS total_outstanding,
+                COALESCE(SUM(CASE WHEN due_date >= NOW() THEN balance_due ELSE 0 END), 0) AS current_amount,
+                COALESCE(SUM(CASE WHEN due_date < NOW() AND due_date >= NOW() - INTERVAL '30 days' THEN balance_due ELSE 0 END), 0) AS days_1_30,
+                COALESCE(SUM(CASE WHEN due_date < NOW() - INTERVAL '30 days' AND due_date >= NOW() - INTERVAL '60 days' THEN balance_due ELSE 0 END), 0) AS days_31_60,
+                COALESCE(SUM(CASE WHEN due_date < NOW() - INTERVAL '60 days' AND due_date >= NOW() - INTERVAL '90 days' THEN balance_due ELSE 0 END), 0) AS days_61_90,
+                COALESCE(SUM(CASE WHEN due_date < NOW() - INTERVAL '90 days' THEN balance_due ELSE 0 END), 0) AS days_over_90,
+                COALESCE(SUM(balance_due), 0) AS total_outstanding,
                 COUNT(*) AS invoice_count,
-                MIN(i.created_at) AS oldest_invoice_date
-             FROM invoices i
-             LEFT JOIN customers c ON i.customer_id = c.id
-             WHERE i.customer_id = $1
-               AND i.status NOT IN ('paid', 'voided', 'written_off')
-               AND i.balance_due > 0
-             GROUP BY i.customer_id, c.first_name, c.last_name, c.email",
+                MIN(created_at) AS oldest_invoice_date
+             FROM invoices
+             WHERE customer_id = $1
+               AND status NOT IN ('paid', 'voided', 'written_off')
+               AND balance_due > 0",
         )
         .bind(customer_id)
         .fetch_one(&self.pool)
         .await
         .map_err(map_db_error)?;
 
-        Ok(CustomerArAging {
-            customer_id: row.customer_id,
-            customer_name: row.customer_name,
-            customer_email: row.customer_email,
-            current: row.current_amount,
-            days_1_30: row.days_1_30,
-            days_31_60: row.days_31_60,
-            days_61_90: row.days_61_90,
-            days_over_90: row.days_over_90,
-            total_outstanding: row.total_outstanding,
-            invoice_count: row.invoice_count as i32,
-            oldest_invoice_date: row.oldest_invoice_date,
+        Ok(Some(CustomerArAging {
+            customer_id,
+            customer_name: Some(format!("{} {}", first_name, last_name)),
+            customer_email: Some(email),
+            current,
+            days_1_30,
+            days_31_60,
+            days_61_90,
+            days_over_90,
+            total_outstanding,
+            invoice_count: invoice_count as i32,
+            oldest_invoice_date,
             last_payment_date: None,
-        })
+        }))
     }
 
     pub async fn get_aging_report_async(
@@ -1243,8 +1251,11 @@ impl PgAccountsReceivableRepository {
         Ok(())
     }
 
-    pub async fn get_customer_summary_async(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
-        let aging = self.get_customer_aging_async(customer_id).await?;
+    pub async fn get_customer_summary_async(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
+        let aging = match self.get_customer_aging_async(customer_id).await? {
+            Some(aging) => aging,
+            None => return Ok(None),
+        };
 
         let unapplied_credits: Decimal = self
             .get_unapplied_credits_async(customer_id)
@@ -1254,7 +1265,7 @@ impl PgAccountsReceivableRepository {
             .sum();
 
         let total_overdue = aging.total_overdue();
-        Ok(CustomerArSummary {
+        Ok(Some(CustomerArSummary {
             customer_id,
             customer_name: aging.customer_name.clone(),
             total_outstanding: aging.total_outstanding,
@@ -1267,7 +1278,7 @@ impl PgAccountsReceivableRepository {
             oldest_open_invoice: aging.oldest_invoice_date,
             last_activity_date: None,
             collection_status: CollectionStatus::None,
-        })
+        }))
     }
 
     pub async fn generate_statement_async(
@@ -1287,7 +1298,10 @@ impl PgAccountsReceivableRepository {
                 .await
                 .map_err(map_db_error)?;
 
-        let aging = self.get_customer_aging_async(request.customer_id).await?;
+        let aging = self
+            .get_customer_aging_async(request.customer_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         let mut line_items: Vec<StatementLineItem> = Vec::new();
         let mut running_balance = Decimal::ZERO;
@@ -1431,7 +1445,9 @@ impl PgAccountsReceivableRepository {
     ) -> Result<Vec<CustomerArSummary>> {
         let mut summaries = Vec::new();
         for id in ids {
-            summaries.push(self.get_customer_summary_async(id).await?);
+            if let Some(summary) = self.get_customer_summary_async(id).await? {
+                summaries.push(summary);
+            }
         }
         Ok(summaries)
     }
@@ -1442,7 +1458,7 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
         block_on(self.get_aging_summary_async())
     }
 
-    fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
+    fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
         block_on(self.get_customer_aging_async(customer_id))
     }
 
@@ -1534,7 +1550,7 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
         block_on(self.unapply_payment_async(application_id))
     }
 
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
         block_on(self.get_customer_summary_async(customer_id))
     }
 

@@ -438,7 +438,7 @@ impl AccountsPayable {
     }
 
     /// Get AP summary for a specific supplier.
-    pub fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    pub fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         self.db.accounts_payable().get_supplier_summary(supplier_id)
     }
 

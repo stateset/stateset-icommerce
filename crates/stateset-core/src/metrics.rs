@@ -132,6 +132,7 @@ macro_rules! instrument_repository {
 pub mod orders {
     use super::*;
 
+    /// Track an order creation event
     pub fn track_order_creation(customer_id: &str) {
         track_operation!(
             operation = "orders.create",
@@ -143,6 +144,7 @@ pub mod orders {
         );
     }
 
+    /// Track an order status transition
     pub fn track_order_status_transition(order_id: &str, from: &str, to: &str) {
         track_operation!(
             operation = "orders.status_transition",
@@ -160,6 +162,7 @@ pub mod orders {
 pub mod inventory {
     use super::*;
 
+    /// Track an inventory reservation
     pub fn track_reservation(sku: &str, quantity: f64) {
         ACTIVE_RESERVATIONS.inc();
         track_operation!(
@@ -173,6 +176,7 @@ pub mod inventory {
         );
     }
 
+    /// Track an inventory stock adjustment
     pub fn track_stock_adjustment(sku: &str, delta: f64) {
         track_operation!(
             operation = "inventory.adjust",
@@ -190,6 +194,7 @@ pub mod inventory {
 pub mod payments {
     use super::*;
 
+    /// Track a payment processing operation
     pub fn track_payment_processing(order_id: &str, amount: f64) {
         track_operation!(
             operation = "payments.process",
@@ -202,6 +207,7 @@ pub mod payments {
         );
     }
 
+    /// Track a payment refund operation
     pub fn track_refund(payment_id: &str, amount: f64) {
         track_operation!(
             operation = "payments.refund",
@@ -225,15 +231,18 @@ pub struct LabelsBuilder {
 }
 
 impl LabelsBuilder {
+    /// Create a new labels builder
     pub fn new() -> Self {
         Self { labels: Vec::new() }
     }
 
+    /// Add a key/value label pair
     pub fn add(mut self, key: &str, value: &str) -> Self {
         self.labels.push(format!("{}:{}", key, value));
         self
     }
 
+    /// Build the final label list
     pub fn build(self) -> Vec<String> {
         self.labels
     }

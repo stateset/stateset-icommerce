@@ -12,7 +12,7 @@ use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::HashMap;
 use stateset_core::{
     AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices,
@@ -223,15 +223,21 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         })
     }
 
-    fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
+    fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
         let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let (first_name, last_name, email): (String, String, String) = conn
+        let customer_row: Option<(String, String, String)> = conn
             .query_row(
                 "SELECT first_name, last_name, email FROM customers WHERE id = ?1",
                 params![customer_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
+            .optional()
             .map_err(map_db_error)?;
+
+        let (first_name, last_name, email) = match customer_row {
+            Some(row) => row,
+            None => return Ok(None),
+        };
 
         let now = Utc::now();
         let cutoff_30 = now - chrono::Duration::days(30);
@@ -291,7 +297,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             return Err(stateset_core::CommerceError::NotFound);
         }
 
-        Ok(CustomerArAging {
+        Ok(Some(CustomerArAging {
             customer_id,
             customer_name: Some(format!("{} {}", first_name, last_name)),
             customer_email: Some(email),
@@ -304,7 +310,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             invoice_count,
             oldest_invoice_date,
             last_payment_date: None,
-        })
+        }))
     }
 
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
@@ -1021,8 +1027,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         Ok(())
     }
 
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
-        let aging = self.get_customer_aging(customer_id)?;
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
+        let aging = match self.get_customer_aging(customer_id)? {
+            Some(aging) => aging,
+            None => return Ok(None),
+        };
 
         // Get unapplied credits
         let unapplied_credits = self.get_unapplied_credits(customer_id)?
@@ -1031,7 +1040,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             .sum();
 
         let total_overdue = aging.total_overdue();
-        Ok(CustomerArSummary {
+        Ok(Some(CustomerArSummary {
             customer_id,
             customer_name: aging.customer_name.clone(),
             total_outstanding: aging.total_outstanding,
@@ -1044,7 +1053,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             oldest_open_invoice: aging.oldest_invoice_date,
             last_activity_date: None,
             collection_status: CollectionStatus::None,
-        })
+        }))
     }
 
     fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
@@ -1062,7 +1071,9 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         ).map_err(map_db_error)?;
 
         // Get aging
-        let aging = self.get_customer_aging(request.customer_id)?;
+        let aging = self
+            .get_customer_aging(request.customer_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Build line items from invoices and payments
         let mut line_items: Vec<StatementLineItem> = Vec::new();
@@ -1224,6 +1235,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_customers_batch(&self, ids: Vec<Uuid>) -> Result<Vec<CustomerArSummary>> {
-        ids.into_iter().map(|id| self.get_customer_summary(id)).collect()
+        let mut summaries = Vec::new();
+        for id in ids {
+            if let Some(summary) = self.get_customer_summary(id)? {
+                summaries.push(summary);
+            }
+        }
+        Ok(summaries)
     }
 }

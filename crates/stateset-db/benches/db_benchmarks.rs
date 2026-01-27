@@ -4,17 +4,39 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_decimal_macros::dec;
+use std::sync::Arc;
+use std::thread;
+use tempfile::TempDir;
 use uuid::Uuid;
 
 use stateset_core::{
-    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    CustomerFilter, CustomerRepository, InventoryRepository, OrderFilter, OrderRepository,
-    ProductFilter, ProductRepository,
+    CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct, CustomerFilter,
+    CustomerRepository, FulfillmentStatus, InventoryRepository, OrderFilter, OrderRepository,
+    OrderStatus, PaymentStatus, ProductFilter, ProductRepository, ReserveInventory, UpdateOrder,
 };
-use stateset_db::SqliteDatabase;
+use stateset_db::{DatabaseConfig, SqliteDatabase};
 
 fn setup_database() -> SqliteDatabase {
     SqliteDatabase::in_memory().expect("Failed to create in-memory database")
+}
+
+struct BenchDb {
+    _dir: TempDir,
+    db: Arc<SqliteDatabase>,
+}
+
+fn setup_database_with_max_connections(max_connections: u32) -> BenchDb {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let path = dir.path().join("bench.db");
+    let mut config = DatabaseConfig::sqlite(
+        path.to_str().expect("Temp path is not valid UTF-8"),
+    );
+    config.max_connections = max_connections;
+    let db = SqliteDatabase::new(&config).expect("Failed to create benchmark database");
+    BenchDb {
+        _dir: dir,
+        db: Arc::new(db),
+    }
 }
 
 fn create_test_customer(idx: usize) -> CreateCustomer {
@@ -302,6 +324,65 @@ fn benchmark_inventory_reservation(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_inventory_concurrent_reservations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("inventory_reservation_concurrent");
+    let reservations_per_thread = 25;
+
+    for thread_count in [2, 4, 8].iter() {
+        let bench_db = setup_database_with_max_connections(*thread_count as u32);
+        let inventory = bench_db.db.inventory();
+        let item_count = thread_count * 2;
+
+        for i in 0..item_count {
+            let mut item = create_test_inventory_item(i);
+            item.initial_quantity = Some(dec!(1000));
+            inventory.create_item(item).unwrap();
+        }
+
+        let skus: Arc<Vec<String>> = Arc::new(
+            (0..item_count).map(|i| format!("INV-{:06}", i)).collect(),
+        );
+        let db = bench_db.db.clone();
+
+        group.bench_with_input(
+            BenchmarkId::new("threads", thread_count),
+            thread_count,
+            |b, &threads| {
+                b.iter(|| {
+                    let mut handles = Vec::with_capacity(threads);
+                    for t in 0..threads {
+                        let db = db.clone();
+                        let skus = skus.clone();
+                        handles.push(thread::spawn(move || {
+                            let inventory = db.inventory();
+                            for i in 0..reservations_per_thread {
+                                let sku = &skus[(t + i) % skus.len()];
+                                let reservation = inventory
+                                    .reserve(ReserveInventory {
+                                        sku: sku.clone(),
+                                        location_id: None,
+                                        quantity: dec!(1),
+                                        reference_type: "benchmark".to_string(),
+                                        reference_id: format!("bench-{}-{}", t, i),
+                                        expires_in_seconds: Some(3600),
+                                    })
+                                    .unwrap();
+                                inventory.release_reservation(reservation.id).unwrap();
+                            }
+                        }));
+                    }
+
+                    for handle in handles {
+                        handle.join().unwrap();
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 // Order Benchmarks
 fn benchmark_order_create(c: &mut Criterion) {
     let mut group = c.benchmark_group("order_crud");
@@ -367,6 +448,118 @@ fn benchmark_order_read(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_order_lifecycle(c: &mut Criterion) {
+    let mut group = c.benchmark_group("order_lifecycle");
+
+    let db = setup_database();
+    let customer = db.customers().create(create_test_customer(0)).unwrap();
+    let orders = db.orders();
+
+    group.bench_function("create_update_statuses", |b| {
+        b.iter(|| {
+            let order = orders.create(create_test_order(customer.id, 3)).unwrap();
+
+            orders
+                .update(
+                    order.id,
+                    UpdateOrder {
+                        status: Some(OrderStatus::Confirmed),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+            orders
+                .update(
+                    order.id,
+                    UpdateOrder {
+                        payment_status: Some(PaymentStatus::Paid),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+            orders
+                .update(
+                    order.id,
+                    UpdateOrder {
+                        fulfillment_status: Some(FulfillmentStatus::Shipped),
+                        tracking_number: Some("TRACK123".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_batch_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch_operations");
+
+    for batch_size in [10, 50, 100].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("customers_partial", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let db = setup_database();
+                    let customers = db.customers();
+                    let inputs: Vec<CreateCustomer> =
+                        (0..size).map(create_test_customer).collect();
+                    customers.create_batch(inputs).unwrap()
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("customers_atomic", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let db = setup_database();
+                    let customers = db.customers();
+                    let inputs: Vec<CreateCustomer> =
+                        (0..size).map(create_test_customer).collect();
+                    customers.create_batch_atomic(inputs).unwrap()
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("inventory_items_atomic", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let db = setup_database();
+                    let inventory = db.inventory();
+                    let inputs: Vec<CreateInventoryItem> =
+                        (0..size).map(create_test_inventory_item).collect();
+                    inventory.create_item_batch_atomic(inputs).unwrap()
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("orders_atomic", batch_size),
+            batch_size,
+            |b, &size| {
+                b.iter(|| {
+                    let db = setup_database();
+                    let customer = db.customers().create(create_test_customer(0)).unwrap();
+                    let orders = db.orders();
+                    let inputs: Vec<CreateOrder> =
+                        (0..size).map(|_| create_test_order(customer.id, 3)).collect();
+                    orders.create_batch_atomic(inputs).unwrap()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 // Mixed workload benchmark
 fn benchmark_mixed_workload(c: &mut Criterion) {
     let mut group = c.benchmark_group("mixed_workload");
@@ -411,8 +604,11 @@ criterion_group!(
     benchmark_inventory_create,
     benchmark_inventory_operations,
     benchmark_inventory_reservation,
+    benchmark_inventory_concurrent_reservations,
     benchmark_order_create,
     benchmark_order_read,
+    benchmark_order_lifecycle,
+    benchmark_batch_operations,
     benchmark_mixed_workload,
 );
 

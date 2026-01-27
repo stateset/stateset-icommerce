@@ -1190,18 +1190,24 @@ pub trait CurrencyRepository {
     fn get_rates_batch(&self, pairs: Vec<(Currency, Currency)>) -> Result<Vec<ExchangeRate>>;
 }
 
-// Tax repository trait
+/// Tax repository trait
 pub trait TaxRepository {
-    // Jurisdiction operations
+    /// Create a tax jurisdiction
     fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction>;
+    /// Get a tax jurisdiction by ID
     fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>>;
+    /// Get a tax jurisdiction by code
     fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>>;
+    /// List tax jurisdictions matching a filter
     fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>>;
 
-    // Rate operations
+    /// Create a tax rate
     fn create_rate(&self, input: CreateTaxRate) -> Result<TaxRate>;
+    /// Get a tax rate by ID
     fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>>;
+    /// List tax rates matching a filter
     fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>>;
+    /// Get applicable tax rates for an address and category on a date
     fn get_rates_for_address(
         &self,
         address: &TaxAddress,
@@ -1209,17 +1215,21 @@ pub trait TaxRepository {
         date: chrono::NaiveDate,
     ) -> Result<Vec<TaxRate>>;
 
-    // Exemption operations
+    /// Create a tax exemption
     fn create_exemption(&self, input: CreateTaxExemption) -> Result<TaxExemption>;
+    /// Get a tax exemption by ID
     fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>>;
+    /// Get all exemptions for a customer
     fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>>;
 
-    // Settings
+    /// Get tax settings
     fn get_settings(&self) -> Result<TaxSettings>;
+    /// Update tax settings
     fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings>;
 
-    // Calculations
+    /// Calculate tax for a request
     fn calculate_tax(&self, request: TaxCalculationRequest) -> Result<TaxCalculationResult>;
+    /// Persist a tax calculation for audit/reporting
     fn save_calculation(
         &self,
         result: &TaxCalculationResult,
@@ -1231,26 +1241,37 @@ pub trait TaxRepository {
     ) -> Result<()>;
 }
 
-// Promotions repository trait
+/// Promotions repository trait
 pub trait PromotionRepository {
-    // Promotion CRUD
+    /// Create a promotion
     fn create(&self, input: CreatePromotion) -> Result<Promotion>;
+    /// Get a promotion by ID
     fn get(&self, id: Uuid) -> Result<Option<Promotion>>;
+    /// Get a promotion by code
     fn get_by_code(&self, code: &str) -> Result<Option<Promotion>>;
+    /// List promotions matching a filter
     fn list(&self, filter: PromotionFilter) -> Result<Vec<Promotion>>;
+    /// Update a promotion
     fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion>;
+    /// Delete a promotion
     fn delete(&self, id: Uuid) -> Result<()>;
+    /// Activate a promotion
     fn activate(&self, id: Uuid) -> Result<Promotion>;
+    /// Deactivate a promotion
     fn deactivate(&self, id: Uuid) -> Result<Promotion>;
 
-    // Coupon operations
+    /// Create a coupon code
     fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode>;
+    /// Get a coupon by ID
     fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>>;
+    /// Get a coupon by code
     fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>>;
+    /// List coupons matching a filter
     fn list_coupons(&self, filter: CouponFilter) -> Result<Vec<CouponCode>>;
 
-    // Evaluation + usage
+    /// Apply promotions to a cart or order snapshot
     fn apply_promotions(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult>;
+    /// Record a promotion usage event
     fn record_usage(
         &self,
         promotion_id: Uuid,
@@ -1263,41 +1284,59 @@ pub trait PromotionRepository {
     ) -> Result<PromotionUsage>;
 }
 
-// Subscriptions repository trait
+/// Subscriptions repository trait
 pub trait SubscriptionRepository {
-    // Plan operations
+    /// Create a subscription plan
     fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan>;
+    /// Get a subscription plan by ID
     fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>>;
+    /// Get a subscription plan by code
     fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>>;
+    /// List subscription plans matching a filter
     fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>>;
+    /// Update a subscription plan
     fn update_plan(&self, id: Uuid, input: UpdateSubscriptionPlan) -> Result<SubscriptionPlan>;
+    /// Activate a subscription plan
     fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan>;
+    /// Archive a subscription plan
     fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan>;
 
-    // Subscription operations
+    /// Create a subscription
     fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription>;
+    /// Get a subscription by ID
     fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>>;
+    /// Get a subscription by number
     fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>>;
+    /// List subscriptions matching a filter
     fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>>;
+    /// Update a subscription
     fn update_subscription(&self, id: Uuid, input: UpdateSubscription) -> Result<Subscription>;
+    /// Cancel a subscription
     fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription>;
+    /// Pause a subscription
     fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription>;
+    /// Resume a paused subscription
     fn resume_subscription(&self, id: Uuid) -> Result<Subscription>;
 
-    // Billing cycles
+    /// Create a billing cycle
     fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle>;
+    /// Get a billing cycle by ID
     fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>>;
+    /// List billing cycles matching a filter
     fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>>;
+    /// Update the status of a billing cycle
     fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle>;
+    /// Skip a billing cycle
     fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription>;
 
-    // Events
+    /// Record a subscription event
     fn record_event(
         &self,
         subscription_id: Uuid,
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent>;
+    /// Get all events for a subscription
     fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>>;
 }
 
@@ -1471,8 +1510,12 @@ pub trait LotRepository {
     /// Get lot transactions
     fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>>;
 
-    /// Get lot quantity at location
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<rust_decimal::Decimal>;
+    /// Get lot quantity at a location (None if no location record exists)
+    fn get_quantity_at_location(
+        &self,
+        lot_id: Uuid,
+        location_id: i32,
+    ) -> Result<Option<rust_decimal::Decimal>>;
 
     /// Get all locations for a lot
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>>;
@@ -2057,8 +2100,8 @@ pub trait AccountsPayableRepository {
     /// Get AP aging summary
     fn get_aging_summary(&self) -> Result<ApAgingSummary>;
 
-    /// Get AP summary by supplier
-    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary>;
+    /// Get AP summary by supplier (None if supplier is not found)
+    fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>>;
 
     /// Get total AP outstanding
     fn get_total_outstanding(&self) -> Result<rust_decimal::Decimal>;
@@ -2339,8 +2382,8 @@ pub trait AccountsReceivableRepository {
     /// Get AR aging summary across all customers
     fn get_aging_summary(&self) -> Result<ArAgingSummary>;
 
-    /// Get aging by customer
-    fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging>;
+    /// Get aging by customer (None if customer is not found)
+    fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>>;
 
     /// Get all customers with aging (AR aging report)
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>>;
@@ -2407,8 +2450,8 @@ pub trait AccountsReceivableRepository {
     fn unapply_payment(&self, application_id: Uuid) -> Result<()>;
 
     // Customer summaries and statements
-    /// Get customer AR summary
-    fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary>;
+    /// Get customer AR summary (None if customer is not found)
+    fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>>;
 
     /// Generate customer statement
     fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement>;
@@ -2548,8 +2591,12 @@ pub trait GeneralLedgerRepository {
     /// Generate income statement
     fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement>;
 
-    /// Get account balance
-    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<rust_decimal::Decimal>;
+    /// Get account balance (None if account is not found)
+    fn get_account_balance(
+        &self,
+        account_id: Uuid,
+        as_of_date: Option<NaiveDate>,
+    ) -> Result<Option<rust_decimal::Decimal>>;
 
     /// Get account transaction history
     fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>>;

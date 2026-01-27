@@ -2508,7 +2508,7 @@ impl AsyncLots {
         self.db.lots().get_transactions_async(lot_id, limit).await
     }
 
-    pub async fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Decimal> {
+    pub async fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
         self.db
             .lots()
             .get_quantity_at_location_async(lot_id, location_id)
@@ -3354,7 +3354,7 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().get_aging_summary_async().await
     }
 
-    pub async fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<SupplierApSummary> {
+    pub async fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
         self.db
             .accounts_payable()
             .get_supplier_summary_async(supplier_id)
@@ -3872,7 +3872,7 @@ impl AsyncAccountsReceivable {
         self.db.accounts_receivable().get_aging_summary_async().await
     }
 
-    pub async fn get_customer_aging(&self, customer_id: Uuid) -> Result<CustomerArAging> {
+    pub async fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
         self.db
             .accounts_receivable()
             .get_customer_aging_async(customer_id)
@@ -4004,7 +4004,7 @@ impl AsyncAccountsReceivable {
         self.db.accounts_receivable().unapply_payment_async(application_id).await
     }
 
-    pub async fn get_customer_summary(&self, customer_id: Uuid) -> Result<CustomerArSummary> {
+    pub async fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
         self.db
             .accounts_receivable()
             .get_customer_summary_async(customer_id)
@@ -4250,7 +4250,7 @@ impl AsyncGeneralLedger {
         &self,
         account_id: Uuid,
         as_of_date: Option<NaiveDate>,
-    ) -> Result<Decimal> {
+    ) -> Result<Option<Decimal>> {
         self.db
             .general_ledger()
             .get_account_balance_async(account_id, as_of_date)

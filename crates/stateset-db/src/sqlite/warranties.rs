@@ -545,7 +545,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
 
         let mut resolution = input.resolution.unwrap_or(claim.resolution);
-        let mut denial_reason = input.denial_reason.or(claim.denial_reason);
+        let denial_reason = input.denial_reason.or(claim.denial_reason);
         let mut approved_at = claim.approved_at;
         let mut resolved_at = claim.resolved_at;
 

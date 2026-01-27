@@ -1,7 +1,8 @@
 //! Vector search operations for semantic similarity search
 //!
-//! This module provides semantic search capabilities using sqlite-vec
-//! with OpenAI embeddings.
+//! This module provides hybrid semantic + lexical search using embeddings
+//! and BM25 (SQLite FTS5) for improved relevance.
+//! If FTS5 isn't available, it transparently falls back to embedding-only search.
 //!
 //! # Example
 //!
@@ -82,7 +83,7 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Product>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo.search_products(&result.embedding, limit)
+        self.repo.search_products_hybrid(&result.embedding, query, limit)
     }
 
     /// Search products using a pre-computed embedding
@@ -151,7 +152,7 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Customer>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo.search_customers(&result.embedding, limit)
+        self.repo.search_customers_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove a customer from the vector index
@@ -210,12 +211,39 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<Order>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo.search_orders(&result.embedding, limit)
+        self.repo.search_orders_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove an order from the vector index
     pub fn unindex_order(&self, order_id: &str) -> Result<()> {
         self.repo.delete_embedding(EntityType::Order, order_id)
+    }
+
+    /// Index multiple orders in batch
+    pub fn index_orders(&self, orders: &[Order]) -> Result<usize> {
+        let mut indexed = 0;
+
+        for chunk in orders.chunks(100) {
+            let texts: Vec<String> = chunk
+                .iter()
+                .map(|o| EmbeddingService::order_text(o))
+                .collect();
+
+            let results = self.embedding_service.embed_batch(&texts)?;
+
+            for (order, result) in chunk.iter().zip(results.iter()) {
+                self.repo.store_embedding(
+                    EntityType::Order,
+                    &order.id.to_string(),
+                    &result.embedding,
+                    &result.text_hash,
+                    self.embedding_service.model(),
+                )?;
+                indexed += 1;
+            }
+        }
+
+        Ok(indexed)
     }
 
     // ========================================================================
@@ -242,7 +270,7 @@ impl Vector {
         limit: usize,
     ) -> Result<Vec<VectorSearchResult<InventoryItem>>> {
         let result = self.embedding_service.embed(query)?;
-        self.repo.search_inventory(&result.embedding, limit)
+        self.repo.search_inventory_hybrid(&result.embedding, query, limit)
     }
 
     /// Remove an inventory item from the vector index

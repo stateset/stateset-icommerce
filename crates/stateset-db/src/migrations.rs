@@ -2,7 +2,7 @@
 //!
 //! Embedded SQL migrations that run automatically on database initialization.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -28,6 +28,12 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MigrationError> {
     let migrations = get_migrations();
 
     for (name, sql) in migrations {
+        if name == "027_vector_search" && !cfg!(feature = "vector") {
+            continue;
+        }
+        if name == "028_bm25_search" && !fts5_available(conn) {
+            continue;
+        }
         // Check if migration already applied
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM _migrations WHERE name = ?",
@@ -50,9 +56,22 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MigrationError> {
     Ok(())
 }
 
+fn fts5_available(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
+        [],
+        |row| row.get::<_, i32>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+        == 1
+}
+
 /// Get list of migrations in order
 fn get_migrations() -> Vec<(&'static str, &'static str)> {
-    let mut migrations = vec![
+    vec![
         ("001_initial_schema", include_str!("../migrations/001_initial_schema.sql")),
         ("002_inventory", include_str!("../migrations/002_inventory.sql")),
         ("003_returns", include_str!("../migrations/003_returns.sql")),
@@ -79,11 +98,9 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("024_general_ledger", include_str!("../migrations/024_general_ledger.sql")),
         ("025_performance_indexes", include_str!("../migrations/025_performance_indexes.sql")),
         ("026_idempotency_keys", include_str!("../migrations/026_idempotency_keys.sql")),
-    ];
-
-    // Vector search migration (requires sqlite-vec extension to be loaded first)
-    #[cfg(feature = "vector")]
-    migrations.push(("027_vector_search", include_str!("../migrations/027_vector_search.sql")));
-
-    migrations
+        // Vector search migration (requires sqlite-vec extension to be loaded first)
+        ("027_vector_search", include_str!("../migrations/027_vector_search.sql")),
+        // Full-text search migration (requires FTS5)
+        ("028_bm25_search", include_str!("../migrations/028_bm25_search.sql")),
+    ]
 }

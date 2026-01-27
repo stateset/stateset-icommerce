@@ -52,6 +52,23 @@ export const TOOL_PERMISSIONS = {
   confirm_reservation: 'write',
   release_reservation: 'write',
 
+  // Vector search tools
+  vector_search_products: 'read',
+  vector_search_customers: 'read',
+  vector_search_orders: 'read',
+  vector_search_inventory: 'read',
+  vector_stats: 'read',
+  vector_index_product: 'write',
+  vector_index_customer: 'write',
+  vector_index_order: 'write',
+  vector_index_inventory: 'write',
+  vector_index_all_products: 'admin',
+  vector_index_all_customers: 'admin',
+  vector_index_all_orders: 'admin',
+  vector_index_all_inventory: 'admin',
+  vector_clear: 'admin',
+  vector_clear_all: 'admin',
+
   // Return tools
   list_returns: 'read',
   get_return: 'read',
@@ -139,7 +156,13 @@ export const DEFAULT_GUARDRAILS = {
   // Require explicit approval for these tools
   requireApprovalFor: [
     'cancel_order',
-    'complete_checkout'
+    'complete_checkout',
+    'vector_index_all_products',
+    'vector_index_all_customers',
+    'vector_index_all_orders',
+    'vector_index_all_inventory',
+    'vector_clear',
+    'vector_clear_all'
   ]
 };
 
