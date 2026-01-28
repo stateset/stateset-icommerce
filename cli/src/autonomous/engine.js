@@ -83,6 +83,7 @@ export class AutonomousEngine extends EventEmitter {
     }) : null;
 
     this.isRunning = false;
+    this._notifier = null;
 
     // Wire up event forwarding
     this.setupEventForwarding();
@@ -218,14 +219,35 @@ export class AutonomousEngine extends EventEmitter {
   }
 
   /**
-   * Send a notification (used by approvals)
+   * Set the channel notifier for proactive notifications.
+   *
+   * @param {import('../channels/notifier.js').ChannelNotifier} notifier
+   */
+  setNotifier(notifier) {
+    this._notifier = notifier;
+  }
+
+  /**
+   * Send a notification (used by approvals and events).
+   * Routes through channel notifier if configured, otherwise logs to console.
    */
   async sendNotification(notification) {
     this.emit('notification', notification);
 
-    // In a real implementation, this would send to Slack, email, etc.
-    // For now, just log it
-    console.log('[Notification]', JSON.stringify(notification, null, 2));
+    if (this._notifier) {
+      try {
+        await this._notifier.sendNotification({
+          type: notification.type || 'general',
+          message: notification.message || JSON.stringify(notification),
+          richMessage: notification.richMessage || null,
+        });
+      } catch (err) {
+        console.error('[Notification] Failed to send via notifier:', err.message);
+        console.log('[Notification]', JSON.stringify(notification, null, 2));
+      }
+    } else {
+      console.log('[Notification]', JSON.stringify(notification, null, 2));
+    }
   }
 
   /**

@@ -1,0 +1,85 @@
+# Multi-Channel Orchestrator Configuration
+# Usage: stateset-channels --config examples/channels.yaml
+
+# Shared options applied to all channels
+shared:
+  dbPath: ./store.db
+  allowApply: false
+  model: claude-sonnet-4-20250514
+  maxTurns: 10
+  verbose: false
+
+# Session persistence (SQLite-backed)
+persistSessions: true
+# sessionDbPath: ~/.stateset/channel-sessions.db  # default
+
+# Middleware configuration
+middleware:
+  logger: true
+  rateLimiter:
+    maxPerMinute: 20
+    maxPerHour: 200
+  contentFilter:
+    wordlist:
+      - spam
+      - scam
+    action: warn            # 'block' or 'warn'
+  languageDetect: false
+
+# Notification routing
+notifications:
+  routes:
+    order.shipped:
+      - channel: slack
+        target: "#orders"
+      - channel: telegram
+        target: "-1001234567890"    # Telegram group chat ID
+    order.delivered:
+      - channel: slack
+        target: "#orders"
+    inventory.low:
+      - channel: slack
+        target: "#ops"
+    inventory.out:
+      - channel: slack
+        target: "#ops"
+      - channel: discord
+        target: "1234567890123456"  # Discord channel ID
+    approvals:request:created:
+      - channel: slack
+        target: "#approvals"
+    "*":                             # Wildcard — catch-all
+      - channel: slack
+        target: "#all-alerts"
+
+# Channel configurations
+channels:
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN}
+    allowList: []                   # Empty = allow all users
+    # allowList: ["12345678"]       # Restrict to specific user IDs
+
+  discord:
+    token: ${DISCORD_BOT_TOKEN}
+    channelIds:                     # Restrict to specific channels
+      - "1234567890123456"
+      - "9876543210987654"
+
+  slack:
+    botToken: ${SLACK_BOT_TOKEN}
+    appToken: ${SLACK_APP_TOKEN}
+    signingSecret: ${SLACK_SIGNING_SECRET}
+
+  whatsapp:
+    phoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID}
+    accessToken: ${WHATSAPP_ACCESS_TOKEN}
+    verifyToken: ${WHATSAPP_VERIFY_TOKEN}
+    webhookPort: 3100
+
+  # signal:
+  #   signalCliPath: /usr/local/bin/signal-cli
+  #   account: "+14155551234"
+
+  # google-chat:
+  #   projectId: ${GOOGLE_CHAT_PROJECT_ID}
+  #   subscriptionName: projects/my-project/subscriptions/my-sub

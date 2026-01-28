@@ -25,6 +25,8 @@ import pkg from '@stateset/embedded';
 const { Commerce } = pkg;
 import { AutonomousEngine } from '../src/autonomous/engine.js';
 import { runAgentLoop } from '../src/claude-harness.js';
+import { getNotifier } from '../src/channels/notifier.js';
+import { EventBridge } from '../src/channels/event-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +57,7 @@ program
   .option('--no-policies', 'Disable policy engine')
   .option('--no-approvals', 'Disable approval queue')
   .option('--init-defaults', 'Initialize with default templates')
+  .option('--notify-config <path>', 'Path to JSON notification routing config')
   .option('-v, --verbose', 'Verbose output')
   .action(async (options) => {
     console.log('');
@@ -105,6 +108,30 @@ program
         enablePolicies: options.policies,
         enableApprovals: options.approvals
       });
+
+      // Wire up channel notifier
+      const notifier = getNotifier();
+      if (options.notifyConfig) {
+        try {
+          const configRaw = fs.readFileSync(options.notifyConfig, 'utf-8');
+          const config = JSON.parse(configRaw);
+          if (config.routes) {
+            notifier.loadRoutes(config.routes);
+            console.log(`   Notification routes loaded from ${options.notifyConfig}`);
+          }
+        } catch (err) {
+          console.error(`   Warning: Failed to load notify config: ${err.message}`);
+        }
+      }
+      engine.setNotifier(notifier);
+
+      // Wire event bridge to forward engine events to channel notifications
+      const eventBridge = new EventBridge({
+        engine,
+        notifier,
+        verbose: options.verbose,
+      });
+      eventBridge.start();
 
       // Set up event logging
       if (options.verbose) {

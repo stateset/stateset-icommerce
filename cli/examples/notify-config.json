@@ -1,0 +1,49 @@
+{
+  "routes": {
+    "order.shipped": [
+      { "channel": "slack", "target": "#orders" },
+      { "channel": "telegram", "target": "-1001234567890" }
+    ],
+    "order.delivered": [
+      { "channel": "slack", "target": "#orders" }
+    ],
+    "order.cancelled": [
+      { "channel": "slack", "target": "#orders" }
+    ],
+    "inventory.low": [
+      { "channel": "slack", "target": "#ops" }
+    ],
+    "inventory.out": [
+      { "channel": "slack", "target": "#ops" },
+      { "channel": "discord", "target": "1234567890123456" }
+    ],
+    "scheduler:task:completed": [
+      { "channel": "slack", "target": "#automation" }
+    ],
+    "scheduler:task:failed": [
+      { "channel": "slack", "target": "#ops" }
+    ],
+    "workflow:completed": [
+      { "channel": "slack", "target": "#automation" }
+    ],
+    "workflow:failed": [
+      { "channel": "slack", "target": "#ops" }
+    ],
+    "approvals:request:created": [
+      { "channel": "slack", "target": "#approvals" },
+      { "channel": "discord", "target": "1234567890123456" }
+    ],
+    "approvals:request:approved": [
+      { "channel": "slack", "target": "#approvals" }
+    ],
+    "approvals:request:rejected": [
+      { "channel": "slack", "target": "#approvals" }
+    ],
+    "webhook:received": [
+      { "channel": "slack", "target": "#webhooks" }
+    ],
+    "*": [
+      { "channel": "slack", "target": "#all-alerts" }
+    ]
+  }
+}
