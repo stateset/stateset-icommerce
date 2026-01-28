@@ -1,6 +1,7 @@
 use crate::PostgresDatabase;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::Error as SqlxError;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -84,6 +85,14 @@ pub struct SagaCoordinator {
     db: std::sync::Arc<PostgresDatabase>,
 }
 
+fn serialize_status(status: &SagaStatus) -> Result<String, SagaError> {
+    serde_json::to_string(status).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))
+}
+
+fn deserialize_status(raw: &str) -> Result<SagaStatus, SagaError> {
+    serde_json::from_str(raw).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))
+}
+
 impl SagaCoordinator {
     pub fn new(db: std::sync::Arc<PostgresDatabase>) -> Self {
         Self { db }
@@ -98,6 +107,7 @@ impl SagaCoordinator {
         let saga = Saga::new(name, idempotency_key.clone(), total_steps);
 
         let pool = self.db.pool();
+        let status = serialize_status(&saga.status)?;
         sqlx::query!(
             r#"
             INSERT INTO sagas (id, name, idempotency_key, status, current_step, total_steps,
@@ -109,7 +119,7 @@ impl SagaCoordinator {
             saga.id,
             saga.name,
             saga.idempotency_key,
-            serde_json::to_string(&saga.status).unwrap(),
+            status,
             saga.current_step,
             saga.total_steps,
             saga.created_at,
@@ -144,6 +154,7 @@ impl SagaCoordinator {
         };
 
         let pool = self.db.pool();
+        let status = serialize_status(&step.status)?;
         sqlx::query!(
             r#"
             INSERT INTO saga_steps (id, saga_id, name, step_order, payload, status,
@@ -155,7 +166,7 @@ impl SagaCoordinator {
             step.name,
             step.step_order,
             step.payload,
-            serde_json::to_string(&step.status).unwrap(),
+            status,
             step.executed_at,
             step.result,
             step.compensation_step_id,
@@ -179,6 +190,10 @@ impl SagaCoordinator {
         Fut: std::future::Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>>,
     {
         let pool = self.db.pool();
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         let step = sqlx::query!(
             r#"
@@ -190,34 +205,53 @@ impl SagaCoordinator {
             step_id,
             saga_id
         )
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| SagaError::SagaNotFound(saga_id))?;
+        .map_err(|e| match e {
+            SqlxError::RowNotFound => SagaError::SagaNotFound(saga_id),
+            _ => SagaError::StepExecutionFailed(e.to_string()),
+        })?;
 
-        if step.status == serde_json::to_string(&SagaStatus::Completed).unwrap() {
-            return Ok(step.result.unwrap_or(serde_json::Value::Null));
+        let completed_status = serialize_status(&SagaStatus::Completed)?;
+        if step.status == completed_status {
+            let result = match step.result.as_ref() {
+                Some(result_str) => serde_json::from_str(result_str)
+                    .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?,
+                None => serde_json::Value::Null,
+            };
+            tx.commit()
+                .await
+                .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+            return Ok(result);
         }
 
-        let payload: serde_json::Value = serde_json::from_str(&step.payload).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&step.payload)
+            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
         let result = handler(payload)
             .await
             .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
+        let result_json =
+            serde_json::to_string(&result).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
         sqlx::query!(
             r#"
             UPDATE saga_steps
             SET status = $1, executed_at = $2, result = $3
             WHERE id = $4 AND saga_id = $5
             "#,
-            serde_json::to_string(&SagaStatus::Completed).unwrap(),
+            completed_status,
             Utc::now(),
-            serde_json::to_string(&result).unwrap(),
+            result_json,
             step_id,
             saga_id
         )
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         Ok(result)
     }
@@ -250,13 +284,14 @@ impl SagaCoordinator {
     pub async fn start_saga(&self, saga_id: Uuid) -> Result<(), SagaError> {
         let pool = self.db.pool();
 
+        let status = serialize_status(&SagaStatus::Running)?;
         sqlx::query!(
             r#"
             UPDATE sagas
             SET status = $1, started_at = $2
             WHERE id = $3
             "#,
-            serde_json::to_string(&SagaStatus::Running).unwrap(),
+            status,
             Utc::now(),
             saga_id
         )
@@ -270,13 +305,14 @@ impl SagaCoordinator {
     pub async fn mark_saga_completed(&self, saga_id: Uuid) -> Result<(), SagaError> {
         let pool = self.db.pool();
 
+        let status = serialize_status(&SagaStatus::Completed)?;
         sqlx::query!(
             r#"
             UPDATE sagas
             SET status = $1, completed_at = $2, current_step = total_steps
             WHERE id = $3
             "#,
-            serde_json::to_string(&SagaStatus::Completed).unwrap(),
+            status,
             Utc::now(),
             saga_id
         )
@@ -298,6 +334,8 @@ impl SagaCoordinator {
     {
         let pool = self.db.pool();
 
+        let completed_status = serde_json::to_string(&SagaStatus::Completed)
+            .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
         let steps = sqlx::query!(
             r#"
             SELECT id, name, step_order, payload, compensation_step_id, result
@@ -306,15 +344,16 @@ impl SagaCoordinator {
             ORDER BY step_order DESC
             "#,
             saga_id,
-            serde_json::to_string(&SagaStatus::Completed).unwrap()
+            completed_status
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| SagaError::SagaNotFound(saga_id))?;
+        .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
 
         for step in steps {
             if let Some(comp_step_id) = step.compensation_step_id {
-                let payload: serde_json::Value = serde_json::from_str(&step.payload).unwrap();
+                let payload: serde_json::Value = serde_json::from_str(&step.payload)
+                    .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
                 (handler)(comp_step_id, payload)
                     .await
                     .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
@@ -334,13 +373,15 @@ impl SagaCoordinator {
             }
         }
 
+        let rolled_back_status = serde_json::to_string(&SagaStatus::RolledBack)
+            .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
         sqlx::query!(
             r#"
             UPDATE sagas
             SET status = $1
             WHERE id = $2
             "#,
-            serde_json::to_string(&SagaStatus::RolledBack).unwrap(),
+            rolled_back_status,
             saga_id
         )
         .execute(pool)
@@ -364,10 +405,10 @@ impl SagaCoordinator {
         )
         .fetch_optional(pool)
         .await
-        .map_err(|e| SagaError::SagaNotFound(saga_id))?
+        .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?
         .ok_or(SagaError::SagaNotFound(saga_id))?;
 
-        let status: SagaStatus = serde_json::from_str(&row.status).unwrap();
+        let status = deserialize_status(&row.status)?;
 
         Ok(Saga {
             id: row.id,
@@ -403,7 +444,7 @@ impl SagaCoordinator {
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         if let Some(row) = row {
-            let status: SagaStatus = serde_json::from_str(&row.status).unwrap();
+            let status = deserialize_status(&row.status)?;
             Ok(Some(Saga {
                 id: row.id,
                 name: row.name,
@@ -436,14 +477,21 @@ impl SagaCoordinator {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| SagaError::SagaNotFound(saga_id))?;
+        .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
         rows
             .iter()
             .map(|row| {
-                let status: SagaStatus = serde_json::from_str(&row.status).unwrap();
-                let result = row.result.as_ref().map(|r| serde_json::from_str(r).unwrap());
-                let payload = serde_json::from_str(&row.payload).unwrap();
+                let status = deserialize_status(&row.status)?;
+                let result = match row.result.as_ref() {
+                    Some(r) => Some(
+                        serde_json::from_str(r)
+                            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?,
+                    ),
+                    None => None,
+                };
+                let payload =
+                    serde_json::from_str(&row.payload).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
                 Ok(SagaStep {
                     id: row.id,

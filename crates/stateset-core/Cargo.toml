@@ -20,6 +20,8 @@ serde_jcs = { workspace = true }
 sha2 = { workspace = true }
 ed25519-dalek = { workspace = true }
 rs_merkle = "1"
+once_cell = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
 
 # Optional embedding service dependencies
 reqwest = { workspace = true, optional = true }
@@ -36,3 +38,4 @@ harness = false
 [features]
 default = []
 embeddings = ["dep:reqwest"]
+metrics = ["dep:once_cell", "dep:prometheus"]

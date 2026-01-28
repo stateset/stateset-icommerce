@@ -5,7 +5,8 @@
 
 use once_cell::sync::Lazy;
 use prometheus::{
-    core::AtomicU64, register_histogram, register_int_counter, Histogram, IntCounter,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge, HistogramVec,
+    IntCounterVec, IntGauge, TextEncoder,
 };
 use std::time::Instant;
 
@@ -14,40 +15,43 @@ use std::time::Instant;
 // ============================================================================
 
 /// Histogram for measuring operation latency in milliseconds
-pub static OPERATION_LATENCY: Lazy<Histogram> = Lazy::new(|| {
-    register_histogram!(
+pub static OPERATION_LATENCY: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
         "stateset_operation_duration_milliseconds",
         "Duration of commerce operations in milliseconds",
+        &["operation", "domain"],
         vec![0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0],
     )
     .expect("Failed to register OPERATION_LATENCY histogram")
 });
 
 /// Counter for successful operations
-pub static OPERATIONS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+pub static OPERATIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
         "stateset_operations_total",
         "Total number of commerce operations",
+        &["operation", "domain"],
     )
     .expect("Failed to register OPERATIONS_TOTAL counter")
 });
 
 /// Counter for failed operations
-pub static OPERATIONS_FAILED: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+pub static OPERATIONS_FAILED: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
         "stateset_operations_failed_total",
         "Total number of failed commerce operations",
+        &["operation", "domain"],
     )
     .expect("Failed to register OPERATIONS_FAILED counter")
 });
 
-/// Counter for active reservations
-pub static ACTIVE_RESERVATIONS: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+/// Gauge for active reservations
+pub static ACTIVE_RESERVATIONS: Lazy<IntGauge> = Lazy::new(|| {
+    register_int_gauge!(
         "stateset_inventory_active_reservations",
         "Total number of active inventory reservations",
     )
-    .expect("Failed to register ACTIVE_RESERVATIONS counter")
+    .expect("Failed to register ACTIVE_RESERVATIONS gauge")
 });
 
 // ============================================================================
@@ -76,9 +80,10 @@ impl OperationTimer {
 impl Drop for OperationTimer {
     fn drop(&mut self) {
         let duration = self.start.elapsed().as_millis() as f64;
-        let mut labels = vec![self.operation.to_string()];
-        labels.extend(self.labels.clone());
-        OPERATION_LATENCY.observe(&labels, duration);
+        let domain = domain_from_labels(&self.labels);
+        OPERATION_LATENCY
+            .with_label_values(&[self.operation, domain])
+            .observe(duration);
     }
 }
 
@@ -86,22 +91,34 @@ impl Drop for OperationTimer {
 // Metrics Macros
 // ============================================================================
 
+/// Extract the domain label if present (format: "domain:<value>")
+pub fn domain_from_labels(labels: &[String]) -> &str {
+    labels
+        .iter()
+        .find_map(|label| label.strip_prefix("domain:"))
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+}
+
 /// Macro to track operation success/failure
 #[macro_export]
 macro_rules! track_operation {
     (operation = $op:expr, labels = $labels:expr, $body:expr) => {{
-        let _timer = OperationTimer::start($op, $labels.clone());
+        let _timer = $crate::metrics::OperationTimer::start($op, $labels.clone());
         let result = $body;
         match result {
             Ok(value) => {
-                OPERATIONS_TOTAL.inc();
+                let domain = $crate::metrics::domain_from_labels(&$labels);
+                $crate::metrics::OPERATIONS_TOTAL
+                    .with_label_values(&[$op, domain])
+                    .inc();
                 Ok(value)
             }
             Err(error) => {
-                let mut labels = vec![$op.to_string()];
-                labels.extend($labels);
-                labels.push(error.to_string());
-                OPERATIONS_FAILED.inc();
+                let domain = $crate::metrics::domain_from_labels(&$labels);
+                $crate::metrics::OPERATIONS_FAILED
+                    .with_label_values(&[$op, domain])
+                    .inc();
                 Err(error)
             }
         }
@@ -114,9 +131,9 @@ macro_rules! instrument_repository {
     ($repository_type:ident, $method:ident, $self:expr) => {
         |operation_name| {
             move || {
-                track_operation!(
+                $crate::track_operation!(
                     operation = operation_name,
-                    labels = vec![$repository_type.to_string()],
+                    labels = vec![format!("domain:{}", stringify!($repository_type))],
                     $self.$method(operation_name)
                 )
             }
@@ -133,26 +150,19 @@ pub mod orders {
     use super::*;
 
     /// Track an order creation event
-    pub fn track_order_creation(customer_id: &str) {
+    pub fn track_order_creation(_customer_id: &str) {
         track_operation!(
             operation = "orders.create",
-            labels = vec![
-                "domain:orders".to_string(),
-                format!("customer:{}", customer_id)
-            ],
+            labels = vec!["domain:orders".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
 
     /// Track an order status transition
-    pub fn track_order_status_transition(order_id: &str, from: &str, to: &str) {
+    pub fn track_order_status_transition(_order_id: &str, _from: &str, _to: &str) {
         track_operation!(
             operation = "orders.status_transition",
-            labels = vec![
-                "domain:orders".to_string(),
-                format!("order:{}", order_id),
-                format!("transition:{}->{}", from, to),
-            ],
+            labels = vec!["domain:orders".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
@@ -163,28 +173,20 @@ pub mod inventory {
     use super::*;
 
     /// Track an inventory reservation
-    pub fn track_reservation(sku: &str, quantity: f64) {
+    pub fn track_reservation(_sku: &str, _quantity: f64) {
         ACTIVE_RESERVATIONS.inc();
         track_operation!(
             operation = "inventory.reserve",
-            labels = vec![
-                "domain:inventory".to_string(),
-                format!("sku:{}", sku),
-                format!("quantity:{}", quantity),
-            ],
+            labels = vec!["domain:inventory".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
 
     /// Track an inventory stock adjustment
-    pub fn track_stock_adjustment(sku: &str, delta: f64) {
+    pub fn track_stock_adjustment(_sku: &str, _delta: f64) {
         track_operation!(
             operation = "inventory.adjust",
-            labels = vec![
-                "domain:inventory".to_string(),
-                format!("sku:{}", sku),
-                format!("delta:{}", delta),
-            ],
+            labels = vec!["domain:inventory".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
@@ -195,27 +197,19 @@ pub mod payments {
     use super::*;
 
     /// Track a payment processing operation
-    pub fn track_payment_processing(order_id: &str, amount: f64) {
+    pub fn track_payment_processing(_order_id: &str, _amount: f64) {
         track_operation!(
             operation = "payments.process",
-            labels = vec![
-                "domain:payments".to_string(),
-                format!("order:{}", order_id),
-                format!("amount:{}", amount),
-            ],
+            labels = vec!["domain:payments".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
 
     /// Track a payment refund operation
-    pub fn track_refund(payment_id: &str, amount: f64) {
+    pub fn track_refund(_payment_id: &str, _amount: f64) {
         track_operation!(
             operation = "payments.refund",
-            labels = vec![
-                "domain:payments".to_string(),
-                format!("payment:{}", payment_id),
-                format!("amount:{}", amount),
-            ],
+            labels = vec!["domain:payments".to_string()],
             OPERATIONS_TOTAL.inc()
         );
     }
@@ -260,7 +254,7 @@ impl Default for LabelsBuilder {
 
 /// Export all metrics in Prometheus format
 pub fn export_metrics() -> Result<String, prometheus::Error> {
-    let encoder = prometheus::TextEncoder::new();
+    let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
     encoder.encode(&metric_families, &mut buffer)?;

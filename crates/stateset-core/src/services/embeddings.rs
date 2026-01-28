@@ -3,6 +3,9 @@
 use crate::{CommerceError, Customer, InventoryItem, Order, Product, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
+
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Embedding service for generating vector embeddings
 pub struct EmbeddingService {
@@ -52,24 +55,60 @@ pub struct EmbeddingResult {
 }
 
 impl EmbeddingService {
+    fn build_client(timeout_secs: u64) -> std::result::Result<reqwest::blocking::Client, reqwest::Error> {
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build()
+    }
+
+    fn build_client_or_default(timeout_secs: u64) -> reqwest::blocking::Client {
+        Self::build_client(timeout_secs).unwrap_or_else(|_| reqwest::blocking::Client::new())
+    }
+
     /// Create a new embedding service with the given API key
     pub fn new(api_key: String) -> Self {
         Self {
-            client: reqwest::blocking::Client::new(),
+            client: Self::build_client_or_default(DEFAULT_TIMEOUT_SECS),
             api_key,
             model: "text-embedding-3-small".to_string(),
             dimensions: 1536,
         }
     }
 
+    /// Create a new embedding service with fallible client construction
+    pub fn try_new(api_key: String) -> Result<Self> {
+        let client = Self::build_client(DEFAULT_TIMEOUT_SECS).map_err(|e| {
+            CommerceError::ExternalServiceError(format!("Failed to build HTTP client: {}", e))
+        })?;
+        Ok(Self {
+            client,
+            api_key,
+            model: "text-embedding-3-small".to_string(),
+            dimensions: 1536,
+        })
+    }
+
     /// Create with custom model and dimensions
     pub fn with_model(api_key: String, model: String, dimensions: usize) -> Self {
         Self {
-            client: reqwest::blocking::Client::new(),
+            client: Self::build_client_or_default(DEFAULT_TIMEOUT_SECS),
             api_key,
             model,
             dimensions,
         }
+    }
+
+    /// Create with custom model and dimensions (fallible client construction)
+    pub fn try_with_model(api_key: String, model: String, dimensions: usize) -> Result<Self> {
+        let client = Self::build_client(DEFAULT_TIMEOUT_SECS).map_err(|e| {
+            CommerceError::ExternalServiceError(format!("Failed to build HTTP client: {}", e))
+        })?;
+        Ok(Self {
+            client,
+            api_key,
+            model,
+            dimensions,
+        })
     }
 
     /// Generate embeddings for a batch of texts

@@ -2,7 +2,6 @@
 //!
 //! Provides ACID transactions and distributed saga pattern for multi-step operations.
 
-use std::sync::Arc;
 use thiserror::Error;
 
 /// Error types for transaction operations
@@ -66,7 +65,7 @@ pub trait TransactionalRepository {
 pub struct TransactionHandle {
     id: String,
     state: TransactionState,
-    operations: Vec<Box<dyn Transactional>>,
+    operations: Vec<Box<dyn Transactional<Output = ()>>>,
 }
 
 impl TransactionHandle {
@@ -90,7 +89,7 @@ impl TransactionHandle {
     }
 
     /// Add an operation to the transaction
-    pub fn add_operation(&mut self, operation: Box<dyn Transactional>) {
+    pub fn add_operation(&mut self, operation: Box<dyn Transactional<Output = ()>>) {
         self.operations.push(operation);
     }
 
@@ -100,20 +99,21 @@ impl TransactionHandle {
             return Err(TransactionError::NotActive);
         }
 
-        let mut results = Vec::new();
+        let mut completed = 0usize;
 
         // Execute all operations
         for op in &self.operations {
             match op.execute() {
-                Ok(_) => continue,
+                Ok(_) => {
+                    completed += 1;
+                }
                 Err(e) => {
                     self.state = TransactionState::Failed;
                     // Try to compensate
-                    self.compensate(&results)?;
+                    Self::compensate(&self.operations[..completed])?;
                     return Err(e);
                 }
             }
-            results.push(op);
         }
 
         self.state = TransactionState::Committed;
@@ -126,13 +126,13 @@ impl TransactionHandle {
             return Err(TransactionError::NotActive);
         }
 
-        self.compensate(&self.operations)?;
+        Self::compensate(&self.operations)?;
         self.state = TransactionState::RolledBack;
         Ok(())
     }
 
     /// Compensate completed operations (called on rollback or failure)
-    fn compensate(&mut self, completed: &[Box<dyn Transactional>]) -> TransactionResult<()> {
+    fn compensate(completed: &[Box<dyn Transactional<Output = ()>>]) -> TransactionResult<()> {
         // Compensate in reverse order
         for op in completed.iter().rev() {
             if let Err(e) = op.compensate() {
@@ -169,7 +169,7 @@ impl Saga {
     }
 
     /// Add a step to the saga
-    pub fn add_step(&mut self, operation: Box<dyn Transactional>) -> &mut Self {
+    pub fn add_step(&mut self, operation: Box<dyn Transactional<Output = ()>>) -> &mut Self {
         self.handle.add_operation(operation);
         self
     }
@@ -188,7 +188,7 @@ impl Default for Saga {
 
 /// Builder for transaction batches
 pub struct TransactionBuilder {
-    operations: Vec<Box<dyn Transactional>>,
+    operations: Vec<Box<dyn Transactional<Output = ()>>>,
 }
 
 impl TransactionBuilder {
@@ -200,7 +200,7 @@ impl TransactionBuilder {
     }
 
     /// Add an operation
-    pub fn add(mut self, operation: Box<dyn Transactional>) -> Self {
+    pub fn add(mut self, operation: Box<dyn Transactional<Output = ()>>) -> Self {
         self.operations.push(operation);
         self
     }

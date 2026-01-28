@@ -42,6 +42,9 @@ pub mod traits;
 #[cfg(feature = "embeddings")]
 pub mod services;
 
+#[cfg(feature = "metrics")]
+pub mod metrics;
+
 pub use errors::*;
 pub use events::*;
 pub use models::*;

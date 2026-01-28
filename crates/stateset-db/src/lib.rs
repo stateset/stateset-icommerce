@@ -33,6 +33,8 @@ pub mod postgres;
 #[cfg(feature = "postgres")]
 pub mod saga;
 
+pub mod transactions;
+
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteDatabase;
 
