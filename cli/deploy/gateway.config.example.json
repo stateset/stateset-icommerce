@@ -1,0 +1,92 @@
+{
+  "_description": "StateSet iCommerce Channel Gateway - Example Configuration",
+  "_version": "0.2.6",
+
+  "channels": {
+    "telegram": {
+      "_description": "Telegram Bot via grammy. Requires TELEGRAM_BOT_TOKEN env var.",
+      "enabled": false,
+      "allowlist": []
+    },
+    "discord": {
+      "_description": "Discord Bot via discord.js. Requires DISCORD_BOT_TOKEN env var.",
+      "enabled": false,
+      "allowlist": [],
+      "channelFilter": []
+    },
+    "slack": {
+      "_description": "Slack Bot via @slack/bolt. Requires SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars.",
+      "enabled": false,
+      "allowlist": []
+    },
+    "whatsapp": {
+      "_description": "WhatsApp via Baileys (QR-code auth). Stores auth at authDir path.",
+      "enabled": false,
+      "allowlist": [],
+      "authDir": "./data/whatsapp-auth"
+    },
+    "signal": {
+      "_description": "Signal via signal-cli JSON-RPC. Requires signalNumber.",
+      "enabled": false,
+      "signalNumber": "",
+      "allowlist": []
+    },
+    "google-chat": {
+      "_description": "Google Chat via Pub/Sub. Requires credentials and subscription.",
+      "enabled": false,
+      "credentials": "",
+      "subscription": ""
+    }
+  },
+
+  "shared": {
+    "_description": "Shared configuration applied to all channel gateways.",
+    "dbPath": "./data/store.db",
+    "allowApply": false,
+    "model": "claude-sonnet-4-20250514",
+    "maxTurns": 10,
+    "agent": "customer-service",
+    "verbose": false
+  },
+
+  "notifications": {
+    "_description": "Cross-channel notification routing.",
+    "routes": {
+      "order_shipped": ["telegram", "discord"],
+      "escalation": ["slack"],
+      "system_alert": ["slack"]
+    }
+  },
+
+  "plugins": {
+    "_description": "Plugin system configuration.",
+    "bundledDir": "./src/plugins",
+    "globalDir": "~/.stateset/plugins",
+    "workspaceDir": "./.stateset/plugins",
+    "loadPaths": [],
+    "allow": [],
+    "deny": [],
+    "configs": {
+      "memory-vector": {
+        "maxMemories": 1000,
+        "maxAgeMs": 604800000,
+        "topK": 5,
+        "pruneIntervalMs": 3600000
+      }
+    }
+  },
+
+  "httpGateway": {
+    "_description": "HTTP API server for management and plugin routes.",
+    "enabled": true,
+    "port": 8080,
+    "host": "127.0.0.1"
+  },
+
+  "stateDir": "./data",
+
+  "autonomousEngine": null,
+
+  "persistSessions": true,
+  "sessionDbPath": "./data/sessions.db"
+}

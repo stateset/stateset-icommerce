@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -54,6 +54,7 @@
     "test:unit": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
+    "test:plugins": "node --test tests/plugin-system.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/**/*.test.js",
     "lint": "echo 'Add eslint when ready'",
     "prepublishOnly": "npm test && echo 'Ready to publish @stateset/cli'"
@@ -92,6 +93,7 @@
   "files": [
     "bin/",
     "src/",
+    "deploy/",
     ".claude/"
   ],
   "dependencies": {
@@ -106,17 +108,20 @@
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
+    "@google-cloud/pubsub": "^4.3.0",
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.7.15",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "qrcode-terminal": "^0.12.0",
-    "grammy": "^1.21.0",
     "@slack/bolt": "^3.17.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "discord.js": "^14.14.0",
     "googleapis": "^130.0.0",
-    "@google-cloud/pubsub": "^4.3.0"
+    "grammy": "^1.21.0",
+    "qrcode-terminal": "^0.12.0"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }

@@ -1,0 +1,34 @@
+{
+  "id": "memory-vector",
+  "name": "Vector Memory",
+  "version": "1.0.0",
+  "description": "In-memory vector store for conversation memory with TF-IDF bag-of-words embeddings and cosine similarity search.",
+  "author": "StateSet",
+  "license": "MIT",
+  "entry": "index.js",
+  "kind": "memory",
+  "channels": [],
+  "provides": ["commands", "hooks", "services"],
+  "enabledByDefault": false,
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "maxMemories": { "type": "number", "minimum": 1, "maximum": 100000 },
+      "maxAgeMs": { "type": "number", "minimum": 60000 },
+      "topK": { "type": "number", "minimum": 1, "maximum": 50 },
+      "pruneIntervalMs": { "type": "number", "minimum": 10000 }
+    }
+  },
+  "configDefaults": {
+    "maxMemories": 1000,
+    "maxAgeMs": 604800000,
+    "topK": 5,
+    "pruneIntervalMs": 3600000
+  },
+  "configHints": [
+    { "field": "maxMemories", "label": "Max Memories", "help": "Maximum number of memories to store.", "inputType": "number" },
+    { "field": "maxAgeMs", "label": "Max Age (ms)", "help": "Memories older than this are pruned. Default: 7 days.", "inputType": "number", "advanced": true },
+    { "field": "topK", "label": "Top K Results", "help": "Number of relevant memories to inject.", "inputType": "number" },
+    { "field": "pruneIntervalMs", "label": "Prune Interval (ms)", "help": "Background pruning interval.", "inputType": "number", "advanced": true }
+  ]
+}

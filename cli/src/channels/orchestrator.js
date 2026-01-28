@@ -12,6 +12,16 @@ import { CustomerIdentityStore } from './identity.js';
 import { getNotifier } from './notifier.js';
 import { rateLimiter, messageLogger, contentFilter, autoLanguageDetect } from './middleware.js';
 import { getMetrics, metricsCollector } from './metrics.js';
+import { getPluginRegistry } from './plugin-api.js';
+import { registerAutonomousCommands, unregisterAutonomousCommands } from './autonomous-commands.js';
+import { EventBridge } from './event-bridge.js';
+import { discoverAndLoadPlugins } from './plugin-loader.js';
+import { getPluginConfigState } from './plugin-config.js';
+import { getPluginSlots } from './plugin-slots.js';
+import { initializeSharedRuntime } from './plugin-runtime.js';
+import { getGatewayMethods } from './gateway-methods.js';
+import { getCliExtensions } from './cli-extensions.js';
+import { getCommandRegistry } from './command-registry.js';
 
 // ============================================================================
 // Channel launchers — lazy-loaded to avoid pulling in SDKs until needed
@@ -96,6 +106,17 @@ export class ChannelOrchestrator {
    * @param {Object}  [config.notifications] - Notification route config
    * @param {boolean} [config.persistSessions=true] - Enable persistent sessions
    * @param {string}  [config.sessionDbPath] - Custom session DB path
+   * @param {Object}  [config.autonomousEngine] - Autonomous engine for workflows/jobs/approvals
+   * @param {Object}  [config.plugins] - Plugin system configuration
+   * @param {string}  [config.plugins.bundledDir] - Bundled plugins directory
+   * @param {string}  [config.plugins.globalDir] - Global plugins directory
+   * @param {string}  [config.plugins.workspaceDir] - Workspace plugins directory
+   * @param {string[]} [config.plugins.loadPaths] - Additional load paths
+   * @param {Object}  [config.plugins.entries] - Config-declared plugins
+   * @param {string[]} [config.plugins.allow] - Plugin allow list
+   * @param {string[]} [config.plugins.deny] - Plugin deny list
+   * @param {Object}  [config.plugins.configs] - Per-plugin configs
+   * @param {string}  [config.stateDir] - State directory for plugin storage
    */
   constructor(config) {
     this.config = config;
@@ -104,6 +125,8 @@ export class ChannelOrchestrator {
     this.identityStore = null;
     this.middleware = [];
     this._running = false;
+    this._eventBridge = null;
+    this._pluginLoadResults = null;
   }
 
   /**
@@ -132,7 +155,78 @@ export class ChannelOrchestrator {
       getNotifier().loadRoutes(notifications.routes);
     }
 
-    // 5. Build shared options
+    // 5. Autonomous engine integration
+    const autonomousEngine = this.config.autonomousEngine || null;
+    if (autonomousEngine) {
+      // Connect notifier to engine for outbound notifications
+      autonomousEngine.setNotifier(getNotifier());
+
+      // Start EventBridge to route engine events to channels
+      this._eventBridge = new EventBridge({
+        engine: autonomousEngine,
+        notifier: getNotifier(),
+        verbose: shared.verbose ?? false,
+      });
+      this._eventBridge.start();
+
+      // Register autonomous commands (/workflow, /job, /approve, etc.)
+      registerAutonomousCommands(autonomousEngine);
+    }
+
+    // 6. Initialize plugin system
+    const pluginsConfig = this.config.plugins || {};
+    const stateDir = this.config.stateDir || null;
+
+    // Initialize shared runtime for plugins
+    initializeSharedRuntime({
+      commerce: null, // Lazy-loaded per request
+      autonomousEngine,
+      stateDir,
+      verbose: shared.verbose ?? false,
+      dbPath: shared.dbPath || './store.db',
+    });
+
+    // Initialize plugin config state (allow/deny lists)
+    const configState = getPluginConfigState({
+      allow: pluginsConfig.allow,
+      deny: pluginsConfig.deny,
+      entries: pluginsConfig.configs ? Object.fromEntries(
+        Object.entries(pluginsConfig.configs).map(([id, config]) => [id, { config }])
+      ) : {},
+      statePath: stateDir ? `${stateDir}/plugin-state.json` : null,
+    });
+
+    // Define default plugin slots
+    const slots = getPluginSlots();
+    if (!slots.hasSlot('memory')) {
+      slots.defineSlot('memory', { description: 'Memory/persistence provider', required: false });
+    }
+    if (!slots.hasSlot('search')) {
+      slots.defineSlot('search', { description: 'Search provider', required: false });
+    }
+
+    // Discover and load plugins
+    if (pluginsConfig.bundledDir || pluginsConfig.globalDir || pluginsConfig.workspaceDir || pluginsConfig.loadPaths?.length) {
+      try {
+        this._pluginLoadResults = await discoverAndLoadPlugins({
+          bundledDir: pluginsConfig.bundledDir,
+          globalDir: pluginsConfig.globalDir,
+          workspaceDir: pluginsConfig.workspaceDir,
+          loadPaths: pluginsConfig.loadPaths || [],
+          configEntries: pluginsConfig.entries || {},
+          pluginConfigs: pluginsConfig.configs || {},
+          configState,
+          verbose: shared.verbose ?? false,
+        });
+      } catch (err) {
+        console.error('[Orchestrator] Plugin loading failed:', err.message);
+      }
+    }
+
+    // Auto-assign plugin slots after all plugins have registered
+    slots.autoAssign();
+
+    // 7. Build shared options
     const sharedOpts = {
       sessionStore: this.sessionStore,
       identityStore: this.identityStore,
@@ -143,9 +237,10 @@ export class ChannelOrchestrator {
       maxTurns: shared.maxTurns || 10,
       agent: shared.agent,
       verbose: shared.verbose ?? false,
+      autonomousEngine,
     };
 
-    // 5. Launch channels
+    // 8. Launch channels
     const started = [];
     const failed = [];
 
@@ -182,6 +277,20 @@ export class ChannelOrchestrator {
       }
     }
 
+    // 8. Start plugin services
+    const pluginRegistry = getPluginRegistry();
+    for (const service of pluginRegistry.getServices()) {
+      try {
+        await service.start();
+        console.log(`[Orchestrator] Started plugin service: ${service.name}`);
+      } catch (err) {
+        console.error(`[Orchestrator] Failed to start plugin service ${service.name}: ${err.message}`);
+      }
+    }
+
+    // Fire gateway_start hook
+    pluginRegistry.getHookRunner().run('gateway_start', { channels: started });
+
     this._running = true;
     return { started, failed };
   }
@@ -191,6 +300,31 @@ export class ChannelOrchestrator {
    */
   async shutdown() {
     console.log('[Orchestrator] Shutting down all channels...');
+
+    const pluginRegistry = getPluginRegistry();
+
+    // Fire gateway_stop hook
+    pluginRegistry.getHookRunner().run('gateway_stop', { channels: [...this.gateways.keys()] });
+
+    // Stop event bridge
+    if (this._eventBridge) {
+      this._eventBridge.stop();
+      this._eventBridge = null;
+      console.log('[Orchestrator] Event bridge stopped.');
+    }
+
+    // Unregister autonomous commands
+    unregisterAutonomousCommands();
+
+    // Stop plugin services
+    for (const service of pluginRegistry.getServices()) {
+      try {
+        await service.stop();
+        console.log(`[Orchestrator] Stopped plugin service: ${service.name}`);
+      } catch (err) {
+        console.error(`[Orchestrator] Error stopping plugin service ${service.name}: ${err.message}`);
+      }
+    }
 
     for (const [name, gateway] of this.gateways) {
       try {
@@ -234,6 +368,13 @@ export class ChannelOrchestrator {
       notifier: {
         registeredChannels: getNotifier().getRegisteredChannels(),
         routes: getNotifier().getRoutes(),
+      },
+      plugins: {
+        loaded: getPluginRegistry().listPlugins(),
+        commands: getCommandRegistry().getStats(),
+        gatewayMethods: getGatewayMethods().list().length,
+        cliExtensions: getCliExtensions().list().length,
+        slots: getPluginSlots().getSlotStates(),
       },
     };
   }

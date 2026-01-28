@@ -20,14 +20,46 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **Database Tables** | 53 |
 | **API Methods** | 700+ |
 | **MCP Tools** | 87 |
-| **CLI Programs** | 25 |
+| **CLI Programs** | 26 |
 | **AI Agents** | 8 |
+| **Messaging Channels** | 6 (WhatsApp, Telegram, Discord, Slack, Signal, Google Chat) |
 | **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
-| **Current Version** | 0.2.4 |
+| **Current Version** | 0.2.5 |
 
 ---
 
 ## Recent Highlights
+
+### v0.2.5 — Multi-Channel Messaging Gateway
+
+Deploy AI commerce agents across **6 messaging platforms** from a single process with shared sessions, middleware, and customer identity resolution.
+
+| Channel | SDK | Interactive Actions | Rich Messages |
+|---------|-----|---------------------|---------------|
+| **WhatsApp** | Baileys | - | Plain text |
+| **Telegram** | grammY | Inline buttons | HTML + keyboard |
+| **Discord** | discord.js | Button clicks | Embeds + action rows |
+| **Slack** | Bolt | Block Kit actions | Block Kit |
+| **Signal** | signal-cli | - | Plain text |
+| **Google Chat** | googleapis | - | Plain text |
+
+**New capabilities in 0.2.5:**
+
+| Feature | Description |
+|---------|-------------|
+| **Persistent Sessions** | SQLite-backed sessions survive gateway restarts |
+| **Middleware Pipeline** | Koa-style onion model — rate limiting, content filtering, logging, language detection |
+| **Rich Messages** | Platform-aware rendering (Embeds, Block Kit, HTML, plain text fallback) |
+| **15+ Bot Commands** | `/orders`, `/inventory`, `/cart`, `/track`, `/analytics`, `/stats`, `/whoami`, `/link`, `/escalate`, and more |
+| **Proactive Notifications** | Route engine events to channels — order shipped, low stock, approvals |
+| **Multi-Gateway Orchestrator** | Config-driven (YAML/JSON) multi-channel launch in one process |
+| **Customer Identity** | Auto-resolve customers by phone (WhatsApp/Signal), manual `/link` by email |
+| **Event Bridge** | Forward autonomous engine events (scheduler, workflows, webhooks) to channels |
+| **Conversation Handoff** | Escalate from AI bot to human agent with `/escalate`, release with `/release` |
+| **Message Templates** | Pre-built rich messages for order confirmations, shipping updates, alerts |
+| **Conversation Metrics** | Per-channel message counts, response times, error rates, command usage |
+
+### v0.2.4 — Hybrid Vector Search & 34 New Tools
 
 **Hybrid Vector Search** — Semantic + BM25 (SQLite FTS5) relevance ranking for products, customers, orders, and inventory.
 
@@ -44,9 +76,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.2.4    # Python
-gem install stateset_embedded -v 0.2.4  # Ruby
-npm install @stateset/embedded@0.2.4    # Node.js
+pip install stateset-embedded==0.2.5    # Python
+gem install stateset_embedded -v 0.2.5  # Ruby
+npm install @stateset/embedded@0.2.5    # Node.js
+npm install -g @stateset/cli@0.2.5      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -95,8 +128,20 @@ stateset-icommerce/
 │   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # 25 CLI programs (including stateset-sync)
+    ├── bin/                 # 26 CLI programs (including stateset-sync, stateset-channels)
     ├── src/                 # MCP server (87 tools)
+    ├── src/channels/        # 6-channel messaging gateway
+    │   ├── base.js          # Shared sessions, commands, pipeline
+    │   ├── middleware.js     # Rate limiter, content filter, logger
+    │   ├── rich-messages.js  # Platform-agnostic rich messages
+    │   ├── session-store.js  # SQLite-backed persistent sessions
+    │   ├── notifier.js       # Proactive notification routing
+    │   ├── orchestrator.js   # Config-driven multi-gateway launcher
+    │   ├── identity.js       # Customer identity resolution
+    │   ├── event-bridge.js   # Engine event → channel notifications
+    │   ├── metrics.js        # Per-channel conversation metrics
+    │   ├── handoff.js        # AI-to-human escalation queue
+    │   └── templates.js      # Pre-built rich message templates
     ├── src/sync/            # VES sync engine, keys, groups
     └── .claude/             # 8 AI agents, 6 skills
 ```
@@ -119,6 +164,12 @@ stateset-icommerce/
 │  │  87 MCP     │  │  8 Agents   │  │  6 Skills   │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
+│  ┌─────────────────────────────────────────────────┐            │
+│  │           6-Channel Messaging Gateway            │            │
+│  │  WhatsApp · Telegram · Discord · Slack           │            │
+│  │  Signal · Google Chat                            │            │
+│  │  Sessions · Middleware · Identity · Handoff       │            │
+│  └─────────────────────────────────────────────────┘            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -580,6 +631,78 @@ stateset-sync groups:show <id>  # Show group details
 stateset-sync groups:my-groups  # List your group memberships
 ```
 
+### Messaging Channels CLI
+
+Deploy AI commerce agents to 6 messaging platforms. Each channel runs as a thin adapter over the shared base module.
+
+```bash
+# Single-channel gateways
+stateset-telegram --db ./store.db --agent customer-service
+stateset-discord --db ./store.db --agent customer-service
+stateset-slack --db ./store.db --agent customer-service
+stateset-whatsapp --db ./store.db --agent customer-service
+stateset-signal --db ./store.db --agent customer-service
+stateset-google-chat --db ./store.db --agent customer-service
+
+# Multi-channel orchestrator (all channels in one process)
+stateset-channels --config channels.yaml
+
+# With autonomous engine notifications
+stateset-autonomous --db ./store.db --agent customer-service \
+  --notify-config notify-config.json
+```
+
+**In-chat bot commands** (available on all channels):
+
+```
+/help                   — List available commands
+/orders [n]             — Show recent orders (default 5)
+/order <id>             — Order detail with rich card
+/inventory <sku>        — Stock levels with rich card
+/cart [id]              — Cart summary
+/track <id>             — Shipment tracking
+/customers              — Customer count
+/analytics              — Sales summary with rich card
+/stats                  — Channel metrics (messages, response time, errors)
+/whoami                 — Show linked customer identity
+/link <email>           — Link chat to a customer by email
+/unlink                 — Remove customer link
+/escalate [reason]      — Hand off to a human agent
+/release                — Return conversation to AI bot
+/reset                  — Reset session state
+```
+
+**Example `channels.yaml`:**
+
+```yaml
+shared:
+  db: ./store.db
+  agent: customer-service
+  model: claude-sonnet-4-20250514
+  middleware:
+    rateLimiter: { maxPerMinute: 20 }
+    contentFilter: { action: warn }
+    logger: true
+
+channels:
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN}
+    allowList: [-1001234567890]
+  discord:
+    token: ${DISCORD_BOT_TOKEN}
+    channelIds: ["1234567890123456"]
+  slack:
+    token: ${SLACK_BOT_TOKEN}
+    appToken: ${SLACK_APP_TOKEN}
+    channels: ["C01ABCDEF"]
+
+notifications:
+  routes:
+    "order.shipped": [{ channel: slack, target: "#orders" }]
+    "inventory.low": [{ channel: slack, target: "#ops" }]
+    "*": [{ channel: slack, target: "#all-alerts" }]
+```
+
 ### Validation & Errors
 
 Inputs are validated at the repository layer (SKU format, required fields, currency codes, etc.)
@@ -758,6 +881,20 @@ Eight specialized agents for different commerce domains:
 - Merkle proofs for on-chain commitment verification
 - Conflict detection and resolution (remote-wins, local-wins, merge)
 
+### Multi-Channel Messaging Gateway
+- 6 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat
+- Persistent sessions across gateway restarts (SQLite-backed)
+- Koa-style middleware pipeline (rate limiter, content filter, logger, language detect)
+- Platform-aware rich messages (Embeds, Block Kit, HTML, plain text)
+- 15+ instant bot commands for orders, inventory, analytics, identity
+- Customer identity resolution (auto by phone, manual by email)
+- Proactive notifications routed from engine events to channels
+- AI-to-human handoff with conversation history
+- Config-driven multi-gateway orchestrator (YAML/JSON)
+- Per-channel conversation metrics and command tracking
+- Interactive action handlers (Telegram buttons, Discord buttons, Slack Block Kit)
+- Pre-built message templates for order lifecycle, alerts, and engagement
+
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
 - MCP protocol integration (87 tools)
@@ -823,14 +960,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.2.4</version>
+    <version>0.2.5</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.2.4'
+implementation 'com.stateset:embedded:0.2.5'
 ```
 
 ### Kotlin (Gradle)
@@ -838,7 +975,7 @@ implementation 'com.stateset:embedded:0.2.4'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.2.4")
+    implementation("com.stateset:embedded-kotlin:0.2.5")
 }
 ```
 
@@ -847,32 +984,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.4")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.5")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.2.4'
+pod 'StateSet', '~> 0.2.5'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.2.4
+dotnet add package StateSet.Embedded --version 0.2.5
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.2.4" />
+<PackageReference Include="StateSet.Embedded" Version="0.2.5" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.4
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.5
 ```
 
 ### CLI
@@ -1084,8 +1221,9 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 25 CLI programs (incl. stateset-sync)
+│   ├── bin/                   # 26 CLI programs (incl. stateset-sync, stateset-channels)
 │   ├── src/mcp-server.js      # 87 MCP tools
+│   ├── src/channels/          # 6-channel messaging gateway (11 modules)
 │   ├── src/sync/              # VES sync engine
 │   │   ├── engine.js          # Sync orchestration
 │   │   ├── outbox.js          # Event outbox management

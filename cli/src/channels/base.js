@@ -11,6 +11,8 @@ import { runAgentLoop } from '../claude-harness.js';
 import { runMiddleware } from './middleware.js';
 import { getMetrics } from './metrics.js';
 import { getHandoffQueue } from './handoff.js';
+import { getCommandRegistry } from './command-registry.js';
+import { getPluginRegistry } from './plugin-api.js';
 import {
   createOrderSummary,
   createOrderList,
@@ -197,9 +199,10 @@ export function isAllowed(senderId, allowlist) {
  * @param {import('./identity.js').CustomerIdentityStore} [opts.identityStore] - Identity store
  * @param {string}  [opts.channel] - Channel name for identity resolution
  * @param {string}  [opts.senderId] - Sender ID for identity resolution
+ * @param {Object}  [opts.autonomousEngine] - Autonomous engine for dynamic commands
  * @returns {Promise<{ handled: boolean, response?: string, richMessage?: import('./rich-messages.js').RichMessage }>}
  */
-export async function handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId } = {}) {
+export async function handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId, autonomousEngine } = {}) {
   const lower = text.toLowerCase().trim();
   const parts = lower.split(/\s+/);
   const cmd = parts[0];
@@ -211,37 +214,42 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
   }
 
   if (cmd === '/help') {
+    const baseHelp = [
+      'StateSet Commerce Agent',
+      '',
+      'You can ask me about:',
+      '- Orders: "show my recent orders"',
+      '- Products: "what products do you have?"',
+      '- Cart: "create a cart and add 2 widgets"',
+      '- Inventory: "how much stock of WIDGET-001?"',
+      '- Returns: "I want to return order #123"',
+      '- Analytics: "what are my top sellers?"',
+      '',
+      'Commands:',
+      '/help - Show this message',
+      '/reset - Start a new conversation',
+      '/status - Show current session',
+      '/orders [n] - List last N orders (default 5)',
+      '/order <id> - Order detail',
+      '/inventory <sku> - Stock levels',
+      '/cart [id] - Cart summary or list',
+      '/track <order-id> - Shipment tracking',
+      '/customers - Customer count',
+      '/analytics - Today\'s sales summary',
+      '/whoami - Show linked customer identity',
+      '/link <email> - Link your identity to a customer',
+      '/unlink - Remove identity link',
+      '/stats - Bot statistics',
+      '/escalate [reason] - Talk to a human agent',
+      '/release - Return to AI mode (after escalation)',
+    ].join('\n');
+
+    // Append dynamically registered commands
+    const dynamicHelp = getCommandRegistry().generateHelp();
+
     return {
       handled: true,
-      response: [
-        'StateSet Commerce Agent',
-        '',
-        'You can ask me about:',
-        '- Orders: "show my recent orders"',
-        '- Products: "what products do you have?"',
-        '- Cart: "create a cart and add 2 widgets"',
-        '- Inventory: "how much stock of WIDGET-001?"',
-        '- Returns: "I want to return order #123"',
-        '- Analytics: "what are my top sellers?"',
-        '',
-        'Commands:',
-        '/help - Show this message',
-        '/reset - Start a new conversation',
-        '/status - Show current session',
-        '/orders [n] - List last N orders (default 5)',
-        '/order <id> - Order detail',
-        '/inventory <sku> - Stock levels',
-        '/cart [id] - Cart summary or list',
-        '/track <order-id> - Shipment tracking',
-        '/customers - Customer count',
-        '/analytics - Today\'s sales summary',
-        '/whoami - Show linked customer identity',
-        '/link <email> - Link your identity to a customer',
-        '/unlink - Remove identity link',
-        '/stats - Bot statistics',
-        '/escalate [reason] - Talk to a human agent',
-        '/release - Return to AI mode (after escalation)',
-      ].join('\n'),
+      response: baseHelp + dynamicHelp,
     };
   }
 
@@ -426,6 +434,22 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
     return { handled: true, response: 'No active escalation found. You\'re already talking to the AI assistant.' };
   }
 
+  // --- Dynamic command registry lookup ---
+  const registry = getCommandRegistry();
+  const cmdName = cmd.startsWith('/') ? cmd.slice(1) : cmd;
+  if (registry.has(cmdName)) {
+    const def = registry.get(cmdName);
+    const argText = parts.slice(1).join(' ');
+    try {
+      const result = await def.handler(argText, {
+        senderId, channel, session, allowApply, commerce, identityStore, autonomousEngine,
+      });
+      return { handled: true, response: result.response, richMessage: result.richMessage };
+    } catch (err) {
+      return { handled: true, response: `Error: ${err.message}` };
+    }
+  }
+
   return { handled: false };
 }
 
@@ -532,6 +556,7 @@ export function sleep(ms) {
  * @param {Function[]} [opts.middleware] - Middleware stack
  * @param {string}   [opts.channel]     - Channel name for middleware context
  * @param {import('./identity.js').CustomerIdentityStore} [opts.identityStore] - Identity store
+ * @param {Object}   [opts.autonomousEngine] - Autonomous engine for dynamic commands
  * @returns {(raw: any) => Promise<void>}
  */
 export function createMessageHandler(adapter, opts) {
@@ -548,6 +573,7 @@ export function createMessageHandler(adapter, opts) {
     middleware = [],
     channel = 'unknown',
     identityStore = null,
+    autonomousEngine = null,
   } = opts;
 
   // Lazy-init commerce for bot commands
@@ -627,14 +653,14 @@ export function createMessageHandler(adapter, opts) {
 
     try {
       await processSingle(adapter, targetId, senderId, text, session, {
-        dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore,
+        dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine,
       });
 
       // Drain the queue
       while (session.queue.length > 0) {
         const queued = session.queue.shift();
         await processSingle(adapter, targetId, senderId, queued, session, {
-          dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore,
+          dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine,
         });
       }
     } finally {
@@ -648,9 +674,13 @@ export function createMessageHandler(adapter, opts) {
  * @private
  */
 async function processSingle(adapter, targetId, senderId, text, session, opts) {
-  const { dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore } = opts;
+  const { dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine } = opts;
   const startTime = Date.now();
   const metrics = getMetrics();
+  const hookRunner = getPluginRegistry().getHookRunner();
+
+  // Fire message_received hook (parallel, fire-and-forget)
+  hookRunner.run('message_received', { text, senderId, channel });
 
   // Typing indicator
   if (adapter.sendTyping) {
@@ -670,7 +700,7 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
   }
 
   // Bot commands (now async to support commerce data commands + identity)
-  const cmd = await handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId });
+  const cmd = await handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId, autonomousEngine });
   if (cmd.handled) {
     // Record command usage
     const cmdName = text.toLowerCase().trim().split(/\s+/)[0];
@@ -681,6 +711,7 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
       try {
         await adapter.sendRichMessage(targetId, cmd.richMessage);
         metrics.recordResponse(channel || 'unknown', Date.now() - startTime);
+        hookRunner.run('message_sent', { text: cmd.response, senderId, channel });
         return;
       } catch {
         // Fall through to plain text
@@ -690,6 +721,7 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
     const formatted = adapter.formatForPlatform(cmd.response);
     await adapter.send(targetId, BOT_PREFIX + formatted);
     metrics.recordResponse(channel || 'unknown', Date.now() - startTime);
+    hookRunner.run('message_sent', { text: cmd.response, senderId, channel });
 
     // Persist session after bot command (e.g. /reset clears sessionId)
     if (persistSession) persistSession(senderId, session);
@@ -698,23 +730,43 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
 
   // Agent processing
   try {
-    const result = await processWithAgent(text, session, {
+    // Fire before_agent_start hook (sequential, can modify text)
+    let processedText = text;
+    if (hookRunner.hasHooks('before_agent_start')) {
+      const hookResult = await hookRunner.run('before_agent_start', { text, session });
+      if (hookResult.text) processedText = hookResult.text;
+    }
+
+    const result = await processWithAgent(processedText, session, {
       dbPath, allowApply, model, maxTurns, agent, verbose,
     });
 
-    const formatted = adapter.formatForPlatform(result.response);
+    // Fire agent_end hook (parallel)
+    hookRunner.run('agent_end', { response: result.response, agent: result.agent });
+
+    // Fire message_sending hook (sequential, can modify response)
+    let finalResponse = result.response;
+    if (hookRunner.hasHooks('message_sending')) {
+      const sendingResult = await hookRunner.run('message_sending', { text: result.response });
+      if (sendingResult.text) finalResponse = sendingResult.text;
+    }
+
+    const formatted = adapter.formatForPlatform(finalResponse);
     const chunks = chunkMessage(formatted, adapter.maxMessageLength);
 
     for (const chunk of chunks) {
       await adapter.send(targetId, BOT_PREFIX + chunk);
     }
 
+    // Fire message_sent hook (parallel)
+    hookRunner.run('message_sent', { text: finalResponse, senderId, channel });
+
     metrics.recordResponse(channel || 'unknown', Date.now() - startTime);
 
     // Persist session after agent updates sessionId/agent
     if (persistSession) persistSession(senderId, session);
 
-    console.log(`[${new Date().toISOString()}] Replied to ${senderId} (${result.response.length} chars, agent: ${result.agent})`);
+    console.log(`[${new Date().toISOString()}] Replied to ${senderId} (${finalResponse.length} chars, agent: ${result.agent})`);
   } catch (err) {
     metrics.recordError(channel || 'unknown');
     console.error(`Agent error for ${senderId}:`, err.message);
