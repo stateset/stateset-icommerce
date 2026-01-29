@@ -1,6 +1,6 @@
 {
   "_description": "StateSet iCommerce Channel Gateway - Example Configuration",
-  "_version": "0.2.6",
+  "_version": "0.3.1",
 
   "channels": {
     "telegram": {
@@ -36,6 +36,28 @@
       "enabled": false,
       "credentials": "",
       "subscription": ""
+    },
+    "imessage": {
+      "_description": "iMessage via BlueBubbles. Requires BLUEBUBBLES_URL and BLUEBUBBLES_PASSWORD env vars.",
+      "enabled": false,
+      "allowlist": [],
+      "pollIntervalMs": 3000
+    },
+    "teams": {
+      "_description": "Microsoft Teams via Bot Framework. Requires TEAMS_APP_ID and TEAMS_APP_PASSWORD env vars.",
+      "enabled": false,
+      "allowlist": [],
+      "webhookPort": 3978
+    },
+    "matrix": {
+      "_description": "Matrix via Client-Server API. Requires MATRIX_HOMESERVER_URL and MATRIX_ACCESS_TOKEN env vars.",
+      "enabled": false,
+      "allowlist": [],
+      "autoJoin": true
+    },
+    "webchat": {
+      "_description": "Web-based chat UI served from the HTTP gateway.",
+      "enabled": false
     }
   },
 
@@ -46,14 +68,17 @@
     "model": "claude-sonnet-4-20250514",
     "maxTurns": 10,
     "agent": "customer-service",
-    "verbose": false
+    "verbose": false,
+    "thinkLevel": "off",
+    "provider": "claude",
+    "enableFallback": true
   },
 
   "notifications": {
     "_description": "Cross-channel notification routing.",
     "routes": {
       "order_shipped": ["telegram", "discord"],
-      "escalation": ["slack"],
+      "escalation": ["slack", "teams"],
       "system_alert": ["slack"]
     }
   },
@@ -80,7 +105,87 @@
     "_description": "HTTP API server for management and plugin routes.",
     "enabled": true,
     "port": 8080,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    "apiKeys": [
+      { "key": "", "name": "default", "level": "admin" }
+    ],
+    "sandbox": { "browser": false, "shell": false }
+  },
+
+  "voice": {
+    "_description": "Voice integration (TTS/STT). Requires ELEVENLABS_API_KEY and/or OPENAI_API_KEY.",
+    "enabled": false,
+    "tts": {
+      "provider": "elevenlabs",
+      "voiceId": ""
+    },
+    "stt": {
+      "provider": "whisper",
+      "model": "whisper-1"
+    }
+  },
+
+  "browser": {
+    "_description": "Browser automation via Chrome DevTools Protocol.",
+    "enabled": false,
+    "headless": true,
+    "chromePath": ""
+  },
+
+  "memory": {
+    "_description": "Conversation memory with optional vector search.",
+    "enabled": false,
+    "vectorSearch": false,
+    "maxSummaries": 5,
+    "maxAgeMs": 2592000000
+  },
+
+  "heartbeat": {
+    "_description": "Proactive commerce health checks — alerts routed through EventBridge.",
+    "enabled": false,
+    "verbose": false,
+    "checks": [
+      { "id": "low-stock",          "name": "Low Stock",           "checker": "low-stock",          "intervalMs": 3600000,  "enabled": false, "config": { "threshold": 10 } },
+      { "id": "abandoned-carts",    "name": "Abandoned Carts",     "checker": "abandoned-carts",    "intervalMs": 86400000, "enabled": false, "config": { "minAgeHours": 24 } },
+      { "id": "revenue-milestone",  "name": "Revenue Milestone",   "checker": "revenue-milestone",  "intervalMs": 3600000,  "enabled": false, "config": { "target": 10000, "period": "month" } },
+      { "id": "pending-returns",    "name": "Pending Returns",     "checker": "pending-returns",    "intervalMs": 43200000, "enabled": false, "config": { "maxAgeDays": 7 } },
+      { "id": "overdue-invoices",   "name": "Overdue Invoices",    "checker": "overdue-invoices",   "intervalMs": 86400000, "enabled": false, "config": {} },
+      { "id": "subscription-churn", "name": "Subscription Churn",  "checker": "subscription-churn", "intervalMs": 86400000, "enabled": false, "config": {} }
+    ]
+  },
+
+  "marketplace": {
+    "_description": "Skills marketplace configuration.",
+    "catalogUrl": "https://skills.stateset.com/catalog.json",
+    "autoUpdate": false
+  },
+
+  "fallback": {
+    "_description": "Provider fallback chain configuration.",
+    "order": ["claude", "openai", "gemini", "ollama"],
+    "failureThreshold": 3,
+    "resetTimeoutMs": 60000
+  },
+
+  "remoteAccess": {
+    "_description": "Remote access configuration for Tailscale and SSH tunnels.",
+    "tailscale": {
+      "_description": "Tailscale VPN access. Setup: sudo stateset-daemon tailscale setup",
+      "enabled": false,
+      "serve": true,
+      "funnel": false,
+      "hostname": ""
+    },
+    "sshTunnels": [
+      {
+        "_description": "Example: reverse tunnel to expose gateway on remote VPS",
+        "name": "vps-tunnel",
+        "host": "user@vps.example.com",
+        "port": 8080,
+        "mode": "reverse",
+        "persistent": true
+      }
+    ]
   },
 
   "stateDir": "./data",

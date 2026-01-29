@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.2.6",
+  "version": "0.3.1",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -38,7 +38,9 @@
     "stateset-discord": "./bin/stateset-discord.js",
     "stateset-google-chat": "./bin/stateset-google-chat.js",
     "stateset-signal": "./bin/stateset-signal.js",
-    "stateset-channels": "./bin/stateset-channels.js"
+    "stateset-channels": "./bin/stateset-channels.js",
+    "stateset-skills": "./bin/stateset-skills.js",
+    "stateset-daemon": "./bin/stateset-daemon.js"
   },
   "main": "src/index.js",
   "repository": {
@@ -55,6 +57,11 @@
     "test:integration": "node --test test/integration/*.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
     "test:plugins": "node --test tests/plugin-system.test.js",
+    "test:skills": "node --test tests/skills-system.test.js",
+    "test:v028": "node --test tests/v028-features.test.js",
+    "test:heartbeat": "node --test tests/v031-heartbeat.test.js",
+    "test:permissions": "node --test tests/v031-permissions.test.js",
+    "test:v031": "node --test tests/v031-permissions.test.js tests/v031-heartbeat.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/**/*.test.js",
     "lint": "echo 'Add eslint when ready'",
     "prepublishOnly": "npm test && echo 'Ready to publish @stateset/cli'"
@@ -83,7 +90,19 @@
     "slack",
     "discord",
     "signal",
-    "google-chat"
+    "google-chat",
+    "skills",
+    "marketplace",
+    "multi-model",
+    "openai",
+    "gemini",
+    "ollama",
+    "extended-thinking",
+    "streaming",
+    "memory",
+    "systemd",
+    "tailscale",
+    "daemon"
   ],
   "author": "StateSet <support@stateset.com>",
   "license": "MIT OR Apache-2.0",
@@ -93,6 +112,7 @@
   "files": [
     "bin/",
     "src/",
+    "skills/",
     "deploy/",
     ".claude/"
   ],
@@ -116,7 +136,10 @@
     "discord.js": "^14.14.0",
     "googleapis": "^130.0.0",
     "grammy": "^1.21.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "botbuilder": "^4.23.0",
+    "matrix-js-sdk": "^34.0.0",
+    "ws": "^8.18.0"
   },
   "publishConfig": {
     "access": "public"

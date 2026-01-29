@@ -81,7 +81,7 @@ export const DEFAULT_DB_PATH = './store.db';
 // CLI CONFIGURATION
 // =============================================================================
 
-export const CLI_VERSION = '0.2.4';
+export const CLI_VERSION = '0.3.1';
 
 export const CLI_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,
@@ -101,6 +101,114 @@ export const AGENT_DEFAULTS = {
 };
 
 // =============================================================================
+// EXTENDED THINKING CONFIGURATION
+// =============================================================================
+
+/**
+ * Extended thinking levels — maps user-facing names to maxThinkingTokens.
+ * The Agent SDK passes `maxThinkingTokens` to `--max-thinking-tokens`.
+ */
+export const THINK_LEVELS = {
+  off: 0,
+  low: 10_000,
+  medium: 50_000,
+  high: 100_000,
+};
+
+// =============================================================================
+// STREAMING CONFIGURATION
+// =============================================================================
+
+export const STREAMING_DEFAULTS = {
+  enabled: false,
+};
+
+// =============================================================================
+// BUDGET CONFIGURATION
+// =============================================================================
+
+export const BUDGET_DEFAULTS = {
+  maxBudgetUsd: null,
+};
+
+// =============================================================================
+// MULTI-MODEL PROVIDER CONFIGURATION
+// =============================================================================
+
+export const PROVIDERS = {
+  claude: {
+    name: 'Claude',
+    models: {
+      'claude-sonnet-4-5': 'claude-sonnet-4-5-20250929',
+      'claude-opus-4-5': 'claude-opus-4-5-20251101',
+      'claude-haiku-3-5': 'claude-haiku-3-5-20241022',
+    },
+    default: 'claude-sonnet-4-5-20250929',
+    envKey: 'ANTHROPIC_API_KEY',
+  },
+  openai: {
+    name: 'OpenAI',
+    models: {
+      'gpt-4o': 'gpt-4o',
+      'gpt-4': 'gpt-4',
+      'o1': 'o1',
+      'o1-mini': 'o1-mini',
+    },
+    default: 'gpt-4o',
+    envKey: 'OPENAI_API_KEY',
+  },
+  gemini: {
+    name: 'Gemini',
+    models: {
+      'gemini-2.0-flash': 'gemini-2.0-flash',
+      'gemini-2.0-pro': 'gemini-2.0-pro',
+    },
+    default: 'gemini-2.0-flash',
+    envKey: 'GEMINI_API_KEY',
+  },
+  ollama: {
+    name: 'Ollama',
+    models: {},
+    default: 'llama3',
+    envKey: null,
+    baseUrl: 'http://localhost:11434',
+  },
+};
+
+// =============================================================================
+// MEMORY CONFIGURATION
+// =============================================================================
+
+export const MEMORY_DEFAULTS = {
+  enabled: false,
+  maxSummaries: 5,
+  summaryModel: MODELS.HAIKU,
+  dbPath: null,
+};
+
+// =============================================================================
+// HEARTBEAT CONFIGURATION
+// =============================================================================
+
+export const HEARTBEAT_DEFAULTS = {
+  enabled: false,
+  verbose: false,
+  checks: null,  // null = use built-in defaults
+};
+
+// =============================================================================
+// HTTP GATEWAY CONFIGURATION
+// =============================================================================
+
+export const HTTP_GATEWAY_DEFAULTS = {
+  enabled: true,
+  port: 8080,
+  host: '127.0.0.1',
+  apiKeys: [],       // empty = auth disabled
+  sandbox: null,     // null = no restrictions
+};
+
+// =============================================================================
 // FEATURE FLAGS
 // =============================================================================
 
@@ -116,6 +224,14 @@ export const FEATURES = {
 
   // Enable telemetry by default
   telemetryEnabled: true,
+
+  // v0.2.8 features
+  extendedThinking: true,
+  streaming: true,
+  multiModel: true,
+  memory: true,
+  budgetControls: true,
+  webchat: true,
 };
 
 // =============================================================================
@@ -144,6 +260,12 @@ export function getParseArgsOptions(overrides = {}) {
     json: { type: 'boolean', default: CLI_DEFAULTS.json },
     help: { type: 'boolean', short: 'h', default: false },
     version: { type: 'boolean', short: 'v', default: false },
+    // v0.2.8: Extended thinking, streaming, multi-model, budget, memory
+    think: { type: 'string', default: 'off' },
+    stream: { type: 'boolean', default: false },
+    provider: { type: 'string', default: 'claude' },
+    budget: { type: 'string' },
+    memory: { type: 'boolean', default: false },
     ...overrides,
   };
 }
