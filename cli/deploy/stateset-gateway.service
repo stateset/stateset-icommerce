@@ -1,0 +1,51 @@
+[Unit]
+Description=StateSet iCommerce Channel Gateway
+Documentation=https://github.com/stateset/stateset-icommerce
+After=network-online.target
+Wants=network-online.target
+
+# Optional: start after Tailscale is up
+After=tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=simple
+User=stateset
+Group=stateset
+
+# Working directory
+WorkingDirectory=/opt/stateset
+
+# Environment
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/stateset/env
+EnvironmentFile=-/opt/stateset/.env
+
+# Main process
+ExecStart=/usr/bin/node /opt/stateset/bin/stateset-channels.js --config /etc/stateset/gateway.json
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=1G
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/stateset/data /var/log/stateset
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stateset-gateway
+
+[Install]
+WantedBy=multi-user.target

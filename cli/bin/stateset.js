@@ -54,7 +54,12 @@ OPTIONS:
   --apply            Enable write operations (create, update, delete)
   --agent <name>     Use specific agent (bypasses auto-routing)
   --profile <name>   Use configuration profile (from ~/.stateset/profiles/)
-  --model <model>    Claude model to use (default: claude-sonnet-4)
+  --model <model>    AI model to use (default: claude-sonnet-4-5)
+  --provider <name>  AI provider: claude, openai, gemini, ollama (default: claude)
+  --think <level>    Extended thinking: off, low, medium, high (default: off)
+  --stream           Enable streaming output (token-by-token)
+  --budget <usd>     Maximum spend per query in USD (e.g., --budget 1.00)
+  --memory           Enable conversation memory
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
@@ -484,6 +489,11 @@ async function main() {
       agent: { type: 'string' },
       profile: { type: 'string', short: 'p' },
       model: { type: 'string' },
+      provider: { type: 'string' },
+      think: { type: 'string', default: 'off' },
+      stream: { type: 'boolean', default: false },
+      budget: { type: 'string' },
+      memory: { type: 'boolean', default: false },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
       format: { type: 'string', default: 'table' },
@@ -548,6 +558,16 @@ async function main() {
     process.exit(1);
   }
 
+  // Validate think level
+  const thinkLevel = values.think || 'off';
+  if (!['off', 'low', 'medium', 'high'].includes(thinkLevel)) {
+    console.error(`Error: Invalid think level '${thinkLevel}'. Use: off, low, medium, high`);
+    process.exit(1);
+  }
+
+  // Resolve provider
+  const providerName = values.provider || 'claude';
+
   // Show mode indicator
   if (!isQuiet) {
     console.log(`\n${ICONS.order} StateSet iCommerce CLI`);
@@ -556,8 +576,20 @@ async function main() {
     }
     console.log(`   ${output.dim('Database:')} ${config.db}`);
     console.log(`   ${output.dim('Mode:')}     ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    if (providerName !== 'claude') {
+      console.log(`   ${output.dim('Provider:')} ${output.cyan(providerName)}`);
+    }
     if (values.agent) {
       console.log(`   ${output.dim('Agent:')}    ${output.cyan(values.agent)}`);
+    }
+    if (thinkLevel !== 'off') {
+      console.log(`   ${output.dim('Thinking:')} ${output.cyan(thinkLevel)}`);
+    }
+    if (values.stream) {
+      console.log(`   ${output.dim('Stream:')}   ${output.cyan('Enabled')}`);
+    }
+    if (values.budget) {
+      console.log(`   ${output.dim('Budget:')}   ${output.cyan('$' + values.budget)}`);
     }
     if (config.verbose) {
       console.log(`   ${output.dim('Verbose:')}  ${output.cyan('Enabled')}`);
@@ -592,9 +624,29 @@ async function main() {
       agent: values.agent,
       verbose: config.verbose,
       onConfirmRequired,
+      // v0.2.8: Extended thinking, streaming, budget, provider
+      thinkLevel,
+      streaming: values.stream,
+      maxBudgetUsd: values.budget || null,
+      provider: providerName,
+      onPartialMessage: values.stream ? (event) => {
+        // Write partial text to stdout for streaming display
+        if (event?.content) {
+          process.stdout.write(event.content);
+        } else if (event?.delta?.text) {
+          process.stdout.write(event.delta.text);
+        } else if (typeof event?.text === 'string') {
+          process.stdout.write(event.text);
+        }
+      } : null,
+      onThinkingBlock: thinkLevel !== 'off' ? (block) => {
+        if (!isQuiet && config.verbose) {
+          const preview = (block.thinking || block.text || '').slice(0, 200);
+          console.log(output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`));
+        }
+      } : null,
       onToolCall: (toolCall) => {
         if (!isQuiet && !config.verbose) {
-          // Standard tool call display (verbose mode handles its own output)
           console.log(output.toolCall(toolCall.name, toolCall.input));
         }
       }
@@ -639,7 +691,12 @@ async function main() {
     } else {
       // Human-readable output
       if (!isQuiet) {
-        console.log('\n' + result.response);
+        // If streaming was used, response was already written to stdout
+        if (values.stream && result.response) {
+          console.log(); // newline after streamed output
+        } else {
+          console.log('\n' + result.response);
+        }
 
         // Show routing info in verbose mode or when agent was auto-selected
         if ((values.verbose || !values.agent) && result.routing) {
@@ -662,6 +719,18 @@ async function main() {
           console.log(`   ${output.dim('Tool Calls:')}  ${stats.toolCalls?.total || 0} (${stats.toolCalls?.successRate || 'N/A'} success)`);
           if (stats.avgToolDuration > 0) {
             console.log(`   ${output.dim('Avg Latency:')} ${stats.avgToolDuration}ms per tool`);
+          }
+          if (result.provider) {
+            console.log(`   ${output.dim('Provider:')}    ${result.provider}`);
+          }
+          if (result.cost != null) {
+            console.log(`   ${output.dim('Cost:')}        $${result.cost.toFixed(4)}`);
+          }
+          if (result.budgetExceeded) {
+            console.log(`   ${output.yellow('Budget exceeded')}${values.budget ? ` (limit: $${values.budget})` : ''}`);
+          }
+          if (result.thinkLevel && result.thinkLevel !== 'off') {
+            console.log(`   ${output.dim('Thinking:')}    ${result.thinkLevel}`);
           }
         }
 

@@ -1,0 +1,50 @@
+[Unit]
+Description=StateSet SSH Tunnel (%i)
+Documentation=https://github.com/stateset/stateset-icommerce
+After=network-online.target stateset-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stateset
+Group=stateset
+
+# Load tunnel-specific environment from /etc/stateset/tunnels/<instance>.env
+# Each env file contains: SSH_HOST, SSH_PORT_FLAG, LOCAL_PORT, TUNNEL_MODE
+EnvironmentFile=/etc/stateset/tunnels/%i.env
+
+# autossh settings for automatic reconnection
+Environment=AUTOSSH_GATETIME=0
+Environment=AUTOSSH_POLL=60
+
+# Use autossh if available for automatic reconnection, fall back to ssh
+ExecStart=/bin/bash -c '\
+  if command -v autossh >/dev/null 2>&1; then \
+    exec autossh -M 0 -N ${SSH_PORT_FLAG} ${SSH_HOST} \
+      -o ServerAliveInterval=60 \
+      -o ServerAliveCountMax=3 \
+      -o ExitOnForwardFailure=yes \
+      -o StrictHostKeyChecking=accept-new \
+      -i /home/stateset/.ssh/stateset_gateway; \
+  else \
+    exec ssh -N ${SSH_PORT_FLAG} ${SSH_HOST} \
+      -o ServerAliveInterval=60 \
+      -o ServerAliveCountMax=3 \
+      -o ExitOnForwardFailure=yes \
+      -o StrictHostKeyChecking=accept-new \
+      -i /home/stateset/.ssh/stateset_gateway; \
+  fi'
+
+# Restart policy
+Restart=on-failure
+RestartSec=15
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stateset-ssh-tunnel-%i
+
+[Install]
+WantedBy=multi-user.target

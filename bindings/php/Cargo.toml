@@ -1,6 +1,6 @@
 [package]
 name = "stateset-embedded-php"
-version = "0.2.4"
+version = "0.2.6"
 edition = "2021"
 description = "PHP bindings for StateSet Embedded Commerce"
 license = "MIT OR Apache-2.0"

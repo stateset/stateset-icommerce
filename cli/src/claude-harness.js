@@ -4,7 +4,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { DEFAULT_MODEL } from './config.js';
+import { DEFAULT_MODEL, THINK_LEVELS } from './config.js';
 import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
@@ -1314,6 +1314,12 @@ export function routeToAgentWithConfidence(request) {
  * @param {boolean} options.enableSync - Enable VES sync event capture (default: auto-detect from config)
  * @param {boolean} options.autoSyncPush - Auto-push events after mutations (default: false)
  * @param {Function} options.onSyncEvent - Callback when sync event is captured
+ * @param {string} options.thinkLevel - Extended thinking level: off|low|medium|high
+ * @param {boolean} options.streaming - Enable streaming/partial messages
+ * @param {number|null} options.maxBudgetUsd - Maximum budget in USD per query
+ * @param {string} options.provider - AI provider: claude|openai|gemini|ollama
+ * @param {Function} options.onPartialMessage - Callback for streaming tokens
+ * @param {Function} options.onThinkingBlock - Callback for thinking content blocks
  */
 export async function runAgentLoop({
   request,
@@ -1332,7 +1338,13 @@ export async function runAgentLoop({
   permissionGate = null,
   enableSync = null,
   autoSyncPush = false,
-  onSyncEvent = null
+  onSyncEvent = null,
+  thinkLevel = 'off',
+  streaming = false,
+  maxBudgetUsd = null,
+  provider = 'claude',
+  onPartialMessage = null,
+  onThinkingBlock = null
 }) {
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
@@ -1410,6 +1422,7 @@ export async function runAgentLoop({
   );
 
   // Build options
+  const thinkTokens = THINK_LEVELS[thinkLevel] || 0;
   const options = {
     model,
     systemPrompt: agentConfig.systemPrompt,
@@ -1420,7 +1433,13 @@ export async function runAgentLoop({
     maxTurns,
     // Allow MCP tools to run without prompting for permission
     permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true
+    allowDangerouslySkipPermissions: true,
+    // v0.2.8: Extended thinking
+    ...(thinkTokens > 0 ? { maxThinkingTokens: thinkTokens } : {}),
+    // v0.2.8: Streaming partial messages
+    ...(streaming ? { includePartialMessages: true } : {}),
+    // v0.2.8: Budget controls
+    ...(maxBudgetUsd ? { maxBudgetUsd: parseFloat(maxBudgetUsd) } : {}),
   };
 
   // Track results
@@ -1440,7 +1459,43 @@ export async function runAgentLoop({
     // Clean process.argv before SDK call
     process.argv = process.argv.slice(0, 2); // Keep only node and script path
 
-    // Run the query
+    // v0.2.8: Non-Claude provider path
+    if (provider !== 'claude') {
+      const { getProviderRegistry } = await import('./providers/base.js');
+      const providerInstance = getProviderRegistry().get(provider);
+      if (!providerInstance) {
+        throw new Error(`Unknown provider: ${provider}. Available: ${getProviderRegistry().list().join(', ')}`);
+      }
+      if (!(await providerInstance.isAvailable())) {
+        const providerConfig = (await import('./config.js')).PROVIDERS[provider];
+        throw new Error(`Provider "${provider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`);
+      }
+      const messages = [
+        { role: 'system', content: agentConfig.systemPrompt },
+        { role: 'user', content: request },
+      ];
+      const providerResult = await providerInstance.chat(messages, {
+        model,
+        stream: streaming,
+        onPartialMessage,
+      });
+      process.argv = savedArgv;
+      return {
+        response: providerResult.text,
+        toolResults: [],
+        sessionId: null,
+        agent: agentName,
+        routing: routingResult,
+        provider,
+        cost: providerResult.cost || null,
+        thinkLevel,
+      };
+    }
+
+    // Run the query (Claude provider)
+    let budgetExceeded = false;
+    let totalCost = null;
+
     for await (const message of query({ prompt: request, options })) {
       // Capture session ID
       if (message.sessionId && !sessionId) {
@@ -1467,6 +1522,9 @@ export async function runAgentLoop({
               }
             } else if (block.type === 'text') {
               response += block.text;
+            } else if (block.type === 'thinking' && onThinkingBlock) {
+              // v0.2.8: Extended thinking content
+              onThinkingBlock(block);
             }
           }
         }
@@ -1474,6 +1532,13 @@ export async function runAgentLoop({
         // Final result message - extract the response
         if (message.result) {
           response = message.result;
+        }
+        // v0.2.8: Track cost and budget status
+        if (message.total_cost_usd != null) {
+          totalCost = message.total_cost_usd;
+        }
+        if (message.subtype === 'error_max_budget_usd') {
+          budgetExceeded = true;
         }
       } else if (message.type === 'user') {
         // User messages contain tool results
@@ -1492,6 +1557,11 @@ export async function runAgentLoop({
             pending.duration
           );
         }
+      }
+
+      // v0.2.8: Streaming partial messages
+      if (streaming && onPartialMessage && message.type !== 'assistant' && message.type !== 'result' && message.type !== 'user') {
+        onPartialMessage(message);
       }
     }
 
@@ -1539,6 +1609,10 @@ export async function runAgentLoop({
       routing: routingResult,
       telemetry: telem.getSummary(),
       traceId: telem.traceId,
+      provider: 'claude',
+      cost: totalCost,
+      thinkLevel,
+      budgetExceeded,
       sync: syncResult ? {
         enabled: true,
         pushed: syncResult.pushed,

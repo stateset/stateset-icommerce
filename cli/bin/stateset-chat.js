@@ -12,7 +12,7 @@
  */
 
 import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
-import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
+import { DEFAULT_MODEL, CLI_VERSION, THINK_LEVELS } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
 
@@ -25,7 +25,12 @@ USAGE:
 OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
   --apply            Enable write operations
-  --model <model>    Claude model to use
+  --model <model>    AI model to use
+  --provider <name>  AI provider: claude, openai, gemini, ollama (default: claude)
+  --think <level>    Extended thinking: off, low, medium, high (default: off)
+  --stream           Enable streaming output
+  --budget <usd>     Maximum spend per query in USD
+  --memory           Enable conversation memory
   --verbose, -V      Enable verbose telemetry
   --help, -h         Show this help message
 
@@ -33,6 +38,11 @@ IN-CHAT COMMANDS:
   /help              Show available commands
   /status            Show current settings
   /apply on|off      Toggle apply mode
+  /think <level>     Set thinking level (off|low|medium|high)
+  /stream            Toggle streaming mode
+  /provider <name>   Switch AI provider
+  /budget <usd>      Set budget per query ($)
+  /memory            Toggle conversation memory
   /verbose on|off    Toggle verbose mode
   /db <path>         Switch database
   /new               Start new session (clear context)
@@ -45,6 +55,11 @@ async function main() {
       db: { type: 'string', default: './store.db' },
       apply: { type: 'boolean', default: false },
       model: { type: 'string', default: DEFAULT_MODEL },
+      provider: { type: 'string', default: 'claude' },
+      think: { type: 'string', default: 'off' },
+      stream: { type: 'boolean', default: false },
+      budget: { type: 'string' },
+      memory: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'V', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },
@@ -65,6 +80,11 @@ async function main() {
   let model = values.model;
   let verbose = values.verbose;
   let sessionId = null;
+  let thinkLevel = values.think || 'off';
+  let streaming = values.stream || false;
+  let provider = values.provider || 'claude';
+  let budget = values.budget || null;
+  let memoryEnabled = values.memory || false;
 
   // Create readline interface
   const rl = readline.createInterface({
@@ -79,24 +99,36 @@ async function main() {
 
   const showStatus = () => {
     console.log(`\n${ICONS.analytics} ${output.bold('Current Settings:')}`);
-    console.log(`   ${output.dim('Database:')} ${dbPath}`);
-    console.log(`   ${output.dim('Mode:')}     ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`);
-    console.log(`   ${output.dim('Verbose:')}  ${verbose ? output.cyan('On') : 'Off'}`);
-    console.log(`   ${output.dim('Model:')}    ${model}`);
-    console.log(`   ${output.dim('Session:')}  ${sessionId || output.dim('(none)')}`);
+    console.log(`   ${output.dim('Database:')}  ${dbPath}`);
+    console.log(`   ${output.dim('Mode:')}      ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(`   ${output.dim('Provider:')}  ${provider}`);
+    console.log(`   ${output.dim('Model:')}     ${model}`);
+    console.log(`   ${output.dim('Thinking:')}  ${thinkLevel === 'off' ? 'Off' : output.cyan(thinkLevel)}`);
+    console.log(`   ${output.dim('Streaming:')} ${streaming ? output.cyan('On') : 'Off'}`);
+    if (budget) {
+      console.log(`   ${output.dim('Budget:')}    ${output.cyan('$' + budget)}/query`);
+    }
+    console.log(`   ${output.dim('Memory:')}    ${memoryEnabled ? output.cyan('On') : 'Off'}`);
+    console.log(`   ${output.dim('Verbose:')}   ${verbose ? output.cyan('On') : 'Off'}`);
+    console.log(`   ${output.dim('Session:')}   ${sessionId || output.dim('(none)')}`);
     console.log();
   };
 
   const showHelp = () => {
     console.log(`
 ${output.bold('Available Commands:')}
-   /help              Show this help
-   /status            Show current settings
-   /apply on|off      Toggle write mode
-   /verbose on|off    Toggle verbose mode
-   /db <path>         Switch database
-   /new               Start new session
-   /exit, /quit       Exit chat
+   /help                    Show this help
+   /status                  Show current settings
+   /apply on|off            Toggle write mode
+   /think off|low|med|high  Set extended thinking level
+   /stream                  Toggle streaming output
+   /provider <name>         Switch provider (claude|openai|gemini|ollama)
+   /budget <usd>            Set max spend per query (e.g., /budget 1.00)
+   /memory                  Toggle conversation memory
+   /verbose on|off          Toggle verbose mode
+   /db <path>               Switch database
+   /new                     Start new session
+   /exit, /quit             Exit chat
 
 ${output.bold('Example Queries:')}
    "show me all customers"
@@ -156,6 +188,59 @@ ${output.bold('Example Queries:')}
           }
           break;
 
+        case 'think': {
+          const level = (args[0] || '').toLowerCase();
+          if (['off', 'low', 'medium', 'med', 'high'].includes(level)) {
+            thinkLevel = level === 'med' ? 'medium' : level;
+            console.log(output.status('success', `Extended thinking: ${thinkLevel}${thinkLevel !== 'off' ? ` (${THINK_LEVELS[thinkLevel]?.toLocaleString()} tokens)` : ''}`));
+          } else {
+            console.log(`Thinking: ${thinkLevel}`);
+            console.log('Use /think off|low|medium|high');
+          }
+          break;
+        }
+
+        case 'stream':
+          streaming = !streaming;
+          console.log(output.status('info', `Streaming: ${streaming ? 'on' : 'off'}`));
+          break;
+
+        case 'provider':
+          if (args[0]) {
+            const p = args[0].toLowerCase();
+            if (['claude', 'openai', 'gemini', 'ollama'].includes(p)) {
+              provider = p;
+              console.log(output.status('success', `Provider: ${provider}`));
+              if (provider !== 'claude') {
+                console.log(output.dim('   Note: Non-Claude providers run in chat-only mode (no MCP tools)'));
+              }
+            } else {
+              console.log(`Unknown provider: ${p}. Available: claude, openai, gemini, ollama`);
+            }
+          } else {
+            console.log(`Current provider: ${provider}`);
+          }
+          break;
+
+        case 'budget':
+          if (args[0]) {
+            const val = parseFloat(args[0]);
+            if (!isNaN(val) && val > 0) {
+              budget = args[0];
+              console.log(output.status('success', `Budget: $${budget}/query`));
+            } else {
+              console.log('Usage: /budget <amount> (e.g., /budget 1.00)');
+            }
+          } else {
+            console.log(`Budget: ${budget ? '$' + budget + '/query' : 'unlimited'}`);
+          }
+          break;
+
+        case 'memory':
+          memoryEnabled = !memoryEnabled;
+          console.log(output.status('info', `Memory: ${memoryEnabled ? 'on' : 'off'}`));
+          break;
+
         case 'db':
           if (args[0]) {
             dbPath = args[0];
@@ -198,9 +283,27 @@ ${output.bold('Example Queries:')}
         allowApply,
         verbose,
         resumeSessionId: sessionId,
+        thinkLevel,
+        streaming,
+        maxBudgetUsd: budget,
+        provider,
+        onPartialMessage: streaming ? (event) => {
+          if (event?.content) {
+            process.stdout.write(event.content);
+          } else if (event?.delta?.text) {
+            process.stdout.write(event.delta.text);
+          } else if (typeof event?.text === 'string') {
+            process.stdout.write(event.text);
+          }
+        } : null,
+        onThinkingBlock: thinkLevel !== 'off' ? (block) => {
+          if (verbose) {
+            const preview = (block.thinking || block.text || '').slice(0, 200);
+            console.log(output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`));
+          }
+        } : null,
         onToolCall: (toolCall) => {
           if (!verbose) {
-            // Standard tool call display (verbose mode handles its own output)
             console.log(output.toolCall(toolCall.name, toolCall.input));
           }
         }
@@ -211,13 +314,21 @@ ${output.bold('Example Queries:')}
         sessionId = result.sessionId;
       }
 
-      console.log('\n' + result.response);
+      // If streaming was used, just add a newline; otherwise print full response
+      if (streaming && result.response) {
+        console.log(); // newline after streamed output
+      } else {
+        console.log('\n' + result.response);
+      }
 
       // Show stats in verbose mode
       if (verbose && result.telemetry) {
         const stats = result.telemetry;
         console.log(`\n${output.dim('─'.repeat(40))}`);
-        console.log(`${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms`);
+        console.log(`${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms${result.cost != null ? `, $${result.cost.toFixed(4)}` : ''}`);
+        if (result.budgetExceeded) {
+          console.log(output.yellow('Budget exceeded'));
+        }
       }
 
       console.log();

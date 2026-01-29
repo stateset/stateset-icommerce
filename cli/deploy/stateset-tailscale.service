@@ -1,0 +1,26 @@
+[Unit]
+Description=StateSet iCommerce Tailscale Reverse Proxy
+Documentation=https://github.com/stateset/stateset-icommerce
+After=stateset-gateway.service tailscaled.service
+Requires=stateset-gateway.service tailscaled.service
+
+[Service]
+Type=simple
+User=stateset
+Group=stateset
+
+# Expose the gateway on the Tailscale network
+# This creates a Tailscale Funnel/Serve for the HTTP gateway
+# Access via: https://stateset-gateway.<tailnet>.ts.net
+ExecStart=/usr/bin/tailscale serve --bg --https=443 http://127.0.0.1:8080
+ExecStop=/usr/bin/tailscale serve off
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stateset-tailscale
+
+[Install]
+WantedBy=multi-user.target

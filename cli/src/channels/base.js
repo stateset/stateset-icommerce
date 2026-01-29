@@ -242,6 +242,11 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       '/stats - Bot statistics',
       '/escalate [reason] - Talk to a human agent',
       '/release - Return to AI mode (after escalation)',
+      '/think <level> - Set thinking (off|low|medium|high)',
+      '/provider <name> - Switch AI provider',
+      '/memory - Toggle conversation memory',
+      '/skills [category] - List loaded skills',
+      '/skill-info <name> - Show skill details',
     ].join('\n');
 
     // Append dynamically registered commands
@@ -261,8 +266,37 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
         `Agent: ${session.agent || 'auto-route'}`,
         `Session: ${session.sessionId ? 'active' : 'none'}`,
         `Mode: ${allowApply ? 'write enabled' : 'preview only'}`,
+        `Provider: ${session.provider || 'claude'}`,
+        `Thinking: ${session.thinkLevel || 'off'}`,
+        `Memory: ${session.memoryEnabled ? 'on' : 'off'}`,
       ].join('\n'),
     };
+  }
+
+  // --- v0.2.8: Extended thinking, provider, memory commands ---
+
+  if (cmd === '/think') {
+    const level = (parts[1] || '').toLowerCase();
+    if (['off', 'low', 'medium', 'med', 'high'].includes(level)) {
+      session.thinkLevel = level === 'med' ? 'medium' : level;
+      return { handled: true, response: `Extended thinking: ${session.thinkLevel}` };
+    }
+    return { handled: true, response: `Thinking: ${session.thinkLevel || 'off'}\nUsage: /think off|low|medium|high` };
+  }
+
+  if (cmd === '/provider') {
+    const p = (parts[1] || '').toLowerCase();
+    if (['claude', 'openai', 'gemini', 'ollama'].includes(p)) {
+      session.provider = p;
+      const note = p !== 'claude' ? '\nNote: Non-Claude providers run in chat-only mode (no tools)' : '';
+      return { handled: true, response: `Provider: ${p}${note}` };
+    }
+    return { handled: true, response: `Provider: ${session.provider || 'claude'}\nUsage: /provider claude|openai|gemini|ollama` };
+  }
+
+  if (cmd === '/memory') {
+    session.memoryEnabled = !session.memoryEnabled;
+    return { handled: true, response: `Memory: ${session.memoryEnabled ? 'on' : 'off'}` };
   }
 
   // --- Commerce data commands (require commerce instance) ---
@@ -434,6 +468,46 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
     return { handled: true, response: 'No active escalation found. You\'re already talking to the AI assistant.' };
   }
 
+  // --- Skills commands ---
+  if (cmd === '/skills') {
+    try {
+      const { getSkillRegistry } = await import('../skills/registry.js');
+      const skillRegistry = getSkillRegistry();
+      const category = parts[1] || null;
+      const skills = category ? skillRegistry.listByCategory(category) : skillRegistry.list();
+      if (skills.length === 0) {
+        return { handled: true, response: category ? `No skills in category "${category}".` : 'No skills loaded.' };
+      }
+      const lines = skills.map((s) => `- ${s.name}: ${s.description.slice(0, 80)}`);
+      const header = category ? `Skills (${category}):` : `Skills (${skills.length}):`;
+      return { handled: true, response: [header, ...lines].join('\n') };
+    } catch {
+      return { handled: true, response: 'Skill system not available.' };
+    }
+  }
+
+  if (cmd === '/skill-info') {
+    const name = parts[1];
+    if (!name) return { handled: true, response: 'Usage: /skill-info <skill-name>' };
+    try {
+      const { getSkillRegistry } = await import('../skills/registry.js');
+      const skill = getSkillRegistry().get(name);
+      if (!skill) return { handled: true, response: `Skill "${name}" not found.` };
+      const info = [
+        `Skill: ${skill.name}`,
+        `Description: ${skill.description}`,
+        `Category: ${skill.category}`,
+        `Origin: ${skill.origin}`,
+        `Tags: ${skill.tags.join(', ')}`,
+        `References: ${skill.hasReferences ? 'yes' : 'no'}`,
+        `Scripts: ${skill.hasScripts ? 'yes' : 'no'}`,
+      ];
+      return { handled: true, response: info.join('\n') };
+    } catch {
+      return { handled: true, response: 'Skill system not available.' };
+    }
+  }
+
   // --- Dynamic command registry lookup ---
   const registry = getCommandRegistry();
   const cmdName = cmd.startsWith('/') ? cmd.slice(1) : cmd;
@@ -474,22 +548,70 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
 export async function processWithAgent(text, session, opts) {
   const { dbPath, allowApply, model, maxTurns = 10, agent, verbose } = opts;
 
-  const result = await runAgentLoop({
-    request: text,
-    dbPath,
-    model,
-    allowApply,
-    maxTurns,
-    resumeSessionId: session.sessionId,
-    agent: agent || session.agent,
-    verbose,
-  });
+  // Resolve extended thinking level from session override or shared config
+  const thinkLevel = session.thinkLevel || opts.thinkLevel || 'off';
 
-  if (result.sessionId) session.sessionId = result.sessionId;
-  if (result.agent) session.agent = result.agent;
+  // Resolve provider from session override or shared config
+  const provider = session.provider || opts.provider || 'claude';
 
-  const response = result.response?.trim() || 'I processed your request but have no text response.';
-  return { response, agent: result.agent };
+  // If using a non-Claude provider, use the fallback chain (chat-only mode)
+  if (provider !== 'claude') {
+    try {
+      const { getFallbackChain } = await import('../providers/base.js');
+      const chain = getFallbackChain({ verbose });
+      const messages = [
+        { role: 'system', content: 'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations.' },
+        { role: 'user', content: text },
+      ];
+      const result = await chain.chat(messages, { preferredProvider: provider });
+      return { response: result.text, agent: 'chat-only', provider: result.provider };
+    } catch (err) {
+      // If fallback fails too, return the error
+      return { response: `Provider ${provider} failed: ${err.message}`, agent: 'error' };
+    }
+  }
+
+  // Primary path: Claude Agent SDK with full MCP tools + extended thinking
+  try {
+    const result = await runAgentLoop({
+      request: text,
+      dbPath,
+      model,
+      allowApply,
+      maxTurns,
+      resumeSessionId: session.sessionId,
+      agent: agent || session.agent,
+      verbose,
+      thinkLevel,
+    });
+
+    if (result.sessionId) session.sessionId = result.sessionId;
+    if (result.agent) session.agent = result.agent;
+
+    const response = result.response?.trim() || 'I processed your request but have no text response.';
+    return { response, agent: result.agent };
+  } catch (err) {
+    // Claude failed — try automatic fallback if enabled
+    if (opts.enableFallback !== false) {
+      try {
+        const { getFallbackChain } = await import('../providers/base.js');
+        const chain = getFallbackChain({ verbose });
+        const messages = [
+          { role: 'system', content: 'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations. Note: advanced commerce tools are temporarily unavailable.' },
+          { role: 'user', content: text },
+        ];
+        const result = await chain.chat(messages);
+        if (verbose) {
+          console.log(`[Gateway] Claude failed, fell back to ${result.provider}`);
+        }
+        return { response: result.text, agent: 'chat-only', provider: result.provider, failedOver: true };
+      } catch {
+        // All providers failed
+      }
+    }
+    const response = `Sorry, I encountered an error: ${err.message}`;
+    return { response, agent: 'error' };
+  }
 }
 
 // ============================================================================
@@ -574,6 +696,9 @@ export function createMessageHandler(adapter, opts) {
     channel = 'unknown',
     identityStore = null,
     autonomousEngine = null,
+    thinkLevel = 'off',
+    provider = 'claude',
+    enableFallback = true,
   } = opts;
 
   // Lazy-init commerce for bot commands
@@ -739,6 +864,7 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
 
     const result = await processWithAgent(processedText, session, {
       dbPath, allowApply, model, maxTurns, agent, verbose,
+      thinkLevel, provider, enableFallback,
     });
 
     // Fire agent_end hook (parallel)
