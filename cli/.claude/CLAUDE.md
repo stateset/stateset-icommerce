@@ -442,6 +442,83 @@ Supported chains:
 - `bitcoin` - Bitcoin mainnet (BTC) - Original cryptocurrency, maximum security
 - `bitcoin_testnet` - Bitcoin testnet (BTC) - Testing
 
+### Permission Sandboxing (v0.3.1)
+
+The HTTP gateway supports API key authentication, per-route permission levels, and sandbox mode.
+
+**Config** (`gateway.config.json`):
+```json
+{
+  "httpGateway": {
+    "enabled": true,
+    "port": 8080,
+    "apiKeys": [
+      { "key": "sk-admin-secret", "name": "admin", "level": "admin" },
+      { "key": "sk-read-only",    "name": "dashboard", "level": "read" }
+    ],
+    "sandbox": { "browser": true, "shell": true }
+  }
+}
+```
+
+**Permission levels:** `none` (0) < `read` (1) < `preview` (2) < `write` (3) < `delete` (4) < `admin` (5)
+
+**Auth methods:**
+- `Authorization: Bearer <key>` header
+- `?api_key=<key>` query param
+
+```bash
+# Authenticated request
+curl -H "Authorization: Bearer sk-admin-secret" http://localhost:8080/metrics
+
+# Sandbox blocks dangerous routes even for admin
+curl -X POST -H "Authorization: Bearer sk-admin-secret" \
+     http://localhost:8080/browser/evaluate
+# 403 — blocked by browser sandbox
+```
+
+When `apiKeys` is empty or omitted, auth is disabled (backwards compatible).
+
+### Heartbeat Monitor (v0.3.1)
+
+Proactive commerce health checks that emit alerts through EventBridge to all messaging channels.
+
+**Config** (`gateway.config.json`):
+```json
+{
+  "heartbeat": {
+    "enabled": true,
+    "checks": [
+      { "id": "low-stock", "name": "Low Stock", "checker": "low-stock", "intervalMs": 3600000, "enabled": true, "config": { "threshold": 10 } },
+      { "id": "abandoned-carts", "name": "Abandoned Carts", "checker": "abandoned-carts", "intervalMs": 86400000, "enabled": true, "config": { "minAgeHours": 24 } }
+    ]
+  }
+}
+```
+
+**Built-in checkers:** `low-stock`, `abandoned-carts`, `revenue-milestone`, `pending-returns`, `overdue-invoices`, `subscription-churn`
+
+**HTTP API:**
+```bash
+# Monitor status
+curl -H "Authorization: Bearer $KEY" http://localhost:8080/heartbeat/status
+
+# List all checks
+curl -H "Authorization: Bearer $KEY" http://localhost:8080/heartbeat/checks
+
+# Manually run a check
+curl -X POST -H "Authorization: Bearer $KEY" \
+     http://localhost:8080/heartbeat/checks/low-stock/run
+
+# Enable/disable a check at runtime
+curl -X POST -H "Authorization: Bearer $KEY" \
+     http://localhost:8080/heartbeat/checks/low-stock/enable
+curl -X POST -H "Authorization: Bearer $KEY" \
+     http://localhost:8080/heartbeat/checks/low-stock/disable
+```
+
+Alerts route through: HeartbeatMonitor -> AutonomousEngine -> EventBridge -> ChannelNotifier -> channels.
+
 ## Configuration
 
 ### Environment Variables

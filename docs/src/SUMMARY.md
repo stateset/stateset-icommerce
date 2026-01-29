@@ -7,6 +7,8 @@
   - [CLI](guides/cli.md)
   - [Sync (VES)](guides/sync.md)
   - [Operations](guides/operations.md)
+  - [Permissions & Auth](guides/permissions.md)
+  - [Heartbeat Monitor](guides/heartbeat.md)
 - [Examples](examples.md)
 - [API Reference](api/index.md)
   - [Rust](api/rust.md)

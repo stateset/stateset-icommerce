@@ -6,6 +6,18 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-01-29
+
+### Added
+- API key authentication for HTTP gateway (Bearer token + query param).
+- Per-route permission levels (none / read / preview / write / delete / admin).
+- Sandbox mode to block browser and shell routes.
+- Proactive heartbeat monitor with 6 commerce checkers (low stock, abandoned carts, revenue milestone, pending returns, overdue invoices, subscription churn).
+- Heartbeat HTTP API (status, list checks, run, enable, disable).
+- EventBridge integration for heartbeat alerts across all messaging channels.
+- `HEARTBEAT_DEFAULTS` and `HTTP_GATEWAY_DEFAULTS` in config.
+- 76 new tests (39 permissions + 37 heartbeat).
+
 ## [0.2.4] - 2026-01-26
 
 ### Added
