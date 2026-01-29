@@ -76,6 +76,17 @@ const DEFAULT_EVENT_MAP = {
     notificationType: 'general',
     message: (d) => d.message || JSON.stringify(d),
   },
+
+  // Heartbeat events
+  'heartbeat:alert': {
+    notificationType: 'heartbeat.alert',
+    message: (d) => `Heartbeat Alert [${d.checkName || d.checkId}]: ${d.summary || 'triggered'}`,
+  },
+
+  'heartbeat:check:error': {
+    notificationType: 'heartbeat.error',
+    message: (d) => `Heartbeat check error [${d.checkId}]: ${d.error || 'unknown'}`,
+  },
 };
 
 // ============================================================================

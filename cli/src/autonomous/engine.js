@@ -49,8 +49,12 @@ export class AutonomousEngine extends EventEmitter {
       scheduler: enableScheduler,
       workflows: enableWorkflows,
       policies: enablePolicies,
-      approvals: enableApprovals
+      approvals: enableApprovals,
+      heartbeat: false,
     };
+
+    // Heartbeat (initialized lazily via initHeartbeat)
+    this.heartbeat = null;
 
     // Initialize subsystems
     this.scheduler = enableScheduler ? new Scheduler({
@@ -216,6 +220,29 @@ export class AutonomousEngine extends EventEmitter {
     }
 
     return true;
+  }
+
+  /**
+   * Initialize the heartbeat monitor subsystem.
+   *
+   * @param {Object} config - Heartbeat config (checks, verbose)
+   * @param {Object} commerce - StateSet Commerce instance
+   */
+  async initHeartbeat(config, commerce) {
+    const { HeartbeatMonitor } = await import('../heartbeat/heartbeat.js');
+    this.heartbeat = new HeartbeatMonitor({
+      checks: config.checks || null,
+      commerce,
+      verbose: config.verbose ?? false,
+    });
+    this.features.heartbeat = true;
+
+    // Forward heartbeat events with prefix
+    const originalEmit = this.heartbeat.emit.bind(this.heartbeat);
+    this.heartbeat.emit = (event, ...args) => {
+      originalEmit(event, ...args);
+      this.emit(`heartbeat:${event}`, ...args);
+    };
   }
 
   /**
@@ -391,6 +418,7 @@ export class AutonomousEngine extends EventEmitter {
     if (this.scheduler) this.scheduler.start();
     if (this.webhooks) this.webhooks.start();
     if (this.approvals) this.approvals.start();
+    if (this.heartbeat) this.heartbeat.start();
 
     this.isRunning = true;
     this.emit('started');
@@ -405,6 +433,7 @@ export class AutonomousEngine extends EventEmitter {
     if (this.scheduler) this.scheduler.stop();
     if (this.webhooks) await this.webhooks.stop();
     if (this.approvals) this.approvals.stop();
+    if (this.heartbeat) this.heartbeat.stop();
 
     await this.save();
 
@@ -423,7 +452,8 @@ export class AutonomousEngine extends EventEmitter {
       workflows: this.workflows?.getStatus() || null,
       policies: this.policies?.getStatus() || null,
       webhooks: this.webhooks?.getStatus() || null,
-      approvals: this.approvals?.getStatus() || null
+      approvals: this.approvals?.getStatus() || null,
+      heartbeat: this.heartbeat?.getStatus() || null,
     };
   }
 
