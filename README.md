@@ -22,13 +22,34 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 | **MCP Tools** | 87 |
 | **CLI Programs** | 26 |
 | **AI Agents** | 8 |
-| **Messaging Channels** | 6 (WhatsApp, Telegram, Discord, Slack, Signal, Google Chat) |
+| **Messaging Channels** | 9 (WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams) |
 | **Language Bindings** | 11 (Rust, Node.js, Python, Ruby, PHP, Java, WASM, Kotlin, Swift, C#, Go) |
-| **Current Version** | 0.2.5 |
+| **Commerce Skills** | 38 |
+| **AI Providers** | 4 (Claude, OpenAI, Gemini, Ollama) |
+| **Current Version** | 0.3.1 |
 
 ---
 
 ## Recent Highlights
+
+### v0.3.1 — Skills System, Voice Mode & Multi-Provider Support
+
+**38 Commerce Skills** — Domain-specific knowledge packs that enhance agent capabilities across the entire commerce stack.
+
+| Feature | Description |
+|---------|-------------|
+| **Skills System** | 38 domain-specific skills (accounts payable, fulfillment, quality, warehouse, cost accounting, and more) with SKILL.md references, scripts, and marketplace browser |
+| **Voice Mode** | Speech-to-text and text-to-speech with pluggable providers (ElevenLabs, OpenAI Whisper), per-session voice settings, and 30-minute TTL |
+| **Multi-Provider AI** | Swap between Claude (full MCP tools), OpenAI, Google Gemini, and local Ollama models with automatic fallback chains |
+| **Conversation Memory** | SQLite-backed persistent memory across sessions — summaries, facts, keyword search, and token tracking |
+| **Browser Automation** | Chrome DevTools Protocol (CDP) integration for web scraping, storefront testing, and catalog sync — no Puppeteer dependency |
+| **Daemon Mode** | `stateset-daemon` systemd service manager with start/stop/logs/health, Tailscale VPN, and SSH tunnel management |
+| **WebChat Channel** | HTTP-based web chat gateway for embedding commerce agents in web apps |
+| **iMessage Gateway** | Experimental iMessage integration via BlueBubbles bridge |
+| **Teams Gateway** | Experimental Microsoft Teams integration via Bot Framework |
+| **Matrix Gateway** | Experimental Matrix protocol integration via Client-Server API |
+| **Heartbeat Monitor** | 6 proactive health checkers (low-stock, abandoned-carts, revenue-milestone, pending-returns, overdue-invoices, subscription-churn) with EventBridge routing |
+| **Permission Sandboxing** | API key auth, per-route permission levels (read/preview/write/delete/admin), and sandbox mode to block dangerous routes |
 
 ### v0.2.5 — Multi-Channel Messaging Gateway
 
@@ -76,10 +97,10 @@ Deploy AI commerce agents across **6 messaging platforms** from a single process
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.2.5    # Python
-gem install stateset_embedded -v 0.2.5  # Ruby
-npm install @stateset/embedded@0.2.5    # Node.js
-npm install -g @stateset/cli@0.2.5      # CLI
+pip install stateset-embedded==0.3.1    # Python
+gem install stateset_embedded -v 0.3.1  # Ruby
+npm install @stateset/embedded@0.3.1    # Node.js
+npm install -g @stateset/cli@0.3.1      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -128,10 +149,11 @@ stateset-icommerce/
 │   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # 26 CLI programs (including stateset-sync, stateset-channels)
+    ├── bin/                 # CLI programs (stateset, stateset-daemon, stateset-skills, ...)
     ├── src/                 # MCP server (87 tools)
-    ├── src/channels/        # 6-channel messaging gateway
+    ├── src/channels/        # 9-channel messaging gateway
     │   ├── base.js          # Shared sessions, commands, pipeline
+    │   ├── webchat.js       # HTTP-based web chat gateway
     │   ├── middleware.js     # Rate limiter, content filter, logger
     │   ├── rich-messages.js  # Platform-agnostic rich messages
     │   ├── session-store.js  # SQLite-backed persistent sessions
@@ -142,14 +164,24 @@ stateset-icommerce/
     │   ├── metrics.js        # Per-channel conversation metrics
     │   ├── handoff.js        # AI-to-human escalation queue
     │   └── templates.js      # Pre-built rich message templates
+    ├── src/providers/       # Multi-provider AI (Claude, OpenAI, Gemini, Ollama)
+    ├── src/voice/           # Voice mode (STT + TTS)
+    ├── src/memory/          # Persistent conversation memory
+    ├── src/browser/         # Chrome DevTools Protocol automation
+    ├── src/skills/          # Skills loader, registry, marketplace
+    ├── src/imessage/        # iMessage gateway (BlueBubbles)
+    ├── src/matrix/          # Matrix protocol gateway
+    ├── src/teams/           # Microsoft Teams gateway
     ├── src/sync/            # VES sync engine, keys, groups
-    └── .claude/             # 8 AI agents, 6 skills
+    ├── skills/              # 38 commerce domain skills
+    ├── deploy/              # Systemd services, Tailscale, SSH tunnels
+    └── .claude/             # 8 AI agents
 ```
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                       AI Agent Layer                            │
-│              (Claude, ChatGPT, Gemini, Custom)                  │
+│         (Claude, OpenAI, Gemini, Ollama — with fallback)        │
 └─────────────────────────────────────────────────────────────────┘
                               │
                    Agentic Commerce Protocol (ACP)
@@ -161,14 +193,22 @@ stateset-icommerce/
 │  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  87 MCP     │  │  8 Agents   │  │  6 Skills   │             │
+│  │  87 MCP     │  │  8 Agents   │  │  38 Skills  │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │  Voice Mode │  │  Memory     │  │  Browser    │             │
+│  │  STT + TTS  │  │ Persistent  │  │  CDP Tools  │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────────────────────────────────────────┐            │
-│  │           6-Channel Messaging Gateway            │            │
-│  │  WhatsApp · Telegram · Discord · Slack           │            │
-│  │  Signal · Google Chat                            │            │
+│  │           9-Channel Messaging Gateway            │            │
+│  │  WhatsApp · Telegram · Discord · Slack · Signal  │            │
+│  │  Google Chat · WebChat · iMessage · Teams        │            │
 │  │  Sessions · Middleware · Identity · Handoff       │            │
+│  └─────────────────────────────────────────────────┘            │
+│  ┌─────────────────────────────────────────────────┐            │
+│  │           Heartbeat Monitor & Permissions        │            │
+│  │  6 Health Checkers · API Key Auth · Sandboxing   │            │
 │  └─────────────────────────────────────────────────┘            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -633,7 +673,7 @@ stateset-sync groups:my-groups  # List your group memberships
 
 ### Messaging Channels CLI
 
-Deploy AI commerce agents to 6 messaging platforms. Each channel runs as a thin adapter over the shared base module.
+Deploy AI commerce agents to 9 messaging platforms. Each channel runs as a thin adapter over the shared base module.
 
 ```bash
 # Single-channel gateways
@@ -643,6 +683,12 @@ stateset-slack --db ./store.db --agent customer-service
 stateset-whatsapp --db ./store.db --agent customer-service
 stateset-signal --db ./store.db --agent customer-service
 stateset-google-chat --db ./store.db --agent customer-service
+
+# Experimental channels
+stateset-webchat --db ./store.db --port 3000
+stateset-imessage --db ./store.db --agent customer-service
+stateset-teams --db ./store.db --agent customer-service
+stateset-matrix --db ./store.db --agent customer-service --homeserver matrix.example.com
 
 # Multi-channel orchestrator (all channels in one process)
 stateset-channels --config channels.yaml
@@ -702,6 +748,95 @@ notifications:
     "inventory.low": [{ channel: slack, target: "#ops" }]
     "*": [{ channel: slack, target: "#all-alerts" }]
 ```
+
+### Skills CLI
+
+Browse, install, and manage 38 commerce domain skills that enhance agent capabilities.
+
+```bash
+# List all loaded skills
+stateset-skills list
+
+# Search for skills
+stateset-skills search "inventory"
+
+# Install from marketplace
+stateset-skills install commerce-warehouse
+
+# Uninstall a skill
+stateset-skills uninstall commerce-warehouse
+
+# Show skill details
+stateset-skills info commerce-fulfillment
+
+# List skill categories
+stateset-skills categories
+
+# Browse the marketplace
+stateset-skills marketplace
+
+# Health check all skills
+stateset-skills doctor
+```
+
+**Available skills:** accounts-payable, accounts-receivable, analytics, autonomous-engine, autonomous-runbook, backorders, checkout, cost-accounting, credit, currency, customer-service, customers, embedded-sdk, engine-setup, events, fulfillment, general-ledger, inventory, invoices, lots-and-serials, manufacturing, mcp-tools, orders, payments, products, promotions, quality, receiving, returns, shipments, storefront, subscriptions, suppliers, sync, tax, vector-search, warehouse, warranties.
+
+### Daemon CLI
+
+Manage the StateSet gateway as a background service with systemd integration.
+
+```bash
+# Start the gateway daemon
+stateset-daemon start --config gateway.config.json
+
+# Stop the daemon
+stateset-daemon stop
+
+# View logs
+stateset-daemon logs --follow
+
+# Health check
+stateset-daemon health
+
+# Tailscale VPN management
+stateset-daemon tailscale up
+stateset-daemon tailscale status
+
+# SSH tunnel management
+stateset-daemon tunnel add --host remote.example.com --port 8080
+stateset-daemon tunnel list
+stateset-daemon tunnel remove <name>
+```
+
+### Voice Mode
+
+Enable voice interactions with speech-to-text input and text-to-speech output.
+
+```bash
+# Enable voice mode in chat
+stateset-chat --voice
+
+# Configure voice provider
+stateset-chat --voice --tts-provider elevenlabs --stt-provider whisper
+```
+
+Voice mode features per-session settings, 30-minute inactivity TTL, pluggable STT/TTS providers (ElevenLabs, OpenAI Whisper), and automatic stale session cleanup.
+
+### Multi-Provider AI
+
+Swap between AI providers or configure fallback chains.
+
+```bash
+# Use a specific provider
+stateset --provider openai "list orders"
+stateset --provider gemini "show revenue"
+stateset --provider ollama --model llama3 "check inventory"
+
+# Claude (default) — full MCP tool integration
+stateset "ship order #12345"
+```
+
+Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 87 MCP tools.
 
 ### Validation & Errors
 
@@ -882,7 +1017,7 @@ Eight specialized agents for different commerce domains:
 - Conflict detection and resolution (remote-wins, local-wins, merge)
 
 ### Multi-Channel Messaging Gateway
-- 6 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat
+- 9 platforms: WhatsApp, Telegram, Discord, Slack, Signal, Google Chat, WebChat, iMessage, Teams
 - Persistent sessions across gateway restarts (SQLite-backed)
 - Koa-style middleware pipeline (rate limiter, content filter, logger, language detect)
 - Platform-aware rich messages (Embeds, Block Kit, HTML, plain text)
@@ -894,6 +1029,46 @@ Eight specialized agents for different commerce domains:
 - Per-channel conversation metrics and command tracking
 - Interactive action handlers (Telegram buttons, Discord buttons, Slack Block Kit)
 - Pre-built message templates for order lifecycle, alerts, and engagement
+
+### Skills System
+- 38 domain-specific commerce skills with SKILL.md references, helper scripts, and runbooks
+- Skills marketplace for browsing, installing, and managing skill packs
+- Covers accounts payable/receivable, fulfillment, quality, warehouse, cost accounting, credit, lots/serials, and more
+- Each skill provides contextual knowledge, troubleshooting, and usage examples
+
+### Voice Mode
+- Speech-to-text input and text-to-speech output for hands-free commerce operations
+- Pluggable providers (ElevenLabs, OpenAI Whisper)
+- Per-session voice settings with 30-minute inactivity TTL
+- Integrated with agent pipeline for natural voice-driven workflows
+
+### Multi-Provider AI
+- Support for Claude (full MCP tools), OpenAI, Google Gemini, and local Ollama models
+- Auto-detection of provider availability and model resolution
+- Configurable fallback chains (try providers in order)
+- Non-Claude providers operate in chat-only mode
+
+### Conversation Memory
+- SQLite-backed persistent memory across sessions
+- Stores summaries, facts, and token counts per conversation
+- Keyword search across memory store
+- Auto-cleanup of aged memories
+
+### Browser Automation
+- Chrome DevTools Protocol (CDP) integration — no Puppeteer dependency
+- Headless Chrome spawning and lifecycle management
+- Navigation, DOM queries, JavaScript evaluation, screenshots
+- Useful for web scraping, storefront testing, and catalog sync
+
+### Heartbeat Monitor
+- 6 proactive health checkers: low-stock, abandoned-carts, revenue-milestone, pending-returns, overdue-invoices, subscription-churn
+- EventBridge routing to all messaging channels
+- HTTP API for status, manual runs, and enable/disable at runtime
+
+### Permission Sandboxing
+- API key authentication (Bearer token and query param)
+- Per-route permission levels: none < read < preview < write < delete < admin
+- Sandbox mode to block dangerous routes (browser automation, shell execution)
 
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
@@ -910,7 +1085,7 @@ Eight specialized agents for different commerce domains:
 
 ```toml
 [dependencies]
-stateset-embedded = "0.2"
+stateset-embedded = "0.3"
 rust_decimal = "1.36"
 rust_decimal_macros = "1.36"
 ```
@@ -960,14 +1135,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.2.5</version>
+    <version>0.3.1</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.2.5'
+implementation 'com.stateset:embedded:0.3.1'
 ```
 
 ### Kotlin (Gradle)
@@ -975,7 +1150,7 @@ implementation 'com.stateset:embedded:0.2.5'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.2.5")
+    implementation("com.stateset:embedded-kotlin:0.3.1")
 }
 ```
 
@@ -984,32 +1159,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.2.5")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.3.1")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.2.5'
+pod 'StateSet', '~> 0.3.1'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.2.5
+dotnet add package StateSet.Embedded --version 0.3.1
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.2.5" />
+<PackageReference Include="StateSet.Embedded" Version="0.3.1" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.2.5
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.3.1
 ```
 
 ### CLI
@@ -1221,9 +1396,17 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # 26 CLI programs (incl. stateset-sync, stateset-channels)
+│   ├── bin/                   # CLI programs (stateset, stateset-daemon, stateset-skills, ...)
 │   ├── src/mcp-server.js      # 87 MCP tools
-│   ├── src/channels/          # 6-channel messaging gateway (11 modules)
+│   ├── src/channels/          # 9-channel messaging gateway
+│   ├── src/providers/         # Multi-provider AI (Claude, OpenAI, Gemini, Ollama)
+│   ├── src/voice/             # Voice mode (STT + TTS)
+│   ├── src/memory/            # Persistent conversation memory
+│   ├── src/browser/           # Chrome DevTools Protocol automation
+│   ├── src/skills/            # Skills loader, registry, marketplace
+│   ├── src/imessage/          # iMessage gateway (BlueBubbles)
+│   ├── src/matrix/            # Matrix protocol gateway
+│   ├── src/teams/             # Microsoft Teams gateway (Bot Framework)
 │   ├── src/sync/              # VES sync engine
 │   │   ├── engine.js          # Sync orchestration
 │   │   ├── outbox.js          # Event outbox management
@@ -1233,7 +1416,9 @@ stateset-icommerce/
 │   │   ├── rotation-policy.js # Key rotation policies
 │   │   ├── crypto.js          # VES cryptographic operations
 │   │   └── conflict.js        # Conflict resolution
-│   └── .claude/               # 8 agents, 6 skills
+│   ├── skills/                # 38 commerce domain skills
+│   ├── deploy/                # Systemd services, Tailscale, SSH tunnels
+│   └── .claude/               # 8 AI agents
 └── examples/
 ```
 
