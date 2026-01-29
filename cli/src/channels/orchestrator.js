@@ -22,6 +22,10 @@ import { initializeSharedRuntime } from './plugin-runtime.js';
 import { getGatewayMethods } from './gateway-methods.js';
 import { getCliExtensions } from './cli-extensions.js';
 import { getCommandRegistry } from './command-registry.js';
+import { discoverSkills } from '../skills/loader.js';
+import { getSkillRegistry } from '../skills/registry.js';
+import { registerSkillHooks } from '../skills/injector.js';
+import { createHttpGateway } from './http-gateway.js';
 
 // ============================================================================
 // Channel launchers — lazy-loaded to avoid pulling in SDKs until needed
@@ -51,6 +55,22 @@ const CHANNEL_LAUNCHERS = {
   async 'google-chat'(config, shared) {
     const { startGoogleChatGateway } = await import('../google-chat/gateway.js');
     return startGoogleChatGateway({ ...config, ...shared });
+  },
+  async imessage(config, shared) {
+    const { startIMessageGateway } = await import('../imessage/gateway.js');
+    return startIMessageGateway({ ...config, ...shared });
+  },
+  async teams(config, shared) {
+    const { startTeamsGateway } = await import('../teams/gateway.js');
+    return startTeamsGateway({ ...config, ...shared });
+  },
+  async matrix(config, shared) {
+    const { startMatrixGateway } = await import('../matrix/gateway.js');
+    return startMatrixGateway({ ...config, ...shared });
+  },
+  async webchat(config, shared) {
+    const { startWebChatChannel } = await import('./webchat.js');
+    return startWebChatChannel({ ...config, ...shared });
   },
 };
 
@@ -127,6 +147,10 @@ export class ChannelOrchestrator {
     this._running = false;
     this._eventBridge = null;
     this._pluginLoadResults = null;
+    this._httpGateway = null;
+    this._voice = null;
+    this._browser = null;
+    this._memory = null;
   }
 
   /**
@@ -226,6 +250,17 @@ export class ChannelOrchestrator {
     // Auto-assign plugin slots after all plugins have registered
     slots.autoAssign();
 
+    // 6c. Initialize skill system
+    const skillRegistry = getSkillRegistry();
+    try {
+      const skillsDiscovered = discoverSkills({ verbose: shared.verbose ?? false });
+      skillRegistry.loadFromDiscovered(skillsDiscovered);
+      registerSkillHooks(skillRegistry);
+      console.log(`[Orchestrator] Loaded ${skillRegistry.count()} skills across ${skillRegistry.getCategories().length} categories`);
+    } catch (err) {
+      console.error('[Orchestrator] Skill loading failed:', err.message);
+    }
+
     // 7. Build shared options
     const sharedOpts = {
       sessionStore: this.sessionStore,
@@ -240,7 +275,82 @@ export class ChannelOrchestrator {
       autonomousEngine,
     };
 
-    // 8. Launch channels
+    // 8. Start HTTP gateway
+    const httpConfig = this.config.httpGateway || {};
+    if (httpConfig.enabled !== false) {
+      try {
+        this._httpGateway = createHttpGateway({
+          port: httpConfig.port || 0,
+          host: httpConfig.host || '127.0.0.1',
+          verbose: shared.verbose ?? false,
+          configState,
+          apiKeys: httpConfig.apiKeys || [],
+          sandbox: httpConfig.sandbox || null,
+        });
+        const addr = await this._httpGateway.start();
+        console.log(`[Orchestrator] HTTP gateway listening on ${addr.host}:${addr.port}`);
+      } catch (err) {
+        console.error(`[Orchestrator] HTTP gateway failed to start: ${err.message}`);
+        this._httpGateway = null;
+      }
+    }
+
+    // 9. Init subsystems (voice, browser, memory)
+    if (this.config.voice?.enabled) {
+      try {
+        const { getVoiceModeController } = await import('../voice/voice-mode.js');
+        this._voice = getVoiceModeController(this.config.voice);
+        console.log('[Orchestrator] Voice subsystem initialized.');
+      } catch (err) {
+        console.error(`[Orchestrator] Voice subsystem failed: ${err.message}`);
+      }
+    }
+
+    if (this.config.browser?.enabled) {
+      try {
+        const { getBrowserTools } = await import('../browser/browser-tools.js');
+        this._browser = getBrowserTools(this.config.browser);
+        console.log('[Orchestrator] Browser subsystem initialized.');
+      } catch (err) {
+        console.error(`[Orchestrator] Browser subsystem failed: ${err.message}`);
+      }
+    }
+
+    if (this.config.memory?.enabled) {
+      try {
+        const { getVectorMemoryStore } = await import('../memory/vector-store.js');
+        this._memory = getVectorMemoryStore(this.config.memory);
+        console.log('[Orchestrator] Memory subsystem initialized.');
+      } catch (err) {
+        console.error(`[Orchestrator] Memory subsystem failed: ${err.message}`);
+      }
+    }
+
+    // Init heartbeat monitor (via autonomous engine)
+    if (autonomousEngine && this.config.heartbeat?.enabled) {
+      try {
+        await autonomousEngine.initHeartbeat(
+          this.config.heartbeat,
+          shared.commerce || null,
+        );
+        this._heartbeat = autonomousEngine.heartbeat;
+        console.log('[Orchestrator] Heartbeat monitor initialized.');
+      } catch (err) {
+        console.error(`[Orchestrator] Heartbeat init failed: ${err.message}`);
+      }
+    }
+
+    // Wire subsystems into HTTP gateway
+    if (this._httpGateway) {
+      this._httpGateway.setSubsystems({
+        voice: this._voice,
+        browser: this._browser,
+        memory: this._memory,
+        heartbeat: this._heartbeat || (autonomousEngine?.heartbeat) || null,
+      });
+    }
+
+    // 10. Launch channels
     const started = [];
     const failed = [];
 
@@ -288,6 +398,22 @@ export class ChannelOrchestrator {
       }
     }
 
+    // Mount webchat routes into HTTP gateway via plugin registry
+    if (this._httpGateway && this.gateways.has('webchat')) {
+      try {
+        const webchatGw = this.gateways.get('webchat');
+        if (typeof webchatGw.getRoutes === 'function') {
+          const routes = webchatGw.getRoutes();
+          for (const route of routes) {
+            pluginRegistry._routes.push(route);
+          }
+          console.log(`[Orchestrator] Mounted ${routes.length} webchat routes into HTTP gateway.`);
+        }
+      } catch (err) {
+        console.error(`[Orchestrator] Failed to mount webchat routes: ${err.message}`);
+      }
+    }
+
     // Fire gateway_start hook
     pluginRegistry.getHookRunner().run('gateway_start', { channels: started });
 
@@ -305,6 +431,31 @@ export class ChannelOrchestrator {
 
     // Fire gateway_stop hook
     pluginRegistry.getHookRunner().run('gateway_stop', { channels: [...this.gateways.keys()] });
+
+    // Stop HTTP gateway
+    if (this._httpGateway) {
+      try {
+        await this._httpGateway.stop();
+        console.log('[Orchestrator] HTTP gateway stopped.');
+      } catch (err) {
+        console.error(`[Orchestrator] Error stopping HTTP gateway: ${err.message}`);
+      }
+      this._httpGateway = null;
+    }
+
+    // Destroy subsystems
+    if (this._voice) {
+      try { this._voice.destroy(); } catch {}
+      this._voice = null;
+    }
+    if (this._browser) {
+      try { await this._browser.close(); } catch {}
+      this._browser = null;
+    }
+    if (this._memory) {
+      try { this._memory.close(); } catch {}
+      this._memory = null;
+    }
 
     // Stop event bridge
     if (this._eventBridge) {
@@ -369,12 +520,29 @@ export class ChannelOrchestrator {
         registeredChannels: getNotifier().getRegisteredChannels(),
         routes: getNotifier().getRoutes(),
       },
+      skills: {
+        total: getSkillRegistry().count(),
+        ...getSkillRegistry().getStats(),
+      },
       plugins: {
         loaded: getPluginRegistry().listPlugins(),
         commands: getCommandRegistry().getStats(),
         gatewayMethods: getGatewayMethods().list().length,
         cliExtensions: getCliExtensions().list().length,
         slots: getPluginSlots().getSlotStates(),
+      },
+      voice: {
+        enabled: !!this._voice,
+      },
+      browser: {
+        enabled: !!this._browser,
+      },
+      memory: {
+        enabled: !!this._memory,
+      },
+      httpGateway: {
+        enabled: !!this._httpGateway,
+        address: this._httpGateway ? this._httpGateway.getAddress() : null,
       },
     };
   }
