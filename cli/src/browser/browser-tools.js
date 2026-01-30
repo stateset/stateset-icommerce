@@ -646,6 +646,310 @@ export class BrowserTools {
     return text;
   }
 
+  // -----------------------------------------------------------------------
+  // Semantic Snapshots (Accessibility Tree)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Get the accessibility tree for the current page.
+   * Returns a lightweight, token-efficient representation of the page structure
+   * suitable for LLM consumption (~100x smaller than screenshots).
+   *
+   * @param {object} [opts]
+   * @param {number} [opts.depth=5] - Maximum tree depth to traverse
+   * @param {boolean} [opts.interestingOnly=true] - Only include interactive/semantic elements
+   * @returns {Promise<object>} - The accessibility tree root node
+   */
+  async getAccessibilityTree(opts = {}) {
+    const depth = opts.depth ?? 5;
+    const interestingOnly = opts.interestingOnly ?? true;
+
+    // Enable Accessibility domain if not already enabled
+    await this.send('Accessibility.enable');
+
+    // Get the full accessibility tree
+    const { nodes } = await this.send('Accessibility.getFullAXTree', {
+      depth,
+      max_depth: depth
+    });
+
+    if (!nodes || nodes.length === 0) {
+      return { role: 'RootWebArea', name: '', children: [] };
+    }
+
+    // Build a map of nodeId -> node for quick lookup
+    const nodeMap = new Map();
+    for (const node of nodes) {
+      nodeMap.set(node.nodeId, node);
+    }
+
+    // Convert CDP accessibility nodes to our simplified format
+    const convertNode = (cdpNode, currentDepth = 0) => {
+      if (!cdpNode || currentDepth > depth) return null;
+
+      const role = cdpNode.role?.value || 'unknown';
+      const name = cdpNode.name?.value || '';
+      const value = cdpNode.value?.value || '';
+      const description = cdpNode.description?.value || '';
+
+      // Filter out uninteresting nodes if requested
+      if (interestingOnly) {
+        const interestingRoles = new Set([
+          'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
+          'listbox', 'option', 'menuitem', 'tab', 'tabpanel', 'dialog',
+          'alert', 'alertdialog', 'heading', 'img', 'list', 'listitem',
+          'table', 'row', 'cell', 'form', 'search', 'navigation', 'main',
+          'article', 'banner', 'contentinfo', 'complementary', 'region',
+          'slider', 'spinbutton', 'switch', 'textfield', 'searchbox'
+        ]);
+
+        // Skip generic/container nodes without meaningful content
+        if (!interestingRoles.has(role.toLowerCase()) && !name && !value) {
+          // But still process children
+          const children = [];
+          if (cdpNode.childIds) {
+            for (const childId of cdpNode.childIds) {
+              const childNode = nodeMap.get(childId);
+              if (childNode) {
+                const converted = convertNode(childNode, currentDepth);
+                if (converted) {
+                  if (Array.isArray(converted)) {
+                    children.push(...converted);
+                  } else {
+                    children.push(converted);
+                  }
+                }
+              }
+            }
+          }
+          return children.length > 0 ? children : null;
+        }
+      }
+
+      const result = {
+        role: role.toLowerCase(),
+        ...(name && { name }),
+        ...(value && { value }),
+        ...(description && { description })
+      };
+
+      // Add properties that indicate state
+      if (cdpNode.properties) {
+        const props = {};
+        for (const prop of cdpNode.properties) {
+          const propName = prop.name;
+          const propValue = prop.value?.value;
+          if (propValue !== undefined && propValue !== false) {
+            // Include boolean states and values
+            if (['disabled', 'checked', 'selected', 'expanded', 'pressed', 'required', 'readonly'].includes(propName)) {
+              props[propName] = propValue;
+            }
+          }
+        }
+        if (Object.keys(props).length > 0) {
+          result.properties = props;
+        }
+      }
+
+      // Process children
+      if (cdpNode.childIds && cdpNode.childIds.length > 0) {
+        const children = [];
+        for (const childId of cdpNode.childIds) {
+          const childNode = nodeMap.get(childId);
+          if (childNode) {
+            const converted = convertNode(childNode, currentDepth + 1);
+            if (converted) {
+              if (Array.isArray(converted)) {
+                children.push(...converted);
+              } else {
+                children.push(converted);
+              }
+            }
+          }
+        }
+        if (children.length > 0) {
+          result.children = children;
+        }
+      }
+
+      return result;
+    };
+
+    // Find the root node (usually the first one with role RootWebArea)
+    const rootNode = nodes.find(n => n.role?.value === 'RootWebArea') || nodes[0];
+    return convertNode(rootNode) || { role: 'RootWebArea', name: '', children: [] };
+  }
+
+  /**
+   * Get a semantic snapshot of the page in a text format optimized for LLMs.
+   * This is the recommended method for agent-based browsing.
+   *
+   * Returns a compact text representation like:
+   *   - button "Sign In" [ref=1]
+   *   - textbox "Email" [ref=2]
+   *   - heading "Welcome back"
+   *
+   * @param {object} [opts]
+   * @param {number} [opts.depth=5] - Maximum tree depth
+   * @param {boolean} [opts.includeRefs=true] - Include reference IDs for interaction
+   * @returns {Promise<{ snapshot: string, refs: Map<number, object> }>}
+   */
+  async getSemanticSnapshot(opts = {}) {
+    const depth = opts.depth ?? 5;
+    const includeRefs = opts.includeRefs ?? true;
+
+    const tree = await this.getAccessibilityTree({ depth, interestingOnly: true });
+
+    let refCounter = 0;
+    const refs = new Map();
+    const lines = [];
+
+    const formatNode = (node, indent = 0) => {
+      if (!node || typeof node !== 'object') return;
+
+      const prefix = '  '.repeat(indent) + '- ';
+      let line = prefix + node.role;
+
+      // Add name/value in quotes
+      if (node.name) {
+        line += ` "${node.name}"`;
+      } else if (node.value) {
+        line += ` "${node.value}"`;
+      }
+
+      // Add state indicators
+      if (node.properties) {
+        const states = [];
+        if (node.properties.disabled) states.push('disabled');
+        if (node.properties.checked) states.push('checked');
+        if (node.properties.selected) states.push('selected');
+        if (node.properties.expanded) states.push('expanded');
+        if (node.properties.required) states.push('required');
+        if (states.length > 0) {
+          line += ` (${states.join(', ')})`;
+        }
+      }
+
+      // Add reference ID for interactive elements
+      if (includeRefs) {
+        const interactiveRoles = new Set([
+          'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
+          'listbox', 'option', 'menuitem', 'tab', 'slider', 'switch',
+          'spinbutton', 'searchbox', 'textfield'
+        ]);
+
+        if (interactiveRoles.has(node.role)) {
+          refCounter++;
+          refs.set(refCounter, {
+            role: node.role,
+            name: node.name || node.value || '',
+            nodeInfo: node
+          });
+          line += ` [ref=${refCounter}]`;
+        }
+      }
+
+      lines.push(line);
+
+      // Process children
+      if (node.children) {
+        for (const child of node.children) {
+          formatNode(child, indent + 1);
+        }
+      }
+    };
+
+    // Handle case where tree is array (from filtering)
+    if (Array.isArray(tree)) {
+      for (const node of tree) {
+        formatNode(node, 0);
+      }
+    } else {
+      // Start from children of root (skip the RootWebArea wrapper)
+      if (tree.children) {
+        for (const child of tree.children) {
+          formatNode(child, 0);
+        }
+      } else {
+        formatNode(tree, 0);
+      }
+    }
+
+    return {
+      snapshot: lines.join('\n'),
+      refs,
+      nodeCount: lines.length,
+      refCount: refCounter
+    };
+  }
+
+  /**
+   * Interact with an element by reference ID from a semantic snapshot.
+   *
+   * @param {number} refId - The reference ID from getSemanticSnapshot()
+   * @param {string} action - 'click', 'type', or 'focus'
+   * @param {string} [value] - Text to type (for 'type' action)
+   * @param {Map<number, object>} refs - The refs map from getSemanticSnapshot()
+   * @returns {Promise<void>}
+   */
+  async interactByRef(refId, action, value, refs) {
+    const ref = refs.get(refId);
+    if (!ref) {
+      throw new Error(`Reference ${refId} not found in snapshot. Re-fetch the snapshot.`);
+    }
+
+    // Use the accessibility node to find the DOM element
+    // We'll search by role and accessible name
+    const { role, name } = ref;
+
+    // Build a selector strategy based on role and name
+    const selector = await this.evaluate(`
+      (() => {
+        // Try to find by aria-label or text content
+        const elements = document.querySelectorAll('[role="${role}"], ${role}');
+        for (const el of elements) {
+          const ariaLabel = el.getAttribute('aria-label') || '';
+          const text = (el.innerText || el.value || '').trim();
+          if (ariaLabel === "${name.replace(/"/g, '\\"')}" ||
+              text === "${name.replace(/"/g, '\\"')}" ||
+              el.placeholder === "${name.replace(/"/g, '\\"')}") {
+            // Generate a unique selector
+            if (el.id) return '#' + el.id;
+            if (el.name) return '[name="' + el.name + '"]';
+            // Use nth-of-type as fallback
+            const parent = el.parentElement;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+              const idx = siblings.indexOf(el) + 1;
+              return el.tagName.toLowerCase() + ':nth-of-type(' + idx + ')';
+            }
+            return el.tagName.toLowerCase();
+          }
+        }
+        return null;
+      })()
+    `);
+
+    if (!selector) {
+      throw new Error(`Could not find DOM element for ref ${refId} (${role}: "${name}")`);
+    }
+
+    switch (action) {
+      case 'click':
+        await this.click(selector);
+        break;
+      case 'type':
+        if (!value) throw new Error('Value required for type action');
+        await this.type(selector, value);
+        break;
+      case 'focus':
+        await this.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
+        break;
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+  }
+
   /**
    * Close the browser and clean up resources.
    * @returns {Promise<void>}

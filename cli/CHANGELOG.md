@@ -5,6 +5,113 @@ All notable changes to `@stateset/cli` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-01-30
+
+### Added
+
+#### Lane-Based Command Queue (`src/command-queue.js`)
+Session-based serialization architecture inspired by Clawdbot:
+- **Serial Lanes** - Operations within a session execute one at a time, preventing race conditions
+- **Parallel Lanes** - Background tasks (cron, batch) run concurrently with configurable limits
+- **Queue Statistics** - Track queue depth, latency, and throughput per lane
+- **Idle Cleanup** - Automatic cleanup of stale lanes to prevent memory leaks
+- Default to serial, go parallel explicitly
+
+#### Context Window Guard (`src/context-guard.js`)
+Proactive context management to prevent overflow failures:
+- **Token Estimation** - Claude-like token counting using cl100k_base approximation
+- **Pre-flight Checks** - Validate context usage before each LLM call
+- **Auto-Compaction** - Summarize old messages when approaching 80% capacity
+- **Conversation Summarizer** - Extract key facts and intents while reducing tokens
+- Thresholds: 70% warn, 80% compact, 95% abort
+
+#### Model Fallback Chain (`src/model-fallback.js`)
+Automatic model failover for resilience:
+- **Default Chain** - Claude Sonnet → Haiku → OpenAI GPT-4o-mini → Gemini Flash
+- **Cooldown Tracking** - Exponential backoff per model/key on failures
+- **Rate Limit Detection** - Pattern matching for 429, quota, capacity errors
+- **Capability Filtering** - Only use models with required capabilities (tools, thinking)
+- Callbacks for fallback and cooldown events
+
+#### Markdown Memory Store (`src/memory/markdown-store.js`)
+Transparent, human-readable memory system:
+- **Main Memory** - `~/.stateset/memory/MEMORY.md` with auto-summarized entries
+- **Session Memory** - Per-session transcripts in `sessions/{id}.md`
+- **Entity Memory** - Entity-specific memories in `entities/{type}_{id}.md`
+- **Topic Memory** - Knowledge by topic in `topics/{topic}.md`
+- Human-readable, git-friendly, easy to debug and inspect
+
+#### Unified Memory Module (`src/memory/index.js`)
+- `UnifiedMemory` class that writes to both SQLite and Markdown stores
+- Combined search across all memory backends
+- Singleton access via `getUnifiedMemory()`
+
+#### Semantic Browser Snapshots (`src/browser/browser-tools.js`)
+Lightweight page representation for LLM agents:
+- `getAccessibilityTree()` - Full ARIA accessibility tree via CDP
+- `getSemanticSnapshot()` - Compact text format optimized for LLMs
+- `interactByRef()` - Interact with elements by reference ID
+- ~100x smaller than screenshots, dramatically reduces token cost
+- Output format: `- button "Sign In" [ref=1]`
+
+#### New Agent Loop Options
+- `enableFallback` - Enable automatic model failover (default: true)
+- `enableContextGuard` - Enable context window checking (default: true)
+- `enableMemory` - Enable memory persistence (default: true)
+- `useMarkdownMemory` - Use markdown memory store (default: true)
+- `conversationHistory` - Existing history for context
+- `onContextWarning` - Callback when context approaches limit
+- `onFallback` - Callback when model fallback occurs
+
+#### New Functions
+- `runAgentLoopQueued()` - Queue-wrapped agent execution with session serialization
+- `runAgentLoopParallel()` - Parallel execution for batch processing
+- `getQueueStats()` - Get command queue statistics
+
+#### New Return Fields
+- `usedModel` - Actual model used (may differ if fallback occurred)
+- `fallbackAttempts` - Array of fallback attempts with success/failure
+- `contextGuard` - Context usage info `{ action, usage }`
+
+### Changed
+
+- Agent loop now automatically saves to both SQLite and Markdown memory stores
+- Context is checked and potentially compacted before each LLM call
+- Model failures trigger automatic fallback with cooldown tracking
+- All new modules exported from `claude-harness.js` for convenience
+
+### Technical Notes
+
+#### Architecture Improvements
+These changes align with Clawdbot's architecture principles:
+- "Default to Serial, go for Parallel explicitly" - Lane-based queuing
+- Simple, inspectable memory - Markdown files alongside SQLite
+- Proactive context management - Guard before call, not after failure
+- Graceful degradation - Fallback chain with cooldown tracking
+
+#### Memory Structure
+```
+~/.stateset/memory/
+├── MEMORY.md           # Main memory (auto-summarized)
+├── sessions/
+│   └── {sessionId}.md  # Per-session transcripts
+├── entities/
+│   └── {type}_{id}.md  # Entity-specific (customer, order)
+└── topics/
+    └── {topic}.md      # Topic-specific knowledge
+```
+
+#### Fallback Chain
+```
+Claude Sonnet (primary)
+    ↓ rate limit / error
+Claude Haiku (fast fallback)
+    ↓ rate limit / error
+OpenAI GPT-4o-mini (cross-provider)
+    ↓ rate limit / error
+Gemini Flash (last resort)
+```
+
 ## [0.2.4] - 2026-01-26
 
 ### Added

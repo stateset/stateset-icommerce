@@ -1,6 +1,13 @@
 /**
  * Claude Agent SDK integration for StateSet iCommerce CLI
  * Supports multiple specialized agents with domain-specific tools and prompts
+ *
+ * v0.4.0 Enhancements:
+ * - Lane-based command queue for session serialization
+ * - Context window guard with automatic compaction
+ * - Model fallback chain for resilience
+ * - Dual memory storage (SQLite + Markdown)
+ * - Semantic browser snapshots
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -13,6 +20,13 @@ import { RichOutput, ICONS } from './output.js';
 import { loadSyncConfig, SyncConfig } from './sync/config.js';
 import { wrapCommerceWithEvents } from './sync/capture.js';
 import { createSyncEngine } from './sync/engine.js';
+
+// v0.4.0: New modules for enhanced reliability
+import { getCommandQueue, CommandQueue } from './command-queue.js';
+import { ContextGuard, guardContext, estimateTokens } from './context-guard.js';
+import { ModelFallback, DEFAULT_FALLBACK_CHAIN } from './model-fallback.js';
+import { getMarkdownMemoryStore } from './memory/markdown-store.js';
+import { getMemoryStore } from './memory/store.js';
 
 // ============================================================================
 // Agent Configurations
@@ -1320,6 +1334,13 @@ export function routeToAgentWithConfidence(request) {
  * @param {string} options.provider - AI provider: claude|openai|gemini|ollama
  * @param {Function} options.onPartialMessage - Callback for streaming tokens
  * @param {Function} options.onThinkingBlock - Callback for thinking content blocks
+ * @param {boolean} options.enableFallback - Enable automatic model fallback (default: true)
+ * @param {boolean} options.enableContextGuard - Enable context window guard (default: true)
+ * @param {boolean} options.enableMemory - Enable memory persistence (default: true)
+ * @param {boolean} options.useMarkdownMemory - Use markdown memory store (default: true)
+ * @param {object[]} options.conversationHistory - Existing conversation history for context
+ * @param {Function} options.onContextWarning - Callback when context approaches limit
+ * @param {Function} options.onFallback - Callback when falling back to alternative model
  */
 export async function runAgentLoop({
   request,
@@ -1344,7 +1365,15 @@ export async function runAgentLoop({
   maxBudgetUsd = null,
   provider = 'claude',
   onPartialMessage = null,
-  onThinkingBlock = null
+  onThinkingBlock = null,
+  // v0.4.0: New options
+  enableFallback = true,
+  enableContextGuard = true,
+  enableMemory = true,
+  useMarkdownMemory = true,
+  conversationHistory = [],
+  onContextWarning = null,
+  onFallback = null
 }) {
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
@@ -1356,6 +1385,84 @@ export async function runAgentLoop({
     guardrails,
     onConfirmRequired
   });
+
+  // -------------------------------------------------------------------------
+  // v0.4.0: Context Guard - Check context window before proceeding
+  // -------------------------------------------------------------------------
+  let workingHistory = [...conversationHistory];
+  let contextGuardResult = null;
+
+  if (enableContextGuard && conversationHistory.length > 0) {
+    const contextGuard = ContextGuard.forModel(model);
+    contextGuardResult = contextGuard.check(
+      conversationHistory,
+      '', // System prompt will be added by SDK
+      request
+    );
+
+    if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
+      telem.logCustomEvent('context_overflow', {
+        tokens: contextGuardResult.usage.tokens,
+        percent: contextGuardResult.usage.percent
+      });
+      throw new Error(contextGuardResult.message);
+    }
+
+    if (contextGuardResult.action === 'compact') {
+      workingHistory = contextGuardResult.compactedHistory;
+      telem.logCustomEvent('context_compacted', {
+        originalTokens: contextGuardResult.usage.tokens,
+        compactedTokens: contextGuardResult.usage.afterCompaction?.tokens,
+        tokensSaved: contextGuardResult.usage.afterCompaction?.tokensSaved
+      });
+    }
+
+    if (contextGuardResult.action === 'warn' && onContextWarning) {
+      onContextWarning(contextGuardResult);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // v0.4.0: Model Fallback - Set up fallback chain
+  // -------------------------------------------------------------------------
+  let modelFallback = null;
+  if (enableFallback && provider === 'claude') {
+    modelFallback = new ModelFallback({
+      requiredCapabilities: thinkLevel !== 'off' ? ['tools', 'thinking'] : ['tools'],
+      onFallback: (info) => {
+        telem.logCustomEvent('model_fallback', {
+          from: info.from.id,
+          to: info.to.id,
+          reason: info.reason
+        });
+        if (onFallback) onFallback(info);
+      },
+      onCooldown: (info) => {
+        telem.logCustomEvent('model_cooldown', {
+          model: info.model.id,
+          reason: info.reason,
+          permanent: info.permanent
+        });
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // v0.4.0: Memory stores initialization
+  // -------------------------------------------------------------------------
+  let memoryStore = null;
+  let markdownMemory = null;
+
+  if (enableMemory) {
+    try {
+      memoryStore = getMemoryStore();
+      if (useMarkdownMemory) {
+        markdownMemory = getMarkdownMemoryStore();
+      }
+    } catch (e) {
+      telem.logCustomEvent('memory_init_failed', { error: e.message });
+    }
+  }
 
   // Initialize commerce instance
   let commerce = new Commerce(dbPath);
@@ -1492,78 +1599,104 @@ export async function runAgentLoop({
       };
     }
 
-    // Run the query (Claude provider)
+    // -------------------------------------------------------------------------
+    // v0.4.0: Run query with optional model fallback
+    // -------------------------------------------------------------------------
     let budgetExceeded = false;
     let totalCost = null;
+    let usedModel = model;
+    let fallbackAttempts = [];
 
-    for await (const message of query({ prompt: request, options })) {
-      // Capture session ID
-      if (message.sessionId && !sessionId) {
-        sessionId = message.sessionId;
-      }
+    // Helper function to run the actual query
+    const runQuery = async (queryModel) => {
+      const queryOptions = { ...options, model: queryModel };
+      const results = { toolResults: [], response: '', sessionId: null, budgetExceeded: false, totalCost: null };
 
-      // Handle different message types
-      if (message.type === 'assistant') {
-        // Extract tool use from assistant messages
-        // Note: SDK wraps API message in message.message
-        const content = message.message?.content || message.content;
-        if (content) {
-          for (const block of content) {
-            if (block.type === 'tool_use') {
-              const toolCall = {
-                id: block.id,
-                name: block.name,
-                input: block.input,
-                startTime: Date.now()
-              };
-              toolResults.push({ toolCall, result: null });
-              if (onToolCall) {
-                onToolCall(toolCall);
+      for await (const message of query({ prompt: request, options: queryOptions })) {
+        // Capture session ID
+        if (message.sessionId && !results.sessionId) {
+          results.sessionId = message.sessionId;
+        }
+
+        // Handle different message types
+        if (message.type === 'assistant') {
+          const content = message.message?.content || message.content;
+          if (content) {
+            for (const block of content) {
+              if (block.type === 'tool_use') {
+                const toolCall = {
+                  id: block.id,
+                  name: block.name,
+                  input: block.input,
+                  startTime: Date.now()
+                };
+                results.toolResults.push({ toolCall, result: null });
+                if (onToolCall) {
+                  onToolCall(toolCall);
+                }
+              } else if (block.type === 'text') {
+                results.response += block.text;
+              } else if (block.type === 'thinking' && onThinkingBlock) {
+                onThinkingBlock(block);
               }
-            } else if (block.type === 'text') {
-              response += block.text;
-            } else if (block.type === 'thinking' && onThinkingBlock) {
-              // v0.2.8: Extended thinking content
-              onThinkingBlock(block);
             }
           }
+        } else if (message.type === 'result') {
+          if (message.result) {
+            results.response = message.result;
+          }
+          if (message.total_cost_usd != null) {
+            results.totalCost = message.total_cost_usd;
+          }
+          if (message.subtype === 'error_max_budget_usd') {
+            results.budgetExceeded = true;
+          }
+        } else if (message.type === 'user') {
+          const pending = results.toolResults.find(tr => tr.result === null);
+          if (pending && message.tool_use_result) {
+            pending.result = message.tool_use_result;
+            pending.endTime = Date.now();
+            pending.duration = pending.endTime - pending.toolCall.startTime;
+            telem.logToolCall(
+              pending.toolCall.name,
+              pending.toolCall.input,
+              pending.result,
+              pending.duration
+            );
+          }
         }
-      } else if (message.type === 'result') {
-        // Final result message - extract the response
-        if (message.result) {
-          response = message.result;
-        }
-        // v0.2.8: Track cost and budget status
-        if (message.total_cost_usd != null) {
-          totalCost = message.total_cost_usd;
-        }
-        if (message.subtype === 'error_max_budget_usd') {
-          budgetExceeded = true;
-        }
-      } else if (message.type === 'user') {
-        // User messages contain tool results
-        // Match result to pending tool call
-        const pending = toolResults.find(tr => tr.result === null);
-        if (pending && message.tool_use_result) {
-          pending.result = message.tool_use_result;
-          pending.endTime = Date.now();
-          pending.duration = pending.endTime - pending.toolCall.startTime;
 
-          // Log to telemetry
-          telem.logToolCall(
-            pending.toolCall.name,
-            pending.toolCall.input,
-            pending.result,
-            pending.duration
-          );
+        if (streaming && onPartialMessage && message.type !== 'assistant' && message.type !== 'result' && message.type !== 'user') {
+          onPartialMessage(message);
         }
       }
 
-      // v0.2.8: Streaming partial messages
-      if (streaming && onPartialMessage && message.type !== 'assistant' && message.type !== 'result' && message.type !== 'user') {
-        onPartialMessage(message);
-      }
+      return results;
+    };
+
+    // Execute with fallback or direct
+    let queryResult;
+    if (modelFallback && enableFallback) {
+      const fallbackResult = await modelFallback.execute(
+        async (modelConfig) => {
+          usedModel = modelConfig.model;
+          return runQuery(modelConfig.model);
+        },
+        { preferredModel: model }
+      );
+      queryResult = fallbackResult.result;
+      fallbackAttempts = fallbackResult.attempts;
+    } else {
+      queryResult = await runQuery(model);
     }
+
+    // Extract results
+    const { toolResults: queryToolResults, response: queryResponse, sessionId: querySessionId, budgetExceeded: queryBudgetExceeded, totalCost: queryTotalCost } = queryResult;
+    toolResults.push(...queryToolResults);
+    response = queryResponse;
+    if (querySessionId) sessionId = querySessionId;
+    budgetExceeded = queryBudgetExceeded;
+    totalCost = queryTotalCost;
 
     // Restore process.argv
     process.argv = savedArgv;
@@ -1598,6 +1731,44 @@ export async function runAgentLoop({
       await syncEngine.shutdown();
     }
 
+    // -------------------------------------------------------------------------
+    // v0.4.0: Save to memory stores
+    // -------------------------------------------------------------------------
+    if (enableMemory && response) {
+      try {
+        // Extract key facts from the conversation
+        const facts = [];
+        for (const tr of toolResults) {
+          if (tr.toolCall?.name) {
+            facts.push(`Used tool: ${tr.toolCall.name}`);
+          }
+        }
+
+        const memoryEntry = {
+          summary: `${request.slice(0, 100)}${request.length > 100 ? '...' : ''} → ${response.slice(0, 150)}${response.length > 150 ? '...' : ''}`,
+          facts,
+          agent: agentName,
+          sessionId,
+          channel: 'cli',
+          senderId: 'local'
+        };
+
+        // Save to SQLite memory store
+        if (memoryStore) {
+          memoryStore.save(memoryEntry);
+          telem.logCustomEvent('memory_saved', { store: 'sqlite' });
+        }
+
+        // Save to markdown memory store
+        if (markdownMemory) {
+          await markdownMemory.save(memoryEntry);
+          telem.logCustomEvent('memory_saved', { store: 'markdown' });
+        }
+      } catch (e) {
+        telem.logCustomEvent('memory_save_failed', { error: e.message });
+      }
+    }
+
     // End main span
     telem.endSpanRef(mainSpan, 'ok', { toolCallCount: toolResults.length });
 
@@ -1613,6 +1784,13 @@ export async function runAgentLoop({
       cost: totalCost,
       thinkLevel,
       budgetExceeded,
+      // v0.4.0: New result fields
+      usedModel,
+      fallbackAttempts: fallbackAttempts.length > 1 ? fallbackAttempts : undefined,
+      contextGuard: contextGuardResult ? {
+        action: contextGuardResult.action,
+        usage: contextGuardResult.usage
+      } : undefined,
       sync: syncResult ? {
         enabled: true,
         pushed: syncResult.pushed,
@@ -1756,6 +1934,68 @@ export function listAgents() {
 }
 
 // ============================================================================
+// v0.4.0: Queue-Wrapped Agent Execution
+// ============================================================================
+
+/**
+ * Run agent loop with lane-based serialization.
+ * Operations for the same session execute serially to prevent race conditions.
+ *
+ * @param {Object} options - Same options as runAgentLoop plus:
+ * @param {boolean} options.useQueue - Enable queue-based serialization (default: true)
+ * @param {string} options.laneId - Custom lane ID (default: sessionId or 'default')
+ * @returns {Promise<Object>} - Same result as runAgentLoop
+ */
+export async function runAgentLoopQueued(options) {
+  const { useQueue = true, laneId, ...loopOptions } = options;
+
+  // Determine lane ID - use session ID for serialization
+  const effectiveLaneId = laneId || options.resumeSessionId || 'default';
+
+  if (!useQueue) {
+    return runAgentLoop(loopOptions);
+  }
+
+  // Get the command queue singleton
+  const queue = getCommandQueue();
+
+  // Enqueue the operation in the appropriate lane
+  return queue.enqueue(effectiveLaneId, async () => {
+    return runAgentLoop(loopOptions);
+  }, {
+    request: options.request?.slice(0, 50),
+    agent: options.agent
+  });
+}
+
+/**
+ * Run multiple agent requests in parallel lanes.
+ * Each request gets its own lane for concurrent execution.
+ *
+ * @param {Object[]} requests - Array of runAgentLoop options
+ * @returns {Promise<Object[]>} - Array of results
+ */
+export async function runAgentLoopParallel(requests) {
+  const queue = getCommandQueue();
+
+  return Promise.all(
+    requests.map((options, index) =>
+      queue.enqueueParallel('parallel', async () => {
+        return runAgentLoop(options);
+      }, { index })
+    )
+  );
+}
+
+/**
+ * Get queue statistics for monitoring.
+ * @returns {Object}
+ */
+export function getQueueStats() {
+  return getCommandQueue().getStats();
+}
+
+// ============================================================================
 // Re-exports for convenience
 // ============================================================================
 
@@ -1769,3 +2009,10 @@ export { createOutbox, Outbox } from './sync/outbox.js';
 export { createSyncEngine, SyncEngine } from './sync/engine.js';
 export { wrapCommerceWithEvents, EventCapture } from './sync/capture.js';
 export { createSequencerClient, SequencerClient } from './sync/client.js';
+
+// v0.4.0: New modules for enhanced reliability
+export { CommandQueue, getCommandQueue, resetCommandQueue } from './command-queue.js';
+export { ContextGuard, ConversationSummarizer, estimateTokens, estimateHistoryTokens, guardContext } from './context-guard.js';
+export { ModelFallback, DEFAULT_FALLBACK_CHAIN, createFallbackCaller } from './model-fallback.js';
+export { MarkdownMemoryStore, getMarkdownMemoryStore } from './memory/markdown-store.js';
+export { MemoryStore, getMemoryStore } from './memory/store.js';
