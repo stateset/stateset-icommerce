@@ -71,7 +71,8 @@
     "verbose": false,
     "thinkLevel": "off",
     "provider": "claude",
-    "enableFallback": true
+    "enableFallback": true,
+    "vectorAutoIndex": false
   },
 
   "notifications": {

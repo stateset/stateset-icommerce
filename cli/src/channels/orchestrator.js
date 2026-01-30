@@ -18,7 +18,7 @@ import { EventBridge } from './event-bridge.js';
 import { discoverAndLoadPlugins } from './plugin-loader.js';
 import { getPluginConfigState } from './plugin-config.js';
 import { getPluginSlots } from './plugin-slots.js';
-import { initializeSharedRuntime } from './plugin-runtime.js';
+import { initializeSharedRuntime, getSharedRuntime } from './plugin-runtime.js';
 import { getGatewayMethods } from './gateway-methods.js';
 import { getCliExtensions } from './cli-extensions.js';
 import { getCommandRegistry } from './command-registry.js';
@@ -151,6 +151,7 @@ export class ChannelOrchestrator {
     this._voice = null;
     this._browser = null;
     this._memory = null;
+    this._vectorAutoIndex = null;
   }
 
   /**
@@ -340,6 +341,25 @@ export class ChannelOrchestrator {
       }
     }
 
+    // Init vector auto-index (auto-embed new entities)
+    if (shared.vectorAutoIndex && process.env.OPENAI_API_KEY) {
+      try {
+        const dbPath = shared.dbPath || './store.db';
+        const { Commerce } = await import('@stateset/embedded');
+        const autoIndexCommerce = new Commerce(dbPath);
+        this._vectorAutoIndex = autoIndexCommerce.vector(process.env.OPENAI_API_KEY);
+        // Make auto-indexer available to MCP tool handlers via shared runtime
+        const runtime = getSharedRuntime();
+        if (runtime) {
+          runtime.vectorAutoIndex = this._vectorAutoIndex;
+        }
+        console.log('[Orchestrator] Vector auto-index enabled — new entities will be embedded automatically.');
+      } catch (err) {
+        console.error(`[Orchestrator] Vector auto-index init failed: ${err.message}`);
+        this._vectorAutoIndex = null;
+      }
+    }
+
     // Wire subsystems into HTTP gateway
     if (this._httpGateway) {
       this._httpGateway.setSubsystems({
@@ -347,6 +367,15 @@ export class ChannelOrchestrator {
         browser: this._browser,
         memory: this._memory,
         heartbeat: this._heartbeat || (autonomousEngine?.heartbeat) || null,
+        vectorAutoIndex: this._vectorAutoIndex || null,
+      });
+
+      this._httpGateway.setOrchestratorStatus(() => {
+        const channels = {};
+        for (const [name] of this.gateways) {
+          channels[name] = 'running';
+        }
+        return channels;
       });
     }
 

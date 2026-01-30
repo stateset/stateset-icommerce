@@ -40,7 +40,8 @@
     "stateset-signal": "./bin/stateset-signal.js",
     "stateset-channels": "./bin/stateset-channels.js",
     "stateset-skills": "./bin/stateset-skills.js",
-    "stateset-daemon": "./bin/stateset-daemon.js"
+    "stateset-daemon": "./bin/stateset-daemon.js",
+    "stateset-install-service": "./bin/stateset-install-service.js"
   },
   "main": "src/index.js",
   "repository": {

@@ -209,6 +209,15 @@ export const vectorTools = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: 'vector_reindex_all',
+        description: 'Rebuild all vector embeddings from scratch. Clears existing embeddings then re-indexes all products, customers, orders, and inventory items. Use this after bulk data imports or to fix stale embeddings.',
+        inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
     }
 ];
 
@@ -227,7 +236,8 @@ const VECTOR_TOOL_PERMISSIONS = {
     vector_index_all_orders: 'admin',
     vector_index_all_inventory: 'admin',
     vector_clear: 'admin',
-    vector_clear_all: 'admin'
+    vector_clear_all: 'admin',
+    vector_reindex_all: 'admin'
 };
 
 /**
@@ -406,6 +416,23 @@ async function runVectorTool(name, args, commerce) {
             const vector = getVectorSearch(commerce);
             const count = await vector.clearAll();
             return { kind: 'text', text: `Cleared ${count} embeddings` };
+        }
+
+        case 'vector_reindex_all': {
+            const vector = getVectorSearch(commerce);
+            await vector.clearAll();
+            const products = await vector.indexAllProducts();
+            const customers = await vector.indexAllCustomers();
+            const orders = await vector.indexAllOrders();
+            const inventory = await vector.indexAllInventory();
+            const total = products + customers + orders + inventory;
+            return {
+                kind: 'json',
+                data: {
+                    reindexed: { products, customers, orders, inventory },
+                    total
+                }
+            };
         }
 
         default:

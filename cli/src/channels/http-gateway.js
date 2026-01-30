@@ -153,6 +153,15 @@ export class HttpGateway {
     // Auth & sandbox
     this._auth = createApiKeyAuth(opts.apiKeys || []);
     this._sandbox = opts.sandbox || null;
+    this._orchestratorStatus = null;
+  }
+
+  /**
+   * Set orchestrator status callback for /health reporting.
+   * @param {() => Object} fn - Returns channel/subsystem status
+   */
+  setOrchestratorStatus(fn) {
+    this._orchestratorStatus = fn;
   }
 
   /**
@@ -246,10 +255,63 @@ export class HttpGateway {
       // --- Built-in routes ---
 
       if (method === 'GET' && pathname === '/health') {
-        return sendJson(res, 200, {
+        const health = {
           status: 'ok',
           uptime: Date.now() - startTime,
           timestamp: new Date().toISOString(),
+          version: process.env.npm_package_version || '0.3.1',
+          subsystems: {
+            voice: this._subsystems.voice ? 'enabled' : 'disabled',
+            browser: this._subsystems.browser ? 'enabled' : 'disabled',
+            memory: this._subsystems.memory ? 'enabled' : 'disabled',
+            heartbeat: this._subsystems.heartbeat ? 'enabled' : 'disabled',
+          },
+        };
+
+        if (this._subsystems.memory) {
+          try { health.memory = this._subsystems.memory.stats(); } catch { /* ignore */ }
+        }
+
+        if (this._orchestratorStatus) {
+          try { health.channels = this._orchestratorStatus(); } catch { /* ignore */ }
+        }
+
+        return sendJson(res, 200, health);
+      }
+
+      if (method === 'GET' && pathname === '/ready') {
+        const checks = {};
+        let ready = true;
+
+        // Database connectivity
+        try {
+          const { Commerce } = await import('@stateset/embedded');
+          if (Commerce) {
+            checks.database = 'ok';
+          }
+        } catch {
+          checks.database = 'unavailable';
+          ready = false;
+        }
+
+        // Memory subsystem
+        if (this._subsystems.memory) {
+          try {
+            this._subsystems.memory.stats();
+            checks.memory = 'ok';
+          } catch {
+            checks.memory = 'error';
+            ready = false;
+          }
+        }
+
+        // Embedding service
+        checks.embeddingService = process.env.OPENAI_API_KEY ? 'configured' : 'not_configured';
+
+        return sendJson(res, ready ? 200 : 503, {
+          status: ready ? 'ready' : 'not_ready',
+          timestamp: new Date().toISOString(),
+          checks,
         });
       }
 

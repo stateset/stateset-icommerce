@@ -344,6 +344,7 @@ export function initializeSharedRuntime(opts = {}) {
     stateDir: opts.stateDir || null,
     verbose: opts.verbose || false,
     dbPath: opts.dbPath || './store.db',
+    vectorAutoIndex: opts.vectorAutoIndex || null,
   };
 }
 

@@ -10,6 +10,26 @@ import { createOutbox } from './sync/outbox.js';
 import { createSyncEngine } from './sync/engine.js';
 import { createSequencerClient } from './sync/client.js';
 import { handleVectorTool } from './tools/vector.js';
+import { getSharedRuntime } from './channels/plugin-runtime.js';
+
+/**
+ * Auto-index a newly created entity if vectorAutoIndex is enabled.
+ * Runs in the background — failures are logged but do not block the response.
+ * @param {'product'|'customer'|'order'} entityType
+ * @param {Object} entity - The created entity (must have .id)
+ */
+function autoIndexEntity(entityType, entity) {
+  const vectorAutoIndex = getSharedRuntime()?.vectorAutoIndex;
+  if (!vectorAutoIndex || !entity?.id) return;
+  const indexFn = {
+    product: () => vectorAutoIndex.indexProduct(entity.id.toString()),
+    customer: () => vectorAutoIndex.indexCustomer(entity.id.toString()),
+    order: () => vectorAutoIndex.indexOrder(entity.id.toString()),
+  }[entityType];
+  if (indexFn) {
+    indexFn().catch(err => console.error(`[AutoIndex] Failed to index ${entityType} ${entity.id}: ${err.message}`));
+  }
+}
 
 /**
  * Create the StateSet Commerce MCP server
@@ -222,6 +242,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
 
           try {
             const customer = await commerce.customers.create(args);
+            autoIndexEntity('customer', customer);
             return {
               content: [{
                 type: 'text',
@@ -368,6 +389,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
 
           try {
             const order = await commerce.orders.create(args);
+            autoIndexEntity('order', order);
             return {
               content: [{
                 type: 'text',
@@ -643,6 +665,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
 
           try {
             const product = await commerce.products.create(args);
+            autoIndexEntity('product', product);
             return {
               content: [{
                 type: 'text',

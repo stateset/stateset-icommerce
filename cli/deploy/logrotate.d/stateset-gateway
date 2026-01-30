@@ -1,0 +1,13 @@
+/var/log/stateset/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 stateset stateset
+    sharedscripts
+    postrotate
+        systemctl reload stateset-gateway.service 2>/dev/null || true
+    endscript
+}
