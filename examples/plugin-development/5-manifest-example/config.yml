@@ -1,0 +1,15 @@
+enabled: true
+
+logLevel: info
+
+maxRetries: 3
+
+apiKey: ''
+
+customSettings:
+  featureEnabled: true
+  timeout: 30000
+  
+notifications:
+  enabled: false
+  channels: []

@@ -1,0 +1,50 @@
+{
+  "channels": {
+    "slack": {
+      "enabled": true
+    },
+    "discord": {
+      "enabled": false
+    },
+    "telegram": {
+      "enabled": false
+    },
+    "webchat": {
+      "enabled": true
+    }
+  },
+  "shared": {
+    "allowApply": false,
+    "maxTurns": 10,
+    "verbose": true
+  },
+  "middleware": {
+    "logger": true,
+    "rateLimiter": {
+      "maxRequests": 100,
+      "windowMs": 60000
+    },
+    "languageDetect": false
+  },
+  "httpGateway": {
+    "enabled": true,
+    "port": 3000,
+    "host": "127.0.0.1",
+    "apiKeys": [
+      {
+        "key": "sk_test_example_key_replace_with_your_own",
+        "name": "test-key"
+      }
+    ],
+    "sandbox": {
+      "enabled": false
+    }
+  },
+  "notifications": {
+    "routes": {
+      "orders": "slack",
+      "inventory": "telegram",
+      "errors": "discord"
+    }
+  }
+}

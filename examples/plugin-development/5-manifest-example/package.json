@@ -1,0 +1,70 @@
+{
+  "name": "manifest-example-plugin",
+  "version": "1.0.0",
+  "description": "A complete example plugin with manifest and configuration",
+  "main": "index.js",
+  "author": "StateSet",
+  "license": "MIT",
+  "displayName": "Manifest Example Plugin",
+  "category": "analytics",
+  "motivation": "Demonstrates full plugin capabilities including manifest validation, configuration options, and comprehensive feature set",
+  "capabilities": {
+    "commands": [
+      "example:greet",
+      "example:status",
+      "example:metrics"
+    ],
+    "hooks": [
+      "agent_start",
+      "agent_end",
+      "message_received",
+      "message_sent"
+    ],
+    "httpRoutes": [
+      {
+        "path": "/example/health",
+        "method": "GET"
+      },
+      {
+        "path": "/example/data",
+        "method": "POST"
+      }
+    ],
+    "services": [
+      {
+        "name": "Example Background Service",
+        "type": "monitor"
+      }
+    ]
+  },
+  "config": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable/disable the plugin",
+        "default": true
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "API key for external service integration"
+      },
+      "maxRetries": {
+        "type": "number",
+        "description": "Maximum number of retry attempts",
+        "default": 3
+      },
+      "logLevel": {
+        "type": "string",
+        "enum": ["debug", "info", "warn", "error"],
+        "default": "info"
+      }
+    }
+  },
+  "dependencies": [],
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=18.0.0",
+    "stateset": ">=1.0.0"
+  }
+}
