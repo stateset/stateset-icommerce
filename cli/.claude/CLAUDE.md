@@ -221,6 +221,21 @@ stateset --apply "create a cart for alice@example.com"
 - `create_stablecoin_payment` - Send stablecoin payment (requires --apply)
 - `list_supported_chains` - List supported blockchains (Solana, SET Chain, Base, etc.)
 
+### commerce-x402 (AI Agent Protocol Payments)
+- `x402_create_payment_intent` - Create x402 payment intent for AI agents
+- `x402_sign_intent` - Sign payment intent with Ed25519 (requires --apply)
+- `x402_get_intent` - Get payment intent details
+- `x402_list_intents` - List payment intents with filters
+- `x402_mark_settled` - Mark intent as settled on-chain (requires --apply)
+- `x402_get_next_nonce` - Get next nonce for replay protection
+
+### commerce-agent-cards (A2A Commerce)
+- `register_agent_card` - Register AI agent for A2A commerce (requires --apply)
+- `discover_agents` - Find agents with specific capabilities
+- `get_agent_card` - Get agent card details
+- `verify_agent` - Verify agent trust level (requires --apply)
+- `list_agent_cards` - List all registered agents
+
 ### commerce-shipments
 - `list_shipments` - List all shipments
 - `create_shipment` - Create shipment with tracking (requires --apply)
@@ -441,6 +456,49 @@ Supported chains:
 - `zcash_testnet` - Zcash testnet (ZEC) - Testing
 - `bitcoin` - Bitcoin mainnet (BTC) - Original cryptocurrency, maximum security
 - `bitcoin_testnet` - Bitcoin testnet (BTC) - Testing
+
+### x402 Protocol (AI Agent Commerce)
+```bash
+# Create payment intent (off-chain)
+stateset "create x402 payment intent from 0xBuyer to 0xSeller for 100 USDC on Set Chain"
+
+# Get signing hash for agent to sign
+stateset "get x402 intent <id>"
+
+# Sign with Ed25519 key (agent signs off-chain)
+stateset --apply "sign x402 intent <id> with signature <sig> and public key <pk>"
+
+# After on-chain settlement, mark settled
+stateset --apply "mark x402 intent <id> settled with tx 0xTxHash at block 12345"
+
+# List payment intents
+stateset "list x402 intents for payer 0xBuyer"
+stateset "list settled x402 intents"
+
+# Get next nonce for replay protection
+stateset "get next x402 nonce for 0xBuyer"
+```
+
+### Agent-to-Agent Commerce (A2A)
+```bash
+# Register an AI agent card
+stateset --apply "register agent card for Widget Seller Bot with wallet 0xSeller on Set Chain"
+
+# Discover agents with capabilities
+stateset "discover agents that can sell on Set Chain with USDC"
+stateset "find verified buyer agents"
+
+# Get agent details
+stateset "get agent card <id>"
+stateset "get agent by wallet 0xSeller"
+
+# Verify agent (admin)
+stateset --apply "verify agent <id>"
+
+# List all agents
+stateset "list all active agents"
+stateset "list verified agents"
+```
 
 ### Permission Sandboxing (v0.3.1)
 

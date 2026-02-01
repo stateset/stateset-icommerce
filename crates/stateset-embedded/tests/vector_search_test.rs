@@ -1,13 +1,14 @@
 //! Vector search integration tests
 //!
 //! Tests the full embed → store → search round-trip using the embedded commerce engine.
-//! Requires OPENAI_API_KEY environment variable. Run with:
-//!   OPENAI_API_KEY=sk-... cargo test --test vector_search_test -- --ignored
+//! Requires OPENAI_API_KEY environment variable and the `vector` feature. Run with:
+//!   OPENAI_API_KEY=sk-... cargo test --test vector_search_test --features vector -- --ignored
 //!
 //! All tests are #[ignore] by default so they don't run in CI without the API key.
 
-use rust_decimal_macros::dec;
-use stateset_embedded::{Commerce, CreateCustomer, CreateProduct};
+#![cfg(feature = "vector")]
+
+use stateset_embedded::{Commerce, CreateCustomer, CreateProduct, EntityType};
 use uuid::Uuid;
 
 // ============================================================================
@@ -38,8 +39,6 @@ fn test_product_embed_store_search_roundtrip() {
         .create(CreateProduct {
             name: "Wireless Bluetooth Headphones".into(),
             description: Some("Noise cancelling over-ear headphones with 30h battery".into()),
-            sku: Some(format!("VEC-HP-{}", Uuid::new_v4().simple())),
-            price: Some(dec!(149.99)),
             ..Default::default()
         })
         .expect("create headphones");
@@ -49,8 +48,6 @@ fn test_product_embed_store_search_roundtrip() {
         .create(CreateProduct {
             name: "Organic Green Tea".into(),
             description: Some("Premium loose leaf green tea from Japanese highlands".into()),
-            sku: Some(format!("VEC-TEA-{}", Uuid::new_v4().simple())),
-            price: Some(dec!(24.99)),
             ..Default::default()
         })
         .expect("create tea");
@@ -112,8 +109,6 @@ fn test_batch_index_products() {
             .create(CreateProduct {
                 name: name.to_string(),
                 description: Some(desc.to_string()),
-                sku: Some(format!("BATCH-{}", Uuid::new_v4().simple())),
-                price: Some(dec!(89.99)),
                 ..Default::default()
             })
             .expect("create product");
@@ -149,7 +144,6 @@ fn test_cross_entity_search_isolation() {
         .create(CreateProduct {
             name: "Coffee Machine Deluxe".into(),
             description: Some("Premium espresso coffee machine".into()),
-            sku: Some(format!("ISO-{}", Uuid::new_v4().simple())),
             ..Default::default()
         })
         .expect("create product");
@@ -199,23 +193,22 @@ fn test_embedding_stats_and_cleanup() {
         .products()
         .create(CreateProduct {
             name: "Stats Test Product".into(),
-            sku: Some(format!("STAT-{}", Uuid::new_v4().simple())),
             ..Default::default()
         })
         .expect("create product");
 
     // Initially empty
     let stats = vector.stats().expect("stats");
-    assert_eq!(stats.product_count, 0);
+    assert_eq!(*stats.counts.get(&EntityType::Product).unwrap_or(&0), 0);
 
     // Index and verify stats
     vector.index_product(&product).expect("index");
     let stats = vector.stats().expect("stats");
-    assert_eq!(stats.product_count, 1);
+    assert_eq!(*stats.counts.get(&EntityType::Product).unwrap_or(&0), 1);
 
     // Check is_indexed
     let indexed = vector
-        .is_indexed(stateset_embedded::EntityType::Product, &product.id.to_string())
+        .is_indexed(EntityType::Product, &product.id.to_string())
         .expect("is_indexed");
     assert!(indexed, "Product should be indexed");
 
@@ -224,12 +217,12 @@ fn test_embedding_stats_and_cleanup() {
         .unindex_product(&product.id.to_string())
         .expect("unindex");
     let indexed = vector
-        .is_indexed(stateset_embedded::EntityType::Product, &product.id.to_string())
+        .is_indexed(EntityType::Product, &product.id.to_string())
         .expect("is_indexed");
     assert!(!indexed, "Product should no longer be indexed");
 
     let stats = vector.stats().expect("stats");
-    assert_eq!(stats.product_count, 0);
+    assert_eq!(*stats.counts.get(&EntityType::Product).unwrap_or(&0), 0);
 }
 
 // ============================================================================
@@ -247,7 +240,6 @@ fn test_clear_all_embeddings() {
         .products()
         .create(CreateProduct {
             name: "Clear Test".into(),
-            sku: Some(format!("CLR-{}", Uuid::new_v4().simple())),
             ..Default::default()
         })
         .expect("create");
@@ -265,13 +257,13 @@ fn test_clear_all_embeddings() {
     vector.index_customer(&customer).expect("index customer");
 
     let stats = vector.stats().expect("stats");
-    assert!(stats.product_count > 0);
-    assert!(stats.customer_count > 0);
+    assert!(*stats.counts.get(&EntityType::Product).unwrap_or(&0) > 0);
+    assert!(*stats.counts.get(&EntityType::Customer).unwrap_or(&0) > 0);
 
     // Clear all
     vector.clear_all().expect("clear all");
 
     let stats = vector.stats().expect("stats after clear");
-    assert_eq!(stats.product_count, 0);
-    assert_eq!(stats.customer_count, 0);
+    assert_eq!(*stats.counts.get(&EntityType::Product).unwrap_or(&0), 0);
+    assert_eq!(*stats.counts.get(&EntityType::Customer).unwrap_or(&0), 0);
 }

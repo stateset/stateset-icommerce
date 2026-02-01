@@ -580,10 +580,13 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     fn submit_for_approval(&self, id: Uuid) -> Result<PurchaseOrder> {
         let conn = self.conn()?;
         let now = chrono::Utc::now();
-        conn.execute(
+        let rows_affected = conn.execute(
             "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE id = ?",
             params![PurchaseOrderStatus::PendingApproval.to_string(), now.to_rfc3339(), id.to_string()],
         ).map_err(map_db_error)?;
+        if rows_affected == 0 {
+            return Err(CommerceError::NotFound);
+        }
         Self::get_po_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 

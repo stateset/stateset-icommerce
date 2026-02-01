@@ -21,6 +21,14 @@
 //! use stateset_db::{PostgresDatabase, DatabaseConfig};
 //! let db = PostgresDatabase::connect(&DatabaseConfig::postgres("postgres://localhost/stateset")).await?;
 //! ```
+//!
+//! ## Error Handling
+//!
+//! This crate uses typed errors via `stateset_core::DbError` for better
+//! debugging and error categorization. Use the error helper functions
+//! in the `error_helpers` module for converting backend-specific errors.
+
+pub mod error_helpers;
 
 #[cfg(feature = "sqlite")]
 pub mod migrations;
@@ -43,14 +51,91 @@ pub use postgres::PostgresDatabase;
 
 
 use stateset_core::{
-    AccountsPayableRepository, AccountsReceivableRepository, AnalyticsRepository, BackorderRepository,
-    BomRepository, CartRepository, CostAccountingRepository, CreditRepository, CurrencyRepository,
-    CustomerRepository, FulfillmentRepository, GeneralLedgerRepository, InventoryRepository,
-    InvoiceRepository, LotRepository, OrderRepository, PaymentRepository, ProductRepository,
-    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
-    ReturnRepository, SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
-    WarehouseRepository, WarrantyRepository, WorkOrderRepository,
+    AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository, AnalyticsRepository,
+    BackorderRepository, BomRepository, CartRepository, CostAccountingRepository, CreditRepository,
+    CurrencyRepository, CustomerRepository, FulfillmentRepository, GeneralLedgerRepository,
+    InventoryRepository, InvoiceRepository, LotRepository, OrderRepository, PaymentRepository,
+    ProductRepository, PromotionRepository, PurchaseOrderRepository, QualityRepository,
+    ReceivingRepository, Result, ReturnRepository, SerialRepository, ShipmentRepository,
+    SubscriptionRepository, TaxRepository, WarehouseRepository, WarrantyRepository,
+    WorkOrderRepository, X402PaymentIntentRepository,
 };
+
+// ============================================================================
+// Transaction Support
+// ============================================================================
+
+/// Context for operations within a transaction
+///
+/// This trait provides access to repositories within a transaction scope.
+/// All operations performed through the context are part of the same transaction.
+pub trait TransactionContext: Send + Sync {
+    /// Get the order repository within this transaction
+    fn orders(&self) -> Box<dyn OrderRepository + '_>;
+    /// Get the inventory repository within this transaction
+    fn inventory(&self) -> Box<dyn InventoryRepository + '_>;
+    /// Get the customer repository within this transaction
+    fn customers(&self) -> Box<dyn CustomerRepository + '_>;
+    /// Get the product repository within this transaction
+    fn products(&self) -> Box<dyn ProductRepository + '_>;
+}
+
+/// Options for transaction execution
+#[derive(Debug, Clone, Default)]
+pub struct TransactionOptions {
+    /// Timeout for the transaction in milliseconds (default: 30000)
+    pub timeout_ms: Option<u64>,
+    /// Isolation level for the transaction
+    pub isolation: TransactionIsolation,
+    /// Whether to retry on transient failures
+    pub retry_on_conflict: bool,
+    /// Maximum number of retries
+    pub max_retries: u32,
+}
+
+impl TransactionOptions {
+    /// Create options with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the timeout
+    pub fn timeout_ms(mut self, ms: u64) -> Self {
+        self.timeout_ms = Some(ms);
+        self
+    }
+
+    /// Set the isolation level
+    pub fn isolation(mut self, level: TransactionIsolation) -> Self {
+        self.isolation = level;
+        self
+    }
+
+    /// Enable retry on conflict
+    pub fn with_retries(mut self, max_retries: u32) -> Self {
+        self.retry_on_conflict = true;
+        self.max_retries = max_retries;
+        self
+    }
+}
+
+/// Transaction isolation levels
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransactionIsolation {
+    /// Read uncommitted (SQLite ignores this, uses serializable)
+    ReadUncommitted,
+    /// Read committed
+    ReadCommitted,
+    /// Repeatable read
+    RepeatableRead,
+    /// Serializable (default for SQLite)
+    #[default]
+    Serializable,
+}
+
+// ============================================================================
+// Database Trait
+// ============================================================================
 
 /// Unified database trait that both SQLite and PostgreSQL implement.
 /// This allows stateset-embedded to work with either backend.
@@ -115,6 +200,10 @@ pub trait Database: Send + Sync {
     fn accounts_receivable(&self) -> Box<dyn AccountsReceivableRepository + '_>;
     /// Get the general ledger repository
     fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_>;
+    /// Get the x402 payment intent repository
+    fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_>;
+    /// Get the agent card repository
+    fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -125,7 +214,7 @@ pub trait Database: Send + Sync {
 ///
 /// # Example
 /// ```ignore
-/// use stateset_db::{SqliteDatabase, DatabaseExt};
+/// use stateset_db::{SqliteDatabase, DatabaseExt, TransactionOptions};
 ///
 /// let db = SqliteDatabase::in_memory()?;
 ///
@@ -135,6 +224,15 @@ pub trait Database: Send + Sync {
 ///     conn.execute("INSERT INTO inventory_transactions (...) VALUES (...)", [...])?;
 ///     Ok(())
 /// })?;
+///
+/// // Transaction with options
+/// db.with_transaction_opts(
+///     TransactionOptions::new().with_retries(3),
+///     |conn| {
+///         conn.execute("UPDATE orders SET status = 'completed' WHERE id = ?", [&order_id])?;
+///         Ok(())
+///     },
+/// )?;
 /// ```
 #[cfg(feature = "sqlite")]
 pub trait DatabaseExt {
@@ -145,6 +243,54 @@ pub trait DatabaseExt {
     fn with_transaction<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>;
+
+    /// Execute a closure within a database transaction with custom options.
+    ///
+    /// This method allows setting transaction options like timeout and retry behavior.
+    fn with_transaction_opts<F, T>(&self, _opts: TransactionOptions, f: F) -> Result<T>
+    where
+        F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
+    {
+        // Default implementation ignores options and delegates to with_transaction
+        self.with_transaction(f)
+    }
+}
+
+/// Async extension trait for PostgreSQL transaction support.
+///
+/// # Example
+/// ```ignore
+/// use stateset_db::{PostgresDatabase, AsyncDatabaseExt, TransactionOptions};
+///
+/// let db = PostgresDatabase::connect("postgres://localhost/db").await?;
+///
+/// db.with_transaction_async(|tx| async move {
+///     sqlx::query("UPDATE orders SET status = 'completed' WHERE id = $1")
+///         .bind(order_id)
+///         .execute(&mut *tx)
+///         .await?;
+///     Ok(())
+/// }).await?;
+/// ```
+#[cfg(feature = "postgres")]
+#[allow(async_fn_in_trait)]
+pub trait AsyncDatabaseExt {
+    /// Execute an async closure within a database transaction.
+    ///
+    /// The transaction is automatically committed if the closure returns `Ok`,
+    /// and rolled back if it returns `Err` or panics.
+    async fn with_transaction_async<F, T, Fut>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(sqlx::Transaction<'static, sqlx::Postgres>) -> Fut + Send,
+        Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
+        T: Send;
+
+    /// Execute an async closure within a transaction with custom options.
+    async fn with_transaction_async_opts<F, T, Fut>(&self, opts: TransactionOptions, f: F) -> Result<T>
+    where
+        F: FnOnce(sqlx::Transaction<'static, sqlx::Postgres>) -> Fut + Send,
+        Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,
+        T: Send;
 }
 
 /// Macro to eliminate duplicate Database implementations
@@ -271,6 +417,14 @@ macro_rules! impl_database_accessors {
             fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_> {
                 Box::new(self.general_ledger())
             }
+
+            fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_> {
+                Box::new(self.x402_payment_intents())
+            }
+
+            fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {
+                Box::new(self.agent_cards())
+            }
         }
     };
 }
@@ -313,9 +467,9 @@ impl DatabaseConfig {
     pub fn in_memory() -> Self {
         Self {
             url: ":memory:".to_string(),
-            // Shared-cache in-memory SQLite returns SQLITE_LOCKED under write contention.
-            // Default to a single connection to keep tests stable.
-            max_connections: 1,
+            // Use multiple connections with FULL_MUTEX mode for serialized access.
+            // This avoids connection pool exhaustion while preventing SQLITE_LOCKED errors.
+            max_connections: 4,
         }
     }
 

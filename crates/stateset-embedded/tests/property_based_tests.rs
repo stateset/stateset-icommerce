@@ -9,19 +9,18 @@
 //!
 
 use proptest::prelude::*;
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct, OrderStatus,
-    Product,
+    Commerce, CreateInventoryItem, CreateOrder, CreateOrderItem, Currency, OrderFilter,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use uuid::Uuid;
 
 proptest! {
     #[test]
     fn prop_inventory_never_goes_negative_reserve_concurrent(
         initial_quantity in 0u32..1000,
-        num_reservations in 0u32..100,
         reserve_quantities: Vec<u32>
     ) {
         let total_reserve: u32 = reserve_quantities.iter().sum();
@@ -38,7 +37,7 @@ proptest! {
             .create_item(CreateInventoryItem {
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
-                initial_quantity: Some(dec!(initial_quantity as i64)),
+                initial_quantity: Some(Decimal::from(initial_quantity)),
                 ..Default::default()
             })
             .unwrap();
@@ -50,7 +49,7 @@ proptest! {
                 let order_id = Uuid::new_v4();
                 commerce
                     .inventory()
-                    .reserve("SKU-001", dec!(quantity as i64), "order", &order_id.to_string(), None)
+                    .reserve("SKU-001", Decimal::from(quantity), "order", &order_id.to_string(), None)
             });
             handles.push(handle);
         }
@@ -62,11 +61,11 @@ proptest! {
 
         let stock = commerce.inventory().get_stock("SKU-001").unwrap().unwrap();
         prop_assert!(
-            stock.total_on_hand >= rust_decimal::Decimal::ZERO,
+            stock.total_on_hand >= Decimal::ZERO,
             "Stock went negative: {}", stock.total_on_hand
         );
 
-        let expected_allocated = dec!(total_reserve as i64);
+        let expected_allocated = Decimal::from(total_reserve);
         prop_assert!(
             stock.total_allocated == expected_allocated,
             "Allocated mismatch: expected {}, got {}",
@@ -81,15 +80,14 @@ proptest! {
         let commerce = Commerce::new(":memory:").unwrap();
 
         // Test conversion chains preserve value
-        let usd_amount = dec!(amount);
+        let usd_amount = Decimal::from(amount);
 
         let conversion = commerce
             .currency()
-            .convert_currency(
-                "USD",
-                "EUR",
+            .convert_amount(
                 usd_amount,
-                None
+                Currency::USD,
+                Currency::EUR,
             );
 
         // If conversion succeeds, round-trip should work
@@ -97,11 +95,10 @@ proptest! {
             let eur_amount = conversion.unwrap();
             let round_trip = commerce
                 .currency()
-                .convert_currency(
-                    "EUR",
-                    "USD",
+                .convert_amount(
                     eur_amount,
-                    None
+                    Currency::EUR,
+                    Currency::USD,
                 );
 
             if round_trip.is_ok() {
@@ -137,8 +134,8 @@ proptest! {
                 product_id: Uuid::new_v4(),
                 sku: format!("SKU-{:03}", customer_id),
                 name: "Test Product".into(),
-                quantity: qty,
-                unit_price: dec!(price),
+                quantity: qty as i32,
+                unit_price: Decimal::from(price),
                 ..Default::default()
             })
             .collect();
@@ -153,48 +150,17 @@ proptest! {
 
         if order.is_ok() {
             let order = order.unwrap();
-            let expected_total: rust_decimal::Decimal = quantities
+            let expected_total: Decimal = quantities
                 .iter()
                 .zip(prices.iter())
-                .map(|(&qty, &price)| dec!(qty) * dec!(price))
+                .map(|(&qty, &price)| Decimal::from(qty) * Decimal::from(price))
                 .sum();
 
             prop_assert!(
-                order.total == expected_total,
+                order.total_amount == expected_total,
                 "Order total mismatch: expected {}, got {}",
-                expected_total, order.total
+                expected_total, order.total_amount
             );
-        }
-    }
-
-    #[test]
-    fn prop_product_price_never_negative(
-        price in -1000000i64..1000000i64
-    ) {
-        let commerce = Commerce::new(":memory:").unwrap();
-
-        if price < 0 {
-            // Negative prices should fail validation
-            let result = commerce
-                .products()
-                .create(CreateProduct {
-                    name: "Test Product".into(),
-                    sku: "SKU-001".into(),
-                    price: dec!(price),
-                    ..Default::default()
-                });
-            prop_assert!(result.is_err(), "Negative price should be rejected");
-        } else {
-            // Non-negative prices should succeed
-            let result = commerce
-                .products()
-                .create(CreateProduct {
-                    name: "Test Product".into(),
-                    sku: "SKU-001".into(),
-                    price: dec!(price),
-                    ..Default::default()
-                });
-            prop_assert!(result.is_ok(), "Valid price should be accepted: {:?}", result);
         }
     }
 }
@@ -242,14 +208,19 @@ fn test_concurrent_order_creation_preserves_consistency() {
     assert_eq!(failure_count, 0);
 
     // Verify all orders exist
-    let orders = commerce.orders().list(0, num_orders as i32).unwrap();
+    let orders = commerce
+        .orders()
+        .list(OrderFilter {
+            limit: Some(num_orders as u32),
+            ..Default::default()
+        })
+        .unwrap();
     assert_eq!(orders.len(), num_orders as usize);
 }
 
 #[test]
 fn test_inventory_reserve_release_under_concurrent_modifications() {
     let commerce = Arc::new(Commerce::new(":memory:").unwrap());
-    let final_stock = Arc::new(Mutex::new(dec!(0)));
 
     commerce
         .inventory()

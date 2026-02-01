@@ -261,7 +261,29 @@ export class ModelFallback {
     let modelsToTry = this.getAvailableModels();
 
     if (modelsToTry.length === 0) {
-      throw new Error('No models available. All models are in cooldown or missing API keys.');
+      // Provide helpful error message based on why no models are available
+      const missingKeys = this.chain.filter(m => m.envKey && !process.env[m.envKey]);
+      const inCooldown = this.chain.filter(m => this.cooldownTracker.isInCooldown(m.id));
+
+      let errorMsg = 'No models available.';
+      let hint = '';
+
+      if (missingKeys.length > 0 && inCooldown.length === 0) {
+        // All models missing API keys
+        errorMsg = 'No API keys configured.';
+        hint = `\n\nTo fix this, set up your API key:\n` +
+               `  1. Run: stateset-config set-key anthropic\n` +
+               `  2. Or set: export ANTHROPIC_API_KEY="sk-ant-..."\n` +
+               `  3. Get key from: https://console.anthropic.com/\n\n` +
+               `Run 'stateset-config show-keys' to check your configuration.`;
+      } else if (inCooldown.length > 0) {
+        errorMsg = 'All models are in cooldown due to rate limiting.';
+        hint = '\n\nTry again in a few minutes, or use a different provider with --provider.';
+      } else {
+        hint = '\n\nRun stateset-doctor to diagnose the issue.';
+      }
+
+      throw new Error(errorMsg + hint);
     }
 
     // If preferred model specified, move it to front

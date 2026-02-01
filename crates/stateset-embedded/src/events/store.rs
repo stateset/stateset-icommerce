@@ -91,6 +91,33 @@ impl InMemoryEventStore {
             | CommerceEvent::RefundIssued { return_id, .. } => {
                 (Some("return".to_string()), Some(return_id.to_string()))
             }
+            // x402 Payment Intent events
+            CommerceEvent::X402IntentCreated { intent_id, .. }
+            | CommerceEvent::X402IntentSigned { intent_id, .. }
+            | CommerceEvent::X402IntentSequenced { intent_id, .. }
+            | CommerceEvent::X402IntentSettled { intent_id, .. }
+            | CommerceEvent::X402IntentFailed { intent_id, .. }
+            | CommerceEvent::X402IntentExpired { intent_id, .. } => {
+                (Some("x402_intent".to_string()), Some(intent_id.to_string()))
+            }
+            // Agent Card events
+            CommerceEvent::AgentCardCreated { agent_id, .. }
+            | CommerceEvent::AgentCardVerified { agent_id, .. }
+            | CommerceEvent::AgentCardSuspended { agent_id, .. }
+            | CommerceEvent::AgentCardReactivated { agent_id, .. } => {
+                (Some("agent_card".to_string()), Some(agent_id.to_string()))
+            }
+            // A2A Commerce events
+            CommerceEvent::A2AQuoteRequested { quote_id, .. }
+            | CommerceEvent::A2AQuoteAccepted { quote_id, .. }
+            | CommerceEvent::A2AQuoteRejected { quote_id, .. } => {
+                (Some("a2a_quote".to_string()), Some(quote_id.to_string()))
+            }
+            CommerceEvent::A2APurchaseInitiated { purchase_id, .. }
+            | CommerceEvent::A2APurchasePaid { purchase_id, .. }
+            | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => {
+                (Some("a2a_purchase".to_string()), Some(purchase_id.to_string()))
+            }
         }
     }
 }

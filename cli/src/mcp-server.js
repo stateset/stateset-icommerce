@@ -84,7 +84,11 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       // Invoices (read-only)
       'list_invoices', 'get_overdue_invoices',
       // Warranties (read-only)
-      'list_warranties'
+      'list_warranties',
+      // x402 Protocol (read-only)
+      'x402_get_intent', 'x402_list_intents', 'x402_get_next_nonce',
+      // Agent Cards (read-only)
+      'discover_agents', 'get_agent_card', 'list_agent_cards'
     ];
     return readOnlyTools.includes(toolName);
   };
@@ -5205,6 +5209,501 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
                   count: chains.length,
                   chains,
                   recommended: 'solana (USDC) for liquidity, set_chain (ssUSD) for yield',
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // x402 Protocol Tools (AI Agent Commerce)
+      // ============================================================================
+      tool(
+        'x402_create_payment_intent',
+        'Create an x402 payment intent for AI agent commerce. Returns a signing hash that the payer agent must sign with Ed25519.',
+        {
+          payerAddress: z.string().describe('Payer wallet address (sender)'),
+          payeeAddress: z.string().describe('Payee wallet address (recipient)'),
+          amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
+          asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
+          network: z.string().optional().describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)'),
+          cartId: z.string().optional().describe('Cart ID to link this payment to'),
+          orderId: z.string().optional().describe('Order ID for reference'),
+          description: z.string().optional().describe('Description of what this payment is for'),
+          validitySeconds: z.number().optional().describe('How long the intent is valid (default: 3600)')
+        },
+        async (args) => {
+          try {
+            const intent = await commerce.x402().createIntent({
+              payer_address: args.payerAddress,
+              payee_address: args.payeeAddress,
+              amount: args.amount,
+              asset: args.asset || 'usdc',
+              network: args.network || 'set_chain',
+              cart_id: args.cartId,
+              order_id: args.orderId,
+              description: args.description,
+              validity_seconds: args.validitySeconds,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'x402 payment intent created. Payer must sign the signing_hash.',
+                  intent: {
+                    id: intent.id,
+                    status: intent.status,
+                    payerAddress: intent.payer_address,
+                    payeeAddress: intent.payee_address,
+                    amount: intent.amount,
+                    amountDecimal: intent.amount_decimal,
+                    asset: intent.asset,
+                    network: intent.network,
+                    chainId: intent.chain_id,
+                    signingHash: intent.signing_hash,
+                    validUntil: intent.valid_until,
+                    nonce: intent.nonce,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_sign_intent',
+        'Sign an x402 payment intent with an Ed25519 signature. This authorizes the payment.',
+        {
+          intentId: z.string().describe('Payment intent ID to sign'),
+          signature: z.string().describe('Ed25519 signature over the signing_hash (hex or base64 encoded)'),
+          publicKey: z.string().describe('Payer Ed25519 public key (hex or base64 encoded)')
+        },
+        async ({ intentId, signature, publicKey }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Signing x402 intent requires --apply flag.',
+                  wouldSign: { intentId, hasSignature: !!signature, hasPublicKey: !!publicKey },
+                  instruction: 'Run with --apply to sign this payment intent'
+                })
+              }]
+            };
+          }
+          try {
+            const signed = await commerce.x402().signIntent(intentId, {
+              intent_id: intentId,
+              signature,
+              public_key: publicKey,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Payment intent signed. Ready for settlement.',
+                  intent: {
+                    id: signed.id,
+                    status: signed.status,
+                    payerSignature: signed.payer_signature,
+                    payerPublicKey: signed.payer_public_key,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_get_intent',
+        'Get details of an x402 payment intent.',
+        {
+          intentId: z.string().describe('Payment intent ID')
+        },
+        async ({ intentId }) => {
+          try {
+            const intent = await commerce.x402().getIntent(intentId);
+            if (!intent) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Payment intent not found' }) }] };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  intent: {
+                    id: intent.id,
+                    status: intent.status,
+                    payerAddress: intent.payer_address,
+                    payeeAddress: intent.payee_address,
+                    amount: intent.amount,
+                    amountDecimal: intent.amount_decimal,
+                    asset: intent.asset,
+                    network: intent.network,
+                    chainId: intent.chain_id,
+                    signingHash: intent.signing_hash,
+                    payerSignature: intent.payer_signature,
+                    validUntil: intent.valid_until,
+                    nonce: intent.nonce,
+                    txHash: intent.tx_hash,
+                    blockNumber: intent.block_number,
+                    createdAt: intent.created_at,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_list_intents',
+        'List x402 payment intents with optional filtering.',
+        {
+          payerAddress: z.string().optional().describe('Filter by payer address'),
+          payeeAddress: z.string().optional().describe('Filter by payee address'),
+          status: z.string().optional().describe('Filter by status: created, signed, sequenced, settled, expired, failed'),
+          network: z.string().optional().describe('Filter by network'),
+          limit: z.number().optional().describe('Maximum results (default: 50)')
+        },
+        async (args) => {
+          try {
+            const intents = await commerce.x402().listIntents({
+              payer_address: args.payerAddress,
+              payee_address: args.payeeAddress,
+              status: args.status,
+              network: args.network,
+              limit: args.limit || 50,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: intents.length,
+                  intents: intents.map(i => ({
+                    id: i.id,
+                    status: i.status,
+                    payerAddress: i.payer_address,
+                    payeeAddress: i.payee_address,
+                    amount: i.amount,
+                    asset: i.asset,
+                    network: i.network,
+                    createdAt: i.created_at,
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_mark_settled',
+        'Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation.',
+        {
+          intentId: z.string().describe('Payment intent ID'),
+          txHash: z.string().describe('On-chain transaction hash'),
+          blockNumber: z.number().describe('Block number where settled')
+        },
+        async ({ intentId, txHash, blockNumber }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Marking settled requires --apply flag.',
+                  wouldSettle: { intentId, txHash, blockNumber }
+                })
+              }]
+            };
+          }
+          try {
+            const settled = await commerce.x402().markSettled(intentId, txHash, blockNumber);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Payment intent marked as settled.',
+                  intent: {
+                    id: settled.id,
+                    status: settled.status,
+                    txHash: settled.tx_hash,
+                    blockNumber: settled.block_number,
+                    settledAt: settled.settled_at,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_get_next_nonce',
+        'Get the next nonce for a payer address. Used for replay protection.',
+        {
+          payerAddress: z.string().describe('Payer wallet address')
+        },
+        async ({ payerAddress }) => {
+          try {
+            const nonce = await commerce.x402().getNextNonce(payerAddress);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  payerAddress,
+                  nextNonce: nonce,
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Agent Card Tools (A2A Commerce)
+      // ============================================================================
+      tool(
+        'register_agent_card',
+        'Register an AI agent card for A2A commerce. Advertises capabilities, supported networks, and payment assets.',
+        {
+          name: z.string().describe('Agent name'),
+          walletAddress: z.string().describe('Agent wallet address for receiving payments'),
+          publicKey: z.string().describe('Ed25519 public key for verifying signatures'),
+          supportedNetworks: z.array(z.string()).optional().describe('Networks: set_chain, base, ethereum, arbitrum'),
+          supportedAssets: z.array(z.string()).optional().describe('Assets: usdc, ssusd, usdt'),
+          skills: z.array(z.string()).optional().describe('A2A skills: sell, buy, quote, fulfill, deliver'),
+          endpointUrl: z.string().optional().describe('A2A endpoint URL'),
+          description: z.string().optional().describe('Agent description')
+        },
+        async (args) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Registering agent card requires --apply flag.',
+                  wouldRegister: { name: args.name, walletAddress: args.walletAddress }
+                })
+              }]
+            };
+          }
+          try {
+            const card = await commerce.x402().registerAgent({
+              name: args.name,
+              wallet_address: args.walletAddress,
+              public_key: args.publicKey,
+              supported_networks: args.supportedNetworks,
+              supported_assets: args.supportedAssets,
+              a2a_skills: args.skills,
+              endpoint_url: args.endpointUrl,
+              description: args.description,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Agent card registered.',
+                  agent: {
+                    id: card.id,
+                    name: card.name,
+                    walletAddress: card.wallet_address,
+                    trustLevel: card.trust_level,
+                    active: card.active,
+                    supportedNetworks: card.supported_networks,
+                    supportedAssets: card.supported_assets,
+                    skills: card.a2a_skills,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'discover_agents',
+        'Discover AI agents with specific commerce capabilities. Find sellers, buyers, or agents supporting specific networks/assets.',
+        {
+          network: z.string().optional().describe('Filter by network: set_chain, base, ethereum'),
+          asset: z.string().optional().describe('Filter by asset: usdc, ssusd, usdt'),
+          skill: z.string().optional().describe('Filter by skill: sell, buy, quote, fulfill'),
+          trustLevel: z.string().optional().describe('Minimum trust level: sandbox, standard, verified, enterprise')
+        },
+        async (args) => {
+          try {
+            const agents = await commerce.x402().discoverAgents(
+              args.network,
+              args.asset,
+              args.skill,
+              args.trustLevel
+            );
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: agents.length,
+                  agents: agents.map(a => ({
+                    id: a.id,
+                    name: a.name,
+                    walletAddress: a.wallet_address,
+                    trustLevel: a.trust_level,
+                    supportedNetworks: a.supported_networks,
+                    supportedAssets: a.supported_assets,
+                    skills: a.a2a_skills,
+                    endpointUrl: a.endpoint_url,
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'get_agent_card',
+        'Get details of a registered AI agent card.',
+        {
+          agentId: z.string().optional().describe('Agent ID (UUID)'),
+          walletAddress: z.string().optional().describe('Agent wallet address')
+        },
+        async ({ agentId, walletAddress }) => {
+          try {
+            let agent;
+            if (agentId) {
+              agent = await commerce.x402().getAgent(agentId);
+            } else if (walletAddress) {
+              agent = await commerce.x402().getAgentByWallet(walletAddress);
+            } else {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Must provide agentId or walletAddress' }) }] };
+            }
+            if (!agent) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'Agent not found' }) }] };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  agent: {
+                    id: agent.id,
+                    name: agent.name,
+                    description: agent.description,
+                    walletAddress: agent.wallet_address,
+                    publicKey: agent.public_key,
+                    trustLevel: agent.trust_level,
+                    active: agent.active,
+                    supportedNetworks: agent.supported_networks,
+                    supportedAssets: agent.supported_assets,
+                    skills: agent.a2a_skills,
+                    endpointUrl: agent.endpoint_url,
+                    createdAt: agent.created_at,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'verify_agent',
+        'Verify an AI agent card (admin operation). Upgrades trust level to Verified.',
+        {
+          agentId: z.string().describe('Agent ID to verify')
+        },
+        async ({ agentId }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Verifying agent requires --apply flag.',
+                  wouldVerify: { agentId }
+                })
+              }]
+            };
+          }
+          try {
+            const verified = await commerce.x402().verifyAgent(agentId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Agent verified.',
+                  agent: {
+                    id: verified.id,
+                    name: verified.name,
+                    trustLevel: verified.trust_level,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'list_agent_cards',
+        'List all registered AI agent cards.',
+        {
+          active: z.boolean().optional().describe('Filter by active status'),
+          trustLevel: z.string().optional().describe('Filter by trust level'),
+          limit: z.number().optional().describe('Maximum results (default: 50)')
+        },
+        async (args) => {
+          try {
+            const agents = await commerce.x402().listAgents({
+              active: args.active,
+              trust_level: args.trustLevel,
+              limit: args.limit || 50,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: agents.length,
+                  agents: agents.map(a => ({
+                    id: a.id,
+                    name: a.name,
+                    walletAddress: a.wallet_address,
+                    trustLevel: a.trust_level,
+                    active: a.active,
+                  }))
                 }, null, 2)
               }]
             };

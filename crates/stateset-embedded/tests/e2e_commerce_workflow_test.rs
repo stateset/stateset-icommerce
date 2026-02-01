@@ -9,9 +9,10 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     Address, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CreatePayment, CreateProduct, CreateRefund, CreateReturn, CreateReturnItem, CreateShipment,
-    ItemCondition, OrderStatus, PaymentMethodType, PaymentTransactionStatus, RefundStatus,
-    ReturnReason, ReturnStatus, ShipmentStatus, ShippingCarrier, ShippingMethod, UpdateReturn,
+    CreatePayment, CreateProduct, CreateProductVariant, CreateRefund, CreateReturn, CreateReturnItem,
+    CreateShipment, ItemCondition, OrderStatus, PaymentMethodType, PaymentTransactionStatus,
+    RefundStatus, ReturnReason, ReturnStatus, ShipmentStatus, ShippingCarrier, ShippingMethod,
+    UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -40,17 +41,20 @@ fn test_full_commerce_lifecycle() {
     // ========================================================================
     // 2. Create products
     // ========================================================================
+    let product_sku = format!("E2E-{}", Uuid::new_v4().simple());
     let product = commerce
         .products()
         .create(CreateProduct {
             name: "Premium Widget".into(),
             description: Some("High-quality widget for e2e testing".into()),
-            sku: Some(format!("E2E-{}", Uuid::new_v4().simple())),
-            price: Some(dec!(49.99)),
+            variants: Some(vec![CreateProductVariant {
+                sku: product_sku.clone(),
+                price: dec!(49.99),
+                ..Default::default()
+            }]),
             ..Default::default()
         })
         .expect("Failed to create product");
-    let product_sku = product.sku.clone().unwrap_or_else(|| "E2E-SKU".into());
 
     // ========================================================================
     // 3. Create inventory
@@ -135,19 +139,9 @@ fn test_full_commerce_lifecycle() {
         .expect("Failed to confirm order");
 
     // ========================================================================
-    // 7. Reserve inventory
+    // 7. Verify inventory was reserved during order creation
     // ========================================================================
-    let reservation = commerce
-        .inventory()
-        .reserve(
-            &product_sku,
-            dec!(2),
-            "order",
-            &order.id.to_string(),
-            None,
-        )
-        .expect("Failed to reserve inventory");
-
+    // Note: Order creation automatically reserves inventory for items with stock
     let stock_reserved = commerce
         .inventory()
         .get_stock(&product_sku)
@@ -157,20 +151,23 @@ fn test_full_commerce_lifecycle() {
     assert_eq!(stock_reserved.total_available, dec!(98));
 
     // ========================================================================
-    // 8. Confirm reservation (deduct stock)
+    // 8. Deduct inventory for fulfillment
     // ========================================================================
+    // When order is fulfilled, adjust inventory to deduct shipped quantity
     commerce
         .inventory()
-        .confirm_reservation(reservation.id)
-        .expect("Failed to confirm reservation");
+        .adjust(&product_sku, dec!(-2), "Order fulfillment")
+        .expect("Failed to adjust inventory");
 
-    let stock_after_confirm = commerce
+    let stock_after_fulfillment = commerce
         .inventory()
         .get_stock(&product_sku)
         .expect("get stock")
         .expect("stock not found");
-    assert_eq!(stock_after_confirm.total_on_hand, dec!(98));
-    assert_eq!(stock_after_confirm.total_allocated, dec!(0));
+    assert_eq!(stock_after_fulfillment.total_on_hand, dec!(98));
+    // Allocation remains until reservation is released
+    assert_eq!(stock_after_fulfillment.total_allocated, dec!(2));
+    assert_eq!(stock_after_fulfillment.total_available, dec!(96));
 
     // ========================================================================
     // 9. Create shipment
@@ -293,6 +290,13 @@ fn test_full_commerce_lifecycle() {
         .expect("Failed to create refund");
     assert!(!refund.id.is_nil());
     assert_eq!(refund.amount, dec!(49.99));
+
+    // Complete the refund to update payment's amount_refunded
+    let refund = commerce
+        .payments()
+        .complete_refund(refund.id)
+        .expect("Failed to complete refund");
+    assert_eq!(refund.status, RefundStatus::Completed);
 
     // ========================================================================
     // 15. Verify final state

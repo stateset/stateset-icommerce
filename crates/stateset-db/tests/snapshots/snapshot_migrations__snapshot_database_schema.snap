@@ -1,0 +1,5 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+expression: tables
+---
+[]

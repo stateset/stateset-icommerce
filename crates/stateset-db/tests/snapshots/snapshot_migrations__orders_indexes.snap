@@ -1,0 +1,11 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+expression: order_indexes
+---
+[
+    "CREATE INDEX idx_orders_customer ON orders(customer_id)",
+    "CREATE INDEX idx_orders_list_cover\n    ON orders(status, order_date, customer_id)",
+    "CREATE INDEX idx_orders_order_date ON orders(order_date)",
+    "CREATE INDEX idx_orders_order_number ON orders(order_number)",
+    "CREATE INDEX idx_orders_status ON orders(status)",
+]

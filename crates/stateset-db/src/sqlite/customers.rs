@@ -3,6 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_json_row,
     parse_enum, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -139,7 +140,6 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
 
         let id = Uuid::new_v4();
-        let now = Utc::now();
         let tags = input.tags.clone().unwrap_or_default();
         let metadata = input.metadata.clone();
         let email = input.email.clone();
@@ -148,20 +148,20 @@ impl CustomerRepository for SqliteCustomerRepository {
         let phone = input.phone.clone();
         let accepts_marketing = input.accepts_marketing.unwrap_or(false);
 
-        {
-            let conn = self.conn()?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let now = Utc::now();
 
             // Check email uniqueness
-            let exists: i32 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM customers WHERE email = ?",
-                    [&input.email],
-                    |row| row.get(0),
-                )
-                .map_err(map_db_error)?;
+            let exists: i32 = tx.query_row(
+                "SELECT COUNT(*) FROM customers WHERE email = ?",
+                [&email],
+                |row| row.get(0),
+            )?;
 
             if exists > 0 {
-                return Err(CommerceError::EmailAlreadyExists(input.email));
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::EmailAlreadyExists(email.clone()),
+                )));
             }
 
             let tags_json = serde_json::to_string(&tags).unwrap_or_default();
@@ -169,7 +169,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                 .as_ref()
                 .map(|m| serde_json::to_string(m).unwrap_or_default());
 
-            conn.execute(
+            tx.execute(
                 "INSERT INTO customers (id, email, first_name, last_name, phone, status,
                                         accepts_marketing, email_verified, tags, metadata,
                                         created_at, updated_at)
@@ -188,26 +188,25 @@ impl CustomerRepository for SqliteCustomerRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            )
-            .map_err(map_db_error)?;
-        } // conn is dropped here
+            )?;
 
-        // Now we can safely get another connection
-        Ok(Customer {
-            id,
-            email,
-            first_name,
-            last_name,
-            phone,
-            status: CustomerStatus::Active,
-            accepts_marketing,
-            email_verified: false,
-            tags,
-            metadata,
-            default_shipping_address_id: None,
-            default_billing_address_id: None,
-            created_at: now,
-            updated_at: now,
+            // Clone values for the return since Fn closure may be called multiple times
+            Ok(Customer {
+                id,
+                email: email.clone(),
+                first_name: first_name.clone(),
+                last_name: last_name.clone(),
+                phone: phone.clone(),
+                status: CustomerStatus::Active,
+                accepts_marketing,
+                email_verified: false,
+                tags: tags.clone(),
+                metadata: metadata.clone(),
+                default_shipping_address_id: None,
+                default_billing_address_id: None,
+                created_at: now,
+                updated_at: now,
+            })
         })
     }
 

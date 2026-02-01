@@ -503,6 +503,14 @@ impl SqliteSubscriptionRepository {
             })?;
         }
 
+        // Create the initial billing cycle for the subscription
+        self.create_billing_cycle(CreateBillingCycle {
+            subscription_id: id,
+            cycle_number: 1,
+            period_start: now,
+            period_end: current_period_end,
+        })?;
+
         self.get_subscription(id)?
             .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created subscription".into()))
     }

@@ -56,45 +56,6 @@ EXAMPLES:
   stateset-doctor --fix
 `;
 
-async function checkApiKey() {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return {
-      status: 'error',
-      message: 'ANTHROPIC_API_KEY not set',
-      hint: 'Set your API key: export ANTHROPIC_API_KEY=sk-ant-...'
-    };
-  }
-  if (!apiKey.startsWith('sk-ant-')) {
-    return {
-      status: 'warning',
-      message: 'API key format looks unusual',
-      hint: 'Anthropic API keys typically start with sk-ant-'
-    };
-  }
-
-  // API key format is valid - report ok
-  // Connectivity is checked separately or only matters for actual operations
-  const result = {
-    status: 'ok',
-    message: `API key configured (${apiKey.slice(0, 10)}...${apiKey.slice(-4)})`,
-    stats: { keyConfigured: true }
-  };
-
-  // Optionally check connectivity (but don't downgrade status for connectivity issues)
-  try {
-    const connectivity = await checkApiAvailability(apiKey, { timeout: 5000 });
-    result.stats.apiReachable = connectivity.available;
-    if (!connectivity.available) {
-      result.hint = `Connectivity issue: ${connectivity.reason}`;
-    }
-  } catch (error) {
-    result.stats.apiReachable = 'unknown';
-  }
-
-  return result;
-}
-
 async function checkSync() {
   try {
     const { isSyncConfigured, loadSyncConfig } = await import('../src/sync/config.js');
@@ -376,9 +337,57 @@ async function main() {
 
   const output = new RichOutput({ color: !values.json });
 
+  // Check all API keys
+  async function checkAllApiKeys() {
+    const providers = [
+      { name: 'Anthropic', env: 'ANTHROPIC_API_KEY', prefix: 'sk-ant-', required: true },
+      { name: 'OpenAI', env: 'OPENAI_API_KEY', prefix: 'sk-', required: false },
+      { name: 'Gemini', env: 'GEMINI_API_KEY', prefix: '', required: false }
+    ];
+
+    const results = [];
+    let hasRequired = false;
+
+    for (const provider of providers) {
+      const key = process.env[provider.env];
+      if (key) {
+        if (provider.required) hasRequired = true;
+        results.push({
+          provider: provider.name,
+          configured: true,
+          masked: key.slice(0, 10) + '...' + key.slice(-4)
+        });
+      } else if (provider.required) {
+        results.push({
+          provider: provider.name,
+          configured: false,
+          required: true
+        });
+      }
+    }
+
+    if (!hasRequired) {
+      return {
+        status: 'error',
+        message: 'No API keys configured (Anthropic required)',
+        hint: 'Run: stateset-config set-key anthropic\n' +
+              '   Or: export ANTHROPIC_API_KEY="sk-ant-..."\n' +
+              '   Get key: https://console.anthropic.com/',
+        stats: { providers: results }
+      };
+    }
+
+    const configured = results.filter(r => r.configured).map(r => r.provider);
+    return {
+      status: 'ok',
+      message: `API keys configured: ${configured.join(', ')}`,
+      stats: { providers: results }
+    };
+  }
+
   // Available checks
   const allChecks = {
-    'API Key': checkApiKey,
+    'API Key': checkAllApiKeys,
     'Node.js': checkNodeVersion,
     'Database': () => checkDatabase(values.db),
     'Permissions': () => checkPermissions(values.db),

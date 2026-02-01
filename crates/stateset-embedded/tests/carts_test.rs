@@ -3,7 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddCartItem, Cart, CartAddress, CartFilter, CartStatus, CheckoutResult, Commerce, CreateCart,
-    CreateCustomer, SetCartPayment, SetCartShipping, UpdateCart, UpdateCartItem,
+    CreateCouponCode, CreateCustomer, CreatePromotion, PromotionType, SetCartPayment,
+    SetCartShipping, UpdateCart, UpdateCartItem,
 };
 use uuid::Uuid;
 
@@ -682,6 +683,35 @@ fn test_cart_apply_discount() {
     let cart = create_test_cart(&commerce);
     add_test_item(&commerce, cart.id);
 
+    // Create and activate a promotion with a coupon code
+    let promotion = commerce
+        .promotions()
+        .create(CreatePromotion {
+            name: "10% Off".into(),
+            promotion_type: PromotionType::PercentageOff,
+            percentage_off: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .expect("Failed to create promotion");
+
+    commerce
+        .promotions()
+        .activate(promotion.id)
+        .expect("Failed to activate promotion");
+
+    commerce
+        .promotions()
+        .create_coupon(CreateCouponCode {
+            code: "SAVE10".into(),
+            promotion_id: promotion.id,
+            usage_limit: Some(100),
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("Failed to create coupon");
+
     let updated = commerce
         .carts()
         .apply_discount(cart.id, "SAVE10")
@@ -695,6 +725,35 @@ fn test_cart_remove_discount() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let cart = create_test_cart(&commerce);
     add_test_item(&commerce, cart.id);
+
+    // Create and activate a promotion with a coupon code
+    let promotion = commerce
+        .promotions()
+        .create(CreatePromotion {
+            name: "10% Off".into(),
+            promotion_type: PromotionType::PercentageOff,
+            percentage_off: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .expect("Failed to create promotion");
+
+    commerce
+        .promotions()
+        .activate(promotion.id)
+        .expect("Failed to activate promotion");
+
+    commerce
+        .promotions()
+        .create_coupon(CreateCouponCode {
+            code: "SAVE10".into(),
+            promotion_id: promotion.id,
+            usage_limit: Some(100),
+            per_customer_limit: None,
+            starts_at: None,
+            ends_at: None,
+            metadata: None,
+        })
+        .expect("Failed to create coupon");
 
     // Apply discount first
     commerce

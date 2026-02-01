@@ -43,7 +43,19 @@ function loadConfigWithProfile(profileName) {
 }
 
 const HELP = `
-StateSet iCommerce CLI - AI-powered commerce operations
+StateSet iCommerce CLI v0.4.0 - AI-powered commerce operations
+
+QUICK START:
+  1. Set up your API key (required):
+     stateset-config set-key anthropic
+
+  2. Or set environment variable directly:
+     export ANTHROPIC_API_KEY="sk-ant-api03-..."
+
+  3. Get your API key from: https://console.anthropic.com/
+
+  4. Run your first command:
+     stateset "show me all customers"
 
 USAGE:
   stateset [options] "<request>"
@@ -59,7 +71,7 @@ OPTIONS:
   --think <level>    Extended thinking: off, low, medium, high (default: off)
   --stream           Enable streaming output (token-by-token)
   --budget <usd>     Maximum spend per query in USD (e.g., --budget 1.00)
-  --memory           Enable conversation memory
+  --memory           Enable conversation memory (SQLite + Markdown)
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
@@ -94,13 +106,52 @@ BATCH/PIPELINE MODE:
     stateset --apply --batch orders.txt --parallel 3
 
 AGENTS:
-  customer-service   Full-service agent (default fallback)
-  checkout           Shopping cart & checkout flow (ACP)
-  orders             Order lifecycle management
-  inventory          Stock & reservation management
-  returns            RMA & refund processing
-  analytics          Business intelligence & forecasting
-  storefront         E-commerce website scaffolding
+  Core Commerce:
+    customer-service   Full-service agent (default fallback, 90+ tools)
+    checkout           Shopping cart & checkout flow (ACP)
+    orders             Order lifecycle management
+    inventory          Stock & reservation management
+    returns            RMA & refund processing
+    analytics          Business intelligence & forecasting
+
+  Marketing & Sales:
+    promotions         Discounts, coupons & promotional campaigns
+    subscriptions      Subscription plans & recurring billing
+
+  Operations:
+    manufacturing      BOMs, work orders & production management
+    shipments          Shipment tracking & delivery
+    suppliers          Supplier management & purchase orders
+    invoices           B2B invoicing & accounts receivable
+    warranties         Product warranties & claims
+
+  Financial:
+    currency           Multi-currency support & exchange rates
+    tax                Tax calculation (US/EU/CA) & exemptions
+    payments           Payment processing & refunds
+    stablecoin         Native crypto payments (USDC, ssUSD, BTC, ZEC)
+
+  Infrastructure:
+    sync               Verifiable Event Sync (VES) with production
+    storefront         E-commerce website scaffolding
+
+SPECIALIZED COMMANDS:
+  stateset-chat            Interactive multi-turn REPL
+  stateset-direct          Direct CLI (no AI, structured commands)
+  stateset-pay             Native stablecoin payments
+  stateset-autonomous      Autonomous business engine
+  stateset-sync            VES sync management
+  stateset-daemon          Daemon & service management
+  stateset-channels        Messaging channel orchestration
+  stateset-skills          Skills marketplace
+
+  Messaging Channels (10+):
+    stateset-slack         Slack integration
+    stateset-discord       Discord bot
+    stateset-telegram      Telegram bot
+    stateset-whatsapp      WhatsApp Business
+    stateset-signal        Signal messenger
+    stateset-google-chat   Google Chat / Workspace
 
 EXAMPLES:
   # List customers (read-only)
@@ -110,6 +161,8 @@ EXAMPLES:
   # Use a specific agent
   stateset --agent inventory "check all stock levels"
   stateset --agent analytics "show me revenue trends"
+  stateset --agent promotions "show active promotions"
+  stateset --agent subscriptions "list all subscription plans"
 
   # Check inventory
   stateset "how much stock do we have of SKU-001?"
@@ -131,8 +184,32 @@ EXAMPLES:
   stateset "what's my total revenue this month?"
   stateset "forecast revenue for next quarter"
 
+  # Promotions and coupons
+  stateset --apply "create a 20% off promotion called Summer Sale"
+  stateset "validate coupon SAVE20"
+
+  # Subscriptions
+  stateset --apply "create a monthly plan called Coffee Club at $29.99"
+  stateset --apply "subscribe customer X to the Coffee Club plan"
+
+  # Multi-currency
+  stateset "convert $100 USD to EUR"
+  stateset "what's the exchange rate from USD to GBP?"
+
+  # Tax calculation
+  stateset "calculate tax for an order shipping to California"
+
+  # Stablecoin payments
+  stateset pay --wallet --chain solana
+  stateset pay --apply --to <address> --amount 50.00 --chain solana
+
   # Cart recovery
   stateset "show me abandoned carts"
+
+  # Sync with production
+  stateset-sync status
+  stateset-sync push
+  stateset-sync pull
 
   # Use a different database
   stateset --db ./production.db "list recent orders"
@@ -140,10 +217,17 @@ EXAMPLES:
   # Output to file
   stateset --format csv --output orders.csv "list all orders"
 
+  # Extended thinking for complex queries
+  stateset --think high "analyze my business performance and suggest improvements"
+
 SAFETY:
   By default, all write operations are blocked. Use --apply to enable them.
   High-value operations (>$1000) will prompt for confirmation unless --yes is used.
   The CLI will always show you what would happen before making changes.
+
+MORE INFO:
+  Documentation: https://docs.stateset.com/cli
+  Issues: https://github.com/stateset/stateset-icommerce/issues
 `;
 
 /**

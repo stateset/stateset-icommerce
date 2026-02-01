@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::Address;
+use super::x402::{X402Asset, X402IntentStatus, X402Network};
 
 /// Cart/Checkout Session aggregate
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +66,9 @@ pub struct Cart {
     // Inventory reservations
     pub inventory_reserved: bool,
     pub reservation_expires_at: Option<DateTime<Utc>>,
+
+    // x402 Payment (for stablecoin checkout)
+    pub x402_payment: Option<CartX402Payment>,
 
     // Timestamps
     pub expires_at: Option<DateTime<Utc>>,
@@ -142,6 +146,95 @@ impl From<Address> for CartAddress {
             email: None,
         }
     }
+}
+
+/// x402 payment configuration for cart checkout
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CartX402Payment {
+    /// x402 payment intent ID (if created)
+    pub intent_id: Option<Uuid>,
+    /// Payer wallet address
+    pub payer_address: String,
+    /// Target blockchain network
+    pub network: X402Network,
+    /// Payment asset (stablecoin)
+    pub asset: X402Asset,
+    /// Current status of the x402 payment
+    pub status: X402IntentStatus,
+}
+
+impl Default for CartX402Payment {
+    fn default() -> Self {
+        Self {
+            intent_id: None,
+            payer_address: String::new(),
+            network: X402Network::default(),
+            asset: X402Asset::default(),
+            status: X402IntentStatus::default(),
+        }
+    }
+}
+
+/// Input for setting x402 payment on cart
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetCartX402Payment {
+    /// Payer wallet address
+    pub payer_address: String,
+    /// Target blockchain network
+    pub network: X402Network,
+    /// Payment asset (stablecoin)
+    pub asset: X402Asset,
+}
+
+/// Result of x402 checkout attempt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum X402CheckoutResult {
+    /// Payment is required - return HTTP 402 with this data
+    PaymentRequired(X402PaymentRequiredData),
+    /// Intent was created and is awaiting signature
+    IntentCreated(X402IntentCreatedData),
+    /// Intent is signed and awaiting settlement
+    AwaitingSettlement(X402AwaitingSettlementData),
+    /// Checkout completed successfully
+    Completed(CheckoutResult),
+}
+
+/// Data for HTTP 402 Payment Required response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402PaymentRequiredData {
+    pub cart_id: Uuid,
+    pub payee_address: String,
+    pub amount: u64,
+    pub amount_display: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub chain_id: u64,
+    pub valid_seconds: u64,
+}
+
+/// Data when intent is created and awaiting signature
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402IntentCreatedData {
+    pub cart_id: Uuid,
+    pub intent_id: Uuid,
+    pub signing_hash: String,
+    pub amount: u64,
+    pub amount_display: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub payee_address: String,
+    pub valid_until: u64,
+    pub nonce: u64,
+}
+
+/// Data when awaiting on-chain settlement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402AwaitingSettlementData {
+    pub cart_id: Uuid,
+    pub intent_id: Uuid,
+    pub status: X402IntentStatus,
+    pub sequence_number: Option<u64>,
+    pub batch_id: Option<Uuid>,
 }
 
 /// Cart status enumeration

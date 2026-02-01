@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::models::{
     CustomerStatus, FulfillmentStatus, OrderStatus, PaymentStatus, ReturnReason, ReturnStatus,
+    X402Asset, X402IntentStatus, X402Network, PurchaseStatus, QuoteStatus, TrustLevel,
 };
 
 /// Commerce domain event
@@ -199,6 +200,114 @@ pub enum CommerceEvent {
         method: String,
         timestamp: DateTime<Utc>,
     },
+
+    // x402 Payment Intent events
+    X402IntentCreated {
+        intent_id: Uuid,
+        cart_id: Option<Uuid>,
+        payer_address: String,
+        payee_address: String,
+        amount: u64,
+        asset: X402Asset,
+        network: X402Network,
+        timestamp: DateTime<Utc>,
+    },
+    X402IntentSigned {
+        intent_id: Uuid,
+        signing_hash: String,
+        payer_public_key: String,
+        timestamp: DateTime<Utc>,
+    },
+    X402IntentSequenced {
+        intent_id: Uuid,
+        sequence_number: u64,
+        batch_id: Uuid,
+        timestamp: DateTime<Utc>,
+    },
+    X402IntentSettled {
+        intent_id: Uuid,
+        tx_hash: String,
+        block_number: u64,
+        timestamp: DateTime<Utc>,
+    },
+    X402IntentFailed {
+        intent_id: Uuid,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
+    X402IntentExpired {
+        intent_id: Uuid,
+        timestamp: DateTime<Utc>,
+    },
+
+    // Agent Card events
+    AgentCardCreated {
+        agent_id: Uuid,
+        name: String,
+        wallet_address: String,
+        trust_level: TrustLevel,
+        timestamp: DateTime<Utc>,
+    },
+    AgentCardVerified {
+        agent_id: Uuid,
+        trust_level: TrustLevel,
+        verification_method: String,
+        timestamp: DateTime<Utc>,
+    },
+    AgentCardSuspended {
+        agent_id: Uuid,
+        reason: String,
+        timestamp: DateTime<Utc>,
+    },
+    AgentCardReactivated {
+        agent_id: Uuid,
+        timestamp: DateTime<Utc>,
+    },
+
+    // A2A Commerce events
+    A2AQuoteRequested {
+        quote_id: Uuid,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+        total: Decimal,
+        item_count: usize,
+        timestamp: DateTime<Utc>,
+    },
+    A2AQuoteAccepted {
+        quote_id: Uuid,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+        timestamp: DateTime<Utc>,
+    },
+    A2AQuoteRejected {
+        quote_id: Uuid,
+        buyer_agent_id: Uuid,
+        reason: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    A2APurchaseInitiated {
+        purchase_id: Uuid,
+        quote_id: Option<Uuid>,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+        payment_intent_id: Uuid,
+        total: Decimal,
+        timestamp: DateTime<Utc>,
+    },
+    A2APurchasePaid {
+        purchase_id: Uuid,
+        payment_intent_id: Uuid,
+        tx_hash: String,
+        timestamp: DateTime<Utc>,
+    },
+    A2ADeliveryConfirmed {
+        purchase_id: Uuid,
+        order_id: Option<Uuid>,
+        buyer_agent_id: Uuid,
+        seller_agent_id: Uuid,
+        rating: Option<u8>,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl CommerceEvent {
@@ -233,6 +342,25 @@ impl CommerceEvent {
             Self::ReturnRejected { .. } => "return_rejected",
             Self::ReturnCompleted { .. } => "return_completed",
             Self::RefundIssued { .. } => "refund_issued",
+            // x402 events
+            Self::X402IntentCreated { .. } => "x402_intent_created",
+            Self::X402IntentSigned { .. } => "x402_intent_signed",
+            Self::X402IntentSequenced { .. } => "x402_intent_sequenced",
+            Self::X402IntentSettled { .. } => "x402_intent_settled",
+            Self::X402IntentFailed { .. } => "x402_intent_failed",
+            Self::X402IntentExpired { .. } => "x402_intent_expired",
+            // Agent card events
+            Self::AgentCardCreated { .. } => "agent_card_created",
+            Self::AgentCardVerified { .. } => "agent_card_verified",
+            Self::AgentCardSuspended { .. } => "agent_card_suspended",
+            Self::AgentCardReactivated { .. } => "agent_card_reactivated",
+            // A2A commerce events
+            Self::A2AQuoteRequested { .. } => "a2a_quote_requested",
+            Self::A2AQuoteAccepted { .. } => "a2a_quote_accepted",
+            Self::A2AQuoteRejected { .. } => "a2a_quote_rejected",
+            Self::A2APurchaseInitiated { .. } => "a2a_purchase_initiated",
+            Self::A2APurchasePaid { .. } => "a2a_purchase_paid",
+            Self::A2ADeliveryConfirmed { .. } => "a2a_delivery_confirmed",
         }
     }
 
@@ -266,7 +394,26 @@ impl CommerceEvent {
             | Self::ReturnApproved { timestamp, .. }
             | Self::ReturnRejected { timestamp, .. }
             | Self::ReturnCompleted { timestamp, .. }
-            | Self::RefundIssued { timestamp, .. } => *timestamp,
+            | Self::RefundIssued { timestamp, .. }
+            // x402 events
+            | Self::X402IntentCreated { timestamp, .. }
+            | Self::X402IntentSigned { timestamp, .. }
+            | Self::X402IntentSequenced { timestamp, .. }
+            | Self::X402IntentSettled { timestamp, .. }
+            | Self::X402IntentFailed { timestamp, .. }
+            | Self::X402IntentExpired { timestamp, .. }
+            // Agent card events
+            | Self::AgentCardCreated { timestamp, .. }
+            | Self::AgentCardVerified { timestamp, .. }
+            | Self::AgentCardSuspended { timestamp, .. }
+            | Self::AgentCardReactivated { timestamp, .. }
+            // A2A commerce events
+            | Self::A2AQuoteRequested { timestamp, .. }
+            | Self::A2AQuoteAccepted { timestamp, .. }
+            | Self::A2AQuoteRejected { timestamp, .. }
+            | Self::A2APurchaseInitiated { timestamp, .. }
+            | Self::A2APurchasePaid { timestamp, .. }
+            | Self::A2ADeliveryConfirmed { timestamp, .. } => *timestamp,
         }
     }
 

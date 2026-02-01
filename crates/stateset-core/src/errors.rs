@@ -1,116 +1,348 @@
 //! Error types for commerce operations
+//!
+//! This module provides comprehensive error handling for all commerce operations.
+//! Errors are categorized by domain and include contextual information for debugging.
+//!
+//! # Error Categories
+//!
+//! - **Entity errors**: Not found, duplicate, invalid state transitions
+//! - **Validation errors**: Input validation failures
+//! - **Database errors**: Connection, query, constraint, and migration failures
+//! - **External service errors**: Third-party service failures
+//!
+//! # Example
+//!
+//! ```rust
+//! use stateset_core::{CommerceError, Result};
+//!
+//! fn process_order(id: uuid::Uuid) -> Result<()> {
+//!     // Operations that might fail...
+//!     Err(CommerceError::OrderNotFound(id))
+//! }
+//!
+//! // Check error category
+//! match process_order(uuid::Uuid::new_v4()) {
+//!     Err(e) if e.is_not_found() => println!("Not found: {}", e),
+//!     Err(e) if e.is_database() => println!("Database error: {}", e),
+//!     Err(e) => println!("Other error: {}", e),
+//!     Ok(()) => println!("Success"),
+//! }
+//! ```
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+// ============================================================================
+// Database Error Types (Enhanced)
+// ============================================================================
+
+/// Specific database error types with context
+///
+/// This enum provides detailed, typed database errors that preserve context
+/// about what operation failed and why. Use [`CommerceError::as_db_error()`]
+/// to extract the underlying database error for detailed handling.
+#[derive(Error, Debug, Clone)]
+pub enum DbError {
+    /// Failed to establish database connection
+    #[error("Connection failed to {url}: {message}")]
+    ConnectionFailed {
+        /// The database URL or connection string
+        url: String,
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Query execution failed
+    #[error("Query failed on {table}: {message}")]
+    QueryFailed {
+        /// The table being queried
+        table: &'static str,
+        /// The operation (e.g., "insert", "update", "select")
+        operation: &'static str,
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Constraint violation (unique, foreign key, check)
+    #[error("Constraint violation on {table}: {constraint} - {message}")]
+    ConstraintViolation {
+        /// The table with the constraint
+        table: &'static str,
+        /// The constraint name or type
+        constraint: String,
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Database migration failed
+    #[error("Migration {version} failed: {message}")]
+    MigrationFailed {
+        /// The migration version that failed
+        version: i32,
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Transaction error
+    #[error("Transaction failed: {message}")]
+    TransactionFailed {
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Connection pool exhausted
+    #[error("Connection pool exhausted after {timeout_ms}ms")]
+    PoolExhausted {
+        /// The timeout in milliseconds before giving up
+        timeout_ms: u64,
+    },
+
+    /// Serialization/deserialization error
+    #[error("Serialization error for {field}: {message}")]
+    SerializationError {
+        /// The field being serialized/deserialized
+        field: String,
+        /// Detailed error message
+        message: String,
+    },
+
+    /// Generic database error (fallback)
+    #[error("Database error: {0}")]
+    Other(String),
+}
+
+impl DbError {
+    /// Create a query failed error
+    pub fn query_failed(table: &'static str, operation: &'static str, message: impl Into<String>) -> Self {
+        Self::QueryFailed {
+            table,
+            operation,
+            message: message.into(),
+        }
+    }
+
+    /// Create a constraint violation error
+    pub fn constraint_violation(table: &'static str, constraint: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::ConstraintViolation {
+            table,
+            constraint: constraint.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a connection failed error
+    pub fn connection_failed(url: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::ConnectionFailed {
+            url: url.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a transaction failed error
+    pub fn transaction_failed(message: impl Into<String>) -> Self {
+        Self::TransactionFailed {
+            message: message.into(),
+        }
+    }
+
+    /// Create a serialization error
+    pub fn serialization_error(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::SerializationError {
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+}
+
+// ============================================================================
+// Main Commerce Error Type
+// ============================================================================
+
 /// Main error type for commerce operations
 #[derive(Error, Debug)]
 pub enum CommerceError {
+    // ========================================================================
     // Order errors
+    // ========================================================================
+
+    /// Order with given ID was not found
     #[error("Order not found: {0}")]
     OrderNotFound(Uuid),
 
+    /// Order cannot be cancelled in its current status
     #[error("Order cannot be cancelled in status: {0}")]
     OrderCannotBeCancelled(String),
 
+    /// Order cannot be refunded
     #[error("Order cannot be refunded: {0}")]
     OrderCannotBeRefunded(String),
 
+    /// Invalid status transition for an order
     #[error("Invalid order status transition from {from} to {to}")]
-    InvalidOrderStatusTransition { from: String, to: String },
+    InvalidOrderStatusTransition {
+        /// The current status
+        from: String,
+        /// The requested new status
+        to: String,
+    },
 
+    // ========================================================================
     // Inventory errors
+    // ========================================================================
+
+    /// Inventory item not found by SKU or ID
     #[error("Inventory item not found: {0}")]
     InventoryItemNotFound(String),
 
+    /// Insufficient stock for the requested quantity
     #[error("Insufficient stock for SKU {sku}: requested {requested}, available {available}")]
     InsufficientStock {
+        /// The SKU that has insufficient stock
         sku: String,
+        /// The quantity that was requested
         requested: String,
+        /// The quantity that is available
         available: String,
     },
 
+    /// Inventory reservation not found
     #[error("Inventory reservation not found: {0}")]
     ReservationNotFound(Uuid),
 
+    /// Inventory reservation has expired
     #[error("Inventory reservation expired: {0}")]
     ReservationExpired(Uuid),
 
+    /// Duplicate SKU already exists
     #[error("Duplicate SKU: {0}")]
     DuplicateSku(String),
 
+    // ========================================================================
     // Customer errors
+    // ========================================================================
+
+    /// Customer with given ID was not found
     #[error("Customer not found: {0}")]
     CustomerNotFound(Uuid),
 
+    /// Email address is already registered
     #[error("Email already exists: {0}")]
     EmailAlreadyExists(String),
 
+    /// Customer account is not active
     #[error("Customer is not active")]
     CustomerNotActive,
 
+    // ========================================================================
     // Product errors
+    // ========================================================================
+
+    /// Product with given ID was not found
     #[error("Product not found: {0}")]
     ProductNotFound(Uuid),
 
+    /// Product variant with given ID was not found
     #[error("Product variant not found: {0}")]
     ProductVariantNotFound(Uuid),
 
+    /// Duplicate product slug already exists
     #[error("Duplicate product slug: {0}")]
     DuplicateSlug(String),
 
+    /// Product is not available for purchase
     #[error("Product is not purchasable")]
     ProductNotPurchasable,
 
+    // ========================================================================
     // Return errors
+    // ========================================================================
+
+    /// Return with given ID was not found
     #[error("Return not found: {0}")]
     ReturnNotFound(Uuid),
 
+    /// Return cannot be approved in its current status
     #[error("Return cannot be approved in status: {0}")]
     ReturnCannotBeApproved(String),
 
+    /// Return period has expired
     #[error("Return period expired")]
     ReturnPeriodExpired,
 
+    /// Item is not eligible for return
     #[error("Item not eligible for return")]
     ItemNotEligibleForReturn,
 
+    // ========================================================================
     // Validation errors
+    // ========================================================================
+
+    /// General validation error
     #[error("Validation error: {0}")]
     ValidationError(String),
 
+    /// Invalid input for a specific field
     #[error("Invalid input: {field} - {message}")]
-    InvalidInput { field: String, message: String },
+    InvalidInput {
+        /// The field that has invalid input
+        field: String,
+        /// The validation error message
+        message: String,
+    },
 
-    // Database/storage errors
+    // ========================================================================
+    // Database/storage errors (Enhanced)
+    // ========================================================================
+
+    /// Legacy database error (for backwards compatibility)
     #[error("Database error: {0}")]
     DatabaseError(String),
 
+    /// Typed database error with context
+    #[error(transparent)]
+    Database(#[from] DbError),
+
+    /// Generic record not found
     #[error("Record not found")]
     NotFound,
 
+    /// Conflict during operation
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    /// Optimistic locking failure
     #[error("Optimistic lock failure: record was modified")]
     OptimisticLockFailure,
 
+    /// Version conflict during update
     #[error("Version conflict on {entity} {id}: expected version {expected_version}")]
     VersionConflict {
+        /// The entity type (e.g., "order", "customer")
         entity: String,
+        /// The entity ID
         id: String,
+        /// The expected version that was not found
         expected_version: i32,
     },
 
+    // ========================================================================
     // External service errors
+    // ========================================================================
+
+    /// External service (payment, shipping, etc.) failed
     #[error("External service error: {0}")]
     ExternalServiceError(String),
 
+    // ========================================================================
     // General errors
+    // ========================================================================
+
+    /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
 
+    /// Operation not permitted
     #[error("Operation not permitted: {0}")]
     NotPermitted(String),
 }
@@ -150,6 +382,64 @@ impl CommerceError {
                 | Self::DuplicateSlug(_)
                 | Self::EmailAlreadyExists(_)
         )
+    }
+
+    /// Check if error is a database error
+    pub fn is_database(&self) -> bool {
+        matches!(self, Self::DatabaseError(_) | Self::Database(_))
+    }
+
+    /// Check if error is an external service error
+    pub fn is_external_service(&self) -> bool {
+        matches!(self, Self::ExternalServiceError(_))
+    }
+
+    /// Check if error is retryable
+    ///
+    /// Retryable errors include:
+    /// - Connection failures
+    /// - Pool exhaustion
+    /// - Transaction failures (some)
+    /// - Optimistic lock failures
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::OptimisticLockFailure => true,
+            Self::Database(db_err) => matches!(
+                db_err,
+                DbError::ConnectionFailed { .. }
+                    | DbError::PoolExhausted { .. }
+                    | DbError::TransactionFailed { .. }
+            ),
+            _ => false,
+        }
+    }
+
+    /// Get the underlying database error if this is a database error
+    pub fn as_db_error(&self) -> Option<&DbError> {
+        match self {
+            Self::Database(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Create a database error from a typed DbError
+    pub fn db(error: DbError) -> Self {
+        Self::Database(error)
+    }
+
+    /// Create a query failed error with context
+    pub fn query_failed(table: &'static str, operation: &'static str, message: impl Into<String>) -> Self {
+        Self::Database(DbError::query_failed(table, operation, message))
+    }
+
+    /// Create a constraint violation error
+    pub fn constraint_violation(table: &'static str, constraint: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Database(DbError::constraint_violation(table, constraint, message))
+    }
+
+    /// Create a connection failed error
+    pub fn connection_failed(url: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Database(DbError::connection_failed(url, message))
     }
 }
 
@@ -198,11 +488,14 @@ impl From<&CommerceError> for BatchErrorCode {
             | CommerceError::DuplicateSlug(_)
             | CommerceError::EmailAlreadyExists(_) => BatchErrorCode::DuplicateKey,
 
+            // Also catch constraint violations from DbError as duplicate key
+            CommerceError::Database(DbError::ConstraintViolation { .. }) => BatchErrorCode::DuplicateKey,
+
             CommerceError::VersionConflict { .. } | CommerceError::OptimisticLockFailure => {
                 BatchErrorCode::VersionConflict
             }
 
-            CommerceError::DatabaseError(_) => BatchErrorCode::DatabaseError,
+            CommerceError::DatabaseError(_) | CommerceError::Database(_) => BatchErrorCode::DatabaseError,
 
             _ => BatchErrorCode::InternalError,
         }

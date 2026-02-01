@@ -1,6 +1,6 @@
 //! Main Commerce struct - the entry point to the library
 
-use crate::{AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit, CurrencyOps, Customers, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders};
+use crate::{AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit, CurrencyOps, Customers, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402};
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
 use std::sync::Arc;
@@ -84,6 +84,92 @@ impl Commerce {
             #[cfg(all(feature = "sqlite", feature = "vector"))]
             sqlite_db: Some(sqlite_db),
         })
+    }
+
+    // ========================================================================
+    // Convenience Constructors
+    // ========================================================================
+
+    /// Create a Commerce instance with SQLite (convenience method).
+    ///
+    /// This is an alias for `Commerce::new()` with a clearer name.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// let commerce = Commerce::sqlite("./store.db")?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite(path: &str) -> Result<Self, CommerceError> {
+        Self::new(path)
+    }
+
+    /// Create a Commerce instance with an in-memory SQLite database.
+    ///
+    /// This is useful for testing or ephemeral data that doesn't need persistence.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// let commerce = Commerce::in_memory()?;
+    /// // Data will be lost when commerce is dropped
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn in_memory() -> Result<Self, CommerceError> {
+        Self::new(":memory:")
+    }
+
+    /// Create a Commerce instance with SQLite and custom pool size.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the SQLite database file
+    /// * `max_connections` - Maximum number of connections in the pool
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// // Create with larger connection pool for high concurrency
+    /// let commerce = Commerce::sqlite_pool("./store.db", 10)?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite_pool(path: &str, max_connections: u32) -> Result<Self, CommerceError> {
+        Self::builder()
+            .sqlite(path)
+            .max_connections(max_connections)
+            .build()
+    }
+
+    /// Create a Commerce instance with PostgreSQL and custom pool size.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - PostgreSQL connection string
+    /// * `max_connections` - Maximum number of connections in the pool
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// let commerce = Commerce::postgres_pool(
+    ///     "postgres://user:pass@localhost/db",
+    ///     20,
+    /// )?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[cfg(feature = "postgres")]
+    pub fn postgres_pool(url: &str, max_connections: u32) -> Result<Self, CommerceError> {
+        Self::with_postgres_options(url, max_connections, 30)
     }
 
     /// Create a Commerce instance connected to PostgreSQL.
@@ -1183,6 +1269,56 @@ impl Commerce {
         GeneralLedger::new(self.db.clone())
     }
 
+    /// Access x402 payment protocol and agent card operations.
+    ///
+    /// Provides x402 stablecoin payment intents for AI agent commerce,
+    /// including intent creation, signing, settlement tracking, and
+    /// agent card management for A2A (agent-to-agent) commerce.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::{Commerce, CreateX402PaymentIntent, X402Network, X402Asset};
+    /// use rust_decimal_macros::dec;
+    ///
+    /// let commerce = Commerce::new("./store.db")?;
+    ///
+    /// // Create a payment intent
+    /// let intent = commerce.x402().create_intent(CreateX402PaymentIntent {
+    ///     payer_address: "0xBuyer...".into(),
+    ///     payee_address: "0xSeller...".into(),
+    ///     amount: dec!(100.00),
+    ///     asset: X402Asset::Usdc,
+    ///     network: X402Network::SetChain,
+    ///     ..Default::default()
+    /// })?;
+    ///
+    /// // Register an agent card
+    /// use stateset_embedded::{CreateAgentCard, A2ASkill};
+    ///
+    /// let card = commerce.x402().register_agent(CreateAgentCard {
+    ///     name: "Commerce Bot".into(),
+    ///     wallet_address: "0xAgent...".into(),
+    ///     public_key: "ed25519_pubkey_base64".into(),
+    ///     supported_networks: vec![X402Network::SetChain],
+    ///     supported_assets: vec![X402Asset::Usdc, X402Asset::SsUsd],
+    ///     a2a_skills: Some(vec![A2ASkill::Sell, A2ASkill::Quote]),
+    ///     ..Default::default()
+    /// })?;
+    ///
+    /// // Discover agents with specific capabilities
+    /// let sellers = commerce.x402().discover_agents(
+    ///     Some(vec![X402Network::SetChain]),
+    ///     Some(vec![X402Asset::Usdc]),
+    ///     Some(vec!["Sell".to_string()]),
+    ///     None,
+    /// )?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    pub fn x402(&self) -> X402 {
+        X402::new(self.db.clone())
+    }
+
     /// Calculate and apply tax to a cart based on its shipping address.
     ///
     /// This method:
@@ -1604,6 +1740,11 @@ pub struct CommerceBuilder {
 }
 
 impl CommerceBuilder {
+    /// Create a new builder with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Set the SQLite database path.
     #[cfg(feature = "sqlite")]
     pub fn sqlite(mut self, path: &str) -> Self {
@@ -1615,6 +1756,13 @@ impl CommerceBuilder {
     #[cfg(feature = "sqlite")]
     pub fn database(self, path: &str) -> Self {
         self.sqlite(path)
+    }
+
+    /// Configure for in-memory SQLite database.
+    #[cfg(feature = "sqlite")]
+    pub fn in_memory(mut self) -> Self {
+        self.sqlite_path = Some(":memory:".to_string());
+        self
     }
 
     /// Set the PostgreSQL connection URL.
@@ -1661,6 +1809,25 @@ impl CommerceBuilder {
     pub fn event_config(mut self, config: EventConfig) -> Self {
         self.event_config = Some(config);
         self
+    }
+
+    /// Build with sensible defaults for development/testing.
+    ///
+    /// Creates an in-memory SQLite database with default settings.
+    /// This is the quickest way to get started for testing.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use stateset_embedded::Commerce;
+    ///
+    /// let commerce = Commerce::builder().build_with_defaults()?;
+    /// // Equivalent to Commerce::in_memory()
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn build_with_defaults(self) -> Result<Commerce, CommerceError> {
+        self.in_memory().build()
     }
 
     /// Build the Commerce instance.

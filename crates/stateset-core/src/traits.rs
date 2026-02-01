@@ -1015,6 +1015,14 @@ pub trait CartRepository {
     /// Set payment method/token
     fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart>;
 
+    /// Set x402 payment method (stablecoin)
+    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart>;
+
+    /// Complete checkout with x402 payment
+    /// Returns PaymentRequired if no intent exists, IntentCreated if awaiting signature,
+    /// AwaitingSettlement if signed but not settled, or Completed if settled
+    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult>;
+
     // Discount operations
     /// Apply coupon/discount code
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart>;
@@ -2672,4 +2680,175 @@ pub trait VectorRepository {
 
     /// Delete all embeddings for an entity type
     fn clear_embeddings(&self, entity_type: EntityType) -> Result<u64>;
+}
+
+// ============================================================================
+// X402 Payment Intent Repository
+// ============================================================================
+
+/// X402 Payment Intent repository trait for off-chain payment signing
+pub trait X402PaymentIntentRepository {
+    /// Create a new x402 payment intent
+    fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent>;
+
+    /// Get payment intent by ID
+    fn get(&self, id: Uuid) -> Result<Option<X402PaymentIntent>>;
+
+    /// Get payment intent by idempotency key
+    fn get_by_idempotency_key(&self, key: &str) -> Result<Option<X402PaymentIntent>>;
+
+    /// Sign a payment intent (records signature and public key)
+    fn sign(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent>;
+
+    /// Mark intent as sequenced (submitted to sequencer)
+    fn mark_sequenced(&self, id: Uuid, sequence_number: u64, batch_id: Uuid) -> Result<X402PaymentIntent>;
+
+    /// Mark intent as settled (confirmed on-chain)
+    fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64) -> Result<X402PaymentIntent>;
+
+    /// Mark intent as failed
+    fn mark_failed(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent>;
+
+    /// Mark intent as expired
+    fn mark_expired(&self, id: Uuid) -> Result<X402PaymentIntent>;
+
+    /// Cancel a payment intent (only if not yet sequenced)
+    fn cancel(&self, id: Uuid) -> Result<X402PaymentIntent>;
+
+    /// Get payment intents for a cart
+    fn for_cart(&self, cart_id: Uuid) -> Result<Vec<X402PaymentIntent>>;
+
+    /// Get payment intents for an order
+    fn for_order(&self, order_id: Uuid) -> Result<Vec<X402PaymentIntent>>;
+
+    /// Get the next nonce for a payer address
+    fn get_next_nonce(&self, payer_address: &str) -> Result<u64>;
+
+    /// List payment intents with filter
+    fn list(&self, filter: X402PaymentIntentFilter) -> Result<Vec<X402PaymentIntent>>;
+
+    /// Count payment intents matching filter
+    fn count(&self, filter: X402PaymentIntentFilter) -> Result<u64>;
+
+    /// Expire all intents that have passed their valid_until timestamp
+    fn expire_stale_intents(&self) -> Result<u64>;
+
+    // === Batch Operations ===
+
+    /// Create multiple payment intents - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>>;
+
+    /// Create multiple payment intents - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>>;
+
+    /// Get multiple payment intents by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<X402PaymentIntent>>;
+}
+
+// ============================================================================
+// Agent Card Repository
+// ============================================================================
+
+/// Agent Card repository trait for AI agent identity and capabilities
+pub trait AgentCardRepository {
+    /// Create a new agent card
+    fn create(&self, input: CreateAgentCard) -> Result<AgentCard>;
+
+    /// Get agent card by ID
+    fn get(&self, id: Uuid) -> Result<Option<AgentCard>>;
+
+    /// Get agent card by wallet address
+    fn get_by_wallet(&self, wallet_address: &str) -> Result<Option<AgentCard>>;
+
+    /// Update an agent card
+    fn update(&self, id: Uuid, input: UpdateAgentCard) -> Result<AgentCard>;
+
+    /// Delete an agent card
+    fn delete(&self, id: Uuid) -> Result<()>;
+
+    /// List agent cards with filter
+    fn list(&self, filter: AgentCardFilter) -> Result<Vec<AgentCard>>;
+
+    /// Count agent cards matching filter
+    fn count(&self, filter: AgentCardFilter) -> Result<u64>;
+
+    /// Verify an agent card (set trust level and verification info)
+    fn verify(&self, id: Uuid, trust_level: TrustLevel, method: &str) -> Result<AgentCard>;
+
+    /// Suspend an agent card
+    fn suspend(&self, id: Uuid, reason: &str) -> Result<AgentCard>;
+
+    /// Reactivate a suspended agent card
+    fn reactivate(&self, id: Uuid) -> Result<AgentCard>;
+
+    /// Discover agents with specific capabilities
+    fn discover(&self, filter: AgentCardFilter) -> Result<Vec<AgentCard>>;
+
+    // === Batch Operations ===
+
+    /// Create multiple agent cards - partial success allowed
+    fn create_batch(&self, inputs: Vec<CreateAgentCard>) -> Result<BatchResult<AgentCard>>;
+
+    /// Create multiple agent cards - atomic (all-or-nothing)
+    fn create_batch_atomic(&self, inputs: Vec<CreateAgentCard>) -> Result<Vec<AgentCard>>;
+
+    /// Get multiple agent cards by ID
+    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<AgentCard>>;
+}
+
+// ============================================================================
+// A2A Commerce Repository
+// ============================================================================
+
+/// A2A (Agent-to-Agent) Commerce repository trait
+pub trait A2ACommerceRepository {
+    // Quote operations
+    /// Create a new quote
+    fn create_quote(&self, input: CreateA2AQuote) -> Result<A2AQuote>;
+
+    /// Get quote by ID
+    fn get_quote(&self, id: Uuid) -> Result<Option<A2AQuote>>;
+
+    /// Get quote by quote number
+    fn get_quote_by_number(&self, quote_number: &str) -> Result<Option<A2AQuote>>;
+
+    /// Update quote status
+    fn update_quote_status(&self, id: Uuid, status: QuoteStatus) -> Result<A2AQuote>;
+
+    /// List quotes with filter
+    fn list_quotes(&self, filter: A2AQuoteFilter) -> Result<Vec<A2AQuote>>;
+
+    /// Count quotes matching filter
+    fn count_quotes(&self, filter: A2AQuoteFilter) -> Result<u64>;
+
+    // Purchase operations
+    /// Create a new purchase
+    fn create_purchase(&self, input: CreateA2APurchase) -> Result<A2APurchase>;
+
+    /// Get purchase by ID
+    fn get_purchase(&self, id: Uuid) -> Result<Option<A2APurchase>>;
+
+    /// Get purchase by purchase number
+    fn get_purchase_by_number(&self, purchase_number: &str) -> Result<Option<A2APurchase>>;
+
+    /// Update purchase status
+    fn update_purchase_status(&self, id: Uuid, status: PurchaseStatus) -> Result<A2APurchase>;
+
+    /// Link purchase to order
+    fn link_purchase_to_order(&self, purchase_id: Uuid, order_id: Uuid) -> Result<A2APurchase>;
+
+    /// Confirm delivery
+    fn confirm_delivery(
+        &self,
+        purchase_id: Uuid,
+        signature: &str,
+        rating: Option<u8>,
+        feedback: Option<&str>,
+    ) -> Result<A2APurchase>;
+
+    /// List purchases with filter
+    fn list_purchases(&self, filter: A2APurchaseFilter) -> Result<Vec<A2APurchase>>;
+
+    /// Count purchases matching filter
+    fn count_purchases(&self, filter: A2APurchaseFilter) -> Result<u64>;
 }

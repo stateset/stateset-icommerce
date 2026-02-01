@@ -1,0 +1,40 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+expression: "fks.collect::<Result<Vec<_>, _>>()"
+---
+Ok(
+    [
+        (
+            "inventory_balances",
+            "inventory_items",
+            "item_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+        (
+            "inventory_balances",
+            "inventory_locations",
+            "location_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+        (
+            "order_items",
+            "orders",
+            "order_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+        (
+            "orders",
+            "customers",
+            "customer_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+    ],
+)

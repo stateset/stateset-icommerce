@@ -5,6 +5,7 @@
 //! after each migration runs, ensuring backwards compatibility and detecting
 //! unintended schema changes.
 
+use insta::assert_debug_snapshot;
 use rusqlite::Connection;
 use stateset_db::migrations::run_migrations;
 
@@ -41,7 +42,7 @@ fn snapshot_database_schema() {
 
     let tables = get_all_tables(&conn).expect("Failed to get tables");
 
-    mut_debug::assert_debug_snapshot!(tables);
+    assert_debug_snapshot!(tables);
 }
 
 #[test]
@@ -57,16 +58,17 @@ fn snapshot_customer_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?, // name
-                row.get::<_, String>(1)?, // type
-                row.get::<_, i32>(2)?,    // notnull
-                row.get::<_, String>(3)?, // default value
-                row.get::<_, i32>(4)?,    // pk
+                row.get::<_, i32>(0)?,             // cid
+                row.get::<_, String>(1)?,          // name
+                row.get::<_, String>(2)?,          // type
+                row.get::<_, i32>(3)?,             // notnull
+                row.get::<_, Option<String>>(4)?,  // default value (nullable)
+                row.get::<_, i32>(5)?,             // pk
             ))
         })
         .expect("Failed to query customers");
 
-    mut_debug::assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -82,16 +84,17 @@ fn snapshot_orders_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i32>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i32>(4)?,
+                row.get::<_, i32>(0)?,             // cid
+                row.get::<_, String>(1)?,          // name
+                row.get::<_, String>(2)?,          // type
+                row.get::<_, i32>(3)?,             // notnull
+                row.get::<_, Option<String>>(4)?,  // default value (nullable)
+                row.get::<_, i32>(5)?,             // pk
             ))
         })
         .expect("Failed to query orders");
 
-    mut_debug::assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -107,16 +110,17 @@ fn snapshot_inventory_items_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i32>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i32>(4)?,
+                row.get::<_, i32>(0)?,             // cid
+                row.get::<_, String>(1)?,          // name
+                row.get::<_, String>(2)?,          // type
+                row.get::<_, i32>(3)?,             // notnull
+                row.get::<_, Option<String>>(4)?,  // default value (nullable)
+                row.get::<_, i32>(5)?,             // pk
             ))
         })
         .expect("Failed to query inventory_items");
 
-    mut_debug::assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -132,16 +136,17 @@ fn snapshot_subscriptions_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i32>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i32>(4)?,
+                row.get::<_, i32>(0)?,             // cid
+                row.get::<_, String>(1)?,          // name
+                row.get::<_, String>(2)?,          // type
+                row.get::<_, i32>(3)?,             // notnull
+                row.get::<_, Option<String>>(4)?,  // default value (nullable)
+                row.get::<_, i32>(5)?,             // pk
             ))
         })
         .expect("Failed to query subscriptions");
 
-    mut_debug::assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -157,16 +162,17 @@ fn snapshot_payments_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i32>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i32>(4)?,
+                row.get::<_, i32>(0)?,             // cid
+                row.get::<_, String>(1)?,          // name
+                row.get::<_, String>(2)?,          // type
+                row.get::<_, i32>(3)?,             // notnull
+                row.get::<_, Option<String>>(4)?,  // default value (nullable)
+                row.get::<_, i32>(5)?,             // pk
             ))
         })
         .expect("Failed to query payments");
 
-    mut_debug::assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(columns.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -177,12 +183,12 @@ fn snapshot_indexes_for_performance() {
 
     // Check indexes on orders table
     let order_indexes = get_table_indexes(&conn, "orders").expect("Failed to get order indexes");
-    mut_debug::assert_debug_snapshot!("orders_indexes", order_indexes);
+    assert_debug_snapshot!("orders_indexes", order_indexes);
 
     // Check indexes on inventory_items table
     let inv_indexes =
         get_table_indexes(&conn, "inventory_items").expect("Failed to get inventory indexes");
-    mut_debug::assert_debug_snapshot!("inventory_items_indexes", inv_indexes);
+    assert_debug_snapshot!("inventory_items_indexes", inv_indexes);
 }
 
 #[test]
@@ -191,17 +197,16 @@ fn snapshot_migration_versions() {
 
     run_migrations(&conn).expect("Failed to run migrations");
 
+    // Only capture migration names (not timestamps which change between runs)
     let mut stmt = conn
-        .prepare("SELECT name, applied_at FROM _migrations ORDER BY id")
+        .prepare("SELECT name FROM _migrations ORDER BY id")
         .expect("Failed to prepare statement");
 
     let migrations = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
+        .query_map([], |row| row.get::<_, String>(0))
         .expect("Failed to query migrations");
 
-    mut_debug::assert_debug_snapshot!(migrations.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(migrations.collect::<Result<Vec<_>, _>>());
 }
 
 #[test]
@@ -215,35 +220,36 @@ fn snapshot_foreign_key_constraints() {
     run_migrations(&conn).expect("Failed to run migrations");
 
     // Query foreign key information
+    // pragma_foreign_key_list returns: id, seq, table, from, to, on_update, on_delete, match
     let mut stmt = conn
         .prepare(
-            "SELECT 
-                table_name,
-                from_column,
-                to_table,
-                to_column,
+            "SELECT
+                'orders' as src_table,
+                \"table\" as ref_table,
+                \"from\" as from_col,
+                \"to\" as to_col,
                 on_update,
                 on_delete
              FROM pragma_foreign_key_list('orders')
              UNION ALL
-             SELECT 
-                table_name,
-                from_column,
-                to_table,
-                to_column,
+             SELECT
+                'order_items' as src_table,
+                \"table\" as ref_table,
+                \"from\" as from_col,
+                \"to\" as to_col,
                 on_update,
                 on_delete
              FROM pragma_foreign_key_list('order_items')
              UNION ALL
-             SELECT 
-                table_name,
-                from_column,
-                to_table,
-                to_column,
+             SELECT
+                'inventory_balances' as src_table,
+                \"table\" as ref_table,
+                \"from\" as from_col,
+                \"to\" as to_col,
                 on_update,
                 on_delete
              FROM pragma_foreign_key_list('inventory_balances')
-             ORDER BY table_name, from_column",
+             ORDER BY src_table, from_col",
         )
         .expect("Failed to prepare statement");
 
@@ -260,5 +266,5 @@ fn snapshot_foreign_key_constraints() {
         })
         .expect("Failed to query FKS");
 
-    mut_debug::assert_debug_snapshot!(fks.collect::<Result<Vec<_>, _>>());
+    assert_debug_snapshot!(fks.collect::<Result<Vec<_>, _>>());
 }

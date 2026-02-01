@@ -29,6 +29,7 @@ tokio = { workspace = true, optional = true }
 rust_decimal_macros = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.10"
+insta = "1.46"
 
 [[bench]]
 name = "db_benchmarks"

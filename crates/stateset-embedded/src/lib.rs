@@ -152,6 +152,7 @@ mod cost_accounting;
 mod credit;
 mod backorder;
 mod general_ledger;
+mod x402;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -204,6 +205,7 @@ pub use cost_accounting::CostAccounting;
 pub use credit::Credit;
 pub use backorder::Backorders;
 pub use general_ledger::GeneralLedger;
+pub use x402::X402;
 
 #[cfg(feature = "vector")]
 pub use vector::Vector;
@@ -824,6 +826,34 @@ pub use stateset_core::{
     from_smallest_unit,
     generate_x402_intent_id,
     to_smallest_unit,
+    // Agent Card types
+    AgentCard,
+    AgentCardFilter,
+    CreateAgentCard,
+    UpdateAgentCard,
+    TrustLevel,
+    // A2A Skill types
+    A2ASkill,
+    A2AQuote,
+    A2APurchase,
+    CreateA2AQuote,
+    CreateA2APurchase,
+    A2AQuoteFilter,
+    A2APurchaseFilter,
+    DiscoverSellersInput,
+    DiscoverSellersOutput,
+    SellerInfo,
+    RequestQuoteInput,
+    RequestQuoteOutput,
+    QuoteItem,
+    QuotedItem,
+    ItemAvailability,
+    InitiatePurchaseInput,
+    InitiatePurchaseOutput,
+    ConfirmDeliveryInput,
+    ConfirmDeliveryOutput,
+    QuoteStatus,
+    PurchaseStatus,
 };
 
 // Vector search types (feature-gated)

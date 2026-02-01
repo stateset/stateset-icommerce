@@ -89,8 +89,8 @@ describe('Discord adapter logic', () => {
   function discordExtractText(msg, mentionOnly = true) {
     let content = msg.content || '';
     if (mentionOnly && msg.guild) {
-      const mentionPrefix = `<@${BOT_ID}>`;
-      if (!content.includes(mentionPrefix)) return null;
+      const mentionRegex = new RegExp(`<@!?${BOT_ID}>`);
+      if (!mentionRegex.test(content)) return null;
       content = content.replace(new RegExp(`<@!?${BOT_ID}>`, 'g'), '').trim();
     }
     return content || null;

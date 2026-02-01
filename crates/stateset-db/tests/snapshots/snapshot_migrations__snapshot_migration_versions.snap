@@ -1,0 +1,36 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+expression: "migrations.collect::<Result<Vec<_>, _>>()"
+---
+Ok(
+    [
+        "001_initial_schema",
+        "002_inventory",
+        "003_returns",
+        "004_manufacturing",
+        "005_shipments",
+        "006_payments_warranties_po_invoices",
+        "007_carts",
+        "008_multi_currency",
+        "009_tax",
+        "010_promotions",
+        "011_subscriptions",
+        "012_versioning",
+        "013_quality",
+        "014_lots",
+        "015_serials",
+        "016_warehouse",
+        "017_receiving",
+        "018_fulfillment",
+        "019_accounts_payable",
+        "020_cost_accounting",
+        "021_credit",
+        "022_backorder",
+        "023_accounts_receivable",
+        "024_general_ledger",
+        "025_performance_indexes",
+        "026_idempotency_keys",
+        "027_vector_search",
+        "028_bm25_search",
+    ],
+)

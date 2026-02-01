@@ -1,0 +1,7 @@
+---
+source: crates/stateset-db/tests/snapshot_migrations.rs
+expression: inv_indexes
+---
+[
+    "CREATE INDEX idx_inventory_items_sku ON inventory_items(sku)",
+]

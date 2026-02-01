@@ -289,6 +289,24 @@ impl std::fmt::Display for X402IntentStatus {
     }
 }
 
+impl std::str::FromStr for X402IntentStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "created" => Ok(Self::Created),
+            "signed" => Ok(Self::Signed),
+            "sequenced" => Ok(Self::Sequenced),
+            "batched" => Ok(Self::Batched),
+            "settled" => Ok(Self::Settled),
+            "expired" => Ok(Self::Expired),
+            "failed" => Ok(Self::Failed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            _ => Err(format!("Unknown x402 intent status: {}", s)),
+        }
+    }
+}
+
 /// x402 Payment Intent - A signed off-chain payment request
 ///
 /// This is the core data structure for x402 payments. It contains all the
@@ -957,6 +975,8 @@ pub struct CreateX402PaymentIntent {
     pub resource_method: Option<String>,
     /// Description
     pub description: Option<String>,
+    /// Associated cart ID (for checkout flows)
+    pub cart_id: Option<Uuid>,
     /// Associated order ID
     pub order_id: Option<Uuid>,
     /// Associated invoice ID

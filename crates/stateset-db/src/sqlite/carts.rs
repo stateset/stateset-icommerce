@@ -4,19 +4,22 @@ use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
     parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row, parse_enum_row, sum_decimal_query,
-    SqliteCustomerRepository, SqliteOrderRepository,
+    SqliteCustomerRepository, SqliteOrderRepository, SqlitePromotionRepository,
 };
 use super::parse_helpers::{parse_uuid, parse_decimal as parse_decimal_err};
 use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
+use rusqlite::OptionalExtension;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
     CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
-    CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder, CreateOrderItem,
-    CustomerRepository, OrderRepository, Result, SetCartPayment, SetCartShipping,
-    ShippingRate, UpdateCart, UpdateCartItem,
+    CartX402Payment, CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder,
+    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PromotionType,
+    Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, UpdateOrder, X402CheckoutResult, X402PaymentRequiredData,
+    X402IntentCreatedData, X402AwaitingSettlementData, X402IntentStatus,
 };
 use uuid::Uuid;
 
@@ -94,6 +97,26 @@ impl SqliteCartRepository {
             inventory_reserved: row.get::<_, i32>("inventory_reserved")? == 1,
             reservation_expires_at: parse_datetime_opt_row(row.get::<_, Option<String>>("reservation_expires_at")?, "cart", "reservation_expires_at")?,
 
+            // x402 payment fields
+            x402_payment: {
+                let payer: Option<String> = row.get("x402_payer_address").ok().flatten();
+                if let Some(payer_address) = payer {
+                    let network_str: Option<String> = row.get("x402_network").ok().flatten();
+                    let asset_str: Option<String> = row.get("x402_asset").ok().flatten();
+                    let intent_id: Option<String> = row.get("x402_intent_id").ok().flatten();
+                    let status_str: Option<String> = row.get("x402_status").ok().flatten();
+                    Some(CartX402Payment {
+                        intent_id: parse_uuid_opt_row(intent_id, "cart", "x402_intent_id")?,
+                        payer_address,
+                        network: network_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
+                        asset: asset_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
+                        status: status_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
+                    })
+                } else {
+                    None
+                }
+            },
+
             expires_at: parse_datetime_opt_row(row.get::<_, Option<String>>("expires_at")?, "cart", "expires_at")?,
             completed_at: parse_datetime_opt_row(row.get::<_, Option<String>>("completed_at")?, "cart", "completed_at")?,
             created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "cart", "created_at")?,
@@ -144,6 +167,87 @@ impl SqliteCartRepository {
             .map_err(map_db_error)?;
 
         Ok(items)
+    }
+
+    /// Finalize x402 checkout after payment settlement
+    fn finalize_x402_checkout(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
+        // This is similar to complete() but assumes x402 payment is settled
+        let cart = self.get(cart_id)?.ok_or(CommerceError::NotFound)?;
+
+        // Create the order
+        let order_repo = SqliteOrderRepository::new(self.pool.clone());
+        let customer_repo = SqliteCustomerRepository::new(self.pool.clone());
+
+        // Get or create customer
+        let customer_id = if let Some(cid) = cart.customer_id {
+            cid
+        } else if let Some(email) = &cart.customer_email {
+            if let Some(customer) = customer_repo.get_by_email(email)? {
+                customer.id
+            } else {
+                let new_customer = customer_repo.create(CreateCustomer {
+                    email: email.clone(),
+                    first_name: cart.customer_name.clone().unwrap_or_default(),
+                    ..Default::default()
+                })?;
+                new_customer.id
+            }
+        } else {
+            return Err(CommerceError::ValidationError("Customer ID or email required".into()));
+        };
+
+        // Build order items
+        let order_items: Vec<CreateOrderItem> = cart
+            .items
+            .iter()
+            .map(|item| CreateOrderItem {
+                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                ..Default::default()
+            })
+            .collect();
+
+        // Create the order
+        let order = order_repo.create(CreateOrder {
+            customer_id,
+            items: order_items,
+            currency: Some(cart.currency.clone()),
+            shipping_address: cart.shipping_address.clone().map(Into::into),
+            billing_address: cart.billing_address.clone().map(Into::into),
+            notes: cart.notes.clone(),
+            ..Default::default()
+        })?;
+
+        // Update cart to completed status
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE carts SET
+                status = 'completed', order_id = ?, order_number = ?,
+                payment_status = 'captured', x402_status = 'settled',
+                completed_at = ?, updated_at = ?
+             WHERE id = ?",
+            rusqlite::params![
+                order.id.to_string(),
+                order.order_number,
+                Utc::now().to_rfc3339(),
+                Utc::now().to_rfc3339(),
+                cart_id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        Ok(X402CheckoutResult::Completed(CheckoutResult {
+            cart_id,
+            order_id: order.id,
+            order_number: order.order_number,
+            payment_id: None, // x402 payment tracked separately
+            total_charged: cart.grand_total,
+            currency: cart.currency,
+        }))
     }
 
     fn update_cart_totals(
@@ -298,6 +402,7 @@ impl CartRepository for SqliteCartRepository {
             metadata: input.metadata,
             inventory_reserved: false,
             reservation_expires_at: None,
+            x402_payment: None,
             expires_at,
             completed_at: None,
             created_at: now,
@@ -795,20 +900,171 @@ impl CartRepository for SqliteCartRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
+    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
+        let conn = self.conn()?;
+
+        conn.execute(
+            "UPDATE carts SET
+                x402_payer_address = ?, x402_network = ?, x402_asset = ?,
+                x402_status = ?, payment_method = 'x402', updated_at = ?
+             WHERE id = ?",
+            rusqlite::params![
+                payment.payer_address,
+                payment.network.to_string(),
+                payment.asset.to_string().to_lowercase(),
+                X402IntentStatus::Created.to_string(),
+                Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
+
+        self.get(id)?.ok_or(CommerceError::NotFound)
+    }
+
+    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult> {
+        use rust_decimal::prelude::ToPrimitive;
+
+        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
+
+        // Validate cart is ready for checkout
+        if !cart.is_ready_for_checkout() {
+            return Err(CommerceError::ValidationError(
+                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
+            ));
+        }
+
+        // Ensure x402 payment is configured
+        let x402_payment = cart.x402_payment.as_ref().ok_or_else(|| {
+            CommerceError::ValidationError(
+                "x402 payment not configured. Call set_x402_payment first".to_string(),
+            )
+        })?;
+
+        // Calculate amount in smallest unit
+        let decimals = x402_payment.asset.decimals();
+        let multiplier = rust_decimal::Decimal::from(10u64.pow(decimals as u32));
+        let amount_scaled = cart.grand_total * multiplier;
+        let amount = amount_scaled.to_u64().unwrap_or(0);
+        let amount_display = format!("{:.6} {}", cart.grand_total, x402_payment.asset);
+
+        // Check if there's an existing intent
+        if let Some(intent_id) = x402_payment.intent_id {
+            // Get the intent status from x402_payment_intents table
+            let conn = self.conn()?;
+            let status_result: Option<(String, Option<String>, Option<i64>, Option<String>)> = conn
+                .query_row(
+                    "SELECT status, signing_hash, sequence_number, batch_id FROM x402_payment_intents WHERE id = ?",
+                    [intent_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(map_db_error)?;
+
+            if let Some((status_str, signing_hash, seq_num, batch_id_str)) = status_result {
+                let status: X402IntentStatus = status_str.parse().unwrap_or_default();
+                match status {
+                    X402IntentStatus::Settled => {
+                        // Payment is settled - complete the checkout
+                        return self.finalize_x402_checkout(id);
+                    }
+                    X402IntentStatus::Signed | X402IntentStatus::Sequenced | X402IntentStatus::Batched => {
+                        // Awaiting settlement
+                        return Ok(X402CheckoutResult::AwaitingSettlement(X402AwaitingSettlementData {
+                            cart_id: id,
+                            intent_id,
+                            status,
+                            sequence_number: seq_num.map(|n| n as u64),
+                            batch_id: batch_id_str.and_then(|s| s.parse().ok()),
+                        }));
+                    }
+                    X402IntentStatus::Created => {
+                        // Intent exists but not signed yet
+                        return Ok(X402CheckoutResult::IntentCreated(X402IntentCreatedData {
+                            cart_id: id,
+                            intent_id,
+                            signing_hash: signing_hash.unwrap_or_default(),
+                            amount,
+                            amount_display,
+                            asset: x402_payment.asset,
+                            network: x402_payment.network,
+                            payee_address: payee_address.to_string(),
+                            valid_until: 0, // Would need to fetch from intent
+                            nonce: 0,
+                        }));
+                    }
+                    X402IntentStatus::Expired | X402IntentStatus::Failed | X402IntentStatus::Cancelled => {
+                        // Need to create a new intent
+                    }
+                }
+            }
+        }
+
+        // No valid intent exists - return PaymentRequired
+        let chain_id = x402_payment.network.chain_id();
+        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
+            cart_id: id,
+            payee_address: payee_address.to_string(),
+            amount,
+            amount_display,
+            asset: x402_payment.asset,
+            network: x402_payment.network,
+            chain_id,
+            valid_seconds: 3600, // 1 hour default
+        }))
+    }
+
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        // In a real implementation, this would validate the coupon
-        // and calculate the discount amount
-        // For now, we'll just store the coupon code
+        // Get the cart first to calculate discount
+        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
+
+        // Look up the coupon and its promotion
+        let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
+        let coupon = promo_repo.get_coupon_by_code(coupon_code)?
+            .ok_or_else(|| CommerceError::ValidationError(format!("Invalid coupon code: {}", coupon_code)))?;
+
+        let promotion = promo_repo.get(coupon.promotion_id)?
+            .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
+
+        // Calculate the discount based on promotion type
+        let subtotal = cart.subtotal;
+        let discount_amount = match promotion.promotion_type {
+            PromotionType::PercentageOff => {
+                let percentage = promotion.percentage_off.unwrap_or(Decimal::ZERO);
+                let discount = subtotal * percentage;
+                // Apply max discount cap if set
+                if let Some(max) = promotion.max_discount_amount {
+                    discount.min(max)
+                } else {
+                    discount
+                }
+            }
+            PromotionType::FixedAmountOff => {
+                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
+            }
+            _ => Decimal::ZERO, // Other types not fully implemented
+        };
+
+        let discount_description = Some(promotion.name.clone());
+
+        // Update the cart with the discount
         {
             let conn = self.conn()?;
             conn.execute(
-                "UPDATE carts SET coupon_code = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![coupon_code, Utc::now().to_rfc3339(), id.to_string()],
+                "UPDATE carts SET coupon_code = ?, discount_amount = ?, discount_description = ?, updated_at = ? WHERE id = ?",
+                rusqlite::params![
+                    coupon_code,
+                    discount_amount.to_string(),
+                    discount_description,
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
             )
             .map_err(map_db_error)?;
         }
 
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        // Recalculate totals and return
+        self.recalculate(id)
     }
 
     fn remove_discount(&self, id: Uuid) -> Result<Cart> {
@@ -875,7 +1131,7 @@ impl CartRepository for SqliteCartRepository {
             .items
             .iter()
             .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(Uuid::nil),
+                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
                 variant_id: item.variant_id,
                 sku: item.sku.clone(),
                 name: item.name.clone(),
@@ -906,6 +1162,12 @@ impl CartRepository for SqliteCartRepository {
             notes: cart.notes.clone(),
             payment_method: cart.payment_method.clone(),
             shipping_method: cart.shipping_method.clone(),
+        })?;
+
+        // Confirm the order after checkout
+        let order = order_repo.update(order.id, UpdateOrder {
+            status: Some(OrderStatus::Confirmed),
+            ..Default::default()
         })?;
 
         let order_id = order.id;
@@ -1203,6 +1465,7 @@ impl CartRepository for SqliteCartRepository {
                 reservation_expires_at: None,
                 expires_at,
                 completed_at: None,
+                x402_payment: None,
                 created_at: now,
                 updated_at: now,
             };

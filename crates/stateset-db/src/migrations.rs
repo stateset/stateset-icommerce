@@ -102,5 +102,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("027_vector_search", include_str!("../migrations/027_vector_search.sql")),
         // Full-text search migration (requires FTS5)
         ("028_bm25_search", include_str!("../migrations/028_bm25_search.sql")),
+        // x402 Payment Intents and Agent Cards for A2A Commerce
+        ("029_x402_a2a", include_str!("../migrations/029_x402_a2a.sql")),
     ]
 }

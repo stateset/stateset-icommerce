@@ -31,6 +31,8 @@ mod cost_accounting;
 mod credit;
 mod backorder;
 mod general_ledger;
+mod x402_payment_intents;
+mod agent_cards;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -41,6 +43,8 @@ pub use backorder::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use general_ledger::*;
+pub use x402_payment_intents::*;
+pub use agent_cards::*;
 #[cfg(feature = "vector")]
 pub use vector::*;
 pub use analytics::*;
@@ -75,6 +79,8 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use rusqlite::OpenFlags;
 use stateset_core::CommerceError;
+use std::thread;
+use std::time::Duration;
 
 /// SQLite database connection pool
 pub struct SqliteDatabase {
@@ -115,7 +121,8 @@ impl SqliteDatabase {
             (manager, config.max_connections)
         };
         let manager = manager.with_init(move |conn| {
-            conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
+            // Use longer busy_timeout for high concurrency scenarios
+            conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 30000;")?;
             if !is_memory {
                 conn.execute_batch("PRAGMA journal_mode = WAL;")?;
             }
@@ -308,6 +315,16 @@ impl SqliteDatabase {
         SqliteVectorRepository::new(self.pool.clone())
     }
 
+    /// Get x402 payment intent repository
+    pub fn x402_payment_intents(&self) -> SqliteX402PaymentIntentRepository {
+        SqliteX402PaymentIntentRepository::new(self.pool.clone())
+    }
+
+    /// Get agent card repository
+    pub fn agent_cards(&self) -> SqliteAgentCardRepository {
+        SqliteAgentCardRepository::new(self.pool.clone())
+    }
+
     /// Get underlying pool (for advanced use)
     pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
         &self.pool
@@ -318,6 +335,13 @@ impl SqliteDatabase {
 pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
     match e {
         rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
+        rusqlite::Error::ToSqlConversionFailure(boxed) => {
+            // Extract CommerceError if it was wrapped for transaction propagation
+            match boxed.downcast::<CommerceError>() {
+                Ok(commerce_error) => *commerce_error,
+                Err(other) => CommerceError::DatabaseError(other.to_string()),
+            }
+        }
         _ => CommerceError::DatabaseError(e.to_string()),
     }
 }
@@ -399,6 +423,105 @@ pub(crate) fn string_params(strings: &[String]) -> Vec<Box<dyn rusqlite::ToSql>>
         .collect()
 }
 
+// ============================================================================
+// Retry Helpers for SQLite Concurrency
+// ============================================================================
+
+/// Maximum number of retries for transient database errors
+const MAX_RETRIES: u32 = 50;
+
+/// Initial backoff delay in milliseconds
+const INITIAL_BACKOFF_MS: u64 = 1;
+
+/// Maximum backoff delay in milliseconds
+const MAX_BACKOFF_MS: u64 = 200;
+
+/// Check if a rusqlite error is a transient lock error that can be retried
+pub(crate) fn is_retryable_error(e: &rusqlite::Error) -> bool {
+    match e {
+        rusqlite::Error::SqliteFailure(ffi_err, msg) => {
+            matches!(
+                ffi_err.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) || msg.as_ref().map_or(false, |m| {
+                m.contains("database is locked") || m.contains("database table is locked")
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Execute a database operation with retry logic for transient lock errors.
+/// Uses exponential backoff with jitter to avoid thundering herd.
+pub(crate) fn with_retry<T, F>(mut f: F) -> Result<T, rusqlite::Error>
+where
+    F: FnMut() -> Result<T, rusqlite::Error>,
+{
+    use std::cell::Cell;
+    use std::time::Instant;
+
+    // Thread-local simple PRNG for jitter
+    thread_local! {
+        static SEED: Cell<u64> = Cell::new(
+            Instant::now().elapsed().as_nanos() as u64
+        );
+    }
+
+    let mut retries = 0;
+    let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+    loop {
+        match f() {
+            Ok(result) => return Ok(result),
+            Err(e) if is_retryable_error(&e) && retries < MAX_RETRIES => {
+                retries += 1;
+                // Simple xorshift for pseudo-random jitter
+                let jitter = SEED.with(|seed| {
+                    let mut s = seed.get().wrapping_add(retries as u64);
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    seed.set(s);
+                    (s % 50) as u64
+                });
+                let delay = backoff_ms.min(MAX_BACKOFF_MS) + jitter;
+                thread::sleep(Duration::from_millis(delay));
+                // Exponential backoff with cap
+                backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Execute a transactional database operation with IMMEDIATE transaction mode
+/// and retry logic. IMMEDIATE transactions acquire write locks immediately,
+/// avoiding deadlocks caused by lock upgrade failures in DEFERRED mode.
+pub(crate) fn with_immediate_transaction<T, F>(
+    pool: &Pool<SqliteConnectionManager>,
+    f: F,
+) -> stateset_core::Result<T>
+where
+    F: Fn(&rusqlite::Transaction<'_>) -> Result<T, rusqlite::Error>,
+{
+    with_retry(|| {
+        let mut conn = pool.get().map_err(|e| {
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                Some(e.to_string()),
+            )
+        })?;
+
+        // Use IMMEDIATE transaction to acquire write lock immediately
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        let result = f(&tx)?;
+        tx.commit()?;
+        Ok(result)
+    })
+    .map_err(map_db_error)
+}
+
 // Transaction support implementation
 use crate::DatabaseExt;
 
@@ -410,7 +533,10 @@ impl DatabaseExt for SqliteDatabase {
         let mut conn = self.pool
             .get()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        // Use IMMEDIATE transaction to prevent lock upgrade deadlocks
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_db_error)?;
 
         match f(&tx) {
             Ok(result) => {

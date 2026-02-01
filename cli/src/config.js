@@ -5,6 +5,9 @@
  * making it easy to update model versions, defaults, and feature flags.
  */
 
+// Auto-load ~/.stateset/.env before anything checks for API keys
+import './load-env.js';
+
 // =============================================================================
 // MODEL CONFIGURATION
 // =============================================================================
