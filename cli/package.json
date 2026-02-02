@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -122,7 +122,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "@stateset/embedded": "^0.2.0",
+    "@stateset/embedded": "^0.5.0",
     "better-sqlite3": "^11.6.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",

@@ -1,5 +1,5 @@
 /**
- * v0.3.1 Permission Sandboxing Tests
+ * v0.5.0 Permission Sandboxing Tests
  *
  * Tests for:
  * - API key authentication (createApiKeyAuth)
@@ -55,7 +55,7 @@ function request(port, method, path, body = null, headers = {}) {
 // http-auth module unit tests
 // ============================================================================
 
-describe('v0.3.1 — http-auth module (unit)', () => {
+describe('v0.5.0 — http-auth module (unit)', () => {
   let createApiKeyAuth, checkRoutePermission, checkSandbox, LEVELS, ROUTE_PERMISSIONS;
 
   before(async () => {
@@ -222,7 +222,7 @@ describe('v0.3.1 — http-auth module (unit)', () => {
 // HTTP Gateway auth integration
 // ============================================================================
 
-describe('v0.3.1 — HTTP Gateway auth integration', () => {
+describe('v0.5.0 — HTTP Gateway auth integration', () => {
   let gw, port;
   const API_KEY = 'test-admin-key-abc123';
 
@@ -282,7 +282,7 @@ describe('v0.3.1 — HTTP Gateway auth integration', () => {
 // Level enforcement end-to-end
 // ============================================================================
 
-describe('v0.3.1 — Level enforcement', () => {
+describe('v0.5.0 — Level enforcement', () => {
   let gw, port;
   const READ_KEY = 'read-only-key-xyz';
 
@@ -336,7 +336,7 @@ describe('v0.3.1 — Level enforcement', () => {
 // Sandbox mode end-to-end
 // ============================================================================
 
-describe('v0.3.1 — Sandbox mode', () => {
+describe('v0.5.0 — Sandbox mode', () => {
   let gw, port;
   const ADMIN_KEY = 'sandbox-admin-key';
 
@@ -398,7 +398,7 @@ describe('v0.3.1 — Sandbox mode', () => {
 // Backwards compatibility (no auth configured)
 // ============================================================================
 
-describe('v0.3.1 — Backwards compat (no apiKeys)', () => {
+describe('v0.5.0 — Backwards compat (no apiKeys)', () => {
   let gw, port;
 
   before(async () => {

@@ -43,7 +43,7 @@ function loadConfigWithProfile(profileName) {
 }
 
 const HELP = `
-StateSet iCommerce CLI v0.4.0 - AI-powered commerce operations
+StateSet iCommerce CLI v0.5.0 - AI-powered commerce operations
 
 QUICK START:
   1. Set up your API key (required):

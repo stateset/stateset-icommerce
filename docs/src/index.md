@@ -9,7 +9,7 @@ StateSet iCommerce is an embedded, AI-native commerce engine designed to run in-
 - A CLI and MCP tools for agent-driven workflows.
 - Deterministic operations designed for automation and auditability.
 
-Current release: **0.2.4**. This book tracks the latest main branch. For release snapshots, see [Versioning](versioning.md).
+Current release: **0.5.0**. This book tracks the latest main branch. For release snapshots, see [Versioning](versioning.md).
 
 ## Quick links
 

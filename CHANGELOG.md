@@ -6,6 +6,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-02
+
+### Changed
+- Version alignment across workspace crates, bindings, CLI, docs, and examples.
+
 ## [0.3.1] - 2026-01-29
 
 ### Added

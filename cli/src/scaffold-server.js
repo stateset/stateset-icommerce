@@ -613,7 +613,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
 function createPackageJson(name, template, features) {
   const base = {
     name: name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-    version: '0.2.4',
+    version: '0.5.0',
     private: true,
     scripts: {
       dev: 'next dev',
@@ -623,7 +623,7 @@ function createPackageJson(name, template, features) {
       seed: 'node scripts/seed.js',
     },
     dependencies: {
-      '@stateset/embedded': '^0.2.4',
+      '@stateset/embedded': '^0.5.0',
       next: '14.0.0',
       react: '^18',
       'react-dom': '^18',

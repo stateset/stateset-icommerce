@@ -48,7 +48,7 @@ const program = new Command();
 program
   .name('stateset-sync')
   .description('Verifiable Event Sync (VES) for StateSet CLI')
-  .version('0.2.4');
+  .version('0.5.0');
 
 // ============================================================================
 // init command

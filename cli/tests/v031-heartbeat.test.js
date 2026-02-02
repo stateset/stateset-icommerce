@@ -1,5 +1,5 @@
 /**
- * v0.3.1 Heartbeat Monitor Tests
+ * v0.5.0 Heartbeat Monitor Tests
  *
  * Tests for:
  * - Checker functions (pure unit)
@@ -72,7 +72,7 @@ function mockCommerce(overrides = {}) {
 // Checker unit tests
 // ============================================================================
 
-describe('v0.3.1 — Heartbeat checkers (unit)', () => {
+describe('v0.5.0 — Heartbeat checkers (unit)', () => {
   let BUILTIN_CHECKERS;
 
   before(async () => {
@@ -211,7 +211,7 @@ describe('v0.3.1 — Heartbeat checkers (unit)', () => {
 // HeartbeatMonitor lifecycle
 // ============================================================================
 
-describe('v0.3.1 — HeartbeatMonitor lifecycle', () => {
+describe('v0.5.0 — HeartbeatMonitor lifecycle', () => {
   let HeartbeatMonitor;
 
   before(async () => {
@@ -354,7 +354,7 @@ describe('v0.3.1 — HeartbeatMonitor lifecycle', () => {
 // HTTP Gateway heartbeat routes
 // ============================================================================
 
-describe('v0.3.1 — HTTP Gateway heartbeat routes (no subsystem)', () => {
+describe('v0.5.0 — HTTP Gateway heartbeat routes (no subsystem)', () => {
   let gw, port;
 
   before(async () => {
@@ -385,7 +385,7 @@ describe('v0.3.1 — HTTP Gateway heartbeat routes (no subsystem)', () => {
   });
 });
 
-describe('v0.3.1 — HTTP Gateway heartbeat routes (with subsystem)', () => {
+describe('v0.5.0 — HTTP Gateway heartbeat routes (with subsystem)', () => {
   let gw, port;
 
   before(async () => {
@@ -448,7 +448,7 @@ describe('v0.3.1 — HTTP Gateway heartbeat routes (with subsystem)', () => {
 // Event bridge heartbeat mappings
 // ============================================================================
 
-describe('v0.3.1 — EventBridge heartbeat mappings', () => {
+describe('v0.5.0 — EventBridge heartbeat mappings', () => {
   it('DEFAULT_EVENT_MAP includes heartbeat events', async () => {
     // Read the event-bridge source to verify mappings exist
     const { EventBridge } = await import('../src/channels/event-bridge.js');

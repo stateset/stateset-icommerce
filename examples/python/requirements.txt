@@ -1,1 +1,1 @@
-stateset-embedded>=0.2.4
+stateset-embedded>=0.5.0
