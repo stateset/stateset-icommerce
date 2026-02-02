@@ -59,6 +59,7 @@ use stateset_core::{
     ReceivingRepository, Result, ReturnRepository, SerialRepository, ShipmentRepository,
     SubscriptionRepository, TaxRepository, WarehouseRepository, WarrantyRepository,
     WorkOrderRepository, X402PaymentIntentRepository, X402CreditRepository,
+    AgentIdentityRepository, AgentReputationRepository, AgentValidationRepository,
 };
 
 // ============================================================================
@@ -206,6 +207,12 @@ pub trait Database: Send + Sync {
     fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_>;
     /// Get the agent card repository
     fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
+    /// Get the agent identity registry repository (ERC-8004)
+    fn agent_identities(&self) -> Box<dyn AgentIdentityRepository + '_>;
+    /// Get the agent reputation registry repository (ERC-8004)
+    fn agent_reputation(&self) -> Box<dyn AgentReputationRepository + '_>;
+    /// Get the agent validation registry repository (ERC-8004)
+    fn agent_validation(&self) -> Box<dyn AgentValidationRepository + '_>;
 }
 
 /// Extension trait for database transaction support.
@@ -430,6 +437,18 @@ macro_rules! impl_database_accessors {
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {
                 Box::new(self.agent_cards())
+            }
+
+            fn agent_identities(&self) -> Box<dyn AgentIdentityRepository + '_> {
+                Box::new(self.agent_identities())
+            }
+
+            fn agent_reputation(&self) -> Box<dyn AgentReputationRepository + '_> {
+                Box::new(self.agent_reputation())
+            }
+
+            fn agent_validation(&self) -> Box<dyn AgentValidationRepository + '_> {
+                Box::new(self.agent_validation())
             }
         }
     };

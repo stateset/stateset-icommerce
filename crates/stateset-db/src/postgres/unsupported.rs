@@ -2142,3 +2142,144 @@ impl X402CreditRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
 }
+
+impl AgentCardRepository for UnsupportedPostgresRepository {
+    fn create(&self, _input: CreateAgentCard) -> Result<AgentCard> {
+        self.not_supported()
+    }
+    fn get(&self, _id: Uuid) -> Result<Option<AgentCard>> {
+        self.not_supported()
+    }
+    fn get_by_wallet(&self, _wallet_address: &str) -> Result<Option<AgentCard>> {
+        self.not_supported()
+    }
+    fn update(&self, _id: Uuid, _input: UpdateAgentCard) -> Result<AgentCard> {
+        self.not_supported()
+    }
+    fn delete(&self, _id: Uuid) -> Result<()> {
+        self.not_supported()
+    }
+    fn list(&self, _filter: AgentCardFilter) -> Result<Vec<AgentCard>> {
+        self.not_supported()
+    }
+    fn count(&self, _filter: AgentCardFilter) -> Result<u64> {
+        self.not_supported()
+    }
+    fn verify(&self, _id: Uuid, _trust_level: TrustLevel, _method: &str) -> Result<AgentCard> {
+        self.not_supported()
+    }
+    fn suspend(&self, _id: Uuid, _reason: &str) -> Result<AgentCard> {
+        self.not_supported()
+    }
+    fn reactivate(&self, _id: Uuid) -> Result<AgentCard> {
+        self.not_supported()
+    }
+    fn discover(&self, _filter: AgentCardFilter) -> Result<Vec<AgentCard>> {
+        self.not_supported()
+    }
+    fn create_batch(&self, _inputs: Vec<CreateAgentCard>) -> Result<BatchResult<AgentCard>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateAgentCard>) -> Result<Vec<AgentCard>> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<AgentCard>> {
+        self.not_supported()
+    }
+}
+
+impl AgentIdentityRepository for UnsupportedPostgresRepository {
+    fn register(&self, _input: CreateAgentIdentity) -> Result<AgentIdentity> {
+        self.not_supported()
+    }
+    fn get(&self, _agent_registry: &str, _agent_id: &str) -> Result<Option<AgentIdentity>> {
+        self.not_supported()
+    }
+    fn get_by_wallet(&self, _agent_wallet: &str) -> Result<Option<AgentIdentity>> {
+        self.not_supported()
+    }
+    fn update(&self, _agent_registry: &str, _agent_id: &str, _input: UpdateAgentIdentity) -> Result<AgentIdentity> {
+        self.not_supported()
+    }
+    fn set_agent_wallet(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _agent_wallet: &str,
+        _proof_type: Option<AgentWalletProofType>,
+        _proof: Option<&str>,
+        _proof_chain_id: Option<u64>,
+        _proof_deadline: Option<DateTime<Utc>>,
+    ) -> Result<AgentIdentity> {
+        self.not_supported()
+    }
+    fn clear_agent_wallet(&self, _agent_registry: &str, _agent_id: &str) -> Result<AgentIdentity> {
+        self.not_supported()
+    }
+    fn list(&self, _filter: AgentIdentityFilter) -> Result<Vec<AgentIdentity>> {
+        self.not_supported()
+    }
+    fn count(&self, _filter: AgentIdentityFilter) -> Result<u64> {
+        self.not_supported()
+    }
+    fn set_metadata(&self, _agent_registry: &str, _agent_id: &str, _entry: AgentMetadataEntry) -> Result<()> {
+        self.not_supported()
+    }
+    fn get_metadata(&self, _agent_registry: &str, _agent_id: &str, _metadata_key: &str) -> Result<Option<Vec<u8>>> {
+        self.not_supported()
+    }
+    fn delete_metadata(&self, _agent_registry: &str, _agent_id: &str, _metadata_key: &str) -> Result<()> {
+        self.not_supported()
+    }
+}
+
+impl AgentReputationRepository for UnsupportedPostgresRepository {
+    fn give_feedback(&self, _input: CreateAgentFeedback) -> Result<AgentFeedback> {
+        self.not_supported()
+    }
+    fn revoke_feedback(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64) -> Result<AgentFeedback> {
+        self.not_supported()
+    }
+    fn read_feedback(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64) -> Result<Option<AgentFeedback>> {
+        self.not_supported()
+    }
+    fn read_all_feedback(&self, _filter: AgentFeedbackFilter) -> Result<Vec<AgentFeedback>> {
+        self.not_supported()
+    }
+    fn get_summary(&self, _agent_registry: &str, _agent_id: &str, _client_addresses: Vec<String>, _tag1: Option<String>, _tag2: Option<String>) -> Result<FeedbackSummary> {
+        self.not_supported()
+    }
+    fn append_response(&self, _input: CreateAgentFeedbackResponse) -> Result<AgentFeedbackResponse> {
+        self.not_supported()
+    }
+    fn get_response_count(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64, _responders: Option<Vec<String>>) -> Result<u64> {
+        self.not_supported()
+    }
+    fn get_clients(&self, _agent_registry: &str, _agent_id: &str) -> Result<Vec<String>> {
+        self.not_supported()
+    }
+    fn get_last_index(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str) -> Result<u64> {
+        self.not_supported()
+    }
+}
+
+impl AgentValidationRepository for UnsupportedPostgresRepository {
+    fn request_validation(&self, _input: CreateAgentValidationRequest) -> Result<AgentValidationRequest> {
+        self.not_supported()
+    }
+    fn respond_validation(&self, _request_hash: &str, _input: CreateAgentValidationResponse) -> Result<AgentValidationResponse> {
+        self.not_supported()
+    }
+    fn get_validation_status(&self, _request_hash: &str) -> Result<Option<AgentValidationStatus>> {
+        self.not_supported()
+    }
+    fn get_summary(&self, _agent_registry: &str, _agent_id: &str, _validator_addresses: Option<Vec<String>>, _tag: Option<String>) -> Result<ValidationSummary> {
+        self.not_supported()
+    }
+    fn get_agent_validations(&self, _agent_registry: &str, _agent_id: &str) -> Result<Vec<String>> {
+        self.not_supported()
+    }
+    fn get_validator_requests(&self, _validator_address: &str) -> Result<Vec<String>> {
+        self.not_supported()
+    }
+}

@@ -153,6 +153,7 @@ mod credit;
 mod backorder;
 mod general_ledger;
 mod x402;
+mod erc8004;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -206,6 +207,7 @@ pub use credit::Credit;
 pub use backorder::Backorders;
 pub use general_ledger::GeneralLedger;
 pub use x402::X402;
+pub use erc8004::Erc8004;
 
 #[cfg(feature = "vector")]
 pub use vector::Vector;
@@ -838,6 +840,30 @@ pub use stateset_core::{
     CreateAgentCard,
     UpdateAgentCard,
     TrustLevel,
+    // ERC-8004 types
+    AgentIdentity,
+    CreateAgentIdentity,
+    UpdateAgentIdentity,
+    AgentIdentityFilter,
+    AgentMetadataEntry,
+    AgentWalletProofType,
+    AgentRegistrationFile,
+    AgentRegistrationRef,
+    AgentServiceEndpoint,
+    ERC8004_REGISTRATION_V1,
+    AgentFeedback,
+    CreateAgentFeedback,
+    AgentFeedbackFilter,
+    FeedbackSummary,
+    AgentFeedbackResponse,
+    CreateAgentFeedbackResponse,
+    AgentValidationRequest,
+    CreateAgentValidationRequest,
+    AgentValidationResponse,
+    CreateAgentValidationResponse,
+    AgentValidationStatus,
+    ValidationSummary,
+    AgentValidationFilter,
     // A2A Skill types
     A2ASkill,
     A2AQuote,

@@ -9738,6 +9738,7 @@ pub struct X402AgentCardInput {
 pub struct X402AgentCardFilterInput {
     pub wallet_address: Option<String>,
     pub trust_level: Option<String>,
+    pub min_trust_level: Option<String>,
     pub network: Option<String>,
     pub asset: Option<String>,
     pub skill: Option<String>,
@@ -10252,6 +10253,10 @@ impl X402 {
             .list_agents(stateset_core::AgentCardFilter {
                 wallet_address: filter.wallet_address,
                 trust_level: match filter.trust_level {
+                    Some(val) => Some(parse_trust_level(&val)?),
+                    None => None,
+                },
+                min_trust_level: match filter.min_trust_level {
                     Some(val) => Some(parse_trust_level(&val)?),
                     None => None,
                 },

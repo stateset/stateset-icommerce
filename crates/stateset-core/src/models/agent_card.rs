@@ -241,6 +241,16 @@ pub enum TrustLevel {
 }
 
 impl TrustLevel {
+    /// Numeric rank for trust comparison (higher is more trusted).
+    pub fn rank(&self) -> u8 {
+        match self {
+            Self::Sandbox => 0,
+            Self::Standard => 1,
+            Self::Verified => 2,
+            Self::Enterprise => 3,
+        }
+    }
+
     /// Get the default transaction limit for this trust level (in USDC cents)
     pub fn default_transaction_limit(&self) -> u64 {
         match self {
@@ -408,6 +418,8 @@ pub struct AgentCardFilter {
     pub wallet_address: Option<String>,
     /// Filter by trust level
     pub trust_level: Option<TrustLevel>,
+    /// Filter by minimum trust level (inclusive)
+    pub min_trust_level: Option<TrustLevel>,
     /// Filter by supported network
     pub network: Option<X402Network>,
     /// Filter by supported asset

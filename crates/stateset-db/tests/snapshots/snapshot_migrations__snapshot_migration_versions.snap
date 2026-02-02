@@ -32,5 +32,8 @@ Ok(
         "026_idempotency_keys",
         "027_vector_search",
         "028_bm25_search",
+        "029_x402_a2a",
+        "030_x402_credits",
+        "031_erc8004",
     ],
 )

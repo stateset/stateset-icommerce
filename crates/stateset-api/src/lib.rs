@@ -133,7 +133,7 @@ impl ApiGatewayBuilder {
     /// Build the API gateway
     pub fn build(self) -> Result<ApiGateway, ApiError> {
         let commerce = self.commerce.ok_or_else(|| {
-            ApiError::Configuration("Commerce instance required".to_string())
+            ApiError::configuration("Commerce instance required".to_string())
         })?;
 
         let state = ApiState {
@@ -206,6 +206,26 @@ impl ApiGatewayBuilder {
             .route("/api/v1/shipments", get(routes::shipments::list_shipments).post(routes::shipments::create_shipment))
             .route("/api/v1/shipments/:id", get(routes::shipments::get_shipment))
             .route("/api/v1/shipments/:id/deliver", post(routes::shipments::deliver_shipment))
+
+            // ERC-8004 Trustless Agents routes
+            .route("/api/v1/erc8004/identities", get(routes::erc8004::list_identities).post(routes::erc8004::create_identity))
+            .route("/api/v1/erc8004/identities/:agent_registry/:agent_id", get(routes::erc8004::get_identity).put(routes::erc8004::update_identity))
+            .route("/api/v1/erc8004/identities/:agent_registry/:agent_id/wallet", put(routes::erc8004::set_agent_wallet).delete(routes::erc8004::clear_agent_wallet))
+            .route("/api/v1/erc8004/identities/:agent_registry/:agent_id/metadata/:metadata_key", get(routes::erc8004::get_identity_metadata).put(routes::erc8004::set_identity_metadata).delete(routes::erc8004::delete_identity_metadata))
+
+            .route("/api/v1/erc8004/feedback", get(routes::erc8004::list_feedback).post(routes::erc8004::give_feedback))
+            .route("/api/v1/erc8004/feedback/revoke", post(routes::erc8004::revoke_feedback))
+            .route("/api/v1/erc8004/feedback/summary", get(routes::erc8004::feedback_summary))
+            .route("/api/v1/erc8004/feedback/response", post(routes::erc8004::append_feedback_response))
+            .route("/api/v1/erc8004/feedback/clients/:agent_registry/:agent_id", get(routes::erc8004::feedback_clients))
+            .route("/api/v1/erc8004/feedback/last-index/:agent_registry/:agent_id/:client_address", get(routes::erc8004::last_feedback_index))
+
+            .route("/api/v1/erc8004/validation/requests", post(routes::erc8004::request_validation))
+            .route("/api/v1/erc8004/validation/responses/:request_hash", post(routes::erc8004::respond_validation))
+            .route("/api/v1/erc8004/validation/status/:request_hash", get(routes::erc8004::validation_status))
+            .route("/api/v1/erc8004/validation/summary", get(routes::erc8004::validation_summary))
+            .route("/api/v1/erc8004/validation/agent/:agent_registry/:agent_id", get(routes::erc8004::agent_validations))
+            .route("/api/v1/erc8004/validation/validator/:validator_address", get(routes::erc8004::validator_requests))
 
             // Analytics routes
             .route("/api/v1/analytics/sales-summary", get(routes::analytics::sales_summary))
@@ -291,7 +311,7 @@ impl ApiGateway {
     pub async fn serve(self) -> Result<(), ApiError> {
         let listener = TcpListener::bind(&self.config.bind_address)
             .await
-            .map_err(|e| ApiError::Configuration(format!("Failed to bind to {}: {}", self.config.bind_address, e)))?;
+            .map_err(|e| ApiError::configuration(format!("Failed to bind to {}: {}", self.config.bind_address, e)))?;
 
         tracing::info!("🚀 StateSet API Gateway listening on {}", self.config.bind_address);
         tracing::info!("📊 OpenAPI spec available at http://{}/api/v1/openapi.json", self.config.bind_address);
@@ -299,7 +319,7 @@ impl ApiGateway {
 
         axum::serve(listener, self.app)
             .await
-            .map_err(|e| ApiError::ServerError(e.to_string()))
+            .map_err(|e| ApiError::server_error(e.to_string()))
     }
 }
 
@@ -342,6 +362,17 @@ impl ApiError {
             },
         }
     }
+
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self {
+            error: ApiErrorResponse {
+                code: "NOT_FOUND".to_string(),
+                message: msg.into(),
+                details: None,
+                request_id: None,
+            },
+        }
+    }
 }
 
 impl From<CommerceError> for ApiError {
@@ -376,7 +407,7 @@ impl From<CommerceError> for ApiError {
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match self.error.code.as_str() {
-            "ORDER_NOT_FOUND" | "CUSTOMER_NOT_FOUND" | "PRODUCT_NOT_FOUND" | "INVENTORY_NOT_FOUND" => StatusCode::NOT_FOUND,
+            "ORDER_NOT_FOUND" | "CUSTOMER_NOT_FOUND" | "PRODUCT_NOT_FOUND" | "INVENTORY_NOT_FOUND" | "NOT_FOUND" => StatusCode::NOT_FOUND,
             "INSUFFICIENT_STOCK" | "INVALID_ORDER_STATUS" | "INVALID_STATUS_TRANSITION" => StatusCode::CONFLICT,
             "VALIDATION_ERROR" | "INVALID_INPUT" => StatusCode::BAD_REQUEST,
             "FORBIDDEN" => StatusCode::FORBIDDEN,

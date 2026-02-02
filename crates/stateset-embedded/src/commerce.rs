@@ -1,6 +1,6 @@
 //! Main Commerce struct - the entry point to the library
 
-use crate::{AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit, CurrencyOps, Customers, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402};
+use crate::{AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit, CurrencyOps, Customers, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402, Erc8004};
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
 use std::sync::Arc;
@@ -1317,6 +1317,14 @@ impl Commerce {
     /// ```
     pub fn x402(&self) -> X402 {
         X402::new(self.db.clone())
+    }
+
+    /// Access ERC-8004 trustless agent registries.
+    ///
+    /// Provides identity, reputation, and validation registry operations
+    /// for trustless agent discovery across organizational boundaries.
+    pub fn erc8004(&self) -> Erc8004 {
+        Erc8004::new(self.db.clone())
     }
 
     /// Calculate and apply tax to a cart based on its shipping address.

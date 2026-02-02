@@ -25,6 +25,24 @@ impl SqliteAgentCardRepository {
         Self { pool }
     }
 
+    fn trust_levels_at_or_above(min: TrustLevel) -> Vec<TrustLevel> {
+        match min {
+            TrustLevel::Sandbox => vec![
+                TrustLevel::Sandbox,
+                TrustLevel::Standard,
+                TrustLevel::Verified,
+                TrustLevel::Enterprise,
+            ],
+            TrustLevel::Standard => vec![
+                TrustLevel::Standard,
+                TrustLevel::Verified,
+                TrustLevel::Enterprise,
+            ],
+            TrustLevel::Verified => vec![TrustLevel::Verified, TrustLevel::Enterprise],
+            TrustLevel::Enterprise => vec![TrustLevel::Enterprise],
+        }
+    }
+
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool
             .get()
@@ -276,6 +294,14 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             conditions.push("trust_level = ?".to_string());
             params.push(Box::new(trust.to_string()));
         }
+        if let Some(min_trust) = filter.min_trust_level {
+            let levels = Self::trust_levels_at_or_above(min_trust);
+            let placeholders = build_in_clause(levels.len());
+            conditions.push(format!("trust_level IN ({})", placeholders));
+            for level in levels {
+                params.push(Box::new(level.to_string()));
+            }
+        }
         if let Some(ref network) = filter.network {
             // Search in JSON array
             conditions.push("supported_networks LIKE ?".to_string());
@@ -331,6 +357,14 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         if let Some(ref trust) = filter.trust_level {
             conditions.push("trust_level = ?".to_string());
             params.push(Box::new(trust.to_string()));
+        }
+        if let Some(min_trust) = filter.min_trust_level {
+            let levels = Self::trust_levels_at_or_above(min_trust);
+            let placeholders = build_in_clause(levels.len());
+            conditions.push(format!("trust_level IN ({})", placeholders));
+            for level in levels {
+                params.push(Box::new(level.to_string()));
+            }
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());

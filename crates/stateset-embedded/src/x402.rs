@@ -445,7 +445,8 @@ impl X402 {
             network,
             asset,
             skill,
-            trust_level: min_trust_level,
+            trust_level: None,
+            min_trust_level,
             active: Some(true),
             ..Default::default()
         })

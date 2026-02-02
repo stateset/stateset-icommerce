@@ -35,6 +35,7 @@ pub mod x402;
 pub mod vector;
 pub mod agent_card;
 pub mod a2a_skill;
+pub mod erc8004;
 
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
@@ -71,6 +72,7 @@ pub use x402::*;
 pub use vector::*;
 pub use agent_card::*;
 pub use a2a_skill::*;
+pub use erc8004::*;
 
 /// Common ID type alias
 pub type Id = uuid::Uuid;

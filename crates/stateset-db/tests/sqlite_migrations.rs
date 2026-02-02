@@ -49,10 +49,10 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    // Base: 30 migrations (001-030)
+    // Base: 31 migrations (001-031)
     // 027_vector_search is skipped without vector feature
     // 028_bm25_search is skipped without FTS5
-    let expected = 30
+    let expected = 31
         - if cfg!(feature = "vector") { 0 } else { 1 }
         - if fts5_available(&conn) { 0 } else { 1 };
     assert_eq!(applied, expected, "expected all embedded migrations to apply");
@@ -115,6 +115,17 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     for table in [
         "x402_credit_accounts",
         "x402_credit_transactions",
+    ] {
+        assert!(has_table(&conn, table), "missing table `{table}`");
+    }
+
+    for table in [
+        "agent_identities",
+        "agent_identity_metadata",
+        "agent_feedback",
+        "agent_feedback_responses",
+        "agent_validation_requests",
+        "agent_validation_responses",
     ] {
         assert!(has_table(&conn, table), "missing table `{table}`");
     }

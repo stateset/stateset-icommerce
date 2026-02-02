@@ -34,6 +34,9 @@ mod general_ledger;
 mod x402_payment_intents;
 mod x402_credits;
 mod agent_cards;
+mod agent_identities;
+mod agent_reputation;
+mod agent_validation;
 
 #[cfg(feature = "vector")]
 mod vector;
@@ -47,6 +50,9 @@ pub use general_ledger::*;
 pub use x402_payment_intents::*;
 pub use x402_credits::*;
 pub use agent_cards::*;
+pub use agent_identities::*;
+pub use agent_reputation::*;
+pub use agent_validation::*;
 #[cfg(feature = "vector")]
 pub use vector::*;
 pub use analytics::*;
@@ -330,6 +336,21 @@ impl SqliteDatabase {
     /// Get agent card repository
     pub fn agent_cards(&self) -> SqliteAgentCardRepository {
         SqliteAgentCardRepository::new(self.pool.clone())
+    }
+
+    /// Get agent identity repository (ERC-8004)
+    pub fn agent_identities(&self) -> SqliteAgentIdentityRepository {
+        SqliteAgentIdentityRepository::new(self.pool.clone())
+    }
+
+    /// Get agent reputation repository (ERC-8004)
+    pub fn agent_reputation(&self) -> SqliteAgentReputationRepository {
+        SqliteAgentReputationRepository::new(self.pool.clone())
+    }
+
+    /// Get agent validation repository (ERC-8004)
+    pub fn agent_validation(&self) -> SqliteAgentValidationRepository {
+        SqliteAgentValidationRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

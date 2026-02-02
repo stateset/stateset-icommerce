@@ -2819,6 +2819,155 @@ pub trait AgentCardRepository {
 }
 
 // ============================================================================
+// ERC-8004 Agent Identity Repository
+// ============================================================================
+
+/// Agent identity registry repository (ERC-8004)
+pub trait AgentIdentityRepository {
+    /// Register a new agent identity
+    fn register(&self, input: CreateAgentIdentity) -> Result<AgentIdentity>;
+
+    /// Get identity by agent registry and agent ID
+    fn get(&self, agent_registry: &str, agent_id: &str) -> Result<Option<AgentIdentity>>;
+
+    /// Get identity by agent wallet address
+    fn get_by_wallet(&self, agent_wallet: &str) -> Result<Option<AgentIdentity>>;
+
+    /// Update agent identity
+    fn update(&self, agent_registry: &str, agent_id: &str, input: UpdateAgentIdentity) -> Result<AgentIdentity>;
+
+    /// Set or update agent wallet with proof metadata
+    fn set_agent_wallet(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        agent_wallet: &str,
+        proof_type: Option<AgentWalletProofType>,
+        proof: Option<&str>,
+        proof_chain_id: Option<u64>,
+        proof_deadline: Option<DateTime<Utc>>,
+    ) -> Result<AgentIdentity>;
+
+    /// Clear agent wallet
+    fn clear_agent_wallet(&self, agent_registry: &str, agent_id: &str) -> Result<AgentIdentity>;
+
+    /// List identities with optional filtering
+    fn list(&self, filter: AgentIdentityFilter) -> Result<Vec<AgentIdentity>>;
+
+    /// Count identities matching filter
+    fn count(&self, filter: AgentIdentityFilter) -> Result<u64>;
+
+    /// Set identity metadata entry
+    fn set_metadata(&self, agent_registry: &str, agent_id: &str, entry: AgentMetadataEntry) -> Result<()>;
+
+    /// Get identity metadata entry
+    fn get_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<Option<Vec<u8>>>;
+
+    /// Delete identity metadata entry
+    fn delete_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<()>;
+}
+
+// ============================================================================
+// ERC-8004 Reputation Registry
+// ============================================================================
+
+/// Reputation feedback registry repository (ERC-8004)
+pub trait AgentReputationRepository {
+    /// Submit feedback for an agent
+    fn give_feedback(&self, input: CreateAgentFeedback) -> Result<AgentFeedback>;
+
+    /// Revoke previously submitted feedback
+    fn revoke_feedback(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+        feedback_index: u64,
+    ) -> Result<AgentFeedback>;
+
+    /// Read a specific feedback entry
+    fn read_feedback(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+        feedback_index: u64,
+    ) -> Result<Option<AgentFeedback>>;
+
+    /// Read feedback entries with filters
+    fn read_all_feedback(&self, filter: AgentFeedbackFilter) -> Result<Vec<AgentFeedback>>;
+
+    /// Get feedback summary for an agent (filtered by client addresses + tags)
+    fn get_summary(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_addresses: Vec<String>,
+        tag1: Option<String>,
+        tag2: Option<String>,
+    ) -> Result<FeedbackSummary>;
+
+    /// Append a response to a feedback entry
+    fn append_response(&self, input: CreateAgentFeedbackResponse) -> Result<AgentFeedbackResponse>;
+
+    /// Count responses for a feedback entry
+    fn get_response_count(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+        feedback_index: u64,
+        responders: Option<Vec<String>>,
+    ) -> Result<u64>;
+
+    /// List client addresses that have provided feedback
+    fn get_clients(&self, agent_registry: &str, agent_id: &str) -> Result<Vec<String>>;
+
+    /// Get last feedback index for a client/agent pair
+    fn get_last_index(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+    ) -> Result<u64>;
+}
+
+// ============================================================================
+// ERC-8004 Validation Registry
+// ============================================================================
+
+/// Validation registry repository (ERC-8004)
+pub trait AgentValidationRepository {
+    /// Submit a validation request
+    fn request_validation(&self, input: CreateAgentValidationRequest) -> Result<AgentValidationRequest>;
+
+    /// Record a validation response for a request hash
+    fn respond_validation(
+        &self,
+        request_hash: &str,
+        input: CreateAgentValidationResponse,
+    ) -> Result<AgentValidationResponse>;
+
+    /// Get latest validation status for a request hash
+    fn get_validation_status(&self, request_hash: &str) -> Result<Option<AgentValidationStatus>>;
+
+    /// Get validation summary for an agent
+    fn get_summary(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        validator_addresses: Option<Vec<String>>,
+        tag: Option<String>,
+    ) -> Result<ValidationSummary>;
+
+    /// Get all request hashes for an agent
+    fn get_agent_validations(&self, agent_registry: &str, agent_id: &str) -> Result<Vec<String>>;
+
+    /// Get all request hashes for a validator
+    fn get_validator_requests(&self, validator_address: &str) -> Result<Vec<String>>;
+}
+
+// ============================================================================
 // A2A Commerce Repository
 // ============================================================================
 

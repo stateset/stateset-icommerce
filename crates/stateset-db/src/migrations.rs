@@ -106,5 +106,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("029_x402_a2a", include_str!("../migrations/029_x402_a2a.sql")),
         // x402 Credit Ledger for metered billing
         ("030_x402_credits", include_str!("../migrations/030_x402_credits.sql")),
+        // ERC-8004 Trustless Agents registries
+        ("031_erc8004", include_str!("../migrations/031_erc8004.sql")),
     ]
 }
