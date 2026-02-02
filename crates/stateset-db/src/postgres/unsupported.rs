@@ -2067,3 +2067,78 @@ impl GeneralLedgerRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
 }
+
+impl X402PaymentIntentRepository for UnsupportedPostgresRepository {
+    fn create(&self, _input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn get(&self, _id: Uuid) -> Result<Option<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn get_by_idempotency_key(&self, _key: &str) -> Result<Option<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn sign(&self, _id: Uuid, _input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn mark_sequenced(&self, _id: Uuid, _sequence_number: u64, _batch_id: Uuid) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn mark_settled(&self, _id: Uuid, _tx_hash: &str, _block_number: u64) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn mark_failed(&self, _id: Uuid, _reason: &str) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn mark_expired(&self, _id: Uuid) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn cancel(&self, _id: Uuid) -> Result<X402PaymentIntent> {
+        self.not_supported()
+    }
+    fn for_cart(&self, _cart_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn for_order(&self, _order_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn get_next_nonce(&self, _payer_address: &str) -> Result<u64> {
+        self.not_supported()
+    }
+    fn list(&self, _filter: X402PaymentIntentFilter) -> Result<Vec<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn count(&self, _filter: X402PaymentIntentFilter) -> Result<u64> {
+        self.not_supported()
+    }
+    fn expire_stale_intents(&self) -> Result<u64> {
+        self.not_supported()
+    }
+    fn create_batch(&self, _inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn create_batch_atomic(&self, _inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>> {
+        self.not_supported()
+    }
+    fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<X402PaymentIntent>> {
+        self.not_supported()
+    }
+}
+
+impl X402CreditRepository for UnsupportedPostgresRepository {
+    fn get_account(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<Option<X402CreditAccount>> {
+        self.not_supported()
+    }
+    fn get_or_create_account(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<X402CreditAccount> {
+        self.not_supported()
+    }
+    fn get_balance(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<u64> {
+        self.not_supported()
+    }
+    fn adjust_balance(&self, _input: X402CreditAdjustment) -> Result<X402CreditTransaction> {
+        self.not_supported()
+    }
+    fn list_transactions(&self, _filter: X402CreditTransactionFilter) -> Result<Vec<X402CreditTransaction>> {
+        self.not_supported()
+    }
+}

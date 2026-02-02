@@ -31,6 +31,7 @@ OPTIONS:
   --stream           Enable streaming output
   --budget <usd>     Maximum spend per query in USD
   --memory           Enable conversation memory
+  --x402             Enable x402 MCP tools
   --verbose, -V      Enable verbose telemetry
   --help, -h         Show this help message
 
@@ -60,6 +61,7 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
+      x402: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'V', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },
@@ -85,6 +87,7 @@ async function main() {
   let provider = values.provider || 'claude';
   let budget = values.budget || null;
   let memoryEnabled = values.memory || false;
+  let x402Enabled = values.x402 || false;
 
   // Create readline interface
   const rl = readline.createInterface({
@@ -109,6 +112,7 @@ async function main() {
       console.log(`   ${output.dim('Budget:')}    ${output.cyan('$' + budget)}/query`);
     }
     console.log(`   ${output.dim('Memory:')}    ${memoryEnabled ? output.cyan('On') : 'Off'}`);
+    console.log(`   ${output.dim('x402:')}      ${x402Enabled ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Verbose:')}   ${verbose ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Session:')}   ${sessionId || output.dim('(none)')}`);
     console.log();
@@ -287,6 +291,7 @@ ${output.bold('Example Queries:')}
         streaming,
         maxBudgetUsd: budget,
         provider,
+        enableX402: x402Enabled,
         onPartialMessage: streaming ? (event) => {
           if (event?.content) {
             process.stdout.write(event.content);

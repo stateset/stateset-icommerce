@@ -1661,6 +1661,180 @@ export interface EmbeddingStatsOutput {
   model: string
   dimensions: number
 }
+export interface X402CreateIntentInput {
+  payerAddress: string
+  payeeAddress: string
+  amount: number
+  asset?: string
+  network?: string
+  nonce?: number
+  validitySeconds?: number
+  resourceUri?: string
+  resourceMethod?: string
+  description?: string
+  cartId?: string
+  orderId?: string
+  invoiceId?: string
+  merchantId?: string
+  idempotencyKey?: string
+  metadata?: string
+}
+export interface X402SignIntentInput {
+  intentId?: string
+  signature: string
+  publicKey: string
+}
+export interface X402IntentFilterInput {
+  payerAddress?: string
+  payeeAddress?: string
+  status?: string
+  network?: string
+  asset?: string
+  orderId?: string
+  batchId?: string
+  limit?: number
+  offset?: number
+}
+export interface X402IntentOutput {
+  id: string
+  version: string
+  status: string
+  payerAddress: string
+  payeeAddress: string
+  amount: number
+  amountDecimal: number
+  asset: string
+  network: string
+  chainId: number
+  tokenAddress?: string
+  createdAtUnix: number
+  validUntil: number
+  nonce: number
+  idempotencyKey?: string
+  resourceUri?: string
+  resourceMethod?: string
+  description?: string
+  orderId?: string
+  invoiceId?: string
+  merchantId?: string
+  signingHash?: string
+  payerSignature?: string
+  payerPublicKey?: string
+  sequenceNumber?: number
+  sequencedAt?: string
+  batchId?: string
+  batchMerkleRoot?: string
+  inclusionProof?: Array<string>
+  txHash?: string
+  blockNumber?: number
+  gasUsed?: number
+  settledAt?: string
+  metadata?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface X402AgentCardInput {
+  name: string
+  description?: string
+  walletAddress: string
+  publicKey: string
+  supportedNetworks?: Array<string>
+  supportedAssets?: Array<string>
+  a2aSkills?: Array<string>
+  trustLevel?: string
+  endpointUrl?: string
+  endpointProtocol?: string
+  merchantId?: string
+  merchantName?: string
+  businessCategory?: string
+  maxTransactionAmount?: number
+  dailyVolumeLimit?: number
+  requiresKyc?: boolean
+  metadata?: string
+}
+export interface X402AgentCardFilterInput {
+  walletAddress?: string
+  trustLevel?: string
+  network?: string
+  asset?: string
+  skill?: string
+  active?: boolean
+  merchantId?: string
+  limit?: number
+  offset?: number
+}
+export interface X402AgentCardOutput {
+  id: string
+  name: string
+  description?: string
+  walletAddress: string
+  publicKey: string
+  supportedNetworks: Array<string>
+  supportedAssets: Array<string>
+  a2aSkills: Array<string>
+  trustLevel: string
+  verifiedAt?: string
+  verificationMethod?: string
+  endpointUrl?: string
+  endpointProtocol?: string
+  merchantId?: string
+  merchantName?: string
+  businessCategory?: string
+  maxTransactionAmount?: number
+  dailyVolumeLimit?: number
+  requiresKyc: boolean
+  active: boolean
+  suspendedAt?: string
+  suspensionReason?: string
+  metadata?: string
+  createdAt: string
+  updatedAt: string
+}
+export interface X402CreditBalanceInput {
+  payerAddress: string
+  asset?: string
+  network?: string
+}
+export interface X402CreditAdjustmentInput {
+  payerAddress: string
+  asset?: string
+  network?: string
+  amount: number
+  reason?: string
+  referenceId?: string
+  metadata?: string
+}
+export interface X402CreditTransactionFilterInput {
+  payerAddress?: string
+  asset?: string
+  network?: string
+  direction?: string
+  limit?: number
+  offset?: number
+}
+export interface X402CreditAccountOutput {
+  id: string
+  payerAddress: string
+  asset: string
+  network: string
+  balance: number
+  createdAt: string
+  updatedAt: string
+}
+export interface X402CreditTransactionOutput {
+  id: string
+  accountId: string
+  payerAddress: string
+  asset: string
+  network: string
+  direction: string
+  amount: number
+  balanceAfter: number
+  reason?: string
+  referenceId?: string
+  metadata?: string
+  createdAt: string
+}
 /** JavaScript-friendly Commerce instance */
 export declare class Commerce {
   /**
@@ -1680,6 +1854,8 @@ export declare class Commerce {
   get returns(): Returns
   /** Get the payments API */
   get payments(): Payments
+  /** Get the x402 payment protocol API */
+  get x402(): X402
   /** Get the shipments API */
   get shipments(): Shipments
   /** Get the warranties API */
@@ -1784,6 +1960,25 @@ export declare class Payments {
   cancel(id: string): Promise<PaymentOutput>
   createRefund(input: CreateRefundInput): Promise<RefundOutput>
   count(): Promise<number>
+}
+export declare class X402 {
+  createIntent(input: X402CreateIntentInput): Promise<X402IntentOutput>
+  signIntent(intentId: string, input: X402SignIntentInput): Promise<X402IntentOutput>
+  getIntent(id: string): Promise<X402IntentOutput | null>
+  listIntents(filter: X402IntentFilterInput): Promise<Array<X402IntentOutput>>
+  markSettled(intentId: string, txHash: string, blockNumber: number): Promise<X402IntentOutput>
+  getNextNonce(payerAddress: string): Promise<number>
+  registerAgent(input: X402AgentCardInput): Promise<X402AgentCardOutput>
+  discoverAgents(network?: string | undefined | null, asset?: string | undefined | null, skill?: string | undefined | null, trustLevel?: string | undefined | null): Promise<Array<X402AgentCardOutput>>
+  getAgent(id: string): Promise<X402AgentCardOutput | null>
+  getAgentByWallet(walletAddress: string): Promise<X402AgentCardOutput | null>
+  verifyAgent(id: string): Promise<X402AgentCardOutput>
+  listAgents(filter: X402AgentCardFilterInput): Promise<Array<X402AgentCardOutput>>
+  getCreditBalance(input: X402CreditBalanceInput): Promise<number>
+  getCreditAccount(input: X402CreditBalanceInput): Promise<X402CreditAccountOutput | null>
+  creditAccount(input: X402CreditAdjustmentInput): Promise<X402CreditTransactionOutput>
+  debitAccount(input: X402CreditAdjustmentInput): Promise<X402CreditTransactionOutput>
+  listCreditTransactions(filter: X402CreditTransactionFilterInput): Promise<Array<X402CreditTransactionOutput>>
 }
 export declare class Shipments {
   create(input: CreateShipmentInput): Promise<ShipmentOutput>

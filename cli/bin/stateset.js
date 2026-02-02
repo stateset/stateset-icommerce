@@ -72,6 +72,7 @@ OPTIONS:
   --stream           Enable streaming output (token-by-token)
   --budget <usd>     Maximum spend per query in USD (e.g., --budget 1.00)
   --memory           Enable conversation memory (SQLite + Markdown)
+  --x402             Enable x402 MCP tools (reads X402_* config/env)
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
@@ -144,6 +145,8 @@ SPECIALIZED COMMANDS:
   stateset-daemon          Daemon & service management
   stateset-channels        Messaging channel orchestration
   stateset-skills          Skills marketplace
+  stateset-x402            x402 config + key setup
+  stateset-x402-mcp        x402 MCP server for paid API calls
 
   Messaging Channels (10+):
     stateset-slack         Slack integration
@@ -302,7 +305,8 @@ async function processBatchRequest(request, index, total, config, values, output
       allowApply: config.apply,
       agent: values.agent,
       verbose: false,
-      onConfirmRequired: values.yes ? null : async () => true
+      onConfirmRequired: values.yes ? null : async () => true,
+      enableX402: values.x402
     });
 
     const duration = Date.now() - startTime;
@@ -354,7 +358,8 @@ async function processSequential(requests, config, values, output) {
         resumeSessionId: sessionId,
         agent: values.agent,
         verbose: false,
-        onConfirmRequired: values.yes ? null : async () => true
+        onConfirmRequired: values.yes ? null : async () => true,
+        enableX402: values.x402
       });
 
       // Chain session IDs for sequential operations
@@ -578,6 +583,7 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
+      x402: { type: 'boolean', default: false },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
       format: { type: 'string', default: 'table' },
@@ -713,6 +719,7 @@ async function main() {
       streaming: values.stream,
       maxBudgetUsd: values.budget || null,
       provider: providerName,
+      enableX402: values.x402,
       onPartialMessage: values.stream ? (event) => {
         // Write partial text to stdout for streaming display
         if (event?.content) {

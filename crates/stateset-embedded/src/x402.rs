@@ -48,7 +48,9 @@
 use stateset_core::{
     AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent,
     Result, SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset,
-    X402IntentStatus, X402Network, X402PaymentIntent, X402PaymentIntentFilter,
+    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
+    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
+    X402PaymentIntentFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -239,6 +241,102 @@ impl X402 {
     /// Get settled intents
     pub fn settled_intents(&self) -> Result<Vec<X402PaymentIntent>> {
         self.intents_by_status(X402IntentStatus::Settled)
+    }
+
+    // ========================================================================
+    // Credit Ledger Operations (Metered Billing)
+    // ========================================================================
+
+    /// Get a credit account for a payer/asset/network
+    pub fn get_credit_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<Option<X402CreditAccount>> {
+        self.db.x402_credits().get_account(payer_address, asset, network)
+    }
+
+    /// Get or create a credit account (balance default = 0)
+    pub fn get_or_create_credit_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<X402CreditAccount> {
+        self.db.x402_credits().get_or_create_account(payer_address, asset, network)
+    }
+
+    /// Get current credit balance for a payer/asset/network
+    pub fn get_credit_balance(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<u64> {
+        self.db.x402_credits().get_balance(payer_address, asset, network)
+    }
+
+    /// Apply a credit or debit adjustment
+    pub fn adjust_credit_balance(
+        &self,
+        input: X402CreditAdjustment,
+    ) -> Result<X402CreditTransaction> {
+        self.db.x402_credits().adjust_balance(input)
+    }
+
+    /// Credit an account (increase balance)
+    pub fn credit_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+        amount: u64,
+        reason: Option<String>,
+        reference_id: Option<String>,
+        metadata: Option<String>,
+    ) -> Result<X402CreditTransaction> {
+        self.adjust_credit_balance(X402CreditAdjustment {
+            payer_address: payer_address.to_string(),
+            asset,
+            network,
+            direction: X402CreditDirection::Credit,
+            amount,
+            reason,
+            reference_id,
+            metadata,
+        })
+    }
+
+    /// Debit an account (decrease balance)
+    pub fn debit_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+        amount: u64,
+        reason: Option<String>,
+        reference_id: Option<String>,
+        metadata: Option<String>,
+    ) -> Result<X402CreditTransaction> {
+        self.adjust_credit_balance(X402CreditAdjustment {
+            payer_address: payer_address.to_string(),
+            asset,
+            network,
+            direction: X402CreditDirection::Debit,
+            amount,
+            reason,
+            reference_id,
+            metadata,
+        })
+    }
+
+    /// List credit ledger transactions
+    pub fn list_credit_transactions(
+        &self,
+        filter: X402CreditTransactionFilter,
+    ) -> Result<Vec<X402CreditTransaction>> {
+        self.db.x402_credits().list_transactions(filter)
     }
 
     // ========================================================================

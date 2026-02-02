@@ -30,6 +30,7 @@ mod shipments;
 mod subscriptions;
 mod tax;
 mod unsupported;
+mod x402_credits;
 mod warehouse;
 mod warranties;
 mod work_orders;
@@ -62,6 +63,7 @@ pub use shipments::*;
 pub use subscriptions::*;
 pub use tax::*;
 pub use unsupported::*;
+pub use x402_credits::*;
 pub use warehouse::*;
 pub use warranties::*;
 pub use work_orders::*;
@@ -150,6 +152,7 @@ impl PostgresDatabase {
             ("028_general_ledger", include_str!("migrations/028_general_ledger.sql")),
             ("029_performance_indexes", include_str!("migrations/029_performance_indexes.sql")),
             ("030_idempotency_keys", include_str!("migrations/030_idempotency_keys.sql")),
+            ("031_x402_credits", include_str!("migrations/031_x402_credits.sql")),
         ];
 
         for (name, sql) in migrations {
@@ -329,6 +332,16 @@ impl PostgresDatabase {
     /// Get general ledger repository
     pub fn general_ledger(&self) -> PgGeneralLedgerRepository {
         PgGeneralLedgerRepository::new(self.pool.clone())
+    }
+
+    /// Get x402 payment intent repository (unsupported in Postgres backend)
+    pub fn x402_payment_intents(&self) -> UnsupportedPostgresRepository {
+        UnsupportedPostgresRepository::new("x402_payment_intents")
+    }
+
+    /// Get x402 credit ledger repository
+    pub fn x402_credits(&self) -> PgX402CreditRepository {
+        PgX402CreditRepository::new(self.pool.clone())
     }
 
     /// Get underlying pool (for advanced use)

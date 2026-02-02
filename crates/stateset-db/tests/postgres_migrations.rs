@@ -37,12 +37,14 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    assert_eq!(applied, 30, "expected all embedded migrations to apply");
+    assert_eq!(applied, 31, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",
         "store_currency_settings",
         "exchange_rate_history",
+        "x402_credit_accounts",
+        "x402_credit_transactions",
     ] {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",

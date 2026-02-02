@@ -2746,6 +2746,28 @@ pub trait X402PaymentIntentRepository {
 }
 
 // ============================================================================
+// X402 Credit Repository (Metered Billing)
+// ============================================================================
+
+/// X402 credit ledger repository for prepaid balances and metered usage.
+pub trait X402CreditRepository {
+    /// Get a credit account for payer/asset/network
+    fn get_account(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<Option<X402CreditAccount>>;
+
+    /// Get or create a credit account (balance default = 0)
+    fn get_or_create_account(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<X402CreditAccount>;
+
+    /// Get current balance for payer/asset/network
+    fn get_balance(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<u64>;
+
+    /// Apply a credit or debit adjustment
+    fn adjust_balance(&self, input: X402CreditAdjustment) -> Result<X402CreditTransaction>;
+
+    /// List credit transactions with optional filter
+    fn list_transactions(&self, filter: X402CreditTransactionFilter) -> Result<Vec<X402CreditTransaction>>;
+}
+
+// ============================================================================
 // Agent Card Repository
 // ============================================================================
 

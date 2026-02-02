@@ -14,6 +14,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { DEFAULT_MODEL, THINK_LEVELS } from './config.js';
 import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
+import { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
 import { PermissionGate, createPermissionGate, PERMISSION_LEVELS } from './permissions.js';
 import { RichOutput, ICONS } from './output.js';
@@ -1341,6 +1342,7 @@ export function routeToAgentWithConfidence(request) {
  * @param {object[]} options.conversationHistory - Existing conversation history for context
  * @param {Function} options.onContextWarning - Callback when context approaches limit
  * @param {Function} options.onFallback - Callback when falling back to alternative model
+ * @param {boolean} options.enableX402 - Enable x402 MCP server tools (default: false)
  */
 export async function runAgentLoop({
   request,
@@ -1373,7 +1375,8 @@ export async function runAgentLoop({
   useMarkdownMemory = true,
   conversationHistory = [],
   onContextWarning = null,
-  onFallback = null
+  onFallback = null,
+  enableX402 = false
 }) {
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
@@ -1515,10 +1518,31 @@ export async function runAgentLoop({
     permissionGate: gate
   });
 
+  const mcpServers = {
+    'stateset-commerce': mcpServer
+  };
+
   // Determine which agent to use
   const routingResult = routeToAgentWithConfidence(request);
   const agentName = agent || routingResult.primary.agent;
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+
+  const allowedTools = [...agentConfig.tools];
+
+  const shouldEnableX402 = Boolean(
+    enableX402 ||
+    process.env.X402_ENABLE === '1' ||
+    process.env.X402_SEQUENCER_URL
+  );
+
+  if (shouldEnableX402) {
+    const configDir = process.env.STATESET_CONFIG_DIR || '.stateset';
+    const x402Server = createX402McpServer({ env: process.env, configDir });
+    mcpServers['stateset-x402'] = x402Server;
+    allowedTools.push(
+      ...X402_MCP_TOOL_NAMES.map(name => `mcp__stateset-x402__${name}`)
+    );
+  }
 
   // Log routing decision
   telem.logAgentRouting(
@@ -1533,10 +1557,8 @@ export async function runAgentLoop({
   const options = {
     model,
     systemPrompt: agentConfig.systemPrompt,
-    mcpServers: {
-      'stateset-commerce': mcpServer
-    },
-    allowedTools: agentConfig.tools,
+    mcpServers,
+    allowedTools,
     maxTurns,
     // Allow MCP tools to run without prompting for permission
     permissionMode: 'bypassPermissions',

@@ -307,6 +307,35 @@ impl std::str::FromStr for X402IntentStatus {
     }
 }
 
+/// Direction of x402 credit ledger entries
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum X402CreditDirection {
+    Credit,
+    Debit,
+}
+
+impl std::fmt::Display for X402CreditDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Credit => write!(f, "credit"),
+            Self::Debit => write!(f, "debit"),
+        }
+    }
+}
+
+impl std::str::FromStr for X402CreditDirection {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "credit" | "cr" => Ok(Self::Credit),
+            "debit" | "dr" => Ok(Self::Debit),
+            _ => Err(format!("Unknown x402 credit direction: {}", s)),
+        }
+    }
+}
+
 /// x402 Payment Intent - A signed off-chain payment request
 ///
 /// This is the core data structure for x402 payments. It contains all the
@@ -856,6 +885,72 @@ impl X402PaymentReceipt {
             self.total_leaves as usize,
         )
     }
+}
+
+// =============================================================================
+// x402 Credit Ledger (Metered Billing)
+// =============================================================================
+
+/// x402 Credit Account - tracks prepaid balances for metered usage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402CreditAccount {
+    pub id: Uuid,
+    pub payer_address: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub balance: u64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Create a new x402 credit account
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateX402CreditAccount {
+    pub payer_address: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub initial_balance: Option<u64>,
+}
+
+/// Credit ledger adjustment (credit or debit)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402CreditAdjustment {
+    pub payer_address: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub direction: X402CreditDirection,
+    pub amount: u64,
+    pub reason: Option<String>,
+    pub reference_id: Option<String>,
+    pub metadata: Option<String>,
+}
+
+/// x402 credit transaction (ledger entry)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct X402CreditTransaction {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub payer_address: String,
+    pub asset: X402Asset,
+    pub network: X402Network,
+    pub direction: X402CreditDirection,
+    pub amount: u64,
+    pub balance_after: u64,
+    pub reason: Option<String>,
+    pub reference_id: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Filter for listing credit ledger transactions
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct X402CreditTransactionFilter {
+    pub payer_address: Option<String>,
+    pub asset: Option<X402Asset>,
+    pub network: Option<X402Network>,
+    pub direction: Option<X402CreditDirection>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 // =============================================================================

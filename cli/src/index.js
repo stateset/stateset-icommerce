@@ -52,6 +52,12 @@ export {
   SCAFFOLD_TOOL_NAMES
 } from './scaffold-server.js';
 
+// x402 MCP Server
+export {
+  createX402McpServer,
+  X402_MCP_TOOL_NAMES
+} from './x402-mcp-server.js';
+
 // Sync (Verifiable Event Sync)
 export {
   Outbox,

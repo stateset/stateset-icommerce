@@ -17,4 +17,13 @@ export {
   decodePaymentHeader,
   decodeReceiptHeader,
   verifyPaymentHeader,
+  BudgetExceededError,
 } from './agent.js';
+export { createBudgetState, getDefaultBudgetStateFile } from './budget.js';
+export {
+  getDefaultX402ConfigPath,
+  loadX402Config,
+  saveX402Config,
+  resolveX402ConfigPath,
+  pickConfigValue,
+} from './config.js';

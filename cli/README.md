@@ -187,6 +187,51 @@ stateset --apply --batch orders.txt --parallel 3
 | `stateset-sync` | Verifiable Event Sync with sequencer |
 | `stateset-tutorial` | Interactive tutorials and onboarding |
 | `stateset-completion` | Shell completion scripts (bash/zsh/fish) |
+| `stateset-x402` | x402 config + key setup |
+| `stateset-x402-mcp` | MCP server for x402 paid API calls |
+
+## x402 MCP Server
+
+Initialize configuration (generates signing key + derives wallet):
+
+```bash
+stateset-x402 init \
+  --sequencer-url "https://api.sequencer.stateset.app" \
+  --tenant-id "your-tenant-id" \
+  --store-id "your-store-id" \
+  --agent-id "your-agent-id" \
+  --network "set_chain"
+```
+
+Expose paid API calls over MCP (stdio transport):
+
+```bash
+export X402_SEQUENCER_URL="https://api.sequencer.stateset.app"
+export X402_TENANT_ID="your-tenant-id"
+export X402_STORE_ID="your-store-id"
+export X402_AGENT_ID="your-agent-id"
+export X402_PAYER_ADDRESS="your-wallet-address"
+
+# Optional budget guardrails
+export X402_BUDGET_PER_CALL="1000000"
+export X402_BUDGET_DAILY="50000000"
+
+stateset-x402-mcp
+```
+
+You can also point the server at a config file:
+
+```bash
+export X402_CONFIG_FILE=".stateset/x402.json"
+stateset-x402-mcp
+```
+
+Tools exposed:
+- `x402_call`
+- `x402_budget_status`
+- `x402_history`
+- `x402_receipt`
+- `x402_balance`
 
 ## Architecture
 

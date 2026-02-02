@@ -90,6 +90,14 @@ impl Commerce {
         }
     }
 
+    /// Get the x402 payment protocol API
+    #[napi(getter)]
+    pub fn x402(&self) -> X402 {
+        X402 {
+            commerce: self.inner.clone(),
+        }
+    }
+
     /// Get the shipments API
     #[napi(getter)]
     pub fn shipments(&self) -> Shipments {
@@ -9569,6 +9577,824 @@ impl GeneralLedger {
         let balance = commerce.general_ledger().get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
         Ok(balance.map(to_f64_or_nan).unwrap_or(f64::NAN))
+    }
+}
+
+// ============================================================================
+// x402 Payment Protocol API
+// ============================================================================
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402CreateIntentInput {
+    pub payer_address: String,
+    pub payee_address: String,
+    pub amount: i64,
+    pub asset: Option<String>,
+    pub network: Option<String>,
+    pub nonce: Option<i64>,
+    pub validity_seconds: Option<i64>,
+    pub resource_uri: Option<String>,
+    pub resource_method: Option<String>,
+    pub description: Option<String>,
+    pub cart_id: Option<String>,
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    pub merchant_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402SignIntentInput {
+    pub intent_id: Option<String>,
+    pub signature: String,
+    pub public_key: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct X402IntentFilterInput {
+    pub payer_address: Option<String>,
+    pub payee_address: Option<String>,
+    pub status: Option<String>,
+    pub network: Option<String>,
+    pub asset: Option<String>,
+    pub order_id: Option<String>,
+    pub batch_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402IntentOutput {
+    pub id: String,
+    pub version: String,
+    pub status: String,
+    pub payer_address: String,
+    pub payee_address: String,
+    pub amount: i64,
+    pub amount_decimal: f64,
+    pub asset: String,
+    pub network: String,
+    pub chain_id: i64,
+    pub token_address: Option<String>,
+    pub created_at_unix: i64,
+    pub valid_until: i64,
+    pub nonce: i64,
+    pub idempotency_key: Option<String>,
+    pub resource_uri: Option<String>,
+    pub resource_method: Option<String>,
+    pub description: Option<String>,
+    pub order_id: Option<String>,
+    pub invoice_id: Option<String>,
+    pub merchant_id: Option<String>,
+    pub signing_hash: Option<String>,
+    pub payer_signature: Option<String>,
+    pub payer_public_key: Option<String>,
+    pub sequence_number: Option<i64>,
+    pub sequenced_at: Option<String>,
+    pub batch_id: Option<String>,
+    pub batch_merkle_root: Option<String>,
+    pub inclusion_proof: Option<Vec<String>>,
+    pub tx_hash: Option<String>,
+    pub block_number: Option<i64>,
+    pub gas_used: Option<i64>,
+    pub settled_at: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::X402PaymentIntent> for X402IntentOutput {
+    fn from(intent: stateset_core::X402PaymentIntent) -> Self {
+        Self {
+            id: intent.id.to_string(),
+            version: intent.version,
+            status: intent.status.to_string(),
+            payer_address: intent.payer_address,
+            payee_address: intent.payee_address,
+            amount: intent.amount as i64,
+            amount_decimal: to_f64_or_nan(intent.amount_decimal),
+            asset: intent.asset.to_string().to_lowercase(),
+            network: intent.network.to_string(),
+            chain_id: intent.chain_id as i64,
+            token_address: intent.token_address,
+            created_at_unix: intent.created_at_unix as i64,
+            valid_until: intent.valid_until as i64,
+            nonce: intent.nonce as i64,
+            idempotency_key: intent.idempotency_key,
+            resource_uri: intent.resource_uri,
+            resource_method: intent.resource_method,
+            description: intent.description,
+            order_id: intent.order_id.map(|id| id.to_string()),
+            invoice_id: intent.invoice_id.map(|id| id.to_string()),
+            merchant_id: intent.merchant_id,
+            signing_hash: intent.signing_hash,
+            payer_signature: intent.payer_signature,
+            payer_public_key: intent.payer_public_key,
+            sequence_number: intent.sequence_number.map(|n| n as i64),
+            sequenced_at: intent.sequenced_at.map(|d| d.to_rfc3339()),
+            batch_id: intent.batch_id.map(|id| id.to_string()),
+            batch_merkle_root: intent.batch_merkle_root,
+            inclusion_proof: intent.inclusion_proof,
+            tx_hash: intent.tx_hash,
+            block_number: intent.block_number.map(|n| n as i64),
+            gas_used: intent.gas_used.map(|n| n as i64),
+            settled_at: intent.settled_at.map(|d| d.to_rfc3339()),
+            metadata: intent.metadata,
+            created_at: intent.created_at.to_rfc3339(),
+            updated_at: intent.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402AgentCardInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub wallet_address: String,
+    pub public_key: String,
+    pub supported_networks: Option<Vec<String>>,
+    pub supported_assets: Option<Vec<String>>,
+    pub a2a_skills: Option<Vec<String>>,
+    pub trust_level: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub endpoint_protocol: Option<String>,
+    pub merchant_id: Option<String>,
+    pub merchant_name: Option<String>,
+    pub business_category: Option<String>,
+    pub max_transaction_amount: Option<i64>,
+    pub daily_volume_limit: Option<i64>,
+    pub requires_kyc: Option<bool>,
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct X402AgentCardFilterInput {
+    pub wallet_address: Option<String>,
+    pub trust_level: Option<String>,
+    pub network: Option<String>,
+    pub asset: Option<String>,
+    pub skill: Option<String>,
+    pub active: Option<bool>,
+    pub merchant_id: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402AgentCardOutput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub wallet_address: String,
+    pub public_key: String,
+    pub supported_networks: Vec<String>,
+    pub supported_assets: Vec<String>,
+    pub a2a_skills: Vec<String>,
+    pub trust_level: String,
+    pub verified_at: Option<String>,
+    pub verification_method: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub endpoint_protocol: Option<String>,
+    pub merchant_id: Option<String>,
+    pub merchant_name: Option<String>,
+    pub business_category: Option<String>,
+    pub max_transaction_amount: Option<i64>,
+    pub daily_volume_limit: Option<i64>,
+    pub requires_kyc: bool,
+    pub active: bool,
+    pub suspended_at: Option<String>,
+    pub suspension_reason: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::AgentCard> for X402AgentCardOutput {
+    fn from(card: stateset_core::AgentCard) -> Self {
+        Self {
+            id: card.id.to_string(),
+            name: card.name,
+            description: card.description,
+            wallet_address: card.wallet_address,
+            public_key: card.public_key,
+            supported_networks: card
+                .supported_networks
+                .into_iter()
+                .map(|n| n.to_string())
+                .collect(),
+            supported_assets: card
+                .supported_assets
+                .into_iter()
+                .map(|a| a.to_string().to_lowercase())
+                .collect(),
+            a2a_skills: card.a2a_skills.into_iter().map(|s| s.to_string()).collect(),
+            trust_level: card.trust_level.to_string(),
+            verified_at: card.verified_at.map(|d| d.to_rfc3339()),
+            verification_method: card.verification_method,
+            endpoint_url: card.endpoint_url,
+            endpoint_protocol: card.endpoint_protocol,
+            merchant_id: card.merchant_id,
+            merchant_name: card.merchant_name,
+            business_category: card.business_category,
+            max_transaction_amount: card.max_transaction_amount.map(|v| v as i64),
+            daily_volume_limit: card.daily_volume_limit.map(|v| v as i64),
+            requires_kyc: card.requires_kyc,
+            active: card.active,
+            suspended_at: card.suspended_at.map(|d| d.to_rfc3339()),
+            suspension_reason: card.suspension_reason,
+            metadata: card.metadata,
+            created_at: card.created_at.to_rfc3339(),
+            updated_at: card.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402CreditBalanceInput {
+    pub payer_address: String,
+    pub asset: Option<String>,
+    pub network: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402CreditAdjustmentInput {
+    pub payer_address: String,
+    pub asset: Option<String>,
+    pub network: Option<String>,
+    pub amount: i64,
+    pub reason: Option<String>,
+    pub reference_id: Option<String>,
+    pub metadata: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct X402CreditTransactionFilterInput {
+    pub payer_address: Option<String>,
+    pub asset: Option<String>,
+    pub network: Option<String>,
+    pub direction: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402CreditAccountOutput {
+    pub id: String,
+    pub payer_address: String,
+    pub asset: String,
+    pub network: String,
+    pub balance: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<stateset_core::X402CreditAccount> for X402CreditAccountOutput {
+    fn from(account: stateset_core::X402CreditAccount) -> Self {
+        Self {
+            id: account.id.to_string(),
+            payer_address: account.payer_address,
+            asset: account.asset.to_string().to_lowercase(),
+            network: account.network.to_string(),
+            balance: account.balance as i64,
+            created_at: account.created_at.to_rfc3339(),
+            updated_at: account.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct X402CreditTransactionOutput {
+    pub id: String,
+    pub account_id: String,
+    pub payer_address: String,
+    pub asset: String,
+    pub network: String,
+    pub direction: String,
+    pub amount: i64,
+    pub balance_after: i64,
+    pub reason: Option<String>,
+    pub reference_id: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+}
+
+impl From<stateset_core::X402CreditTransaction> for X402CreditTransactionOutput {
+    fn from(txn: stateset_core::X402CreditTransaction) -> Self {
+        Self {
+            id: txn.id.to_string(),
+            account_id: txn.account_id.to_string(),
+            payer_address: txn.payer_address,
+            asset: txn.asset.to_string().to_lowercase(),
+            network: txn.network.to_string(),
+            direction: txn.direction.to_string(),
+            amount: txn.amount as i64,
+            balance_after: txn.balance_after as i64,
+            reason: txn.reason,
+            reference_id: txn.reference_id,
+            metadata: txn.metadata,
+            created_at: txn.created_at.to_rfc3339(),
+        }
+    }
+}
+
+fn parse_x402_asset(s: &str) -> Result<stateset_core::X402Asset> {
+    s.parse::<stateset_core::X402Asset>()
+        .map_err(|e| Error::from_reason(format!("Invalid x402 asset: {}", e)))
+}
+
+fn parse_x402_network(s: &str) -> Result<stateset_core::X402Network> {
+    s.parse::<stateset_core::X402Network>()
+        .map_err(|e| Error::from_reason(format!("Invalid x402 network: {}", e)))
+}
+
+fn parse_x402_status(s: &str) -> Result<stateset_core::X402IntentStatus> {
+    s.parse::<stateset_core::X402IntentStatus>()
+        .map_err(|e| Error::from_reason(format!("Invalid x402 status: {}", e)))
+}
+
+fn parse_trust_level(s: &str) -> Result<stateset_core::TrustLevel> {
+    s.parse::<stateset_core::TrustLevel>()
+        .map_err(|e| Error::from_reason(format!("Invalid trust level: {}", e)))
+}
+
+fn parse_a2a_skill(s: &str) -> Result<stateset_core::A2ASkill> {
+    s.parse::<stateset_core::A2ASkill>()
+        .map_err(|e| Error::from_reason(format!("Invalid A2A skill: {}", e)))
+}
+
+fn parse_credit_direction(s: &str) -> Result<stateset_core::X402CreditDirection> {
+    s.parse::<stateset_core::X402CreditDirection>()
+        .map_err(|e| Error::from_reason(format!("Invalid credit direction: {}", e)))
+}
+
+fn parse_uuid_opt(value: Option<String>) -> Result<Option<uuid::Uuid>> {
+    match value {
+        Some(id) => Ok(Some(id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?)),
+        None => Ok(None),
+    }
+}
+
+fn parse_amount(value: i64) -> Result<u64> {
+    if value < 0 {
+        return Err(Error::from_reason("Amount must be >= 0"));
+    }
+    Ok(value as u64)
+}
+
+fn parse_u64_field(field: &str, value: i64) -> Result<u64> {
+    if value < 0 {
+        return Err(Error::from_reason(format!("{} must be >= 0", field)));
+    }
+    Ok(value as u64)
+}
+
+fn parse_u64_opt(field: &str, value: Option<i64>) -> Result<Option<u64>> {
+    match value {
+        Some(val) => Ok(Some(parse_u64_field(field, val)?)),
+        None => Ok(None),
+    }
+}
+
+#[napi]
+pub struct X402 {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl X402 {
+    #[napi]
+    pub async fn create_intent(&self, input: X402CreateIntentInput) -> Result<X402IntentOutput> {
+        let commerce = self.commerce.lock().await;
+        let asset = match input.asset {
+            Some(val) => parse_x402_asset(&val)?,
+            None => stateset_core::X402Asset::Usdc,
+        };
+        let network = match input.network {
+            Some(val) => parse_x402_network(&val)?,
+            None => stateset_core::X402Network::SetChain,
+        };
+        let amount = parse_amount(input.amount)?;
+
+        let intent = commerce
+            .x402()
+            .create_intent(stateset_core::CreateX402PaymentIntent {
+                payer_address: input.payer_address,
+                payee_address: input.payee_address,
+                amount,
+                asset,
+                network,
+                nonce: parse_u64_opt("nonce", input.nonce)?,
+                validity_seconds: parse_u64_opt("validity_seconds", input.validity_seconds)?,
+                resource_uri: input.resource_uri,
+                resource_method: input.resource_method,
+                description: input.description,
+                cart_id: parse_uuid_opt(input.cart_id)?,
+                order_id: parse_uuid_opt(input.order_id)?,
+                invoice_id: parse_uuid_opt(input.invoice_id)?,
+                merchant_id: input.merchant_id,
+                idempotency_key: input.idempotency_key,
+                metadata: input.metadata,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create x402 intent: {}", e)))?;
+
+        Ok(intent.into())
+    }
+
+    #[napi]
+    pub async fn sign_intent(
+        &self,
+        intent_id: String,
+        input: X402SignIntentInput,
+    ) -> Result<X402IntentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let signed = commerce
+            .x402()
+            .sign_intent(
+                uuid,
+                stateset_core::SignX402PaymentIntent {
+                    intent_id: uuid,
+                    signature: input.signature,
+                    public_key: input.public_key,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to sign x402 intent: {}", e)))?;
+
+        Ok(signed.into())
+    }
+
+    #[napi]
+    pub async fn get_intent(&self, id: String) -> Result<Option<X402IntentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let intent = commerce
+            .x402()
+            .get_intent(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get x402 intent: {}", e)))?;
+        Ok(intent.map(|i| i.into()))
+    }
+
+    #[napi]
+    pub async fn list_intents(&self, filter: X402IntentFilterInput) -> Result<Vec<X402IntentOutput>> {
+        let commerce = self.commerce.lock().await;
+        let intents = commerce
+            .x402()
+            .list_intents(stateset_core::X402PaymentIntentFilter {
+                payer_address: filter.payer_address,
+                payee_address: filter.payee_address,
+                status: match filter.status {
+                    Some(val) => Some(parse_x402_status(&val)?),
+                    None => None,
+                },
+                network: match filter.network {
+                    Some(val) => Some(parse_x402_network(&val)?),
+                    None => None,
+                },
+                asset: match filter.asset {
+                    Some(val) => Some(parse_x402_asset(&val)?),
+                    None => None,
+                },
+                order_id: parse_uuid_opt(filter.order_id)?,
+                batch_id: parse_uuid_opt(filter.batch_id)?,
+                limit: filter.limit,
+                offset: filter.offset,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list x402 intents: {}", e)))?;
+
+        Ok(intents.into_iter().map(|i| i.into()).collect())
+    }
+
+    #[napi]
+    pub async fn mark_settled(
+        &self,
+        intent_id: String,
+        tx_hash: String,
+        block_number: i64,
+    ) -> Result<X402IntentOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let block_number = parse_u64_field("block_number", block_number)?;
+        let intent = commerce
+            .x402()
+            .mark_settled(uuid, &tx_hash, block_number)
+            .map_err(|e| Error::from_reason(format!("Failed to mark settled: {}", e)))?;
+        Ok(intent.into())
+    }
+
+    #[napi]
+    pub async fn get_next_nonce(&self, payer_address: String) -> Result<i64> {
+        let commerce = self.commerce.lock().await;
+        let nonce = commerce
+            .x402()
+            .get_next_nonce(&payer_address)
+            .map_err(|e| Error::from_reason(format!("Failed to get nonce: {}", e)))?;
+        i64::try_from(nonce)
+            .map_err(|_| Error::from_reason("Nonce too large to fit in i64"))
+    }
+
+    #[napi]
+    pub async fn register_agent(&self, input: X402AgentCardInput) -> Result<X402AgentCardOutput> {
+        let commerce = self.commerce.lock().await;
+        let supported_networks = match input.supported_networks {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in list {
+                    parsed.push(parse_x402_network(&item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
+        let supported_assets = match input.supported_assets {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in list {
+                    parsed.push(parse_x402_asset(&item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
+        let a2a_skills = match input.a2a_skills {
+            Some(list) => {
+                let mut parsed = Vec::with_capacity(list.len());
+                for item in list {
+                    parsed.push(parse_a2a_skill(&item)?);
+                }
+                Some(parsed)
+            }
+            None => None,
+        };
+        let trust_level = match input.trust_level {
+            Some(val) => Some(parse_trust_level(&val)?),
+            None => None,
+        };
+        let max_transaction_amount = match input.max_transaction_amount {
+            Some(val) => Some(parse_amount(val)?),
+            None => None,
+        };
+        let daily_volume_limit = match input.daily_volume_limit {
+            Some(val) => Some(parse_amount(val)?),
+            None => None,
+        };
+
+        let card = commerce
+            .x402()
+            .register_agent(stateset_core::CreateAgentCard {
+                name: input.name,
+                description: input.description,
+                wallet_address: input.wallet_address,
+                public_key: input.public_key,
+                supported_networks,
+                supported_assets,
+                a2a_skills,
+                trust_level,
+                endpoint_url: input.endpoint_url,
+                endpoint_protocol: input.endpoint_protocol,
+                merchant_id: input.merchant_id,
+                merchant_name: input.merchant_name,
+                business_category: input.business_category,
+                max_transaction_amount,
+                daily_volume_limit,
+                requires_kyc: input.requires_kyc,
+                metadata: input.metadata,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to register agent: {}", e)))?;
+
+        Ok(card.into())
+    }
+
+    #[napi]
+    pub async fn discover_agents(
+        &self,
+        network: Option<String>,
+        asset: Option<String>,
+        skill: Option<String>,
+        trust_level: Option<String>,
+    ) -> Result<Vec<X402AgentCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let network = match network {
+            Some(val) => Some(parse_x402_network(&val)?),
+            None => None,
+        };
+        let asset = match asset {
+            Some(val) => Some(parse_x402_asset(&val)?),
+            None => None,
+        };
+        let skill = match skill {
+            Some(val) => Some(parse_a2a_skill(&val)?),
+            None => None,
+        };
+        let trust_level = match trust_level {
+            Some(val) => Some(parse_trust_level(&val)?),
+            None => None,
+        };
+
+        let agents = commerce
+            .x402()
+            .discover_agents(network, asset, skill, trust_level)
+            .map_err(|e| Error::from_reason(format!("Failed to discover agents: {}", e)))?;
+
+        Ok(agents.into_iter().map(|a| a.into()).collect())
+    }
+
+    #[napi]
+    pub async fn get_agent(&self, id: String) -> Result<Option<X402AgentCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let agent = commerce
+            .x402()
+            .get_agent(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to get agent: {}", e)))?;
+        Ok(agent.map(|a| a.into()))
+    }
+
+    #[napi]
+    pub async fn get_agent_by_wallet(&self, wallet_address: String) -> Result<Option<X402AgentCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let agent = commerce
+            .x402()
+            .get_agent_by_wallet(&wallet_address)
+            .map_err(|e| Error::from_reason(format!("Failed to get agent: {}", e)))?;
+        Ok(agent.map(|a| a.into()))
+    }
+
+    #[napi]
+    pub async fn verify_agent(&self, id: String) -> Result<X402AgentCardOutput> {
+        let commerce = self.commerce.lock().await;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let agent = commerce
+            .x402()
+            .verify_agent(uuid)
+            .map_err(|e| Error::from_reason(format!("Failed to verify agent: {}", e)))?;
+        Ok(agent.into())
+    }
+
+    #[napi]
+    pub async fn list_agents(&self, filter: X402AgentCardFilterInput) -> Result<Vec<X402AgentCardOutput>> {
+        let commerce = self.commerce.lock().await;
+        let agents = commerce
+            .x402()
+            .list_agents(stateset_core::AgentCardFilter {
+                wallet_address: filter.wallet_address,
+                trust_level: match filter.trust_level {
+                    Some(val) => Some(parse_trust_level(&val)?),
+                    None => None,
+                },
+                network: match filter.network {
+                    Some(val) => Some(parse_x402_network(&val)?),
+                    None => None,
+                },
+                asset: match filter.asset {
+                    Some(val) => Some(parse_x402_asset(&val)?),
+                    None => None,
+                },
+                skill: match filter.skill {
+                    Some(val) => Some(parse_a2a_skill(&val)?),
+                    None => None,
+                },
+                active: filter.active,
+                merchant_id: filter.merchant_id,
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list agents: {}", e)))?;
+
+        Ok(agents.into_iter().map(|a| a.into()).collect())
+    }
+
+    #[napi]
+    pub async fn get_credit_balance(&self, input: X402CreditBalanceInput) -> Result<i64> {
+        let commerce = self.commerce.lock().await;
+        let asset = match input.asset {
+            Some(val) => parse_x402_asset(&val)?,
+            None => stateset_core::X402Asset::Usdc,
+        };
+        let network = match input.network {
+            Some(val) => parse_x402_network(&val)?,
+            None => stateset_core::X402Network::SetChain,
+        };
+        let balance = commerce
+            .x402()
+            .get_credit_balance(&input.payer_address, asset, network)
+            .map_err(|e| Error::from_reason(format!("Failed to get credit balance: {}", e)))?;
+        Ok(balance as i64)
+    }
+
+    #[napi]
+    pub async fn get_credit_account(&self, input: X402CreditBalanceInput) -> Result<Option<X402CreditAccountOutput>> {
+        let commerce = self.commerce.lock().await;
+        let asset = match input.asset {
+            Some(val) => parse_x402_asset(&val)?,
+            None => stateset_core::X402Asset::Usdc,
+        };
+        let network = match input.network {
+            Some(val) => parse_x402_network(&val)?,
+            None => stateset_core::X402Network::SetChain,
+        };
+        let account = commerce
+            .x402()
+            .get_credit_account(&input.payer_address, asset, network)
+            .map_err(|e| Error::from_reason(format!("Failed to get credit account: {}", e)))?;
+        Ok(account.map(|a| a.into()))
+    }
+
+    #[napi]
+    pub async fn credit_account(&self, input: X402CreditAdjustmentInput) -> Result<X402CreditTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let asset = match input.asset {
+            Some(val) => parse_x402_asset(&val)?,
+            None => stateset_core::X402Asset::Usdc,
+        };
+        let network = match input.network {
+            Some(val) => parse_x402_network(&val)?,
+            None => stateset_core::X402Network::SetChain,
+        };
+        let amount = parse_amount(input.amount)?;
+        let txn = commerce
+            .x402()
+            .credit_account(
+                &input.payer_address,
+                asset,
+                network,
+                amount,
+                input.reason,
+                input.reference_id,
+                input.metadata,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to credit account: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn debit_account(&self, input: X402CreditAdjustmentInput) -> Result<X402CreditTransactionOutput> {
+        let commerce = self.commerce.lock().await;
+        let asset = match input.asset {
+            Some(val) => parse_x402_asset(&val)?,
+            None => stateset_core::X402Asset::Usdc,
+        };
+        let network = match input.network {
+            Some(val) => parse_x402_network(&val)?,
+            None => stateset_core::X402Network::SetChain,
+        };
+        let amount = parse_amount(input.amount)?;
+        let txn = commerce
+            .x402()
+            .debit_account(
+                &input.payer_address,
+                asset,
+                network,
+                amount,
+                input.reason,
+                input.reference_id,
+                input.metadata,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to debit account: {}", e)))?;
+        Ok(txn.into())
+    }
+
+    #[napi]
+    pub async fn list_credit_transactions(
+        &self,
+        filter: X402CreditTransactionFilterInput,
+    ) -> Result<Vec<X402CreditTransactionOutput>> {
+        let commerce = self.commerce.lock().await;
+        let transactions = commerce
+            .x402()
+            .list_credit_transactions(stateset_core::X402CreditTransactionFilter {
+                payer_address: filter.payer_address,
+                asset: match filter.asset {
+                    Some(val) => Some(parse_x402_asset(&val)?),
+                    None => None,
+                },
+                network: match filter.network {
+                    Some(val) => Some(parse_x402_network(&val)?),
+                    None => None,
+                },
+                direction: match filter.direction {
+                    Some(val) => Some(parse_credit_direction(&val)?),
+                    None => None,
+                },
+                limit: filter.limit,
+                offset: filter.offset,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to list credit transactions: {}", e)))?;
+
+        Ok(transactions.into_iter().map(|t| t.into()).collect())
     }
 }
 

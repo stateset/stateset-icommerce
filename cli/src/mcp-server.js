@@ -87,6 +87,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       'list_warranties',
       // x402 Protocol (read-only)
       'x402_get_intent', 'x402_list_intents', 'x402_get_next_nonce',
+      'x402_credit_balance', 'x402_credit_transactions',
       // Agent Cards (read-only)
       'discover_agents', 'get_agent_card', 'list_agent_cards'
     ];
@@ -5483,6 +5484,199 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       ),
 
       // ============================================================================
+      // x402 Credit Ledger Tools (Metered Billing)
+      // ============================================================================
+      tool(
+        'x402_credit_balance',
+        'Get x402 credit balance for a payer (prepaid meter for streaming usage).',
+        {
+          payerAddress: z.string().describe('Payer wallet address'),
+          asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
+          network: z.string().optional().describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)')
+        },
+        async ({ payerAddress, asset, network }) => {
+          try {
+            const balance = await commerce.x402().getCreditBalance({
+              payer_address: payerAddress,
+              asset,
+              network,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  payerAddress,
+                  asset: asset || 'usdc',
+                  network: network || 'set_chain',
+                  balance,
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_credit_deposit',
+        'Credit (deposit) x402 balance for metered usage. Requires --apply.',
+        {
+          payerAddress: z.string().describe('Payer wallet address'),
+          amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
+          asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
+          network: z.string().optional().describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)'),
+          reason: z.string().optional().describe('Reason for deposit'),
+          referenceId: z.string().optional().describe('Reference ID for audit'),
+          metadata: z.string().optional().describe('Metadata (JSON string)')
+        },
+        async ({ payerAddress, amount, asset, network, reason, referenceId, metadata }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Depositing credit requires --apply flag.',
+                  wouldDeposit: { payerAddress, amount, asset, network }
+                })
+              }]
+            };
+          }
+          try {
+            const txn = await commerce.x402().creditAccount({
+              payer_address: payerAddress,
+              asset,
+              network,
+              amount,
+              reason,
+              reference_id: referenceId,
+              metadata,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Credit deposited.',
+                  transaction: {
+                    id: txn.id,
+                    accountId: txn.account_id,
+                    direction: txn.direction,
+                    amount: txn.amount,
+                    balanceAfter: txn.balance_after,
+                    createdAt: txn.created_at,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_credit_debit',
+        'Debit x402 balance for metered usage. Requires --apply.',
+        {
+          payerAddress: z.string().describe('Payer wallet address'),
+          amount: z.number().describe('Amount in smallest unit (e.g., 1000000 = 1 USDC)'),
+          asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
+          network: z.string().optional().describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)'),
+          reason: z.string().optional().describe('Reason for debit'),
+          referenceId: z.string().optional().describe('Reference ID for audit'),
+          metadata: z.string().optional().describe('Metadata (JSON string)')
+        },
+        async ({ payerAddress, amount, asset, network, reason, referenceId, metadata }) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Debiting credit requires --apply flag.',
+                  wouldDebit: { payerAddress, amount, asset, network }
+                })
+              }]
+            };
+          }
+          try {
+            const txn = await commerce.x402().debitAccount({
+              payer_address: payerAddress,
+              asset,
+              network,
+              amount,
+              reason,
+              reference_id: referenceId,
+              metadata,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Credit debited.',
+                  transaction: {
+                    id: txn.id,
+                    accountId: txn.account_id,
+                    direction: txn.direction,
+                    amount: txn.amount,
+                    balanceAfter: txn.balance_after,
+                    createdAt: txn.created_at,
+                  }
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'x402_credit_transactions',
+        'List x402 credit ledger transactions.',
+        {
+          payerAddress: z.string().optional().describe('Filter by payer address'),
+          asset: z.string().optional().describe('Filter by asset'),
+          network: z.string().optional().describe('Filter by network'),
+          direction: z.string().optional().describe('Filter by direction: credit, debit'),
+          limit: z.number().optional().describe('Maximum results (default: 50)')
+        },
+        async (args) => {
+          try {
+            const txns = await commerce.x402().listCreditTransactions({
+              payer_address: args.payerAddress,
+              asset: args.asset,
+              network: args.network,
+              direction: args.direction,
+              limit: args.limit || 50,
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  count: txns.length,
+                  transactions: txns.map(txn => ({
+                    id: txn.id,
+                    accountId: txn.account_id,
+                    payerAddress: txn.payer_address,
+                    direction: txn.direction,
+                    amount: txn.amount,
+                    balanceAfter: txn.balance_after,
+                    createdAt: txn.created_at,
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
       // Agent Card Tools (A2A Commerce)
       // ============================================================================
       tool(
@@ -6397,6 +6591,22 @@ export const TOOL_NAMES = [
   'mcp__stateset-commerce__create_payment',
   'mcp__stateset-commerce__complete_payment',
   'mcp__stateset-commerce__create_refund',
+  // x402 Protocol (A2A + Metered Billing)
+  'mcp__stateset-commerce__x402_create_payment_intent',
+  'mcp__stateset-commerce__x402_sign_intent',
+  'mcp__stateset-commerce__x402_get_intent',
+  'mcp__stateset-commerce__x402_list_intents',
+  'mcp__stateset-commerce__x402_mark_settled',
+  'mcp__stateset-commerce__x402_get_next_nonce',
+  'mcp__stateset-commerce__x402_credit_balance',
+  'mcp__stateset-commerce__x402_credit_deposit',
+  'mcp__stateset-commerce__x402_credit_debit',
+  'mcp__stateset-commerce__x402_credit_transactions',
+  'mcp__stateset-commerce__register_agent_card',
+  'mcp__stateset-commerce__discover_agents',
+  'mcp__stateset-commerce__get_agent_card',
+  'mcp__stateset-commerce__verify_agent',
+  'mcp__stateset-commerce__list_agent_cards',
   // Shipments
   'mcp__stateset-commerce__list_shipments',
   'mcp__stateset-commerce__create_shipment',

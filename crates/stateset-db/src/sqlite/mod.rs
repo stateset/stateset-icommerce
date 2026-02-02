@@ -32,6 +32,7 @@ mod credit;
 mod backorder;
 mod general_ledger;
 mod x402_payment_intents;
+mod x402_credits;
 mod agent_cards;
 
 #[cfg(feature = "vector")]
@@ -44,6 +45,7 @@ pub use cost_accounting::*;
 pub use credit::*;
 pub use general_ledger::*;
 pub use x402_payment_intents::*;
+pub use x402_credits::*;
 pub use agent_cards::*;
 #[cfg(feature = "vector")]
 pub use vector::*;
@@ -318,6 +320,11 @@ impl SqliteDatabase {
     /// Get x402 payment intent repository
     pub fn x402_payment_intents(&self) -> SqliteX402PaymentIntentRepository {
         SqliteX402PaymentIntentRepository::new(self.pool.clone())
+    }
+
+    /// Get x402 credit ledger repository
+    pub fn x402_credits(&self) -> SqliteX402CreditRepository {
+        SqliteX402CreditRepository::new(self.pool.clone())
     }
 
     /// Get agent card repository

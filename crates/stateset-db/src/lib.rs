@@ -58,7 +58,7 @@ use stateset_core::{
     ProductRepository, PromotionRepository, PurchaseOrderRepository, QualityRepository,
     ReceivingRepository, Result, ReturnRepository, SerialRepository, ShipmentRepository,
     SubscriptionRepository, TaxRepository, WarehouseRepository, WarrantyRepository,
-    WorkOrderRepository, X402PaymentIntentRepository,
+    WorkOrderRepository, X402PaymentIntentRepository, X402CreditRepository,
 };
 
 // ============================================================================
@@ -202,6 +202,8 @@ pub trait Database: Send + Sync {
     fn general_ledger(&self) -> Box<dyn GeneralLedgerRepository + '_>;
     /// Get the x402 payment intent repository
     fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_>;
+    /// Get the x402 credit ledger repository
+    fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_>;
     /// Get the agent card repository
     fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_>;
 }
@@ -420,6 +422,10 @@ macro_rules! impl_database_accessors {
 
             fn x402_payment_intents(&self) -> Box<dyn X402PaymentIntentRepository + '_> {
                 Box::new(self.x402_payment_intents())
+            }
+
+            fn x402_credits(&self) -> Box<dyn X402CreditRepository + '_> {
+                Box::new(self.x402_credits())
             }
 
             fn agent_cards(&self) -> Box<dyn AgentCardRepository + '_> {
