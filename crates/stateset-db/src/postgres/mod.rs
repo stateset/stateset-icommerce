@@ -5,6 +5,7 @@
 mod accounts_payable;
 mod accounts_receivable;
 mod analytics;
+mod agent_cards;
 mod agent_identities;
 mod agent_reputation;
 mod agent_validation;
@@ -34,6 +35,7 @@ mod subscriptions;
 mod tax;
 mod unsupported;
 mod x402_credits;
+mod x402_payment_intents;
 mod warehouse;
 mod warranties;
 mod work_orders;
@@ -41,6 +43,7 @@ mod work_orders;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
 pub use analytics::*;
+pub use agent_cards::*;
 pub use agent_identities::*;
 pub use agent_reputation::*;
 pub use agent_validation::*;
@@ -70,6 +73,7 @@ pub use subscriptions::*;
 pub use tax::*;
 pub use unsupported::*;
 pub use x402_credits::*;
+pub use x402_payment_intents::*;
 pub use warehouse::*;
 pub use warranties::*;
 pub use work_orders::*;
@@ -160,6 +164,7 @@ impl PostgresDatabase {
             ("030_idempotency_keys", include_str!("migrations/030_idempotency_keys.sql")),
             ("031_x402_credits", include_str!("migrations/031_x402_credits.sql")),
             ("032_erc8004", include_str!("migrations/032_erc8004.sql")),
+            ("033_x402_a2a", include_str!("migrations/033_x402_a2a.sql")),
         ];
 
         for (name, sql) in migrations {
@@ -341,9 +346,9 @@ impl PostgresDatabase {
         PgGeneralLedgerRepository::new(self.pool.clone())
     }
 
-    /// Get x402 payment intent repository (unsupported in Postgres backend)
-    pub fn x402_payment_intents(&self) -> UnsupportedPostgresRepository {
-        UnsupportedPostgresRepository::new("x402_payment_intents")
+    /// Get x402 payment intent repository
+    pub fn x402_payment_intents(&self) -> PgX402PaymentIntentRepository {
+        PgX402PaymentIntentRepository::new(self.pool.clone())
     }
 
     /// Get x402 credit ledger repository
@@ -351,9 +356,9 @@ impl PostgresDatabase {
         PgX402CreditRepository::new(self.pool.clone())
     }
 
-    /// Get agent card repository (unsupported in Postgres backend)
-    pub fn agent_cards(&self) -> UnsupportedPostgresRepository {
-        UnsupportedPostgresRepository::new("agent_cards")
+    /// Get agent card repository
+    pub fn agent_cards(&self) -> PgAgentCardRepository {
+        PgAgentCardRepository::new(self.pool.clone())
     }
 
     /// Get agent identity repository (ERC-8004)

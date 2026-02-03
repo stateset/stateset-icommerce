@@ -1,14 +1,16 @@
 //! PostgreSQL implementation of cart/checkout repository
 
-use super::map_db_error;
+use super::{map_db_error, PgCustomerRepository, PgOrderRepository};
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
-use sqlx::{postgres::PgPool, FromRow, Row};
+use sqlx::{postgres::PgPool, FromRow};
 use stateset_core::{
     validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
-    CartPaymentStatus, CartRepository, CartStatus, CheckoutResult, CommerceError, CreateCart,
-    FulfillmentType, Result, SetCartPayment, SetCartShipping, ShippingRate, UpdateCart,
-    UpdateCartItem,
+    CartPaymentStatus, CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError,
+    CreateCart, CreateCustomer, CreateOrder, CreateOrderItem, FulfillmentType, Result,
+    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
+    X402Asset, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
+    X402IntentStatus, X402Network, X402PaymentRequiredData,
 };
 use uuid::Uuid;
 
@@ -45,6 +47,11 @@ struct CartRow {
     metadata: Option<serde_json::Value>,
     inventory_reserved: bool,
     reservation_expires_at: Option<DateTime<Utc>>,
+    x402_payer_address: Option<String>,
+    x402_network: Option<String>,
+    x402_asset: Option<String>,
+    x402_intent_id: Option<Uuid>,
+    x402_status: Option<String>,
     expires_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
@@ -85,6 +92,11 @@ impl CartRow {
             metadata,
             inventory_reserved,
             reservation_expires_at,
+            x402_payer_address,
+            x402_network,
+            x402_asset,
+            x402_intent_id,
+            x402_status,
             expires_at,
             completed_at,
             created_at,
@@ -127,6 +139,45 @@ impl CartRow {
                     e
                 ))
             })?;
+        let x402_payment = match x402_payer_address {
+            Some(payer_address) => {
+                let network = match x402_network.as_deref() {
+                    Some(value) => value.parse::<X402Network>().map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid cart.x402_network '{}': {}",
+                            value, e
+                        ))
+                    })?,
+                    None => X402Network::default(),
+                };
+                let asset = match x402_asset.as_deref() {
+                    Some(value) => value.parse::<X402Asset>().map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid cart.x402_asset '{}': {}",
+                            value, e
+                        ))
+                    })?,
+                    None => X402Asset::default(),
+                };
+                let status = match x402_status.as_deref() {
+                    Some(value) => value.parse::<X402IntentStatus>().map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Invalid cart.x402_status '{}': {}",
+                            value, e
+                        ))
+                    })?,
+                    None => X402IntentStatus::default(),
+                };
+                Some(CartX402Payment {
+                    intent_id: x402_intent_id,
+                    payer_address,
+                    network,
+                    asset,
+                    status,
+                })
+            }
+            None => None,
+        };
 
         Ok(Cart {
             id,
@@ -161,6 +212,7 @@ impl CartRow {
             metadata,
             inventory_reserved,
             reservation_expires_at,
+            x402_payment,
             expires_at,
             completed_at,
             created_at,
@@ -295,6 +347,90 @@ impl PgCartRepository {
         .map_err(map_db_error)?;
 
         Ok(())
+    }
+
+    async fn finalize_x402_checkout_async(&self, cart_id: Uuid) -> Result<X402CheckoutResult> {
+        let cart = self
+            .get_cart_with_items(cart_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+
+        let order_repo = PgOrderRepository::new(self.pool.clone());
+        let customer_repo = PgCustomerRepository::new(self.pool.clone());
+
+        let customer_id = if let Some(id) = cart.customer_id {
+            id
+        } else if let Some(email) = &cart.customer_email {
+            if let Some(customer) = customer_repo.get_by_email_async(email).await? {
+                customer.id
+            } else {
+                let new_customer = customer_repo
+                    .create_async(CreateCustomer {
+                        email: email.clone(),
+                        first_name: cart.customer_name.clone().unwrap_or_default(),
+                        ..Default::default()
+                    })
+                    .await?;
+                new_customer.id
+            }
+        } else {
+            return Err(CommerceError::ValidationError(
+                "Customer ID or email required".to_string(),
+            ));
+        };
+
+        let order_items: Vec<CreateOrderItem> = cart
+            .items
+            .iter()
+            .map(|item| CreateOrderItem {
+                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                ..Default::default()
+            })
+            .collect();
+
+        let order = order_repo
+            .create_async(CreateOrder {
+                customer_id,
+                items: order_items,
+                currency: Some(cart.currency.clone()),
+                shipping_address: cart.shipping_address.clone().map(Into::into),
+                billing_address: cart.billing_address.clone().map(Into::into),
+                notes: cart.notes.clone(),
+                ..Default::default()
+            })
+            .await?;
+
+        let now = Utc::now();
+        sqlx::query(
+            r#"UPDATE carts SET
+                status = 'completed', order_id = $1, order_number = $2,
+                payment_status = 'captured', x402_status = $3,
+                completed_at = $4, updated_at = $5
+             WHERE id = $6"#,
+        )
+        .bind(order.id)
+        .bind(&order.order_number)
+        .bind(X402IntentStatus::Settled.to_string())
+        .bind(now)
+        .bind(now)
+        .bind(cart_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(X402CheckoutResult::Completed(CheckoutResult {
+            cart_id,
+            order_id: order.id,
+            order_number: order.order_number,
+            payment_id: None,
+            total_charged: cart.grand_total,
+            currency: cart.currency,
+        }))
     }
 
     // Async implementations
@@ -990,6 +1126,120 @@ impl PgCartRepository {
             .ok_or(CommerceError::NotFound)
     }
 
+    pub async fn set_x402_payment_async(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
+        sqlx::query(
+            r#"UPDATE carts SET
+                x402_payer_address = $1, x402_network = $2, x402_asset = $3,
+                x402_status = $4, payment_method = 'x402', updated_at = $5
+            WHERE id = $6"#,
+        )
+        .bind(payment.payer_address)
+        .bind(payment.network.to_string())
+        .bind(payment.asset.to_string().to_lowercase())
+        .bind(X402IntentStatus::Created.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        self.get_cart_with_items(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
+    }
+
+    pub async fn complete_with_x402_async(
+        &self,
+        id: Uuid,
+        payee_address: &str,
+    ) -> Result<X402CheckoutResult> {
+        use rust_decimal::prelude::ToPrimitive;
+
+        let cart = self
+            .get_cart_with_items(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+
+        if !cart.is_ready_for_checkout() {
+            return Err(CommerceError::ValidationError(
+                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
+            ));
+        }
+
+        let x402_payment = cart.x402_payment.as_ref().ok_or_else(|| {
+            CommerceError::ValidationError(
+                "x402 payment not configured. Call set_x402_payment first".to_string(),
+            )
+        })?;
+
+        let decimals = x402_payment.asset.decimals();
+        let multiplier = Decimal::from(10u64.pow(decimals as u32));
+        let amount_scaled = cart.grand_total * multiplier;
+        let amount = amount_scaled.to_u64().unwrap_or(0);
+        let amount_display = format!("{:.6} {}", cart.grand_total, x402_payment.asset);
+
+        if let Some(intent_id) = x402_payment.intent_id {
+            let row: Option<(String, Option<String>, Option<i64>, Option<Uuid>)> = sqlx::query_as(
+                "SELECT status, signing_hash, sequence_number, batch_id FROM x402_payment_intents WHERE id = $1",
+            )
+            .bind(intent_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+            if let Some((status_str, signing_hash, seq_num, batch_id)) = row {
+                let status: X402IntentStatus = status_str.parse().unwrap_or_default();
+                match status {
+                    X402IntentStatus::Settled => {
+                        return self.finalize_x402_checkout_async(id).await;
+                    }
+                    X402IntentStatus::Signed
+                    | X402IntentStatus::Sequenced
+                    | X402IntentStatus::Batched => {
+                        return Ok(X402CheckoutResult::AwaitingSettlement(
+                            X402AwaitingSettlementData {
+                                cart_id: id,
+                                intent_id,
+                                status,
+                                sequence_number: seq_num.map(|n| n as u64),
+                                batch_id,
+                            },
+                        ));
+                    }
+                    X402IntentStatus::Created => {
+                        return Ok(X402CheckoutResult::IntentCreated(X402IntentCreatedData {
+                            cart_id: id,
+                            intent_id,
+                            signing_hash: signing_hash.unwrap_or_default(),
+                            amount,
+                            amount_display,
+                            asset: x402_payment.asset,
+                            network: x402_payment.network,
+                            payee_address: payee_address.to_string(),
+                            valid_until: 0,
+                            nonce: 0,
+                        }));
+                    }
+                    X402IntentStatus::Expired
+                    | X402IntentStatus::Failed
+                    | X402IntentStatus::Cancelled => {}
+                }
+            }
+        }
+
+        let chain_id = x402_payment.network.chain_id();
+        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
+            cart_id: id,
+            payee_address: payee_address.to_string(),
+            amount,
+            amount_display,
+            asset: x402_payment.asset,
+            network: x402_payment.network,
+            chain_id,
+            valid_seconds: 3600,
+        }))
+    }
+
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
         sqlx::query("UPDATE carts SET coupon_code = $1, updated_at = $2 WHERE id = $3")
             .bind(coupon_code)
@@ -1427,6 +1677,7 @@ impl PgCartRepository {
                 metadata: input.metadata,
                 inventory_reserved: false,
                 reservation_expires_at: None,
+                x402_payment: None,
                 expires_at,
                 completed_at: None,
                 created_at: now,
@@ -1655,6 +1906,14 @@ impl CartRepository for PgCartRepository {
 
     fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
         super::block_on(self.set_payment_async(id, payment))
+    }
+
+    fn set_x402_payment(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
+        super::block_on(self.set_x402_payment_async(id, payment))
+    }
+
+    fn complete_with_x402(&self, id: Uuid, payee_address: &str) -> Result<X402CheckoutResult> {
+        super::block_on(self.complete_with_x402_async(id, payee_address))
     }
 
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {

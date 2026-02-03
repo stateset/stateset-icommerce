@@ -37,7 +37,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    assert_eq!(applied, 32, "expected all embedded migrations to apply");
+    assert_eq!(applied, 33, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",
@@ -45,6 +45,10 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         "exchange_rate_history",
         "x402_credit_accounts",
         "x402_credit_transactions",
+        "x402_payment_intents",
+        "agent_cards",
+        "a2a_quotes",
+        "a2a_purchases",
         "agent_identities",
         "agent_identity_metadata",
         "agent_feedback",

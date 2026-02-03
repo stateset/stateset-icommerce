@@ -406,6 +406,9 @@ pub struct X402PaymentIntent {
     /// Description of what the payment is for
     pub description: Option<String>,
 
+    /// Associated cart ID (if applicable)
+    pub cart_id: Option<Uuid>,
+
     /// Associated order ID (if applicable)
     pub order_id: Option<Uuid>,
 
@@ -510,6 +513,7 @@ impl X402PaymentIntent {
             resource_uri: None,
             resource_method: None,
             description: None,
+            cart_id: None,
             order_id: None,
             invoice_id: None,
             merchant_id: None,

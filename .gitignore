@@ -88,3 +88,4 @@ comparison_doc.md
 admin/
 .claude/*.local*
 target-local/
+target-codex/

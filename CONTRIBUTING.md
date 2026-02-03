@@ -39,11 +39,15 @@ Please be respectful and constructive in all interactions. We're building softwa
 - **Node.js 18+** - For CLI and Node.js bindings
 - **Python 3.8+** - For Python bindings (optional)
 - **wasm-pack** - For WebAssembly bindings (optional)
+- **Java 11+** - For Java/Kotlin bindings (optional)
+- **Go 1.20+** - For Go bindings (optional)
+- **.NET SDK 8.0+** - For C#/.NET bindings (optional)
+- **Swift 5.7+** - For Swift bindings (macOS only, optional)
 
 ### Building the Rust Crates
 
 ```bash
-# Build all default workspace members
+# Build default workspace members (core crates)
 cargo build
 
 # Build with all features
@@ -53,6 +57,16 @@ cargo build --all-features
 cargo build -p stateset-core
 cargo build -p stateset-db
 cargo build -p stateset-embedded
+```
+
+To build a specific binding, target it explicitly:
+
+```bash
+cargo build -p stateset-java
+cargo build -p stateset-kotlin
+cargo build -p stateset-go
+cargo build -p stateset-dotnet
+cargo build -p stateset-swift
 ```
 
 ### Building the Node.js Binding
@@ -168,6 +182,8 @@ cargo test -- --nocapture
 # Run specific test
 cargo test test_order_lifecycle
 ```
+
+CI note: Swift bindings run on macOS only when a PR has the `ci-swift` label (they run on pushes to main/master).
 
 ### Node.js Binding Tests
 
@@ -343,4 +359,3 @@ Looking for ways to contribute? Here are some areas we'd love help with:
 ---
 
 Thank you for contributing to StateSet iCommerce! 🚀
-

@@ -94,6 +94,14 @@ When `apiKeys` is empty or omitted, authentication is completely disabled.
 All requests are treated as `admin` level — this preserves the pre-0.3.1
 behavior.
 
+## Production Hardening
+
+- Bind `host` to `127.0.0.1` and put the gateway behind a reverse proxy, or enable authentication before binding to `0.0.0.0`.
+- Configure at least one API key; do not ship with `apiKeys: []`.
+- Enable sandbox mode for `browser` and `shell` unless explicitly needed.
+- Restrict CORS to known origins; avoid `*` in production.
+- Terminate TLS at the edge and forward only from trusted networks.
+
 ## Sandbox Mode
 
 Sandbox mode blocks specific dangerous routes regardless of the caller's

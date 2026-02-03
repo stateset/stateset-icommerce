@@ -31,6 +31,18 @@ cargo add stateset-embedded             # Rust
 
 ---
 
+## Support Matrix
+
+| Tier | What’s Covered | CI Coverage |
+|------|----------------|------------|
+| Tier 1 | Core Rust crates, CLI, Node, Python, Ruby, PHP | Full test suite + lint/format + security checks |
+| Tier 2 | Go, .NET, Java, Kotlin, WASM, Swift (macOS) | Build or smoke tests |
+| Tier 3 | Experimental integrations | Manual/roadmap |
+
+Production note: use `config/stateset.production.properties` as the baseline for secure defaults.
+
+---
+
 ## The Shift: From eCommerce to iCommerce
 
 Commerce is undergoing a fundamental shift. Where eCommerce was built for humans clicking buttons in dashboards, **iCommerce** (Intelligent Commerce) is built for AI agents making decisions.
@@ -52,7 +64,8 @@ stateset-icommerce/
 ├── crates/
 │   ├── stateset-core/       # Pure domain models & business logic (no I/O)
 │   ├── stateset-db/         # SQLite + PostgreSQL implementations
-│   └── stateset-embedded/   # Unified high-level API
+│   ├── stateset-embedded/   # Unified high-level API
+│   └── stateset-observability/ # Metrics + tracing helpers
 ├── bindings/
 │   ├── node/                # JavaScript/TypeScript (NAPI)
 │   ├── python/              # Python (PyO3)

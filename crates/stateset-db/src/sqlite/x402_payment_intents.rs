@@ -63,6 +63,11 @@ impl SqliteX402PaymentIntentRepository {
             resource_uri: row.get("resource_uri")?,
             resource_method: row.get("resource_method")?,
             description: row.get("description")?,
+            cart_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("cart_id")?,
+                "x402_intent",
+                "cart_id",
+            )?,
             order_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("order_id")?,
                 "x402_intent",
@@ -167,7 +172,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 input.resource_uri,
                 input.resource_method,
                 input.description,
-                Option::<String>::None, // cart_id
+                input.cart_id.map(|id| id.to_string()),
                 input.order_id.map(|id| id.to_string()),
                 input.invoice_id.map(|id| id.to_string()),
                 input.merchant_id,
@@ -563,9 +568,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 "INSERT INTO x402_payment_intents (
                     id, version, status, payer_address, payee_address, amount, amount_decimal,
                     asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
-                    idempotency_key, resource_uri, resource_method, description, order_id,
+                    idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
                     invoice_id, merchant_id, metadata, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     id.to_string(),
                     "1.0",
@@ -585,6 +590,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                     input.resource_uri,
                     input.resource_method,
                     input.description,
+                    input.cart_id.map(|id| id.to_string()),
                     input.order_id.map(|id| id.to_string()),
                     input.invoice_id.map(|id| id.to_string()),
                     input.merchant_id,

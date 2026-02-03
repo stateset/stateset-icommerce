@@ -308,12 +308,20 @@ impl AgentCardRepository for SqliteAgentCardRepository {
             params.push(Box::new(format!("%\"{}%", network.to_string())));
         }
         if let Some(ref asset) = filter.asset {
+            let asset_value = serde_json::to_value(asset)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| asset.to_string().to_lowercase());
             conditions.push("supported_assets LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", asset.to_string())));
+            params.push(Box::new(format!("%\"{}%", asset_value)));
         }
         if let Some(ref skill) = filter.skill {
+            let skill_value = serde_json::to_value(skill)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| skill.to_string());
             conditions.push("a2a_skills LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", skill.to_string())));
+            params.push(Box::new(format!("%\"{}%", skill_value)));
         }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
@@ -366,9 +374,33 @@ impl AgentCardRepository for SqliteAgentCardRepository {
                 params.push(Box::new(level.to_string()));
             }
         }
+        if let Some(ref network) = filter.network {
+            conditions.push("supported_networks LIKE ?".to_string());
+            params.push(Box::new(format!("%\"{}%", network.to_string())));
+        }
+        if let Some(ref asset) = filter.asset {
+            let asset_value = serde_json::to_value(asset)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| asset.to_string().to_lowercase());
+            conditions.push("supported_assets LIKE ?".to_string());
+            params.push(Box::new(format!("%\"{}%", asset_value)));
+        }
+        if let Some(ref skill) = filter.skill {
+            let skill_value = serde_json::to_value(skill)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| skill.to_string());
+            conditions.push("a2a_skills LIKE ?".to_string());
+            params.push(Box::new(format!("%\"{}%", skill_value)));
+        }
         if let Some(active) = filter.active {
             conditions.push("active = ?".to_string());
             params.push(Box::new(active as i32));
+        }
+        if let Some(ref merchant) = filter.merchant_id {
+            conditions.push("merchant_id = ?".to_string());
+            params.push(Box::new(merchant.clone()));
         }
 
         let sql = format!(

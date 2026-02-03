@@ -55,7 +55,7 @@
     "url": "https://github.com/stateset/stateset-icommerce/issues"
   },
   "scripts": {
-    "test": "node --test --test-name-pattern='.' test/unit/*.test.js test/integration/commands.test.js test/integration/grpc-client.test.js test/e2e/*.test.js",
+    "test": "node --test --test-name-pattern='.' test/unit/*.test.js test/integration/commands.test.js test/integration/grpc-client.test.js test/e2e/*.test.js tests/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
