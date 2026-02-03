@@ -28,7 +28,7 @@ export class GeminiProvider extends ModelProvider {
    * @returns {Promise<import('./base.js').ChatResult>}
    */
   async chat(messages, options = {}) {
-    const apiKey = this.getApiKey();
+    const apiKey = options.apiKey || this.getApiKey();
     if (!apiKey) {
       throw new Error('Gemini API key not set. Set GEMINI_API_KEY environment variable.');
     }
@@ -60,6 +60,7 @@ export class GeminiProvider extends ModelProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!res.ok) {

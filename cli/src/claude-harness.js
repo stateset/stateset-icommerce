@@ -16,7 +16,7 @@ import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
-import { PermissionGate, createPermissionGate, PERMISSION_LEVELS } from './permissions.js';
+import { createPermissionGate } from './permissions.js';
 import { RichOutput, ICONS } from './output.js';
 import { loadSyncConfig, SyncConfig } from './sync/config.js';
 import { wrapCommerceWithEvents } from './sync/capture.js';
@@ -24,10 +24,143 @@ import { createSyncEngine } from './sync/engine.js';
 
 // v0.4.0: New modules for enhanced reliability
 import { getCommandQueue, CommandQueue } from './command-queue.js';
-import { ContextGuard, guardContext, estimateTokens } from './context-guard.js';
+import { ContextGuard } from './context-guard.js';
 import { ModelFallback, DEFAULT_FALLBACK_CHAIN } from './model-fallback.js';
 import { getMarkdownMemoryStore } from './memory/markdown-store.js';
 import { getMemoryStore } from './memory/store.js';
+import { loadAgentSettings } from './settings.js';
+import { getAgentSessionStore } from './agent-session-store.js';
+import { resolveProviderApiKey } from './credentials.js';
+import { ensureHarnessPluginsLoaded, getHarnessHookRunner } from './harness-hooks.js';
+import { redactSensitive, redactObject } from './privacy.js';
+
+// ============================================================================
+// Conversation History Helpers
+// ============================================================================
+
+function extractHistoryText(content) {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (!block) return '';
+        if (typeof block === 'string') return block;
+        if (block.type === 'text' && typeof block.text === 'string') return block.text;
+        if (block.type === 'tool_result' && typeof block.content === 'string') return block.content;
+        if (block.text && typeof block.text === 'string') return block.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (content.text && typeof content.text === 'string') return content.text;
+  if (content.content) return extractHistoryText(content.content);
+  return '';
+}
+
+function formatConversationHistory(history) {
+  if (!Array.isArray(history) || history.length === 0) return '';
+  const lines = [];
+  for (const msg of history) {
+    if (!msg) continue;
+    const role = (msg.role || msg.type || 'message').toString().toUpperCase();
+    const content = extractHistoryText(
+      msg.content ?? msg.message?.content ?? msg.text ?? msg.message ?? ''
+    ).trim();
+    if (!content) continue;
+    lines.push(`${role}: ${content}`);
+  }
+  return lines.join('\n');
+}
+
+function buildPromptWithHistory(request, history, options = {}) {
+  const historyText = formatConversationHistory(history);
+  if (!historyText) return request;
+  const finalHistory = options.redactHistory
+    ? redactSensitive(historyText, options.redactOptions)
+    : historyText;
+  const finalRequest = options.redactRequest
+    ? redactSensitive(request, options.redactOptions)
+    : request;
+  return `Conversation history:\n${finalHistory}\n\nCurrent request:\n${finalRequest}`;
+}
+
+function extractCompactionSummary(compactedHistory) {
+  if (!Array.isArray(compactedHistory) || compactedHistory.length === 0) return null;
+  const summaryMsg = compactedHistory.find((msg) => msg?.role === 'user');
+  if (!summaryMsg) return null;
+  const text = extractHistoryText(summaryMsg.content ?? summaryMsg.message?.content ?? '');
+  return text || null;
+}
+
+// ============================================================================
+// Retry Helpers
+// ============================================================================
+
+function isRetryableError(error, retrySettings) {
+  if (!error) return false;
+  const message = typeof error === 'string' ? error : error.message || '';
+  const patterns = retrySettings?.retryableErrors || [];
+  const lower = message.toLowerCase();
+  return patterns.some((p) => lower.includes(String(p).toLowerCase()));
+}
+
+function computeRetryDelay(attempt, retrySettings) {
+  const base = retrySettings.baseDelayMs || 500;
+  const max = retrySettings.maxDelayMs || 8000;
+  const jitter = retrySettings.jitter || 0;
+  let delay = base * (2 ** Math.max(0, attempt - 1));
+  delay = Math.min(delay, max);
+  if (jitter > 0) {
+    const rand = (Math.random() * 2 - 1) * jitter;
+    delay = Math.max(0, Math.floor(delay * (1 + rand)));
+  }
+  return delay;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildClaudeEnv({ env: envOverrides = null, apiKey = null } = {}) {
+  const env = { ...process.env, ...(envOverrides || {}) };
+  if (apiKey) {
+    env.ANTHROPIC_API_KEY = apiKey;
+    return env;
+  }
+  if (!env.ANTHROPIC_API_KEY) {
+    const storedKey = resolveProviderApiKey('claude');
+    if (storedKey) env.ANTHROPIC_API_KEY = storedKey;
+  }
+  return env;
+}
+
+function normalizeAbortController({ abortController = null, signal = null } = {}) {
+  if (abortController) return abortController;
+  if (!signal) return null;
+  const controller = new AbortController();
+  if (signal.aborted) {
+    controller.abort(signal.reason);
+    return controller;
+  }
+  signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+  return controller;
+}
+
+function emitEvent(onEvent, event) {
+  if (typeof onEvent !== 'function') return;
+  try {
+    const result = onEvent(event);
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => {
+        console.error('[Harness] onEvent error:', err?.message || err);
+      });
+    }
+  } catch (err) {
+    console.error('[Harness] onEvent error:', err?.message || err);
+  }
+}
 
 // ============================================================================
 // Agent Configurations
@@ -1340,14 +1473,27 @@ export function routeToAgentWithConfidence(request) {
  * @param {boolean} options.enableMemory - Enable memory persistence (default: true)
  * @param {boolean} options.useMarkdownMemory - Use markdown memory store (default: true)
  * @param {object[]} options.conversationHistory - Existing conversation history for context
+ * @param {Function} options.transformContext - Optional transform for conversation history before prompt build
  * @param {Function} options.onContextWarning - Callback when context approaches limit
  * @param {Function} options.onFallback - Callback when falling back to alternative model
  * @param {boolean} options.enableX402 - Enable x402 MCP server tools (default: false)
+ * @param {string} options.apiKey - Override Claude API key for this run
+ * @param {Function} options.getApiKey - Resolve API key dynamically for this run
+ * @param {AbortController} options.abortController - Abort controller for cancelling the run
+ * @param {AbortSignal} options.signal - Abort signal for cancelling the run
+ * @param {Object} options.settings - Settings overrides (merged with defaults)
+ * @param {Object} options.retry - Retry settings overrides
+ * @param {Object} options.privacy - Privacy/redaction overrides
+ * @param {Object} options.sessionStore - Custom session store instance
+ * @param {Object} options.hookRunner - HookRunner instance for prompt/tool hooks
+ * @param {boolean} options.enablePlugins - Enable harness plugin loading
+ * @param {Object} options.contextGuardOptions - Override context guard thresholds
+ * @param {Function} options.onEvent - Event callback for agent lifecycle events
  */
 export async function runAgentLoop({
   request,
   dbPath = './store.db',
-  model = DEFAULT_MODEL,
+  model,
   allowApply = false,
   maxTurns = 10,
   resumeSessionId,
@@ -1355,52 +1501,191 @@ export async function runAgentLoop({
   onToolCall,
   onMessage,
   verbose = false,
-  guardrails = {},
+  guardrails = null,
   onConfirmRequired = null,
   telemetry = null,
   permissionGate = null,
   enableSync = null,
   autoSyncPush = false,
   onSyncEvent = null,
-  thinkLevel = 'off',
+  thinkLevel,
   streaming = false,
   maxBudgetUsd = null,
-  provider = 'claude',
+  provider,
   onPartialMessage = null,
   onThinkingBlock = null,
   // v0.4.0: New options
   enableFallback = true,
-  enableContextGuard = true,
-  enableMemory = true,
-  useMarkdownMemory = true,
+  enableContextGuard = null,
+  enableMemory = null,
+  useMarkdownMemory = null,
   conversationHistory = [],
+  transformContext = null,
   onContextWarning = null,
   onFallback = null,
-  enableX402 = false
+  enableX402 = false,
+  apiKey = null,
+  getApiKey = null,
+  abortController = null,
+  signal = null,
+  settings = null,
+  retry = null,
+  privacy = null,
+  sessionStore = null,
+  hookRunner = null,
+  enablePlugins = null,
+  contextGuardOptions = null,
+  onEvent = null
 }) {
+  const resolvedSettings = loadAgentSettings(settings || {});
+  const retrySettings = { ...resolvedSettings.retry, ...(retry || {}) };
+  const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
+  const eventRedact = privacySettings.redactLogs;
+  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
+  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const contextSettings = { ...resolvedSettings.contextGuard, ...(contextGuardOptions || {}) };
+  const memorySettings = { ...resolvedSettings.memory };
+  const effectiveEnableContextGuard = enableContextGuard ?? contextSettings.enabled;
+  const effectiveEnableMemory = enableMemory ?? memorySettings.enabled;
+  const effectiveUseMarkdownMemory = useMarkdownMemory ?? memorySettings.useMarkdown;
+  const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
+  const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
+  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+
+  // Determine provider/model/think level with session restore
+  let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
+  let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
+  let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+
+  const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
+  let sessionStoreInstance = sessionStore || null;
+  if (!sessionStoreInstance && useSessionStore) {
+    try {
+      sessionStoreInstance = getAgentSessionStore({
+        dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
+        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || memorySettings.maxSummaries || 5
+      });
+    } catch (err) {
+      console.warn('[Harness] Session store unavailable:', err.message);
+      sessionStoreInstance = null;
+    }
+  }
+
+  let sessionMeta = null;
+  if (resumeSessionId && sessionStoreInstance && resolvedSettings.model?.preferSession !== false) {
+    try {
+      sessionMeta = sessionStoreInstance.get(resumeSessionId);
+    } catch (err) {
+      console.warn('[Harness] Session store read failed:', err.message);
+      sessionMeta = null;
+    }
+  }
+
+  if (sessionMeta) {
+    if (!provider && sessionMeta.provider) effectiveProvider = sessionMeta.provider;
+    if (!model && sessionMeta.model) effectiveModel = sessionMeta.model;
+    if (thinkLevel == null && sessionMeta.thinkLevel) effectiveThinkLevel = sessionMeta.thinkLevel;
+    if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
+  }
+
+  if (pluginsEnabled) {
+    try {
+      await ensureHarnessPluginsLoaded({ verbose: pluginsVerbose || verbose });
+    } catch (err) {
+      console.warn('[Harness] Plugin load failed:', err.message);
+    }
+  }
+  const hooks = hookRunner || getHarnessHookRunner();
+
+  let effectiveRequest = request;
+  let systemPromptOverride = null;
+  if (hooks?.hasHooks?.('before_agent_start')) {
+    const hookResult = await hooks.run('before_agent_start', {
+      request: effectiveRequest,
+      agent,
+      model: effectiveModel,
+      provider: effectiveProvider,
+      thinkLevel: effectiveThinkLevel,
+      guardrails: effectiveGuardrails,
+      allowApply,
+      conversationHistory,
+      systemPrompt: AGENTS[agent]?.systemPrompt
+    });
+    if (hookResult?.request) effectiveRequest = hookResult.request;
+    if (hookResult?.agent) agent = hookResult.agent;
+    if (hookResult?.model) effectiveModel = hookResult.model;
+    if (hookResult?.provider) effectiveProvider = hookResult.provider;
+    if (hookResult?.thinkLevel) effectiveThinkLevel = hookResult.thinkLevel;
+    if (hookResult?.systemPrompt) {
+      systemPromptOverride = hookResult.systemPrompt;
+    } else if (hookResult?.systemPromptAppend && AGENTS[agent]?.systemPrompt) {
+      systemPromptOverride = `${AGENTS[agent].systemPrompt}\n\n${hookResult.systemPromptAppend}`;
+    }
+  }
+
+  const resolvedAbortController = normalizeAbortController({ abortController, signal });
+  const effectiveSignal = resolvedAbortController?.signal || signal || null;
+
+  const safeRequestForLogs = privacySettings.redactLogs
+    ? redactSensitive(effectiveRequest, privacySettings)
+    : effectiveRequest;
+
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
-  const mainSpan = telem.startSpan('agent_run', { request: request.slice(0, 100), agent });
+  const mainSpan = telem.startSpan('agent_run', { request: safeRequestForLogs.slice(0, 100), agent });
 
   // Initialize permission gate
   const gate = permissionGate || createPermissionGate({
     apply: allowApply,
-    guardrails,
+    guardrails: effectiveGuardrails,
     onConfirmRequired
   });
+
+  // Emit initial lifecycle events
+  emitEvent(onEvent, { type: 'agent_start' });
+  emitEvent(onEvent, { type: 'turn_start' });
+  const userEventMessage = { role: 'user', content: redactEventText(effectiveRequest) };
+  emitEvent(onEvent, { type: 'message_start', message: userEventMessage });
+  emitEvent(onEvent, { type: 'message_end', message: userEventMessage });
 
   // -------------------------------------------------------------------------
   // v0.4.0: Context Guard - Check context window before proceeding
   // -------------------------------------------------------------------------
-  let workingHistory = [...conversationHistory];
+  const sessionSummary = sessionMeta?.summaries?.[0] || null;
+  const baseHistory = conversationHistory.length > 0
+    ? conversationHistory
+    : (sessionSummary
+      ? [
+        { role: 'user', content: sessionSummary },
+        { role: 'assistant', content: 'Understood. I have the context from our earlier conversation.' }
+      ]
+      : []);
+  let workingHistory = [...baseHistory];
   let contextGuardResult = null;
+  let compactionSummary = null;
 
-  if (enableContextGuard && conversationHistory.length > 0) {
-    const contextGuard = ContextGuard.forModel(model);
+  if (typeof transformContext === 'function') {
+    try {
+      const transformed = await transformContext(workingHistory, effectiveSignal);
+      if (Array.isArray(transformed)) {
+        workingHistory = transformed;
+      }
+    } catch (err) {
+      console.warn('[Harness] transformContext failed:', err.message);
+    }
+  }
+
+  if (effectiveEnableContextGuard && workingHistory.length > 0) {
+    const contextGuard = ContextGuard.forModel(effectiveModel, {
+      warningThreshold: contextSettings.warningThreshold,
+      compactThreshold: contextSettings.compactThreshold,
+      abortThreshold: contextSettings.abortThreshold,
+      reserveTokens: contextSettings.reserveTokens
+    });
     contextGuardResult = contextGuard.check(
-      conversationHistory,
+      workingHistory,
       '', // System prompt will be added by SDK
-      request
+      effectiveRequest
     );
 
     if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
@@ -1412,12 +1697,51 @@ export async function runAgentLoop({
     }
 
     if (contextGuardResult.action === 'compact') {
-      workingHistory = contextGuardResult.compactedHistory;
-      telem.logCustomEvent('context_compacted', {
-        originalTokens: contextGuardResult.usage.tokens,
-        compactedTokens: contextGuardResult.usage.afterCompaction?.tokens,
-        tokensSaved: contextGuardResult.usage.afterCompaction?.tokensSaved
-      });
+      let historyForCompaction = workingHistory;
+      if (hooks?.hasHooks?.('before_compaction')) {
+        const hookResult = await hooks.run('before_compaction', {
+          history: historyForCompaction,
+          usage: contextGuardResult.usage,
+          request: effectiveRequest
+        });
+        if (hookResult?.history) {
+          historyForCompaction = hookResult.history;
+        }
+      }
+
+      if (historyForCompaction !== workingHistory) {
+        workingHistory = historyForCompaction;
+        contextGuardResult = contextGuard.check(
+          workingHistory,
+          '',
+          effectiveRequest
+        );
+        if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
+          telem.logCustomEvent('context_overflow', {
+            tokens: contextGuardResult.usage.tokens,
+            percent: contextGuardResult.usage.percent
+          });
+          throw new Error(contextGuardResult.message);
+        }
+      }
+
+      if (contextGuardResult.action !== 'compact') {
+        // Recheck after hook no longer requires compaction.
+      } else {
+        workingHistory = contextGuardResult.compactedHistory;
+        compactionSummary = extractCompactionSummary(contextGuardResult.compactedHistory);
+        telem.logCustomEvent('context_compacted', {
+          originalTokens: contextGuardResult.usage.tokens,
+          compactedTokens: contextGuardResult.usage.afterCompaction?.tokens,
+          tokensSaved: contextGuardResult.usage.afterCompaction?.tokensSaved
+        });
+        if (hooks?.hasHooks?.('after_compaction')) {
+          await hooks.run('after_compaction', {
+            summary: compactionSummary,
+            usage: contextGuardResult.usage
+          });
+        }
+      }
     }
 
     if (contextGuardResult.action === 'warn' && onContextWarning) {
@@ -1425,13 +1749,23 @@ export async function runAgentLoop({
     }
   }
 
+  // Only inject history into the prompt when not resuming an SDK session.
+  // Resumed sessions already carry server-side context.
+  const shouldIncludeHistory = workingHistory.length > 0 && !resumeSessionId;
+  const requestWithHistory = shouldIncludeHistory
+    ? buildPromptWithHistory(effectiveRequest, workingHistory, {
+      redactHistory: privacySettings.redactHistory,
+      redactOptions: privacySettings
+    })
+    : effectiveRequest;
+
   // -------------------------------------------------------------------------
   // v0.4.0: Model Fallback - Set up fallback chain
   // -------------------------------------------------------------------------
   let modelFallback = null;
-  if (enableFallback && provider === 'claude') {
+  if (enableFallback && effectiveProvider === 'claude') {
     modelFallback = new ModelFallback({
-      requiredCapabilities: thinkLevel !== 'off' ? ['tools', 'thinking'] : ['tools'],
+      requiredCapabilities: effectiveThinkLevel !== 'off' ? ['tools', 'thinking'] : ['tools'],
       onFallback: (info) => {
         telem.logCustomEvent('model_fallback', {
           from: info.from.id,
@@ -1456,10 +1790,10 @@ export async function runAgentLoop({
   let memoryStore = null;
   let markdownMemory = null;
 
-  if (enableMemory) {
+  if (effectiveEnableMemory) {
     try {
       memoryStore = getMemoryStore();
-      if (useMarkdownMemory) {
+      if (effectiveUseMarkdownMemory) {
         markdownMemory = getMarkdownMemoryStore();
       }
     } catch (e) {
@@ -1515,7 +1849,8 @@ export async function runAgentLoop({
     commerce,
     allowApply,
     telemetry: telem,
-    permissionGate: gate
+    permissionGate: gate,
+    hookRunner: hooks
   });
 
   const mcpServers = {
@@ -1523,8 +1858,11 @@ export async function runAgentLoop({
   };
 
   // Determine which agent to use
-  const routingResult = routeToAgentWithConfidence(request);
-  const agentName = agent || routingResult.primary.agent;
+  const routingResult = routeToAgentWithConfidence(effectiveRequest);
+  let agentName = agent || routingResult.primary.agent;
+  if (!agent && routingResult.primary.level === 'default' && resolvedSettings.agent?.default) {
+    agentName = resolvedSettings.agent.default;
+  }
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
 
   const allowedTools = [...agentConfig.tools];
@@ -1546,17 +1884,25 @@ export async function runAgentLoop({
 
   // Log routing decision
   telem.logAgentRouting(
-    request,
+    safeRequestForLogs,
     agentName,
     routingResult.primary.confidence,
     routingResult.alternatives
   );
 
   // Build options
-  const thinkTokens = THINK_LEVELS[thinkLevel] || 0;
+  const thinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
+  const systemPrompt = systemPromptOverride || agentConfig.systemPrompt;
+  let apiKeyOverride = apiKey;
+  if (!apiKeyOverride && typeof getApiKey === 'function' && effectiveProvider === 'claude') {
+    apiKeyOverride = await getApiKey(effectiveProvider);
+  }
+  const claudeEnv = effectiveProvider === 'claude'
+    ? buildClaudeEnv({ apiKey: apiKeyOverride })
+    : null;
   const options = {
-    model,
-    systemPrompt: agentConfig.systemPrompt,
+    model: effectiveModel,
+    systemPrompt,
     mcpServers,
     allowedTools,
     maxTurns,
@@ -1569,6 +1915,8 @@ export async function runAgentLoop({
     ...(streaming ? { includePartialMessages: true } : {}),
     // v0.2.8: Budget controls
     ...(maxBudgetUsd ? { maxBudgetUsd: parseFloat(maxBudgetUsd) } : {}),
+    ...(claudeEnv ? { env: claudeEnv } : {}),
+    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
   };
 
   // Track results
@@ -1589,35 +1937,108 @@ export async function runAgentLoop({
     process.argv = process.argv.slice(0, 2); // Keep only node and script path
 
     // v0.2.8: Non-Claude provider path
-    if (provider !== 'claude') {
+    if (effectiveProvider !== 'claude') {
       const { getProviderRegistry } = await import('./providers/base.js');
-      const providerInstance = getProviderRegistry().get(provider);
+      const providerInstance = getProviderRegistry().get(effectiveProvider);
       if (!providerInstance) {
-        throw new Error(`Unknown provider: ${provider}. Available: ${getProviderRegistry().list().join(', ')}`);
+        throw new Error(`Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`);
       }
       if (!(await providerInstance.isAvailable())) {
-        const providerConfig = (await import('./config.js')).PROVIDERS[provider];
-        throw new Error(`Provider "${provider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`);
+        const providerConfig = (await import('./config.js')).PROVIDERS[effectiveProvider];
+        throw new Error(`Provider "${effectiveProvider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`);
       }
       const messages = [
-        { role: 'system', content: agentConfig.systemPrompt },
-        { role: 'user', content: request },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: requestWithHistory },
       ];
+      let providerApiKey = apiKey;
+      if (!providerApiKey && typeof getApiKey === 'function') {
+        providerApiKey = await getApiKey(effectiveProvider);
+      }
+      let assistantStarted = false;
+      let partialText = '';
+      const handlePartialMessage = (data) => {
+        if (!assistantStarted) {
+          assistantStarted = true;
+          emitEvent(onEvent, {
+            type: 'message_start',
+            message: { role: 'assistant', content: '' }
+          });
+        }
+        if (data?.text) {
+          partialText += data.text;
+          emitEvent(onEvent, {
+            type: 'message_update',
+            message: { role: 'assistant', content: redactEventText(partialText) },
+            delta: redactEventText(data.text)
+          });
+        }
+        if (onPartialMessage) onPartialMessage(data);
+      };
+
       const providerResult = await providerInstance.chat(messages, {
-        model,
+        model: effectiveModel,
         stream: streaming,
-        onPartialMessage,
+        onPartialMessage: streaming ? handlePartialMessage : onPartialMessage,
+        apiKey: providerApiKey,
+        signal: effectiveSignal,
       });
       process.argv = savedArgv;
+      let providerResponse = providerResult.text;
+      if (hooks?.hasHooks?.('before_send')) {
+        const hookResult = await hooks.run('before_send', {
+          request: effectiveRequest,
+          response: providerResponse,
+          agent: agentName,
+          model: effectiveModel,
+          provider: effectiveProvider,
+          toolResults: []
+        });
+        if (hookResult?.response) {
+          providerResponse = hookResult.response;
+        }
+      }
+      const responseForUser = privacySettings.redactResponse
+        ? redactSensitive(providerResponse, privacySettings)
+        : providerResponse;
+      if (onMessage) {
+        onMessage(responseForUser);
+      }
+      if (!assistantStarted) {
+        emitEvent(onEvent, {
+          type: 'message_start',
+          message: { role: 'assistant', content: '' }
+        });
+      }
+      emitEvent(onEvent, {
+        type: 'message_end',
+        message: { role: 'assistant', content: redactEventText(providerResponse) }
+      });
+      emitEvent(onEvent, {
+        type: 'turn_end',
+        response: redactEventText(providerResponse),
+        toolResults: []
+      });
+      emitEvent(onEvent, {
+        type: 'agent_end',
+        response: redactEventText(providerResponse),
+        toolResults: [],
+        sessionId: null,
+        agent: agentName,
+        provider: effectiveProvider,
+        model: effectiveModel,
+        cost: providerResult.cost || null,
+        budgetExceeded: false
+      });
       return {
-        response: providerResult.text,
+        response: responseForUser,
         toolResults: [],
         sessionId: null,
         agent: agentName,
         routing: routingResult,
-        provider,
+        provider: effectiveProvider,
         cost: providerResult.cost || null,
-        thinkLevel,
+        thinkLevel: effectiveThinkLevel,
       };
     }
 
@@ -1626,15 +2047,18 @@ export async function runAgentLoop({
     // -------------------------------------------------------------------------
     let budgetExceeded = false;
     let totalCost = null;
-    let usedModel = model;
+    let usedModel = effectiveModel;
     let fallbackAttempts = [];
 
     // Helper function to run the actual query
     const runQuery = async (queryModel) => {
       const queryOptions = { ...options, model: queryModel };
-      const results = { toolResults: [], response: '', sessionId: null, budgetExceeded: false, totalCost: null };
+      const results = { toolResults: [], response: '', sessionId: null, budgetExceeded: false, totalCost: null, error: null, errorType: null };
+      const pendingToolCalls = new Map();
+      let assistantStarted = false;
+      let assistantText = '';
 
-      for await (const message of query({ prompt: request, options: queryOptions })) {
+      for await (const message of query({ prompt: requestWithHistory, options: queryOptions })) {
         // Capture session ID
         if (message.sessionId && !results.sessionId) {
           results.sessionId = message.sessionId;
@@ -1644,6 +2068,13 @@ export async function runAgentLoop({
         if (message.type === 'assistant') {
           const content = message.message?.content || message.content;
           if (content) {
+            if (!assistantStarted) {
+              assistantStarted = true;
+              emitEvent(onEvent, {
+                type: 'message_start',
+                message: { role: 'assistant', content: '' }
+              });
+            }
             for (const block of content) {
               if (block.type === 'tool_use') {
                 const toolCall = {
@@ -1652,12 +2083,30 @@ export async function runAgentLoop({
                   input: block.input,
                   startTime: Date.now()
                 };
-                results.toolResults.push({ toolCall, result: null });
+                const entry = { toolCall, result: null };
+                results.toolResults.push(entry);
+                if (toolCall.id) {
+                  pendingToolCalls.set(toolCall.id, entry);
+                }
+                emitEvent(onEvent, {
+                  type: 'tool_execution_start',
+                  toolCallId: toolCall.id,
+                  toolName: toolCall.name,
+                  args: redactEventValue(toolCall.input)
+                });
                 if (onToolCall) {
                   onToolCall(toolCall);
                 }
               } else if (block.type === 'text') {
                 results.response += block.text;
+                assistantText = results.response;
+                if (streaming) {
+                  emitEvent(onEvent, {
+                    type: 'message_update',
+                    message: { role: 'assistant', content: redactEventText(assistantText) },
+                    delta: redactEventText(block.text)
+                  });
+                }
               } else if (block.type === 'thinking' && onThinkingBlock) {
                 onThinkingBlock(block);
               }
@@ -1666,6 +2115,7 @@ export async function runAgentLoop({
         } else if (message.type === 'result') {
           if (message.result) {
             results.response = message.result;
+            assistantText = message.result;
           }
           if (message.total_cost_usd != null) {
             results.totalCost = message.total_cost_usd;
@@ -1673,18 +2123,63 @@ export async function runAgentLoop({
           if (message.subtype === 'error_max_budget_usd') {
             results.budgetExceeded = true;
           }
+          if (message.subtype && message.subtype.startsWith('error_')) {
+            results.errorType = message.subtype;
+            results.error = (message.errors && message.errors.length > 0)
+              ? message.errors.join('; ')
+              : message.subtype;
+          }
+          if (!assistantStarted) {
+            assistantStarted = true;
+            emitEvent(onEvent, {
+              type: 'message_start',
+              message: { role: 'assistant', content: '' }
+            });
+          }
+          if (assistantText) {
+            emitEvent(onEvent, {
+              type: 'message_end',
+              message: { role: 'assistant', content: redactEventText(assistantText) }
+            });
+          }
         } else if (message.type === 'user') {
-          const pending = results.toolResults.find(tr => tr.result === null);
+          const toolUseId = message.parent_tool_use_id
+            || message.tool_use_id
+            || message.tool_use_result?.tool_use_id
+            || message.tool_use_result?.tool_use_id;
+          const pending = toolUseId ? pendingToolCalls.get(toolUseId) : results.toolResults.find(tr => tr.result === null);
           if (pending && message.tool_use_result) {
             pending.result = message.tool_use_result;
             pending.endTime = Date.now();
             pending.duration = pending.endTime - pending.toolCall.startTime;
+            if (hooks?.hasHooks?.('tool_result_persist')) {
+              const hookResult = await hooks.run('tool_result_persist', {
+                tool: pending.toolCall.name,
+                toolCall: pending.toolCall,
+                result: pending.result
+              });
+              if (hookResult?.result) {
+                pending.result = hookResult.result;
+              }
+            }
+            const logInput = privacySettings.redactLogs ? redactObject(pending.toolCall.input, privacySettings) : pending.toolCall.input;
+            const logResult = privacySettings.redactLogs ? redactObject(pending.result, privacySettings) : pending.result;
             telem.logToolCall(
               pending.toolCall.name,
-              pending.toolCall.input,
-              pending.result,
+              logInput,
+              logResult,
               pending.duration
             );
+            emitEvent(onEvent, {
+              type: 'tool_execution_end',
+              toolCallId: pending.toolCall.id,
+              toolName: pending.toolCall.name,
+              result: redactEventValue(pending.result),
+              isError: Boolean(pending.result?.is_error || pending.result?.isError)
+            });
+            if (toolUseId) {
+              pendingToolCalls.delete(toolUseId);
+            }
           }
         }
 
@@ -1696,20 +2191,56 @@ export async function runAgentLoop({
       return results;
     };
 
-    // Execute with fallback or direct
+    const executeOnce = async () => {
+      if (modelFallback && enableFallback) {
+        const fallbackResult = await modelFallback.execute(
+          async (modelConfig) => {
+            usedModel = modelConfig.model;
+            return runQuery(modelConfig.model);
+          },
+          { preferredModel: effectiveModel }
+        );
+        fallbackAttempts = fallbackResult.attempts;
+        return fallbackResult.result;
+      }
+      return runQuery(effectiveModel);
+    };
+
     let queryResult;
-    if (modelFallback && enableFallback) {
-      const fallbackResult = await modelFallback.execute(
-        async (modelConfig) => {
-          usedModel = modelConfig.model;
-          return runQuery(modelConfig.model);
-        },
-        { preferredModel: model }
-      );
-      queryResult = fallbackResult.result;
-      fallbackAttempts = fallbackResult.attempts;
-    } else {
-      queryResult = await runQuery(model);
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        queryResult = await executeOnce();
+        if (queryResult.error) {
+          if (queryResult.errorType === 'error_max_budget_usd') {
+            break;
+          }
+          const err = new Error(queryResult.error);
+          err.code = queryResult.errorType;
+          throw err;
+        }
+        break;
+      } catch (err) {
+        const errorType = queryResult?.errorType;
+        const nonRetryable = errorType && errorType.startsWith('error_max');
+        const canRetry = retrySettings?.enabled
+          && attempt <= (retrySettings.maxRetries || 0)
+          && !nonRetryable
+          && isRetryableError(err, retrySettings);
+
+        if (!canRetry) {
+          throw err;
+        }
+
+        const delayMs = computeRetryDelay(attempt, retrySettings);
+        telem.logCustomEvent('auto_retry', {
+          attempt,
+          delayMs,
+          error: err?.message || String(err)
+        });
+        await sleep(delayMs);
+      }
     }
 
     // Extract results
@@ -1723,12 +2254,39 @@ export async function runAgentLoop({
     // Restore process.argv
     process.argv = savedArgv;
 
+    if (hooks?.hasHooks?.('before_send')) {
+      const hookResult = await hooks.run('before_send', {
+        request: effectiveRequest,
+        response,
+        agent: agentName,
+        model: usedModel || effectiveModel,
+        provider: effectiveProvider,
+        toolResults
+      });
+      if (hookResult?.response) {
+        response = hookResult.response;
+      }
+    }
+
+    const responseForUser = privacySettings.redactResponse
+      ? redactSensitive(response, privacySettings)
+      : response;
+    const logResponse = privacySettings.redactLogs
+      ? redactSensitive(response, privacySettings)
+      : response;
+
     // Log assistant response
-    telem.logAssistantMessage(response);
+    telem.logAssistantMessage(logResponse);
 
     if (onMessage) {
-      onMessage(response);
+      onMessage(responseForUser);
     }
+
+    emitEvent(onEvent, {
+      type: 'turn_end',
+      response: redactEventText(response),
+      toolResults: redactEventValue(toolResults)
+    });
 
     // Auto-push sync events if enabled
     let syncResult = null;
@@ -1756,7 +2314,7 @@ export async function runAgentLoop({
     // -------------------------------------------------------------------------
     // v0.4.0: Save to memory stores
     // -------------------------------------------------------------------------
-    if (enableMemory && response) {
+    if (effectiveEnableMemory && response) {
       try {
         // Extract key facts from the conversation
         const facts = [];
@@ -1766,8 +2324,19 @@ export async function runAgentLoop({
           }
         }
 
+        if (compactionSummary) {
+          facts.push('Context compaction applied');
+        }
+
+        const summaryRequest = privacySettings.redactMemory
+          ? redactSensitive(effectiveRequest, privacySettings)
+          : effectiveRequest;
+        const summaryResponse = privacySettings.redactMemory
+          ? redactSensitive(response, privacySettings)
+          : response;
+
         const memoryEntry = {
-          summary: `${request.slice(0, 100)}${request.length > 100 ? '...' : ''} → ${response.slice(0, 150)}${response.length > 150 ? '...' : ''}`,
+          summary: `${summaryRequest.slice(0, 100)}${summaryRequest.length > 100 ? '...' : ''} → ${summaryResponse.slice(0, 150)}${summaryResponse.length > 150 ? '...' : ''}`,
           facts,
           agent: agentName,
           sessionId,
@@ -1786,25 +2355,89 @@ export async function runAgentLoop({
           await markdownMemory.save(memoryEntry);
           telem.logCustomEvent('memory_saved', { store: 'markdown' });
         }
+
+        if (compactionSummary) {
+          const compactionEntry = {
+            summary: `[Compaction] ${summaryRequest.slice(0, 80)}...`,
+            facts: [`Summary: ${compactionSummary.slice(0, 200)}`],
+            agent: agentName,
+            sessionId,
+            channel: 'cli',
+            senderId: 'local'
+          };
+          if (memoryStore) memoryStore.save(compactionEntry);
+          if (markdownMemory) await markdownMemory.save(compactionEntry);
+        }
       } catch (e) {
         telem.logCustomEvent('memory_save_failed', { error: e.message });
       }
     }
 
+    // Persist session metadata
+    const sessionIdToStore = sessionId || resumeSessionId;
+    if (sessionStoreInstance && sessionIdToStore) {
+      const storedRequest = privacySettings.redactMemory
+        ? redactSensitive(effectiveRequest, privacySettings)
+        : effectiveRequest;
+      const storedResponse = privacySettings.redactMemory
+        ? redactSensitive(response, privacySettings)
+        : response;
+      try {
+        sessionStoreInstance.upsert(sessionIdToStore, {
+          provider: effectiveProvider,
+          model: usedModel || effectiveModel,
+          thinkLevel: effectiveThinkLevel,
+          agent: agentName,
+          lastRequest: storedRequest,
+          lastResponse: storedResponse
+        });
+        if (compactionSummary) {
+          sessionStoreInstance.appendSummary(sessionIdToStore, compactionSummary);
+        }
+      } catch (err) {
+        console.warn('[Harness] Session store write failed:', err.message);
+      }
+    }
+
+    if (hooks?.hasHooks?.('agent_end')) {
+      await hooks.run('agent_end', {
+        request: effectiveRequest,
+        response: responseForUser,
+        agent: agentName,
+        model: usedModel || effectiveModel,
+        provider: effectiveProvider,
+        toolResults,
+        cost: totalCost,
+        budgetExceeded
+      });
+    }
+
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      response: redactEventText(response),
+      toolResults: redactEventValue(toolResults),
+      sessionId,
+      agent: agentName,
+      provider: effectiveProvider,
+      model: usedModel || effectiveModel,
+      cost: totalCost,
+      budgetExceeded
+    });
+
     // End main span
     telem.endSpanRef(mainSpan, 'ok', { toolCallCount: toolResults.length });
 
     return {
-      response,
+      response: responseForUser,
       toolResults,
       sessionId,
       agent: agentName,
       routing: routingResult,
       telemetry: telem.getSummary(),
       traceId: telem.traceId,
-      provider: 'claude',
+      provider: effectiveProvider,
       cost: totalCost,
-      thinkLevel,
+      thinkLevel: effectiveThinkLevel,
       budgetExceeded,
       // v0.4.0: New result fields
       usedModel,
@@ -1827,7 +2460,11 @@ export async function runAgentLoop({
     if (syncEngine) {
       try { await syncEngine.shutdown(); } catch (e) { /* ignore */ }
     }
-    telem.logError(error, { agent: agentName, request: request.slice(0, 100) });
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      error: error?.message || String(error)
+    });
+    telem.logError(error, { agent: agentName, request: safeRequestForLogs.slice(0, 100) });
     telem.endSpanRef(mainSpan, 'error', { error: error.message });
     throw new Error(`Agent error: ${error.message}`);
   }
@@ -1841,14 +2478,196 @@ export async function runAgentLoop({
 export async function* runAgentStream({
   request,
   dbPath = './store.db',
-  model = DEFAULT_MODEL,
+  model,
   allowApply = false,
   maxTurns = 10,
   resumeSessionId,
   agent,
-  enableSync = null
+  enableSync = null,
+  guardrails = null,
+  onConfirmRequired = null,
+  permissionGate = null,
+  conversationHistory = [],
+  transformContext = null,
+  enableContextGuard = null,
+  onContextWarning = null,
+  settings = null,
+  privacy = null,
+  hookRunner = null,
+  enablePlugins = null,
+  sessionStore = null,
+  contextGuardOptions = null,
+  provider,
+  thinkLevel,
+  apiKey = null,
+  getApiKey = null,
+  abortController = null,
+  signal = null,
+  onEvent = null
 }) {
+  const resolvedSettings = loadAgentSettings(settings || {});
+  const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
+  const eventRedact = privacySettings.redactLogs;
+  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
+  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const contextSettings = { ...resolvedSettings.contextGuard, ...(contextGuardOptions || {}) };
+  const effectiveEnableContextGuard = enableContextGuard ?? contextSettings.enabled;
+  const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
+  const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
+  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+  let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
+  let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
+  let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+
+  const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
+  let sessionStoreInstance = sessionStore || null;
+  if (!sessionStoreInstance && useSessionStore) {
+    try {
+      sessionStoreInstance = getAgentSessionStore({
+        dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
+        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5
+      });
+    } catch (err) {
+      console.warn('[Harness] Session store unavailable:', err.message);
+      sessionStoreInstance = null;
+    }
+  }
+  let sessionMeta = null;
+  if (resumeSessionId && sessionStoreInstance && resolvedSettings.model?.preferSession !== false) {
+    try {
+      sessionMeta = sessionStoreInstance.get(resumeSessionId);
+    } catch (err) {
+      console.warn('[Harness] Session store read failed:', err.message);
+      sessionMeta = null;
+    }
+  }
+  if (sessionMeta) {
+    if (!provider && sessionMeta.provider) effectiveProvider = sessionMeta.provider;
+    if (!model && sessionMeta.model) effectiveModel = sessionMeta.model;
+    if (thinkLevel == null && sessionMeta.thinkLevel) effectiveThinkLevel = sessionMeta.thinkLevel;
+    if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
+  }
+
+  if (pluginsEnabled) {
+    try {
+      await ensureHarnessPluginsLoaded({ verbose: pluginsVerbose });
+    } catch (err) {
+      console.warn('[Harness] Plugin load failed:', err.message);
+    }
+  }
+  const hooks = hookRunner || getHarnessHookRunner();
+
+  let effectiveRequest = request;
+  if (hooks?.hasHooks?.('before_agent_start')) {
+    const hookResult = await hooks.run('before_agent_start', {
+      request: effectiveRequest,
+      agent,
+      model: effectiveModel,
+      provider: effectiveProvider,
+      thinkLevel: effectiveThinkLevel,
+      guardrails: effectiveGuardrails,
+      allowApply,
+      conversationHistory
+    });
+    if (hookResult?.request) effectiveRequest = hookResult.request;
+    if (hookResult?.agent) agent = hookResult.agent;
+    if (hookResult?.model) effectiveModel = hookResult.model;
+    if (hookResult?.provider) effectiveProvider = hookResult.provider;
+    if (hookResult?.thinkLevel) effectiveThinkLevel = hookResult.thinkLevel;
+  }
+
+  const resolvedAbortController = normalizeAbortController({ abortController, signal });
+  const effectiveSignal = resolvedAbortController?.signal || signal || null;
+
+  if (effectiveProvider !== 'claude') {
+    throw new Error(`runAgentStream supports only claude provider (requested: ${effectiveProvider})`);
+  }
+
   let commerce = new Commerce(dbPath);
+
+  // Context guard for streaming path (optional)
+  const streamSessionSummary = sessionMeta?.summaries?.[0] || null;
+  const streamBaseHistory = conversationHistory.length > 0
+    ? conversationHistory
+    : (streamSessionSummary
+      ? [
+        { role: 'user', content: streamSessionSummary },
+        { role: 'assistant', content: 'Understood. I have the context from our earlier conversation.' }
+      ]
+      : []);
+  let workingHistory = [...streamBaseHistory];
+  let contextGuardResult = null;
+  let compactionSummary = null;
+  if (typeof transformContext === 'function') {
+    try {
+      const transformed = await transformContext(workingHistory, effectiveSignal);
+      if (Array.isArray(transformed)) {
+        workingHistory = transformed;
+      }
+    } catch (err) {
+      console.warn('[Harness] transformContext failed:', err.message);
+    }
+  }
+  if (effectiveEnableContextGuard && workingHistory.length > 0) {
+    const contextGuard = ContextGuard.forModel(effectiveModel, {
+      warningThreshold: contextSettings.warningThreshold,
+      compactThreshold: contextSettings.compactThreshold,
+      abortThreshold: contextSettings.abortThreshold,
+      reserveTokens: contextSettings.reserveTokens
+    });
+    contextGuardResult = contextGuard.check(
+      workingHistory,
+      '', // System prompt will be added by SDK
+      effectiveRequest
+    );
+
+    if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
+      throw new Error(contextGuardResult.message);
+    }
+
+    if (contextGuardResult.action === 'compact') {
+      let historyForCompaction = workingHistory;
+      if (hooks?.hasHooks?.('before_compaction')) {
+        const hookResult = await hooks.run('before_compaction', {
+          history: historyForCompaction,
+          usage: contextGuardResult.usage,
+          request: effectiveRequest
+        });
+        if (hookResult?.history) {
+          historyForCompaction = hookResult.history;
+        }
+      }
+
+      if (historyForCompaction !== workingHistory) {
+        workingHistory = historyForCompaction;
+        contextGuardResult = contextGuard.check(
+          workingHistory,
+          '',
+          effectiveRequest
+        );
+        if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
+          throw new Error(contextGuardResult.message);
+        }
+      }
+
+      if (contextGuardResult.action !== 'compact') {
+        // Recheck after hook no longer requires compaction.
+      } else {
+        workingHistory = contextGuardResult.compactedHistory;
+        compactionSummary = extractCompactionSummary(contextGuardResult.compactedHistory);
+        if (hooks?.hasHooks?.('after_compaction')) {
+          await hooks.run('after_compaction', {
+            summary: compactionSummary,
+            usage: contextGuardResult.usage
+          });
+        }
+      }
+    }
+
+    if (contextGuardResult.action === 'warn' && onContextWarning) {
+      onContextWarning(contextGuardResult);
+    }
+  }
 
   // Check if sync is configured
   const rawSyncConfig = loadSyncConfig();
@@ -1859,29 +2678,548 @@ export async function* runAgentStream({
     commerce = wrapCommerceWithEvents(commerce, syncConfig);
   }
 
-  const mcpServer = createStatesetMcpServer({ commerce, allowApply });
+  const gate = permissionGate || createPermissionGate({
+    apply: allowApply,
+    guardrails: effectiveGuardrails,
+    onConfirmRequired
+  });
+
+  const mcpServer = createStatesetMcpServer({
+    commerce,
+    allowApply,
+    permissionGate: gate,
+    hookRunner: hooks
+  });
 
   // Determine which agent to use
-  const agentName = agent || routeToAgent(request);
+  const routingResult = routeToAgentWithConfidence(effectiveRequest);
+  let agentName = agent || routingResult.primary.agent;
+  if (!agent && routingResult.primary.level === 'default' && resolvedSettings.agent?.default) {
+    agentName = resolvedSettings.agent.default;
+  }
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
 
+  const shouldIncludeHistory = workingHistory.length > 0 && !resumeSessionId;
+  const requestWithHistory = shouldIncludeHistory
+    ? buildPromptWithHistory(effectiveRequest, workingHistory, {
+      redactHistory: privacySettings.redactHistory,
+      redactOptions: privacySettings
+    })
+    : effectiveRequest;
+
+  const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
+  let apiKeyOverride = apiKey;
+  if (!apiKeyOverride && typeof getApiKey === 'function' && effectiveProvider === 'claude') {
+    apiKeyOverride = await getApiKey(effectiveProvider);
+  }
+  const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
   const options = {
-    model,
+    model: effectiveModel,
     systemPrompt: agentConfig.systemPrompt,
     mcpServers: {
       'stateset-commerce': mcpServer
     },
     allowedTools: agentConfig.tools,
-    maxTurns
+    maxTurns,
+    // Allow MCP tools to run without SDK permission prompts (guarded by PermissionGate)
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
+    ...(claudeEnv ? { env: claudeEnv } : {}),
+    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {})
   };
 
   const input = resumeSessionId
-    ? { sessionId: resumeSessionId, prompt: request }
-    : { prompt: request };
+    ? { sessionId: resumeSessionId, prompt: requestWithHistory }
+    : { prompt: requestWithHistory };
 
-  for await (const message of query({ prompt: input, options })) {
-    yield message;
+  let streamSessionId = resumeSessionId || null;
+  let lastResponse = null;
+  let assistantStarted = false;
+  let assistantText = '';
+
+  try {
+    for await (const message of query({ prompt: input, options })) {
+      if (message.sessionId && !streamSessionId) {
+        streamSessionId = message.sessionId;
+      }
+      if (message.type === 'assistant') {
+        const content = message.message?.content || message.content;
+        if (content) {
+          if (!assistantStarted) {
+            assistantStarted = true;
+            emitEvent(onEvent, {
+              type: 'message_start',
+              message: { role: 'assistant', content: '' }
+            });
+          }
+          for (const block of content) {
+            if (block.type === 'tool_use') {
+              emitEvent(onEvent, {
+                type: 'tool_execution_start',
+                toolCallId: block.id,
+                toolName: block.name,
+                args: redactEventValue(block.input)
+              });
+            } else if (block.type === 'text') {
+              assistantText += block.text;
+              emitEvent(onEvent, {
+                type: 'message_update',
+                message: { role: 'assistant', content: redactEventText(assistantText) },
+                delta: redactEventText(block.text)
+              });
+            }
+          }
+        }
+    } else if (message.type === 'user' && message.tool_use_result) {
+      let toolResult = message.tool_use_result;
+      if (hooks?.hasHooks?.('tool_result_persist')) {
+        const hookResult = await hooks.run('tool_result_persist', {
+          tool: toolResult?.name,
+          toolCall: { id: toolResult?.tool_use_id, name: toolResult?.name, input: toolResult?.content },
+          result: toolResult
+        });
+        if (hookResult?.result) {
+          toolResult = hookResult.result;
+        }
+      }
+      emitEvent(onEvent, {
+        type: 'tool_execution_end',
+        toolCallId: toolResult?.tool_use_id,
+        toolName: toolResult?.name,
+        result: redactEventValue(toolResult),
+        isError: Boolean(toolResult?.is_error || toolResult?.isError)
+      });
+    }
+      if (message.type === 'result' && message.result) {
+        lastResponse = message.result;
+        assistantText = message.result;
+        if (hooks?.hasHooks?.('before_send')) {
+          const hookResult = await hooks.run('before_send', {
+            request: effectiveRequest,
+            response: lastResponse,
+            agent: agentName,
+            model: effectiveModel,
+            provider: effectiveProvider,
+            toolResults: []
+          });
+          if (hookResult?.response) {
+            lastResponse = hookResult.response;
+          }
+        }
+        if (!assistantStarted) {
+          assistantStarted = true;
+          emitEvent(onEvent, {
+            type: 'message_start',
+            message: { role: 'assistant', content: '' }
+          });
+        }
+        emitEvent(onEvent, {
+          type: 'message_end',
+          message: { role: 'assistant', content: redactEventText(lastResponse) }
+        });
+        emitEvent(onEvent, {
+          type: 'turn_end',
+          response: redactEventText(lastResponse),
+          toolResults: []
+        });
+      }
+      yield message;
+    }
+
+    if (sessionStoreInstance && streamSessionId) {
+      const storedRequest = privacySettings.redactMemory
+        ? redactSensitive(effectiveRequest, privacySettings)
+        : effectiveRequest;
+      const storedResponse = privacySettings.redactMemory && lastResponse
+        ? redactSensitive(lastResponse, privacySettings)
+        : lastResponse;
+      try {
+        sessionStoreInstance.upsert(streamSessionId, {
+          provider: effectiveProvider,
+          model: effectiveModel,
+          thinkLevel: effectiveThinkLevel,
+          agent: agentName,
+          lastRequest: storedRequest,
+          lastResponse: storedResponse
+        });
+        if (compactionSummary) {
+          sessionStoreInstance.appendSummary(streamSessionId, compactionSummary);
+        }
+      } catch (err) {
+        console.warn('[Harness] Session store write failed:', err.message);
+      }
+    }
+
+    if (hooks?.hasHooks?.('agent_end')) {
+      await hooks.run('agent_end', {
+        request: effectiveRequest,
+        response: lastResponse,
+        agent: agentName,
+        model: effectiveModel,
+        provider: effectiveProvider,
+        toolResults: [],
+        cost: null,
+        budgetExceeded: false
+      });
+    }
+
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      response: lastResponse ? redactEventText(lastResponse) : null,
+      toolResults: [],
+      sessionId: streamSessionId,
+      agent: agentName,
+      provider: effectiveProvider,
+      model: effectiveModel,
+      cost: null,
+      budgetExceeded: false
+    });
+  } catch (error) {
+    emitEvent(onEvent, {
+      type: 'agent_end',
+      error: error?.message || String(error)
+    });
+    throw error;
   }
+}
+
+/**
+ * Create a streaming agent session with queued inputs.
+ * Messages are queued and delivered in order once the model finishes a turn.
+ *
+ * @param {Object} options
+ * @returns {{ stream: () => AsyncGenerator, send: (text: string) => void, followUp: (text: string) => void, steer: (text: string) => void, close: () => void, abort: (reason?: any) => void, getSessionId: () => string|null }}
+ */
+export function createAgentStreamSession(options = {}) {
+  const {
+    dbPath = './store.db',
+    model,
+    allowApply = false,
+    maxTurns = 10,
+    agent,
+    enableSync = null,
+    guardrails = null,
+    onConfirmRequired = null,
+    permissionGate = null,
+    settings = null,
+    privacy = null,
+    hookRunner = null,
+    enablePlugins = null,
+    sessionStore = null,
+    contextGuardOptions = null,
+    provider,
+    thinkLevel,
+    apiKey = null,
+    getApiKey = null,
+    abortController = null,
+    signal = null,
+    onEvent = null
+  } = options;
+
+  const resolvedSettings = loadAgentSettings(settings || {});
+  const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
+  const eventRedact = privacySettings.redactLogs;
+  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
+  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
+  const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
+  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+  let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
+  let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
+  let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+
+  if (pluginsEnabled) {
+    ensureHarnessPluginsLoaded({ verbose: pluginsVerbose }).catch((err) => {
+      console.warn('[Harness] Plugin load failed:', err.message);
+    });
+  }
+
+  if (effectiveProvider !== 'claude') {
+    throw new Error(`createAgentStreamSession supports only claude provider (requested: ${effectiveProvider})`);
+  }
+
+  const hooks = hookRunner || getHarnessHookRunner();
+  const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
+  let sessionStoreInstance = sessionStore || null;
+  if (!sessionStoreInstance && useSessionStore) {
+    try {
+      sessionStoreInstance = getAgentSessionStore({
+        dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
+        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5
+      });
+    } catch (err) {
+      console.warn('[Harness] Session store unavailable:', err.message);
+      sessionStoreInstance = null;
+    }
+  }
+
+  const routingResult = routeToAgentWithConfidence('');
+  let agentName = agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
+  const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
+
+  const gate = permissionGate || createPermissionGate({
+    apply: allowApply,
+    guardrails: effectiveGuardrails,
+    onConfirmRequired
+  });
+
+  let commerce = new Commerce(dbPath);
+  const rawSyncConfig = loadSyncConfig();
+  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+  if (shouldEnableSync && rawSyncConfig) {
+    const syncConfig = new SyncConfig(rawSyncConfig);
+    commerce = wrapCommerceWithEvents(commerce, syncConfig);
+  }
+
+  const mcpServer = createStatesetMcpServer({
+    commerce,
+    allowApply,
+    permissionGate: gate,
+    hookRunner: hooks
+  });
+
+  const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
+  const resolvedAbortController = normalizeAbortController({ abortController, signal });
+  const effectiveSignal = resolvedAbortController?.signal || signal || null;
+  const baseOptionsForQuery = {
+    model: effectiveModel,
+    systemPrompt: agentConfig.systemPrompt,
+    mcpServers: {
+      'stateset-commerce': mcpServer
+    },
+    allowedTools: agentConfig.tools,
+    maxTurns,
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {})
+  };
+
+  const queue = [];
+  const followUpQueue = [];
+  const steerQueue = [];
+  let inTurn = false;
+  let closed = false;
+  let sessionId = null;
+  let wakeInput = null;
+  let agentStarted = false;
+  let assistantStarted = false;
+  let assistantText = '';
+
+  const notify = () => {
+    if (wakeInput) {
+      wakeInput();
+      wakeInput = null;
+    }
+  };
+
+  const enqueue = (text, mode = 'followUp') => {
+    if (!text) return;
+    if (mode === 'steer') {
+      steerQueue.push(text);
+    } else if (mode === 'followUp') {
+      followUpQueue.push(text);
+    } else {
+      queue.push(text);
+    }
+    notify();
+  };
+
+  const nextMessage = async () => {
+    while (!closed) {
+      if (steerQueue.length > 0 && !inTurn) return steerQueue.shift();
+      if (!inTurn && followUpQueue.length > 0) return followUpQueue.shift();
+      if (!inTurn && queue.length > 0) return queue.shift();
+      await new Promise((resolve) => { wakeInput = resolve; });
+    }
+    return null;
+  };
+
+  async function* inputStream() {
+    while (!closed) {
+      const next = await nextMessage();
+      if (!next) continue;
+      inTurn = true;
+      assistantStarted = false;
+      assistantText = '';
+      if (!agentStarted) {
+        agentStarted = true;
+        emitEvent(onEvent, { type: 'agent_start' });
+      }
+      emitEvent(onEvent, { type: 'turn_start' });
+      const userEventMessage = { role: 'user', content: redactEventText(next) };
+      emitEvent(onEvent, { type: 'message_start', message: userEventMessage });
+      emitEvent(onEvent, { type: 'message_end', message: userEventMessage });
+      yield {
+        type: 'user',
+        session_id: sessionId || '',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: next }]
+        },
+        parent_tool_use_id: null
+      };
+    }
+  }
+
+  async function* stream() {
+    let lastResponse = null;
+    const apiKeyOverride = typeof getApiKey === 'function' ? await getApiKey(effectiveProvider) : apiKey;
+    const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
+    const optionsForQuery = {
+      ...baseOptionsForQuery,
+      ...(claudeEnv ? { env: claudeEnv } : {}),
+      ...(resolvedAbortController ? { abortController: resolvedAbortController } : {})
+    };
+
+    try {
+      for await (const message of query({ prompt: inputStream(), options: optionsForQuery })) {
+        if (message.sessionId && !sessionId) {
+          sessionId = message.sessionId;
+        }
+        if (message.type === 'assistant') {
+          const content = message.message?.content || message.content;
+          if (content) {
+            if (!assistantStarted) {
+              assistantStarted = true;
+              emitEvent(onEvent, {
+                type: 'message_start',
+                message: { role: 'assistant', content: '' }
+              });
+            }
+            for (const block of content) {
+              if (block.type === 'tool_use') {
+                emitEvent(onEvent, {
+                  type: 'tool_execution_start',
+                  toolCallId: block.id,
+                  toolName: block.name,
+                  args: redactEventValue(block.input)
+                });
+              } else if (block.type === 'text') {
+                assistantText += block.text;
+                emitEvent(onEvent, {
+                  type: 'message_update',
+                  message: { role: 'assistant', content: redactEventText(assistantText) },
+                  delta: redactEventText(block.text)
+                });
+              }
+            }
+          }
+        } else if (message.type === 'user' && message.tool_use_result) {
+          let toolResult = message.tool_use_result;
+          if (hooks?.hasHooks?.('tool_result_persist')) {
+            const hookResult = await hooks.run('tool_result_persist', {
+              tool: toolResult?.name,
+              toolCall: { id: toolResult?.tool_use_id, name: toolResult?.name, input: toolResult?.content },
+              result: toolResult
+            });
+            if (hookResult?.result) {
+              toolResult = hookResult.result;
+            }
+          }
+          emitEvent(onEvent, {
+            type: 'tool_execution_end',
+            toolCallId: toolResult?.tool_use_id,
+            toolName: toolResult?.name,
+            result: redactEventValue(toolResult),
+            isError: Boolean(toolResult?.is_error || toolResult?.isError)
+          });
+        }
+        if (message.type === 'result') {
+          inTurn = false;
+          lastResponse = message.result || lastResponse;
+          if (lastResponse && hooks?.hasHooks?.('before_send')) {
+            const hookResult = await hooks.run('before_send', {
+              request: null,
+              response: lastResponse,
+              agent: agentName,
+              model: effectiveModel,
+              provider: effectiveProvider,
+              toolResults: []
+            });
+            if (hookResult?.response) {
+              lastResponse = hookResult.response;
+            }
+          }
+          if (!assistantStarted) {
+            assistantStarted = true;
+            emitEvent(onEvent, {
+              type: 'message_start',
+              message: { role: 'assistant', content: '' }
+            });
+          }
+          if (lastResponse != null) {
+            emitEvent(onEvent, {
+              type: 'message_end',
+              message: { role: 'assistant', content: redactEventText(lastResponse) }
+            });
+            emitEvent(onEvent, {
+              type: 'turn_end',
+              response: redactEventText(lastResponse),
+              toolResults: []
+            });
+          }
+          notify();
+        }
+        yield message;
+      }
+
+      if (sessionStoreInstance && sessionId) {
+        const storedResponse = privacySettings.redactMemory && lastResponse
+          ? redactSensitive(lastResponse, privacySettings)
+          : lastResponse;
+        try {
+          sessionStoreInstance.upsert(sessionId, {
+            provider: effectiveProvider,
+            model: effectiveModel,
+            thinkLevel: effectiveThinkLevel,
+            agent: agentName,
+            lastRequest: null,
+            lastResponse: storedResponse
+          });
+        } catch (err) {
+          console.warn('[Harness] Session store write failed:', err.message);
+        }
+      }
+
+      emitEvent(onEvent, {
+        type: 'agent_end',
+        response: lastResponse ? redactEventText(lastResponse) : null,
+        toolResults: [],
+        sessionId,
+        agent: agentName,
+        provider: effectiveProvider,
+        model: effectiveModel,
+        cost: null,
+        budgetExceeded: false
+      });
+    } catch (error) {
+      emitEvent(onEvent, {
+        type: 'agent_end',
+        error: error?.message || String(error)
+      });
+      throw error;
+    }
+  }
+
+  return {
+    stream,
+    send: (text) => enqueue(text, 'followUp'),
+    followUp: (text) => enqueue(text, 'followUp'),
+    steer: (text) => enqueue(text, 'steer'),
+    close: () => {
+      closed = true;
+      notify();
+    },
+    abort: (reason) => {
+      closed = true;
+      if (resolvedAbortController) {
+        try { resolvedAbortController.abort(reason); } catch { /* ignore */ }
+      }
+      notify();
+    },
+    getSessionId: () => sessionId
+  };
 }
 
 /**
@@ -1889,14 +3227,17 @@ export async function* runAgentStream({
  */
 export function createAgentSession({
   dbPath = './store.db',
-  model = DEFAULT_MODEL,
+  model,
   allowApply = false,
   maxTurns = 10,
   agent,
-  resumeSessionId = null
+  resumeSessionId = null,
+  conversationHistory = [],
+  ...rest
 }) {
   let sessionId = resumeSessionId;
   let currentAgent = agent;
+  let history = Array.isArray(conversationHistory) ? conversationHistory.slice() : [];
 
   return {
     async query(message, { onToolCall = null, onText = null } = {}) {
@@ -1909,7 +3250,9 @@ export function createAgentSession({
         resumeSessionId: sessionId,
         agent: currentAgent,
         onToolCall,
-        onMessage: onText
+        onMessage: onText,
+        conversationHistory: history,
+        ...rest
       });
 
       // Update session ID for subsequent queries
@@ -1920,6 +3263,13 @@ export function createAgentSession({
       // Track which agent was used
       if (result.agent) {
         currentAgent = result.agent;
+      }
+
+      if (message) {
+        history.push({ role: 'user', content: message });
+      }
+      if (result.response) {
+        history.push({ role: 'assistant', content: result.response });
       }
 
       return result;
@@ -1939,6 +3289,14 @@ export function createAgentSession({
       } else {
         throw new Error(`Unknown agent: ${name}. Available: ${Object.keys(AGENTS).join(', ')}`);
       }
+    },
+
+    getHistory() {
+      return history.slice();
+    },
+
+    clearHistory() {
+      history = [];
     }
   };
 }

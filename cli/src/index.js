@@ -8,6 +8,7 @@
 export {
   runAgentLoop,
   runAgentStream,
+  createAgentStreamSession,
   createAgentSession,
   routeToAgent,
   routeToAgentWithConfidence,
@@ -104,6 +105,36 @@ export {
   scaffoldPlugin,
   PLUGIN_TEMPLATE
 } from './plugins/loader.js';
+
+// Harness Settings & Persistence
+export {
+  DEFAULT_AGENT_SETTINGS,
+  loadAgentSettings,
+  resetAgentSettingsCache
+} from './settings.js';
+
+export {
+  CredentialStore,
+  getCredentialStore,
+  resolveProviderApiKey,
+  resetCredentialStore
+} from './credentials.js';
+
+export {
+  AgentSessionStore,
+  getAgentSessionStore,
+  resetAgentSessionStore
+} from './agent-session-store.js';
+
+export {
+  getHarnessHookRunner,
+  ensureHarnessPluginsLoaded
+} from './harness-hooks.js';
+
+export {
+  redactSensitive,
+  redactObject
+} from './privacy.js';
 
 // Offline Support
 export {

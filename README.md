@@ -28,6 +28,7 @@ cargo add stateset-embedded             # Rust
 - API reference pointers per binding: `docs/src/api/`.
 - End-to-end examples and workflows: `examples/`.
 - Release history: `CHANGELOG.md`.
+- Security policy: `SECURITY.md`.
 
 ---
 

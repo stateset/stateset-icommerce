@@ -17,6 +17,7 @@ Thank you for your interest in contributing to StateSet iCommerce! This document
 ## Code of Conduct
 
 Please be respectful and constructive in all interactions. We're building software for AI agents and humans alike—let's make the community welcoming for everyone.
+See `CODE_OF_CONDUCT.md`.
 
 ## Getting Started
 
@@ -184,6 +185,25 @@ cargo test test_order_lifecycle
 ```
 
 CI note: Swift bindings run on macOS only when a PR has the `ci-swift` label (they run on pushes to main/master).
+CI policy: To keep PRs fast, mutation testing, coverage, and benchmarks only run on pushes to `main`/`master`.
+If your change impacts core logic or performance, please run these locally before requesting review:
+
+```bash
+# Mutation testing (requires cargo-mutants)
+cargo mutants -p stateset-core --test-threads 1 --in-cargo-test-dir
+
+# Coverage (requires cargo-tarpaulin; workspace, postgres feature)
+cargo tarpaulin \
+  --out Xml \
+  --output-dir ./coverage \
+  --workspace \
+  --exclude-files '*/tests/*' \
+  --exclude-files '*/benches/*' \
+  --features postgres
+
+# Benchmarks (core crates)
+cargo bench -p stateset-core -p stateset-db -p stateset-embedded
+```
 
 ### Node.js Binding Tests
 

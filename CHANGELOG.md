@@ -6,6 +6,10 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- Harness lifecycle events (`onEvent`) across loop/stream sessions plus context transforms and hook points (`before_compaction`, `tool_result_persist`, `before_send`).
+- Provider overrides for non-Claude calls (`apiKey`, `getApiKey`, `signal`) and stream session event emission.
+
 ## [0.5.0] - 2026-02-02
 
 ### Changed

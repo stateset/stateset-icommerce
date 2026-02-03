@@ -28,7 +28,7 @@ export class OpenAIProvider extends ModelProvider {
    * @returns {Promise<import('./base.js').ChatResult>}
    */
   async chat(messages, options = {}) {
-    const apiKey = this.getApiKey();
+    const apiKey = options.apiKey || this.getApiKey();
     if (!apiKey) {
       throw new Error('OpenAI API key not set. Set OPENAI_API_KEY environment variable.');
     }
@@ -59,6 +59,7 @@ export class OpenAIProvider extends ModelProvider {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!res.ok) {

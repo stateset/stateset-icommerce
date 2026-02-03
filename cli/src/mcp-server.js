@@ -38,12 +38,44 @@ function autoIndexEntity(entityType, entity) {
  * @param {boolean} options.allowApply - Whether to allow destructive operations
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
+ * @param {import('./channels/plugin-api.js').HookRunner} options.hookRunner - Hook runner instance
  */
-export function createStatesetMcpServer({ commerce, allowApply = false, telemetry = null, permissionGate = null }) {
+export function createStatesetMcpServer({ commerce, allowApply = false, telemetry = null, permissionGate = null, hookRunner = null }) {
   // Helper to check permissions before executing
   const checkPermission = async (toolName, params) => {
-    if (!permissionGate) return { allowed: allowApply || isReadOnly(toolName) };
-    return permissionGate.checkPermission(toolName, params);
+    if (permissionGate) {
+      const result = await permissionGate.checkPermission(toolName, params);
+      if (telemetry) {
+        telemetry.logCustomEvent('permission_decision', {
+          tool: toolName,
+          allowed: result.allowed,
+          preview: result.preview || false,
+          reason: result.reason || null
+        });
+      }
+      return result;
+    }
+    if (allowApply || isReadOnly(toolName)) {
+      if (telemetry) {
+        telemetry.logCustomEvent('permission_decision', { tool: toolName, allowed: true, preview: false });
+      }
+      return { allowed: true };
+    }
+    const result = {
+      allowed: false,
+      preview: true,
+      reason: `Preview mode: would execute '${toolName}' if --apply flag is set`,
+      wouldDo: { tool: toolName, params }
+    };
+    if (telemetry) {
+      telemetry.logCustomEvent('permission_decision', {
+        tool: toolName,
+        allowed: false,
+        preview: true,
+        reason: result.reason
+      });
+    }
+    return result;
   };
 
   // Helper to determine if a tool is read-only
@@ -118,14 +150,21 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
   // Wrap tool registration with permission and telemetry enforcement
   const tool = (name, description, schema, handler) => {
     return sdkTool(name, description, schema, async (args) => {
-      if (permissionGate) {
-        const permission = await checkPermission(name, args);
-        if (!permission.allowed) {
+      let nextArgs = args;
+
+      if (hookRunner?.hasHooks?.('before_tool_call')) {
+        const hookResult = await hookRunner.run('before_tool_call', {
+          tool: name,
+          params: nextArgs,
+          allowApply
+        });
+        if (hookResult?.params) nextArgs = hookResult.params;
+        if (hookResult?.blocked || hookResult?.allowed === false) {
           return {
             content: [{
               type: 'text',
               text: JSON.stringify({
-                error: permission.reason || 'Permission denied',
+                error: hookResult?.reason || 'Tool execution blocked by hook',
                 tool: name
               })
             }],
@@ -134,8 +173,48 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
         }
       }
 
+      const permission = await checkPermission(name, nextArgs);
+      if (!permission.allowed) {
+        const payload = {
+          error: permission.reason || 'Permission denied',
+          tool: name
+        };
+        if (permission.preview) {
+          payload.preview = true;
+          if (permission.wouldDo) {
+            payload.wouldDo = permission.wouldDo;
+          }
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(payload)
+          }],
+          isError: true
+        };
+      }
+
       const wrapped = wrapWithTelemetry(name, handler);
-      return wrapped(args);
+      try {
+        const result = await wrapped(nextArgs);
+        if (hookRunner?.hasHooks?.('after_tool_call')) {
+          await hookRunner.run('after_tool_call', {
+            tool: name,
+            params: nextArgs,
+            result
+          });
+        }
+        return result;
+      } catch (error) {
+        if (hookRunner?.hasHooks?.('after_tool_call')) {
+          await hookRunner.run('after_tool_call', {
+            tool: name,
+            params: nextArgs,
+            error: error.message
+          });
+        }
+        throw error;
+      }
     });
   };
 

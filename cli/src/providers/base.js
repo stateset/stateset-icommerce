@@ -9,6 +9,7 @@
  */
 
 import { PROVIDERS } from '../config.js';
+import { resolveProviderApiKey } from '../credentials.js';
 
 // ============================================================================
 // ModelProvider Base Class
@@ -27,6 +28,8 @@ import { PROVIDERS } from '../config.js';
  * @property {Function} [onPartialMessage] - Streaming callback
  * @property {number} [maxTokens=4096] - Max output tokens
  * @property {number} [temperature=0.7] - Temperature
+ * @property {string} [apiKey] - Override API key for this call
+ * @property {AbortSignal} [signal] - Abort signal for request cancellation
  */
 
 /**
@@ -93,6 +96,8 @@ export class ModelProvider {
    * @returns {string|null}
    */
   getApiKey() {
+    const stored = resolveProviderApiKey(this.name);
+    if (stored) return stored;
     if (!this.config.envKey) return null;
     return process.env[this.config.envKey] || null;
   }
@@ -172,16 +177,17 @@ class ProviderRegistry {
     const info = [{
       name: 'claude',
       displayName: 'Claude',
-      available: !!process.env.ANTHROPIC_API_KEY,
+      available: !!resolveProviderApiKey('claude') || !!process.env.ANTHROPIC_API_KEY,
       models: Object.keys(PROVIDERS.claude.models),
       default: PROVIDERS.claude.default,
     }];
 
     for (const [name, provider] of this._providers) {
+      const storedKey = resolveProviderApiKey(name);
       info.push({
         name,
         displayName: provider.config.name || name,
-        available: !!provider.getApiKey() || !provider.config.envKey,
+        available: !!storedKey || !!provider.getApiKey() || !provider.config.envKey,
         models: provider.listModels(),
         default: provider.config.default,
       });
