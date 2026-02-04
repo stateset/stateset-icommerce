@@ -116,7 +116,7 @@ const COMMANDS = {
   },
   'stateset-autonomous': {
     subcommands: ['start', 'status', 'init', 'jobs'],
-    options: ['--db', '--store', '--port', '--no-webhooks', '--no-scheduler', '--no-workflows', '--no-policies', '--no-approvals', '--init-defaults', '--notify-config', '--verbose', '--help']
+    options: ['--db', '--store', '--port', '--no-webhooks', '--no-scheduler', '--no-workflows', '--no-policies', '--no-approvals', '--init-defaults', '--notify-config', '--force', '--status', '--enabled', '--disabled', '--json', '--output', '--verbose', '--help']
   },
   'stateset-x402': {
     subcommands: ['init'],
@@ -124,6 +124,9 @@ const COMMANDS = {
   },
   'stateset-x402-mcp': {
     options: ['--config-dir', '--help', '--version']
+  },
+  'stateset-install-service': {
+    options: ['--dry-run', '--uninstall', '--json', '--output', '--help']
   }
 };
 
@@ -135,7 +138,7 @@ _stateset_complete() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-pay stateset-checkout stateset-orders stateset-inventory stateset-returns stateset-analytics stateset-promotions stateset-subscriptions stateset-create stateset-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-manufacturing stateset-payments stateset-shipments stateset-suppliers stateset-invoices stateset-warranties stateset-currency stateset-tax"
+    local commands="stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-pay stateset-checkout stateset-orders stateset-inventory stateset-returns stateset-analytics stateset-promotions stateset-subscriptions stateset-create stateset-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-manufacturing stateset-payments stateset-shipments stateset-suppliers stateset-invoices stateset-warranties stateset-currency stateset-tax"
 
     case "\${words[0]}" in
         stateset|ss)
@@ -235,6 +238,11 @@ _stateset_complete() {
                 COMPREPLY=( $(compgen -W "--config-dir --help --version" -- "\${cur}") )
             fi
             ;;
+        stateset-install-service)
+            if [[ "\${cur}" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--dry-run --uninstall --json --output --help" -- "\${cur}") )
+            fi
+            ;;
         stateset-pay)
             if [[ "\${cur}" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--to --amount --chain --token --agent --order --customer --memo --wallet --balance --chains --apply --json --output --yes --help --version" -- "\${cur}") )
@@ -243,8 +251,10 @@ _stateset_complete() {
         stateset-autonomous)
             if [[ \${cword} -eq 1 ]]; then
                 COMPREPLY=( $(compgen -W "start status init jobs" -- "\${cur}") )
+            elif [[ \${cword} -eq 2 && "\${words[1]}" == "jobs" ]]; then
+                COMPREPLY=( $(compgen -W "list enable disable run" -- "\${cur}") )
             elif [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--db --store --port --no-webhooks --no-scheduler --no-workflows --no-policies --no-approvals --init-defaults --notify-config --verbose --help" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "--db --store --port --no-webhooks --no-scheduler --no-workflows --no-policies --no-approvals --init-defaults --notify-config --force --status --enabled --disabled --json --output --verbose --help" -- "\${cur}") )
             fi
             ;;
         stateset-slack)
@@ -311,6 +321,7 @@ complete -F _stateset_complete stateset-daemon
 complete -F _stateset_complete stateset-skills
 complete -F _stateset_complete stateset-x402
 complete -F _stateset_complete stateset-x402-mcp
+complete -F _stateset_complete stateset-install-service
 complete -F _stateset_complete stateset-pay
 complete -F _stateset_complete stateset-autonomous
 complete -F _stateset_complete stateset-slack
@@ -331,7 +342,7 @@ complete -F _stateset_complete stateset-tax
 }
 
 function generateZshCompletion() {
-  return `#compdef stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-pay stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-create stateset-analytics stateset-checkout stateset-currency stateset-inventory stateset-invoices stateset-manufacturing stateset-orders stateset-payments stateset-promotions stateset-returns stateset-shipments stateset-subscriptions stateset-suppliers stateset-tax stateset-warranties
+  return `#compdef stateset ss stateset-direct stateset-chat stateset-doctor stateset-config stateset-sync stateset-events stateset-channels stateset-daemon stateset-skills stateset-x402 stateset-x402-mcp stateset-install-service stateset-pay stateset-autonomous stateset-slack stateset-discord stateset-telegram stateset-whatsapp stateset-signal stateset-google-chat stateset-create stateset-analytics stateset-checkout stateset-currency stateset-inventory stateset-invoices stateset-manufacturing stateset-orders stateset-payments stateset-promotions stateset-returns stateset-shipments stateset-subscriptions stateset-suppliers stateset-tax stateset-warranties
 
 # StateSet CLI Zsh Completion
 # Generated by stateset-completion
@@ -493,6 +504,17 @@ _stateset_config() {
     case "$state" in
         subcommand)
             _describe -t subcommands 'subcommand' subcommands
+            ;;
+        args)
+            if [[ "${words[2]}" == "jobs" ]]; then
+                local job_subcommands=(
+                    'list:List scheduled jobs'
+                    'enable:Enable a job'
+                    'disable:Disable a job'
+                    'run:Run a job immediately'
+                )
+                _describe -t job_subcommands 'jobs subcommand' job_subcommands
+            fi
             ;;
     esac
 }
@@ -721,6 +743,16 @@ _stateset_x402_mcp() {
         '*::arg:->args'
 }
 
+_stateset_install_service() {
+    _arguments -C \\
+        '--dry-run[Preview actions without changes]' \\
+        '--uninstall[Remove service]' \\
+        '--json[JSON output]' \\
+        '--output[Write output to file]:file:_files' \\
+        '--help[Show help]' \\
+        '*::arg:->args'
+}
+
 _stateset_pay() {
     _arguments -C \\
         '--to[Recipient address]:address:' \\
@@ -762,6 +794,12 @@ _stateset_autonomous() {
         '--no-approvals[Disable approvals]' \\
         '--init-defaults[Initialize defaults]' \\
         '--notify-config[Notification config]:path:_files' \\
+        '--force[Overwrite existing autonomous data]' \\
+        '--status[Filter jobs by status]:status:(pending running completed failed paused cancelled)' \\
+        '--enabled[Only enabled jobs]' \\
+        '--disabled[Only disabled jobs]' \\
+        '--json[JSON output]' \\
+        '--output[Write output to file]:file:_files' \\
         '--enable[Enable job]:id:' \\
         '--disable[Disable job]:id:' \\
         '--run[Run job now]:id:' \\
@@ -875,6 +913,7 @@ compdef _stateset_daemon stateset-daemon
 compdef _stateset_skills stateset-skills
 compdef _stateset_x402 stateset-x402
 compdef _stateset_x402_mcp stateset-x402-mcp
+compdef _stateset_install_service stateset-install-service
 compdef _stateset_pay stateset-pay
 compdef _stateset_autonomous stateset-autonomous
 compdef _stateset_slack stateset-slack
@@ -921,6 +960,7 @@ complete -c stateset-skills -f
 complete -c stateset-create -f
 complete -c stateset-x402 -f
 complete -c stateset-x402-mcp -f
+complete -c stateset-install-service -f
 complete -c stateset-pay -f
 complete -c stateset-autonomous -f
 complete -c stateset-slack -f
@@ -1166,6 +1206,7 @@ complete -c stateset-pay -l version -s v -d 'Show version'
 
 # stateset-autonomous
 complete -c stateset-autonomous -n '__fish_is_first_arg' -a 'start status init jobs' -d 'Autonomous commands'
+complete -c stateset-autonomous -n '__fish_seen_subcommand_from jobs; and __fish_is_nth_token 2' -a 'list enable disable run' -d 'Jobs commands'
 complete -c stateset-autonomous -l db -d 'Database path' -r
 complete -c stateset-autonomous -l store -s s -d 'Engine data path' -r
 complete -c stateset-autonomous -l port -s p -d 'Webhook server port' -r
@@ -1176,6 +1217,12 @@ complete -c stateset-autonomous -l no-policies -d 'Disable policies'
 complete -c stateset-autonomous -l no-approvals -d 'Disable approvals'
 complete -c stateset-autonomous -l init-defaults -d 'Initialize defaults'
 complete -c stateset-autonomous -l notify-config -d 'Notification config' -r
+complete -c stateset-autonomous -l force -d 'Overwrite existing autonomous data'
+complete -c stateset-autonomous -l status -d 'Filter jobs by status' -r
+complete -c stateset-autonomous -l enabled -d 'Only enabled jobs'
+complete -c stateset-autonomous -l disabled -d 'Only disabled jobs'
+complete -c stateset-autonomous -l json -d 'JSON output'
+complete -c stateset-autonomous -l output -d 'Write output to file' -r
 complete -c stateset-autonomous -l enable -d 'Enable job' -r
 complete -c stateset-autonomous -l disable -d 'Disable job' -r
 complete -c stateset-autonomous -l run -d 'Run job now' -r
@@ -1276,6 +1323,13 @@ complete -c stateset-x402 -l version -d 'Show version'
 complete -c stateset-x402-mcp -l config-dir -d 'Config directory' -r
 complete -c stateset-x402-mcp -l help -d 'Show help'
 complete -c stateset-x402-mcp -l version -d 'Show version'
+
+# stateset-install-service
+complete -c stateset-install-service -l dry-run -d 'Preview actions without changes'
+complete -c stateset-install-service -l uninstall -d 'Remove service'
+complete -c stateset-install-service -l json -d 'JSON output'
+complete -c stateset-install-service -l output -d 'Write output to file' -r
+complete -c stateset-install-service -l help -s h -d 'Show help'
 `;
 }
 

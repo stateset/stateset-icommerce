@@ -7,12 +7,13 @@ AI-powered command-line interface for autonomous commerce operations.
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
-## What's New in v0.2.0
+## Highlights
 
 - **Verifiable Event Sync (VES) Protocol** - Cryptographically signed event sourcing with Ed25519
 - **gRPC Bidirectional Streaming** - Real-time sync with the StateSet Sequencer
-- **Multi-Chain Stablecoin Payments** - Native crypto payments on Solana, Base, Ethereum, SET Chain, Zcash, and Bitcoin
-- **New `stateset-pay` Command** - Send stablecoin payments directly from CLI
+- **Autonomous Business Engine** - Scheduled jobs, workflows, policies, approvals (`stateset-autonomous`)
+- **Multi-Chain Stablecoin Payments** - Native crypto payments on Solana, Base, Ethereum, SET Chain, Zcash, and Bitcoin (`stateset-pay`)
+- **x402 Payments** - Config + MCP server for paid API calls (`stateset-x402`, `stateset-x402-mcp`)
 
 ## Philosophy
 
@@ -129,6 +130,65 @@ stateset-direct --apply inventory adjust WIDGET-001 -5 "Sold 5 units"
 stateset-direct vector search products "wireless earbuds" 5
 ```
 
+### Autonomous Engine
+
+Initialize the default templates, then start the runtime:
+
+```bash
+stateset-autonomous init --db ./.stateset/commerce.db --store ./.stateset/autonomous
+stateset-autonomous start --db ./.stateset/commerce.db --store ./.stateset/autonomous
+```
+
+Check status and manage scheduled jobs:
+
+```bash
+stateset-autonomous status
+stateset-autonomous status --json --output autonomous-status.json
+
+stateset-autonomous jobs list
+stateset-autonomous jobs enable <job-id>
+stateset-autonomous jobs run <job-id>
+stateset-autonomous jobs --json | jq '.jobs[] | {id, name, schedule}'
+stateset-autonomous jobs list --enabled
+stateset-autonomous jobs list --status failed
+```
+
+Re-initialize templates (overwrites the autonomous store path):
+
+```bash
+stateset-autonomous init --force
+```
+
+### Stablecoin Payments
+
+```bash
+# Show wallets and balances
+stateset-pay --wallet
+stateset-pay --balance --chain solana
+
+# Send a payment (safe by default, requires --apply)
+stateset-pay --apply --to 9WzD...WWWM --amount 50 --chain solana
+
+# Machine-readable output
+stateset-pay --balance --chain solana --json --output balance.json
+```
+
+### Install Gateway Service
+
+```bash
+# Preview changes
+stateset-install-service --dry-run
+
+# Install system service (Linux systemd / macOS launchd)
+sudo stateset-install-service
+
+# Remove system service
+sudo stateset-install-service --uninstall
+
+# Machine-readable plan
+stateset-install-service --dry-run --json --output service-plan.json
+```
+
 ### Batch Processing
 
 ```bash
@@ -182,8 +242,10 @@ stateset --apply --batch orders.txt --parallel 3
 | Command | Description |
 |---------|-------------|
 | `stateset-channels` | Multi-channel gateway runtime |
+| `stateset-autonomous` | Autonomous engine (scheduler, workflows, policies, approvals) |
 | `stateset-config` | Profile and configuration management |
 | `stateset-daemon` | Systemd service manager for the gateway |
+| `stateset-install-service` | Install gateway as a system service (systemd/launchd) |
 | `stateset-doctor` | Health check and diagnostics |
 | `stateset-events` | Event management and webhooks |
 | `stateset-sync` | Verifiable Event Sync with sequencer |
@@ -940,6 +1002,94 @@ Options:
   --reverse        Reverse SSH tunnel
   --persistent     Persistent SSH tunnel via systemd
   --name <n>       Name for persistent tunnel
+  --help           Show help
+```
+
+### `stateset-autonomous` - Autonomous Engine
+
+```
+stateset-autonomous <command> [options]
+
+Commands:
+  start            Start the autonomous engine
+  status           Show engine status
+  init             Initialize default templates
+  jobs             Manage scheduled jobs
+  jobs list        List scheduled jobs
+  jobs enable      Enable a job
+  jobs disable     Disable a job
+  jobs run         Run a job immediately
+
+Options:
+  --db <path>      Database path
+  --store <path>   Engine data path
+  --port <port>    Webhook server port (start)
+  --no-webhooks    Disable webhook server
+  --no-scheduler   Disable job scheduler
+  --no-workflows   Disable workflow engine
+  --no-policies    Disable policy engine
+  --no-approvals   Disable approvals
+  --init-defaults  Initialize with default templates (start)
+  --notify-config  Notification routing config
+  --force          Overwrite existing autonomous data (init)
+  --status <s>     Filter jobs by status (jobs list)
+  --enabled        Only enabled jobs (jobs list)
+  --disabled       Only disabled jobs (jobs list)
+  --json           JSON output (status/init/jobs)
+  --output <file>  Write JSON output to file (implies --json)
+  --verbose        Verbose output
+  --help           Show help
+
+Notes:
+  Legacy flags `jobs --enable/--disable/--run` are still supported.
+```
+
+### `stateset-install-service` - Install Gateway Service
+
+```
+stateset-install-service [options]
+
+Options:
+  --dry-run       Preview actions without changes
+  --uninstall     Remove the service
+  --json          JSON output
+  --output <file> Write JSON output to file (implies --json)
+  --help          Show help
+```
+
+### Service Management Flow
+
+```
+# Install system service and load defaults
+sudo stateset-install-service
+
+# Validate config, then start
+stateset-daemon validate
+sudo stateset-daemon start
+
+# Check status and tail logs
+stateset-daemon status --json --output daemon-status.json
+stateset-daemon logs -f
+```
+
+### `stateset-pay` - Stablecoin Payments
+
+```
+stateset-pay [options]
+
+Options:
+  --to <address>   Recipient wallet address
+  --amount <amt>   Amount to send
+  --chain <id>     Blockchain network
+  --token <sym>    Token symbol
+  --wallet         Show agent wallet address(es)
+  --balance        Check wallet balance
+  --chains         List supported blockchains
+  --apply          Execute payment (default: simulate)
+  --agent <id>     Agent ID
+  --json           JSON output
+  --output <file>  Write JSON output to file (implies --json)
+  --yes            Skip confirmations
   --help           Show help
 ```
 

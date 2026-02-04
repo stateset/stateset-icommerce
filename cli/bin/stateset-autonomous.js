@@ -14,6 +14,10 @@
  *   stateset-autonomous start [options]
  *   stateset-autonomous status
  *   stateset-autonomous init
+ *   stateset-autonomous jobs list
+ *   stateset-autonomous jobs enable <id>
+ *   stateset-autonomous jobs disable <id>
+ *   stateset-autonomous jobs run <id>
  */
 
 import { program } from 'commander';
@@ -36,6 +40,195 @@ const packageJson = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8')
 );
 
+const DEFAULT_DB_PATH = './.stateset/commerce.db';
+const DEFAULT_STORE_PATH = './.stateset/autonomous';
+const JOB_STATUSES = ['pending', 'running', 'completed', 'failed', 'paused', 'cancelled'];
+
+function createOutputHelpers(options = {}) {
+  const outputPath = options.output || null;
+  const jsonOutput = Boolean(options.json || outputPath);
+  const writeJson = async (data) => {
+    const payload = JSON.stringify(data, null, 2);
+    if (outputPath) {
+      await fs.promises.writeFile(outputPath, payload);
+      return;
+    }
+    console.log(payload);
+  };
+
+  return { jsonOutput, writeJson };
+}
+
+function serializeJob(job) {
+  if (!job) return job;
+  if (typeof job.toJSON === 'function') return job.toJSON();
+  return { ...job };
+}
+
+function collectInitData(engine) {
+  const jobs = engine.scheduler ? engine.scheduler.listJobs().map(serializeJob) : [];
+  const workflows = engine.workflows ? engine.workflows.listWorkflows() : [];
+  const policies = engine.policies ? engine.policies.listPolicySets() : [];
+  const approvals = engine.approvals ? engine.approvals.getStatus() : null;
+
+  return {
+    jobs,
+    workflows,
+    policies,
+    approvals,
+    counts: {
+      jobs: jobs.length,
+      workflows: workflows.length,
+      policies: policies.length,
+      approvalChains: approvals?.chainCount ?? 0,
+    }
+  };
+}
+
+function hasExistingData(summary) {
+  if (!summary) return false;
+  return (
+    summary.counts.jobs > 0 ||
+    summary.counts.workflows > 0 ||
+    summary.counts.policies > 0 ||
+    summary.counts.approvalChains > 0
+  );
+}
+
+async function withEngine(options, handler) {
+  const commerce = new Commerce(options.db);
+
+  const engine = new AutonomousEngine({
+    storePath: options.store,
+    commerce
+  });
+
+  await engine.load();
+  return handler(engine);
+}
+
+async function handleJobsList(options, jsonOutput, writeJson) {
+  return withEngine(options, async (engine) => {
+    if (options.enabled && options.disabled) {
+      const message = 'Only one of --enabled or --disabled may be specified.';
+      if (jsonOutput) {
+        await writeJson({ error: message });
+      } else {
+        console.error(`Error: ${message}`);
+      }
+      process.exit(1);
+    }
+
+    const status = options.status ? String(options.status).toLowerCase() : null;
+    if (status && !JOB_STATUSES.includes(status)) {
+      const message = `Invalid status: ${options.status}. Expected one of ${JOB_STATUSES.join(', ')}.`;
+      if (jsonOutput) {
+        await writeJson({ error: message });
+      } else {
+        console.error(`Error: ${message}`);
+      }
+      process.exit(1);
+    }
+
+    const enabled = options.enabled ? true : options.disabled ? false : null;
+
+    const jobs = engine.scheduler?.listJobs({
+      status: status || null,
+      enabled
+    }) || [];
+
+    if (jsonOutput) {
+      await writeJson({
+        ok: true,
+        timestamp: new Date().toISOString(),
+        storePath: options.store,
+        dbPath: options.db,
+        filters: {
+          status: status || null,
+          enabled
+        },
+        jobs: jobs.map(serializeJob),
+        total: jobs.length
+      });
+      return;
+    }
+
+    console.log('\n📅 Scheduled Jobs\n');
+
+    if (jobs.length === 0) {
+      console.log('   No jobs configured');
+      return;
+    }
+
+    for (const job of jobs) {
+      const status = job.enabled ? '✅' : '⏸️';
+      console.log(`${status} ${job.name}`);
+      console.log(`   ID: ${job.id}`);
+      console.log(`   Schedule: ${job.type} - ${job.schedule}`);
+      console.log(`   Next Run: ${job.nextRunAt || 'N/A'}`);
+      console.log(`   Runs: ${job.runCount} (${job.failCount} failed)`);
+      console.log('');
+    }
+  });
+}
+
+async function handleJobsEnable(jobId, options, jsonOutput, writeJson) {
+  return withEngine(options, async (engine) => {
+    const job = engine.scheduler?.resumeJob(jobId);
+    if (!job) {
+      const message = `Job not found: ${jobId}`;
+      if (jsonOutput) {
+        await writeJson({ error: message });
+      } else {
+        console.error(`Error: ${message}`);
+      }
+      process.exit(1);
+    }
+
+    if (jsonOutput) {
+      await writeJson({ success: true, action: 'enable', job: serializeJob(job) });
+    } else {
+      console.log(`✅ Job enabled: ${jobId}`);
+    }
+  });
+}
+
+async function handleJobsDisable(jobId, options, jsonOutput, writeJson) {
+  return withEngine(options, async (engine) => {
+    const job = engine.scheduler?.pauseJob(jobId);
+    if (!job) {
+      const message = `Job not found: ${jobId}`;
+      if (jsonOutput) {
+        await writeJson({ error: message });
+      } else {
+        console.error(`Error: ${message}`);
+      }
+      process.exit(1);
+    }
+
+    if (jsonOutput) {
+      await writeJson({ success: true, action: 'disable', job: serializeJob(job) });
+    } else {
+      console.log(`✅ Job disabled: ${jobId}`);
+    }
+  });
+}
+
+async function handleJobsRun(jobId, options, jsonOutput, writeJson) {
+  return withEngine(options, async (engine) => {
+    if (!jsonOutput) {
+      console.log(`⏰ Running job: ${jobId}`);
+    }
+    const result = await engine.scheduler.runNow(jobId);
+    if (jsonOutput) {
+      await writeJson({ success: result.status === 'completed', action: 'run', jobId, result });
+    } else {
+      console.log(`   Status: ${result.status}`);
+      console.log(`   Duration: ${result.duration}ms`);
+    }
+  });
+}
+
 program
   .name('stateset-autonomous')
   .description('StateSet Autonomous Business Engine - AI agents running your commerce operations')
@@ -48,8 +241,8 @@ program
 program
   .command('start')
   .description('Start the autonomous business engine')
-  .option('-d, --db <path>', 'Path to SQLite database', './.stateset/commerce.db')
-  .option('-s, --store <path>', 'Path to store autonomous engine data', './.stateset/autonomous')
+  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('-s, --store <path>', 'Path to store autonomous engine data', DEFAULT_STORE_PATH)
   .option('-p, --port <port>', 'Webhook server port', '3000')
   .option('--no-webhooks', 'Disable webhook server')
   .option('--no-scheduler', 'Disable job scheduler')
@@ -71,7 +264,7 @@ program
       // Initialize commerce instance
       console.log(`📦 Initializing commerce engine...`);
       const commerce = new Commerce(options.db);
-            console.log(`   Database: ${options.db}`);
+      console.log(`   Database: ${options.db}`);
 
       // Create agent executor
       const agentExecutor = async (agent, request, context) => {
@@ -227,10 +420,14 @@ program
 program
   .command('status')
   .description('Show status of the autonomous engine')
-  .option('-s, --store <path>', 'Path to autonomous engine data', './.stateset/autonomous')
+  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('-s, --store <path>', 'Path to autonomous engine data', DEFAULT_STORE_PATH)
+  .option('--json', 'Output status as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const { jsonOutput, writeJson } = createOutputHelpers(options);
     try {
-      const commerce = new Commerce('./.stateset/commerce.db');
+      const commerce = new Commerce(options.db);
       
       const engine = new AutonomousEngine({
         storePath: options.store,
@@ -240,11 +437,47 @@ program
       await engine.load();
       const status = engine.getStatus();
 
+      if (jsonOutput) {
+        await writeJson({
+          ok: true,
+          timestamp: new Date().toISOString(),
+          storePath: options.store,
+          dbPath: options.db,
+          status
+        });
+        return;
+      }
+
+      const features = status.features || {};
+      const scheduler = status.scheduler || {};
+      const workflows = status.workflows || {};
+      const policies = status.policies || {};
+      const webhooks = status.webhooks || {};
+      const approvals = status.approvals || {};
+      const heartbeat = status.heartbeat || {};
+
       console.log('\n📊 Autonomous Engine Status\n');
-      console.log(JSON.stringify(status, null, 2));
+      console.log(`Store: ${options.store}`);
+      console.log(`Database: ${options.db}`);
+      console.log(`Running: ${status.isRunning ? '✅ Yes' : '⏸️ No'}`);
+      console.log('');
+
+      console.log(`Scheduler: ${features.scheduler ? `✅ ${scheduler.enabledJobs || 0}/${scheduler.totalJobs || 0} jobs enabled` : '❌ Disabled'}`);
+      console.log(`Workflows: ${features.workflows ? `✅ ${workflows.totalWorkflows || 0} workflows (${workflows.totalInstances || 0} instances)` : '❌ Disabled'}`);
+      console.log(`Policies:  ${features.policies ? `✅ ${policies.totalPolicySets || 0} policy sets (${policies.totalRules || 0} rules)` : '❌ Disabled'}`);
+      console.log(`Webhooks:  ${features.webhooks ? `✅ ${webhooks.isRunning ? 'Listening' : 'Configured'} on ${webhooks.host || '0.0.0.0'}:${webhooks.port || 'N/A'}` : '❌ Disabled'}`);
+      console.log(`Approvals: ${features.approvals ? `✅ ${approvals.chainCount || 0} chains (${approvals.pendingCount || 0} pending)` : '❌ Disabled'}`);
+
+      if (features.heartbeat) {
+        console.log(`Heartbeat: ✅ ${heartbeat.running ? 'Running' : 'Configured'} (${heartbeat.checkCount || 0} checks)`);
+      }
 
     } catch (error) {
-      console.error(`Error: ${error.message}`);
+      if (jsonOutput) {
+        await writeJson({ error: error.message });
+      } else {
+        console.error(`Error: ${error.message}`);
+      }
       process.exit(1);
     }
   });
@@ -256,11 +489,21 @@ program
 program
   .command('init')
   .description('Initialize autonomous engine with default templates')
-  .option('-d, --db <path>', 'Path to SQLite database', './.stateset/commerce.db')
-  .option('-s, --store <path>', 'Path to store autonomous engine data', './.stateset/autonomous')
+  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('-s, --store <path>', 'Path to store autonomous engine data', DEFAULT_STORE_PATH)
+  .option('--force', 'Overwrite existing autonomous data')
+  .option('--json', 'Output status as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const { jsonOutput, writeJson } = createOutputHelpers(options);
     try {
-      console.log('\n🔧 Initializing Autonomous Business Engine...\n');
+      if (!jsonOutput) {
+        console.log('\n🔧 Initializing Autonomous Business Engine...\n');
+      }
+
+      if (options.force && fs.existsSync(options.store)) {
+        fs.rmSync(options.store, { recursive: true, force: true });
+      }
 
       const commerce = new Commerce(options.db);
       
@@ -270,7 +513,36 @@ program
         enableWebhooks: false // Don't start server during init
       });
 
+      await engine.load();
+
+      if (!options.force) {
+        const existing = collectInitData(engine);
+        if (hasExistingData(existing)) {
+          const message = `Autonomous data already exists at ${options.store}. Use --force to overwrite.`;
+          if (jsonOutput) {
+            await writeJson({ error: message, existing: existing.counts });
+          } else {
+            console.error(`❌ ${message}`);
+          }
+          process.exit(1);
+        }
+      }
+
       await engine.initializeDefaults();
+      await engine.save();
+
+      const initData = collectInitData(engine);
+
+      if (jsonOutput) {
+        await writeJson({
+          success: true,
+          timestamp: new Date().toISOString(),
+          storePath: options.store,
+          dbPath: options.db,
+          ...initData
+        });
+        return;
+      }
 
       console.log('✅ Default templates initialized:\n');
 
@@ -312,7 +584,11 @@ program
       console.log(`\nRun 'stateset-autonomous start' to begin autonomous operations.\n`);
 
     } catch (error) {
-      console.error(`Error: ${error.message}`);
+      if (jsonOutput) {
+        await writeJson({ error: error.message });
+      } else {
+        console.error(`Error: ${error.message}`);
+      }
       process.exit(1);
     }
   });
@@ -321,69 +597,144 @@ program
 // Jobs Commands
 // ============================================================================
 
-program
+const jobsCommand = program
   .command('jobs')
   .description('Manage scheduled jobs')
-  .option('-s, --store <path>', 'Path to autonomous engine data', './.stateset/autonomous')
+  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('-s, --store <path>', 'Path to autonomous engine data', DEFAULT_STORE_PATH)
   .option('--enable <id>', 'Enable a job')
   .option('--disable <id>', 'Disable a job')
   .option('--run <id>', 'Run a job immediately')
+  .option('--status <status>', 'Filter jobs by status')
+  .option('--enabled', 'Only enabled jobs')
+  .option('--disabled', 'Only disabled jobs')
+  .option('--json', 'Output status as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const { jsonOutput, writeJson } = createOutputHelpers(options);
     try {
-      const commerce = new Commerce('./.stateset/commerce.db');
-      
-      const engine = new AutonomousEngine({
-        storePath: options.store,
-        commerce
-      });
-
-      await engine.load();
+      const actionFlags = ['enable', 'disable', 'run'].filter((flag) => Boolean(options[flag]));
+      if (actionFlags.length > 1) {
+        const message = 'Only one of --enable, --disable, or --run may be specified.';
+        if (jsonOutput) {
+          await writeJson({ error: message });
+        } else {
+          console.error(`Error: ${message}`);
+        }
+        process.exit(1);
+      }
 
       if (options.enable) {
-        engine.scheduler.resumeJob(options.enable);
-        await engine.save();
-        console.log(`✅ Job enabled: ${options.enable}`);
+        await handleJobsEnable(options.enable, options, jsonOutput, writeJson);
         return;
       }
 
       if (options.disable) {
-        engine.scheduler.pauseJob(options.disable);
-        await engine.save();
-        console.log(`✅ Job disabled: ${options.disable}`);
+        await handleJobsDisable(options.disable, options, jsonOutput, writeJson);
         return;
       }
 
       if (options.run) {
-        console.log(`⏰ Running job: ${options.run}`);
-        const result = await engine.scheduler.runNow(options.run);
-        console.log(`   Status: ${result.status}`);
-        console.log(`   Duration: ${result.duration}ms`);
+        await handleJobsRun(options.run, options, jsonOutput, writeJson);
         return;
       }
 
-      // List jobs
-      const jobs = engine.scheduler.listJobs();
-      console.log('\n📅 Scheduled Jobs\n');
-
-      if (jobs.length === 0) {
-        console.log('   No jobs configured');
-        return;
-      }
-
-      for (const job of jobs) {
-        const status = job.enabled ? '✅' : '⏸️';
-        console.log(`${status} ${job.name}`);
-        console.log(`   ID: ${job.id}`);
-        console.log(`   Schedule: ${job.type} - ${job.schedule}`);
-        console.log(`   Next Run: ${job.nextRunAt || 'N/A'}`);
-        console.log(`   Runs: ${job.runCount} (${job.failCount} failed)`);
-        console.log('');
-      }
+      await handleJobsList(options, jsonOutput, writeJson);
 
     } catch (error) {
-      console.error(`Error: ${error.message}`);
+      if (jsonOutput) {
+        await writeJson({ error: error.message });
+      } else {
+        console.error(`Error: ${error.message}`);
+      }
       process.exit(1);
     }
   });
+
+const applyJobsOptions = (command) => command
+  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+  .option('-s, --store <path>', 'Path to autonomous engine data', DEFAULT_STORE_PATH)
+  .option('--json', 'Output status as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)');
+
+const applyJobsListOptions = (command) => applyJobsOptions(command)
+  .option('--status <status>', 'Filter jobs by status')
+  .option('--enabled', 'Only enabled jobs')
+  .option('--disabled', 'Only disabled jobs');
+
+applyJobsListOptions(
+  jobsCommand
+    .command('list')
+    .description('List scheduled jobs')
+).action(async (options) => {
+  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  try {
+    await handleJobsList(options, jsonOutput, writeJson);
+  } catch (error) {
+    if (jsonOutput) {
+      await writeJson({ error: error.message });
+    } else {
+      console.error(`Error: ${error.message}`);
+    }
+    process.exit(1);
+  }
+});
+
+applyJobsOptions(
+  jobsCommand
+    .command('enable')
+    .description('Enable a scheduled job')
+    .argument('<id>', 'Job ID')
+).action(async (jobId, options) => {
+  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  try {
+    await handleJobsEnable(jobId, options, jsonOutput, writeJson);
+  } catch (error) {
+    if (jsonOutput) {
+      await writeJson({ error: error.message });
+    } else {
+      console.error(`Error: ${error.message}`);
+    }
+    process.exit(1);
+  }
+});
+
+applyJobsOptions(
+  jobsCommand
+    .command('disable')
+    .description('Disable a scheduled job')
+    .argument('<id>', 'Job ID')
+).action(async (jobId, options) => {
+  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  try {
+    await handleJobsDisable(jobId, options, jsonOutput, writeJson);
+  } catch (error) {
+    if (jsonOutput) {
+      await writeJson({ error: error.message });
+    } else {
+      console.error(`Error: ${error.message}`);
+    }
+    process.exit(1);
+  }
+});
+
+applyJobsOptions(
+  jobsCommand
+    .command('run')
+    .description('Run a job immediately')
+    .argument('<id>', 'Job ID')
+).action(async (jobId, options) => {
+  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  try {
+    await handleJobsRun(jobId, options, jsonOutput, writeJson);
+  } catch (error) {
+    if (jsonOutput) {
+      await writeJson({ error: error.message });
+    } else {
+      console.error(`Error: ${error.message}`);
+    }
+    process.exit(1);
+  }
+});
 
 program.parse();

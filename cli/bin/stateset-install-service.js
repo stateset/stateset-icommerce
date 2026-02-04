@@ -13,67 +13,134 @@
  *   stateset-install-service --uninstall  # Remove the service
  */
 
-import { existsSync, mkdirSync, copyFileSync, chmodSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
 import { unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { platform } from 'node:os';
+import { parseArgs } from 'node:util';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEPLOY_DIR = join(__dirname, '..', 'deploy');
 
-const args = process.argv.slice(2);
-const dryRun = args.includes('--dry-run');
-const uninstall = args.includes('--uninstall');
+const { values } = parseArgs({
+  options: {
+    'dry-run': { type: 'boolean', default: false },
+    uninstall: { type: 'boolean', default: false },
+    json: { type: 'boolean', default: false },
+    output: { type: 'string' },
+    help: { type: 'boolean', short: 'h', default: false },
+  },
+  strict: false,
+});
+
+const dryRun = values['dry-run'];
+const uninstall = values.uninstall;
+const outputPath = values.output || null;
+const jsonOutput = Boolean(values.json || outputPath);
 
 const os = platform();
 
+const HELP = `
+stateset-install-service — Install StateSet Gateway as a system service.
+
+USAGE:
+  stateset-install-service              Install service
+  stateset-install-service --dry-run    Preview what would be done
+  stateset-install-service --uninstall  Remove the service
+
+OPTIONS:
+  --dry-run       Show actions without making changes
+  --uninstall     Remove the service
+  --json          Output actions as JSON
+  --output <file> Write JSON output to file (implies --json)
+  -h, --help      Show this help
+`;
+
+const report = {
+  ok: true,
+  os,
+  mode: uninstall ? 'uninstall' : 'install',
+  dryRun,
+  steps: [],
+};
+
+function writeJson(data) {
+  const payload = JSON.stringify(data, null, 2);
+  if (outputPath) {
+    writeFileSync(outputPath, payload);
+    return;
+  }
+  console.log(payload);
+}
+
 function log(msg) {
-  console.log(`  ${msg}`);
+  if (!jsonOutput) {
+    console.log(`  ${msg}`);
+  }
+}
+
+function recordStep(step) {
+  report.steps.push(step);
+  if (step.status === 'error') {
+    report.ok = false;
+  }
 }
 
 function run(cmd, label) {
   if (dryRun) {
     log(`[dry-run] ${label || cmd}`);
+    recordStep({ action: 'run', command: cmd, label, status: 'dry-run' });
     return;
   }
   log(`$ ${cmd}`);
   try {
-    execSync(cmd, { stdio: 'inherit' });
+    const stdio = jsonOutput ? 'pipe' : 'inherit';
+    execSync(cmd, { stdio });
+    recordStep({ action: 'run', command: cmd, label, status: 'ok' });
   } catch (err) {
-    console.error(`  Failed: ${err.message}`);
+    if (!jsonOutput) {
+      console.error(`  Failed: ${err.message}`);
+    }
+    recordStep({ action: 'run', command: cmd, label, status: 'error', error: err.message });
   }
 }
 
 function ensureDir(dir) {
   if (dryRun) {
     log(`[dry-run] mkdir -p ${dir}`);
+    recordStep({ action: 'mkdir', target: dir, status: 'dry-run' });
     return;
   }
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
     log(`Created ${dir}`);
+    recordStep({ action: 'mkdir', target: dir, status: 'ok' });
   }
 }
 
 function copyFile(src, dest) {
   if (dryRun) {
     log(`[dry-run] cp ${src} → ${dest}`);
+    recordStep({ action: 'copy', source: src, target: dest, status: 'dry-run' });
     return;
   }
   copyFileSync(src, dest);
   log(`Copied ${dest}`);
+  recordStep({ action: 'copy', source: src, target: dest, status: 'ok' });
 }
 
 function removeFile(path) {
   if (dryRun) {
     log(`[dry-run] rm ${path}`);
+    recordStep({ action: 'remove', target: path, status: 'dry-run' });
     return;
   }
   if (existsSync(path)) {
     unlinkSync(path);
     log(`Removed ${path}`);
+    recordStep({ action: 'remove', target: path, status: 'ok' });
   }
 }
 
@@ -82,7 +149,9 @@ function removeFile(path) {
 // ============================================================================
 
 function installSystemd() {
-  console.log('\n[StateSet] Installing systemd service...\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Installing systemd service...\n');
+  }
 
   const serviceFile = join(DEPLOY_DIR, 'stateset-gateway.service');
   const logrotateFile = join(DEPLOY_DIR, 'logrotate.d', 'stateset-gateway');
@@ -93,6 +162,7 @@ function installSystemd() {
   try {
     execSync('id stateset', { stdio: 'ignore' });
     log('User "stateset" already exists.');
+    recordStep({ action: 'user-check', target: 'stateset', status: 'ok' });
   } catch {
     run('useradd --system --no-create-home --shell /usr/sbin/nologin stateset', 'Create stateset user');
   }
@@ -127,16 +197,20 @@ function installSystemd() {
   // Reload systemd
   run('systemctl daemon-reload', 'Reload systemd');
 
-  console.log('\n[StateSet] Installation complete.');
-  console.log('  Next steps:');
-  console.log('  1. Edit /etc/stateset/gateway.json');
-  console.log('  2. Add API keys to /etc/stateset/env');
-  console.log('  3. sudo systemctl enable --now stateset-gateway');
-  console.log('');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Installation complete.');
+    console.log('  Next steps:');
+    console.log('  1. Edit /etc/stateset/gateway.json');
+    console.log('  2. Add API keys to /etc/stateset/env');
+    console.log('  3. sudo systemctl enable --now stateset-gateway');
+    console.log('');
+  }
 }
 
 function uninstallSystemd() {
-  console.log('\n[StateSet] Uninstalling systemd service...\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Uninstalling systemd service...\n');
+  }
 
   run('systemctl stop stateset-gateway 2>/dev/null || true', 'Stop service');
   run('systemctl disable stateset-gateway 2>/dev/null || true', 'Disable service');
@@ -144,7 +218,9 @@ function uninstallSystemd() {
   removeFile('/etc/logrotate.d/stateset-gateway');
   run('systemctl daemon-reload', 'Reload systemd');
 
-  console.log('\n[StateSet] Service uninstalled. Data in /opt/stateset and /etc/stateset left intact.\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Service uninstalled. Data in /opt/stateset and /etc/stateset left intact.\n');
+  }
 }
 
 // ============================================================================
@@ -152,7 +228,9 @@ function uninstallSystemd() {
 // ============================================================================
 
 function installLaunchd() {
-  console.log('\n[StateSet] Installing launchd service...\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Installing launchd service...\n');
+  }
 
   const plistFile = join(DEPLOY_DIR, 'com.stateset.gateway.plist');
   const plistDest = '/Library/LaunchDaemons/com.stateset.gateway.plist';
@@ -175,23 +253,29 @@ function installLaunchd() {
     }
   }
 
-  console.log('\n[StateSet] Installation complete.');
-  console.log('  Next steps:');
-  console.log('  1. Copy stateset files to /usr/local/lib/stateset/');
-  console.log('  2. Edit /usr/local/etc/stateset/gateway.json');
-  console.log('  3. sudo launchctl load /Library/LaunchDaemons/com.stateset.gateway.plist');
-  console.log('');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Installation complete.');
+    console.log('  Next steps:');
+    console.log('  1. Copy stateset files to /usr/local/lib/stateset/');
+    console.log('  2. Edit /usr/local/etc/stateset/gateway.json');
+    console.log('  3. sudo launchctl load /Library/LaunchDaemons/com.stateset.gateway.plist');
+    console.log('');
+  }
 }
 
 function uninstallLaunchd() {
-  console.log('\n[StateSet] Uninstalling launchd service...\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Uninstalling launchd service...\n');
+  }
 
   const plistDest = '/Library/LaunchDaemons/com.stateset.gateway.plist';
 
   run(`launchctl unload ${plistDest} 2>/dev/null || true`, 'Unload service');
   removeFile(plistDest);
 
-  console.log('\n[StateSet] Service uninstalled. Data in /usr/local/etc/stateset left intact.\n');
+  if (!jsonOutput) {
+    console.log('\n[StateSet] Service uninstalled. Data in /usr/local/etc/stateset left intact.\n');
+  }
 }
 
 // ============================================================================
@@ -199,8 +283,15 @@ function uninstallLaunchd() {
 // ============================================================================
 
 function main() {
+  if (values.help) {
+    console.log(HELP);
+    return;
+  }
+
   if (dryRun) {
-    console.log('\n[StateSet] Dry-run mode — no changes will be made.\n');
+    if (!jsonOutput) {
+      console.log('\n[StateSet] Dry-run mode — no changes will be made.\n');
+    }
   }
 
   if (os === 'linux') {
@@ -216,7 +307,18 @@ function main() {
       installLaunchd();
     }
   } else {
-    console.error(`Unsupported OS: ${os}. Only Linux (systemd) and macOS (launchd) are supported.`);
+    const message = `Unsupported OS: ${os}. Only Linux (systemd) and macOS (launchd) are supported.`;
+    if (!jsonOutput) {
+      console.error(message);
+    }
+    recordStep({ action: 'error', status: 'error', error: message });
+  }
+
+  if (jsonOutput) {
+    writeJson(report);
+  }
+
+  if (!report.ok) {
     process.exit(1);
   }
 }
