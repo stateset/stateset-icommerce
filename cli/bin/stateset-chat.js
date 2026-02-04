@@ -34,6 +34,13 @@ OPTIONS:
   --memory           Enable conversation memory (overrides settings)
   --no-memory        Disable conversation memory (overrides settings)
   --x402             Enable x402 MCP tools
+  --treasury         Enable treasury billing (stablecoins)
+  --treasury-chain <id>    Treasury chain id (e.g., base, solana)
+  --treasury-token <sym>   Treasury token symbol (e.g., USDC)
+  --treasury-agent <id>    Treasury agent id (default: default)
+  --treasury-db <path>     Treasury DB path
+  --treasury-erc8004-registry <uri>  ERC-8004 registry URI
+  --treasury-erc8004-db <path>       ERC-8004 db path (defaults to --db)
   --verbose, -V      Enable verbose telemetry
   --yes, -y          Skip confirmation prompts
   --help, -h         Show this help message
@@ -66,6 +73,13 @@ async function main() {
       memory: { type: 'boolean', default: false },
       noMemory: { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
+      treasury: { type: 'boolean', default: false },
+      treasuryChain: { type: 'string' },
+      treasuryToken: { type: 'string' },
+      treasuryAgent: { type: 'string' },
+      treasuryDb: { type: 'string' },
+      treasuryErc8004Registry: { type: 'string' },
+      treasuryErc8004Db: { type: 'string' },
       verbose: { type: 'boolean', short: 'V', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
       help: { type: 'boolean', short: 'h', default: false }
@@ -93,6 +107,24 @@ async function main() {
   let budget = values.budget || null;
   let memoryEnabled = values.noMemory ? false : (values.memory ? true : null);
   let x402Enabled = values.x402 || false;
+  const treasuryEnabled = Boolean(
+    values.treasury
+      || values.treasuryChain
+      || values.treasuryToken
+      || values.treasuryAgent
+      || values.treasuryDb
+      || values.treasuryErc8004Registry
+      || values.treasuryErc8004Db
+  );
+  const treasuryConfig = treasuryEnabled ? {
+    enabled: true,
+    chainId: values.treasuryChain,
+    tokenSymbol: values.treasuryToken,
+    agentId: values.treasuryAgent,
+    dbPath: values.treasuryDb,
+    erc8004Registry: values.treasuryErc8004Registry,
+    erc8004DbPath: values.treasuryErc8004Db
+  } : null;
 
   // Create readline interface
   const rl = readline.createInterface({
@@ -134,6 +166,7 @@ async function main() {
       : (memoryEnabled ? output.cyan('On') : 'Off');
     console.log(`   ${output.dim('Memory:')}    ${memoryLabel}`);
     console.log(`   ${output.dim('x402:')}      ${x402Enabled ? output.cyan('On') : 'Off'}`);
+    console.log(`   ${output.dim('Treasury:')}  ${treasuryConfig ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Verbose:')}   ${verbose ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Session:')}   ${sessionId || output.dim('(none)')}`);
     console.log();
@@ -313,6 +346,7 @@ ${output.bold('Example Queries:')}
         verbose,
         resumeSessionId: sessionId,
         onConfirmRequired,
+        treasury: treasuryConfig,
         thinkLevel,
         streaming,
         maxBudgetUsd: budget,

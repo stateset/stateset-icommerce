@@ -55,11 +55,11 @@ EXAMPLES:
 // Command structure for completions
 const COMMANDS = {
   'ss': {
-    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
+    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
     description: 'Shorthand for stateset'
   },
   'stateset': {
-    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
+    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
     description: 'AI-powered commerce CLI'
   },
   'stateset-direct': {
@@ -78,7 +78,7 @@ const COMMANDS = {
     options: ['--db', '--apply', '--json', '--format', '--output', '--yes', '--help']
   },
   'stateset-chat': {
-    options: ['--db', '--apply', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--verbose', '--yes', '--help'],
+    options: ['--db', '--apply', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--verbose', '--yes', '--help'],
     description: 'Interactive REPL'
   },
   'stateset-doctor': {
@@ -95,6 +95,10 @@ const COMMANDS = {
   },
   'stateset-pay': {
     options: ['--to', '--amount', '--chain', '--token', '--agent', '--order', '--customer', '--memo', '--wallet', '--balance', '--chains', '--apply', '--json', '--output', '--yes', '--help', '--version']
+  },
+  'stateset-treasury': {
+    subcommands: ['init', 'wallet', 'balance', 'deposit', 'buy', 'token', 'ledger', 'sync', 'identity'],
+    options: ['--db', '--registry', '--commerce-db', '--json', '--output', '--apply', '--yes', '--help', '--version', '--task', '--request']
   },
   'stateset-slack': {
     options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--verbose', '--help']
@@ -143,12 +147,12 @@ _stateset_complete() {
     case "\${words[0]}" in
         stateset|ss)
             if [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--db --apply --agent --profile --model --provider --think --stream --budget --memory --no-memory --x402 --resume --json --format --output --verbose --stats --yes --quiet --stdin --batch --parallel --help --version" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "--db --apply --agent --profile --model --provider --think --stream --budget --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --resume --json --format --output --verbose --stats --yes --quiet --stdin --batch --parallel --help --version" -- "\${cur}") )
             fi
             ;;
         stateset-chat)
             if [[ "\${cur}" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--db --apply --model --provider --think --stream --budget --memory --no-memory --x402 --verbose --yes --help" -- "\${cur}") )
+                COMPREPLY=( $(compgen -W "--db --apply --model --provider --think --stream --budget --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --verbose --yes --help" -- "\${cur}") )
             fi
             ;;
         stateset-direct)

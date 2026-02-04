@@ -39,8 +39,10 @@ function autoIndexEntity(entityType, entity) {
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
  * @param {import('./channels/plugin-api.js').HookRunner} options.hookRunner - Hook runner instance
+ * @param {string} options.dbPath - Commerce database path (used for ERC-8004 lookups)
+ * @param {Object} options.treasury - Treasury configuration (agentId, dbPath, ERC-8004 registry)
  */
-export function createStatesetMcpServer({ commerce, allowApply = false, telemetry = null, permissionGate = null, hookRunner = null }) {
+export function createStatesetMcpServer({ commerce, allowApply = false, telemetry = null, permissionGate = null, hookRunner = null, dbPath = './store.db', treasury = null }) {
   // Helper to check permissions before executing
   const checkPermission = async (toolName, params) => {
     if (permissionGate) {
@@ -120,18 +122,64 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
       // x402 Protocol (read-only)
       'x402_get_intent', 'x402_list_intents', 'x402_get_next_nonce',
       'x402_credit_balance', 'x402_credit_transactions',
+      // Treasury (read-only)
+      'treasury_balance', 'treasury_ledger', 'treasury_list_tokens',
+      // ERC-8004 (read-only)
+      'erc8004_get_identity', 'erc8004_get_by_wallet', 'erc8004_list_identities',
       // Agent Cards (read-only)
       'discover_agents', 'get_agent_card', 'list_agent_cards'
     ];
     return readOnlyTools.includes(toolName);
   };
 
+  const treasuryAgentId = treasury?.agentId || process.env.TREASURY_AGENT || 'default';
+  const treasuryDbPath = treasury?.dbPath || process.env.TREASURY_DB || null;
+  const treasuryContextOptions = treasuryDbPath ? { dbPath: treasuryDbPath } : {};
+  const treasuryRegistry = treasury?.erc8004Registry || process.env.TREASURY_ERC8004_REGISTRY || null;
+  const treasuryIdentityDbPath = treasury?.erc8004DbPath || dbPath;
+  let treasuryIdentityLoaded = false;
+  let treasuryIdentityCache = null;
+
+  const resolveTreasuryIdentity = async () => {
+    if (!treasuryRegistry) return null;
+    if (treasuryIdentityLoaded) return treasuryIdentityCache;
+    treasuryIdentityLoaded = true;
+    try {
+      const { getIdentity } = await import('./erc8004/index.js');
+      treasuryIdentityCache = getIdentity(treasuryIdentityDbPath, treasuryRegistry, treasuryAgentId);
+    } catch (err) {
+      treasuryIdentityCache = null;
+    }
+    if (!treasuryIdentityCache) {
+      throw new Error(`ERC-8004 identity not found for ${treasuryRegistry}:${treasuryAgentId}`);
+    }
+    return treasuryIdentityCache;
+  };
+
+  const resolveTreasuryAgentId = async () => {
+    const identity = await resolveTreasuryIdentity();
+    return identity?.agent_id || treasuryAgentId;
+  };
+
+  const buildTreasuryIdentityMetadata = async () => {
+    const identity = await resolveTreasuryIdentity();
+    if (!identity) return {};
+    return {
+      erc8004: {
+        registry: treasuryRegistry,
+        agentId: identity.agent_id,
+        wallet: identity.agent_wallet,
+        owner: identity.owner_address
+      }
+    };
+  };
+
   // Helper to wrap tool execution with telemetry
   const wrapWithTelemetry = (toolName, fn) => {
-    return async (params) => {
+    return async (params, extra) => {
       const startTime = Date.now();
       try {
-        const result = await fn(params);
+        const result = await fn(params, extra);
         if (telemetry) {
           const duration = Date.now() - startTime;
           telemetry.logToolCall(toolName, params, result, duration);
@@ -147,16 +195,96 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
     };
   };
 
+  const buildAuditContext = (extra, toolName) => ({
+    taskId: extra?.requestId || null,
+    requestId: extra?.requestId || null,
+    sessionId: extra?.sessionId || null,
+    toolName
+  });
+
+  const maybeChargeForTool = async (toolName, extra) => {
+    try {
+      const { loadTreasuryContext, getToolPricing, resolveToken, recordFee } = await import('./treasury/index.js');
+      const { toSmallestUnit } = await import('./chains/config.js');
+      const ctx = await loadTreasuryContext(treasuryContextOptions);
+      const rule = getToolPricing(ctx.pricing, toolName);
+      if (!rule) return { charged: false };
+
+      if (!allowApply) {
+        return {
+          charged: false,
+          blocked: true,
+          reason: `Tool ${toolName} requires a treasury charge. Re-run with --apply.`
+        };
+      }
+
+      const token = resolveToken(rule.chainId, rule.tokenSymbol, ctx.registry);
+      if (!token) {
+        return {
+          charged: false,
+          blocked: true,
+          reason: `Unknown token ${rule.tokenSymbol} on ${rule.chainId}.`
+        };
+      }
+      const amount = Number(rule.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return {
+          charged: false,
+          blocked: true,
+          reason: `Invalid pricing amount for ${toolName}.`
+        };
+      }
+      const effectiveAgentId = await resolveTreasuryAgentId();
+      const identityMeta = await buildTreasuryIdentityMetadata();
+      const balance = ctx.store.getBalance({
+        agentId: effectiveAgentId,
+        chainId: rule.chainId,
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals
+      });
+
+      const required = toSmallestUnit(amount, token.decimals);
+
+      if (balance.balanceSmallest < required) {
+        return {
+          charged: false,
+          blocked: true,
+          reason: `Insufficient ${token.symbol} balance for ${toolName}. Required ${rule.amount} ${token.symbol}.`
+        };
+      }
+
+      const audit = buildAuditContext(extra, toolName);
+      await recordFee({
+        agentId: effectiveAgentId,
+        chainId: rule.chainId,
+        tokenSymbol: token.symbol,
+        amount,
+        source: 'task',
+        metadata: {
+          pricingRule: rule,
+          ...identityMeta
+        },
+        ...audit
+      }, ctx);
+
+      return { charged: true, rule };
+    } catch (error) {
+      return { charged: false, blocked: true, reason: error.message };
+    }
+  };
+
   // Wrap tool registration with permission and telemetry enforcement
   const tool = (name, description, schema, handler) => {
-    return sdkTool(name, description, schema, async (args) => {
+    return sdkTool(name, description, schema, async (args, extra) => {
       let nextArgs = args;
 
       if (hookRunner?.hasHooks?.('before_tool_call')) {
         const hookResult = await hookRunner.run('before_tool_call', {
           tool: name,
           params: nextArgs,
-          allowApply
+          allowApply,
+          requestId: extra?.requestId,
+          sessionId: extra?.sessionId
         });
         if (hookResult?.params) nextArgs = hookResult.params;
         if (hookResult?.blocked || hookResult?.allowed === false) {
@@ -194,14 +322,30 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
         };
       }
 
+      const charge = await maybeChargeForTool(name, extra);
+      if (charge?.blocked) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: charge.reason || 'Treasury charge blocked',
+              tool: name
+            })
+          }],
+          isError: true
+        };
+      }
+
       const wrapped = wrapWithTelemetry(name, handler);
       try {
-        const result = await wrapped(nextArgs);
+        const result = await wrapped(nextArgs, extra);
         if (hookRunner?.hasHooks?.('after_tool_call')) {
           await hookRunner.run('after_tool_call', {
             tool: name,
             params: nextArgs,
-            result
+            result,
+            requestId: extra?.requestId,
+            sessionId: extra?.sessionId
           });
         }
         return result;
@@ -210,7 +354,9 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
           await hookRunner.run('after_tool_call', {
             tool: name,
             params: nextArgs,
-            error: error.message
+            error: error.message,
+            requestId: extra?.requestId,
+            sessionId: extra?.sessionId
           });
         }
         throw error;
@@ -310,7 +456,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
           phone: z.string().optional().describe('Customer phone number'),
           acceptsMarketing: z.boolean().optional().default(false).describe('Whether customer accepts marketing')
         },
-        async (args) => {
+        async (args, extra) => {
           if (!allowApply) {
             return {
               content: [{
@@ -453,7 +599,7 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
           currency: z.string().optional().default('USD').describe('Currency code'),
           notes: z.string().optional().describe('Order notes')
         },
-        async (args) => {
+        async (args, extra) => {
           if (!allowApply) {
             return {
               content: [{
@@ -5213,9 +5359,10 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             };
           }
           try {
+            const effectiveAgentId = await resolveTreasuryAgentId();
             const { executePayment, getExplorerTxUrl } = await import('./chains/index.js');
             const result = await executePayment({
-              agentId: 'default',
+              agentId: effectiveAgentId,
               chainId: args.chain || 'solana',
               toAddress: args.toAddress,
               amount: args.amount,
@@ -5231,6 +5378,33 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
             });
 
             if (result.success) {
+              try {
+                const chainId = args.chain || 'solana';
+                const { getDefaultStablecoin } = await import('./chains/index.js');
+                const { loadTreasuryContext, recordWithdrawal } = await import('./treasury/index.js');
+                const ctx = await loadTreasuryContext(treasuryContextOptions);
+                const audit = buildAuditContext(extra, 'create_stablecoin_payment');
+                const defaultStablecoin = getDefaultStablecoin(chainId);
+                const identityMeta = await buildTreasuryIdentityMetadata();
+                await recordWithdrawal({
+                  agentId: effectiveAgentId,
+                  chainId,
+                  tokenSymbol: args.token || defaultStablecoin?.symbol,
+                  amount: args.amount,
+                  txId: result.txHash || null,
+                  toAddress: args.toAddress,
+                  source: 'stablecoin_payment',
+                  metadata: {
+                    orderId: args.orderId || null,
+                    customerId: args.customerId || null,
+                    memo: args.memo || null,
+                    ...identityMeta
+                  },
+                  ...audit
+                }, ctx);
+              } catch (auditError) {
+                console.warn(`[Treasury] Failed to record stablecoin payment: ${auditError.message}`);
+              }
               return {
                 content: [{
                   type: 'text',
@@ -5290,6 +5464,431 @@ export function createStatesetMcpServer({ commerce, allowApply = false, telemetr
                   chains,
                   recommended: 'solana (USDC) for liquidity, set_chain (ssUSD) for yield',
                 }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // Treasury Tools (Agent Funding + Token Purchases)
+      // ============================================================================
+      tool(
+        'treasury_balance',
+        'Get treasury balances for an agent.',
+        {
+          agentId: z.string().optional().describe('Agent ID (default: default)'),
+          chainId: z.string().optional().describe('Chain ID'),
+          token: z.string().optional().describe('Token symbol (requires chainId)')
+        },
+        async ({ agentId = 'default', chainId, token }, extra) => {
+          try {
+            const { loadTreasuryContext, resolveToken, computeBalanceDisplay } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+
+            if (token && !chainId) {
+              return { content: [{ type: 'text', text: JSON.stringify({ error: 'token requires chainId' }) }] };
+            }
+
+            if (token) {
+              const resolved = resolveToken(chainId, token, ctx.registry);
+              if (!resolved) {
+                return { content: [{ type: 'text', text: JSON.stringify({ error: `Unknown token ${token} on ${chainId}` }) }] };
+              }
+              const balance = ctx.store.getBalance({
+                agentId,
+                chainId,
+                tokenSymbol: resolved.symbol,
+                tokenDecimals: resolved.decimals
+              });
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    agentId,
+                    chainId,
+                    token: resolved.symbol,
+                    balance: computeBalanceDisplay(balance.balanceSmallest, resolved.decimals),
+                    balanceSmallest: balance.balanceSmallest.toString()
+                  }, null, 2)
+                }]
+              };
+            }
+
+            const balances = ctx.store.getBalances({ agentId, chainId: chainId || null });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  agentId,
+                  chainId: chainId || null,
+                  balances: balances.map(b => ({
+                    chainId: b.chainId,
+                    token: b.tokenSymbol,
+                    balance: computeBalanceDisplay(b.balanceSmallest, b.tokenDecimals || 0),
+                    balanceSmallest: b.balanceSmallest.toString()
+                  }))
+                }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'treasury_ledger',
+        'List recent treasury transactions for an agent.',
+        {
+          agentId: z.string().describe('Agent ID'),
+          chainId: z.string().optional().describe('Chain ID'),
+          token: z.string().optional().describe('Token symbol'),
+          taskId: z.string().optional().describe('Task id filter'),
+          requestId: z.string().optional().describe('Request id filter'),
+          limit: z.number().optional().default(25).describe('Max entries')
+        },
+        async ({ agentId, chainId, token, taskId, requestId, limit }, extra) => {
+          try {
+            const { loadTreasuryContext } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+            const entries = ctx.store.list({
+              agentId,
+              chainId: chainId || null,
+              tokenSymbol: token ? token.toUpperCase() : null,
+              taskId: taskId || null,
+              requestId: requestId || null,
+              limit
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, count: entries.length, entries }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'treasury_deposit',
+        'Record a treasury deposit for an agent (funds received).',
+        {
+          agentId: z.string().describe('Agent ID'),
+          chainId: z.string().describe('Chain ID'),
+          token: z.string().describe('Token symbol'),
+          amount: z.number().describe('Amount to deposit'),
+          txId: z.string().optional().describe('Transaction hash'),
+          fromAddress: z.string().optional().describe('Sender wallet address')
+        },
+        async ({ agentId, chainId, token, amount, txId, fromAddress }, extra) => {
+          try {
+            const { loadTreasuryContext, recordDeposit } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+            const audit = buildAuditContext(extra, 'treasury_deposit');
+            const entry = await recordDeposit({
+              agentId,
+              chainId,
+              tokenSymbol: token,
+              amount,
+              txId: txId || null,
+              fromAddress: fromAddress || null,
+              source: 'mcp',
+              ...audit
+            }, ctx);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, entry }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'treasury_buy',
+        'Purchase tokens using treasury stablecoin balances.',
+        {
+          agentId: z.string().describe('Agent ID'),
+          chainId: z.string().describe('Chain ID'),
+          toToken: z.string().describe('Target token symbol'),
+          amount: z.number().describe('Stablecoin amount to spend'),
+          fromToken: z.string().optional().describe('Funding token symbol (default: chain stablecoin)'),
+          priceUsd: z.number().optional().describe('Override token price in USD'),
+          slippagePct: z.number().optional().default(1).describe('Slippage percentage')
+        },
+        async ({ agentId, chainId, toToken, amount, fromToken, priceUsd, slippagePct }, extra) => {
+          try {
+            const { loadTreasuryContext, buyTokens } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+            const audit = buildAuditContext(extra, 'treasury_buy');
+            const result = await buyTokens({
+              agentId,
+              chainId,
+              fromSymbol: fromToken || null,
+              toSymbol: toToken,
+              amount,
+              priceUsd,
+              slippagePct,
+              ...audit
+            }, ctx);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, result }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'treasury_list_tokens',
+        'List available tokens from chain config and custom registry.',
+        {
+          chainId: z.string().optional().describe('Chain ID')
+        },
+        async ({ chainId }) => {
+          try {
+            const { loadTreasuryContext, listTokens } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+            const tokens = listTokens(chainId || null, ctx.registry);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, count: tokens.length, tokens }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'treasury_register_token',
+        'Add or update a token in the treasury registry.',
+        {
+          symbol: z.string().describe('Token symbol'),
+          chainId: z.string().describe('Chain ID'),
+          decimals: z.number().describe('Token decimals'),
+          address: z.string().optional().describe('Token contract address'),
+          priceUsd: z.number().optional().describe('Token price in USD'),
+          issuerAgentId: z.string().optional().describe('Issuing agent ID')
+        },
+        async ({ symbol, chainId, decimals, address, priceUsd, issuerAgentId }) => {
+          try {
+            const { loadTreasuryContext, addRegistryToken } = await import('./treasury/index.js');
+            const ctx = await loadTreasuryContext(treasuryContextOptions);
+            const updated = await addRegistryToken(ctx.registryPath, ctx.registry, {
+              symbol,
+              chainId,
+              decimals,
+              address: address || null,
+              priceUsd: priceUsd ?? null,
+              issuerAgentId: issuerAgentId || null
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, tokens: updated.tokens }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      // ============================================================================
+      // ERC-8004 Identity Registry
+      // ============================================================================
+      tool(
+        'erc8004_register_identity',
+        'Register or update an ERC-8004 agent identity record.',
+        {
+          registry: z.string().describe('Agent registry URI'),
+          agentId: z.string().describe('Agent ID'),
+          agentUri: z.string().describe('Agent URI'),
+          agentWallet: z.string().optional().describe('Agent wallet address'),
+          ownerAddress: z.string().optional().describe('Owner address'),
+          agentCardId: z.string().optional().describe('Agent card ID'),
+          registration: z.string().optional().describe('Registration payload'),
+          registrationHash: z.string().optional().describe('Registration hash'),
+          walletProofType: z.enum(['eip712', 'erc1271']).optional().describe('Wallet proof type'),
+          walletProof: z.string().optional().describe('Wallet proof signature'),
+          walletProofChainId: z.number().optional().describe('Wallet proof chain id'),
+          walletProofDeadline: z.string().optional().describe('Wallet proof deadline (ISO)'),
+          active: z.boolean().optional().describe('Active flag')
+        },
+        async (args, extra) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Registering ERC-8004 identity requires --apply flag.',
+                  wouldRegister: args
+                })
+              }]
+            };
+          }
+          try {
+            const { registerIdentity } = await import('./erc8004/index.js');
+            const identity = registerIdentity(dbPath, {
+              agentRegistry: args.registry,
+              agentId: args.agentId,
+              agentUri: args.agentUri,
+              agentWallet: args.agentWallet || null,
+              ownerAddress: args.ownerAddress || null,
+              agentCardId: args.agentCardId || null,
+              registration: args.registration || null,
+              registrationHash: args.registrationHash || null,
+              walletProofType: args.walletProofType || null,
+              walletProof: args.walletProof || null,
+              walletProofChainId: args.walletProofChainId || null,
+              walletProofDeadline: args.walletProofDeadline || null,
+              active: args.active
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, identity }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'erc8004_link_wallet',
+        'Link a wallet to an existing ERC-8004 identity record.',
+        {
+          registry: z.string().describe('Agent registry URI'),
+          agentId: z.string().describe('Agent ID'),
+          agentWallet: z.string().describe('Wallet address'),
+          walletProofType: z.enum(['eip712', 'erc1271']).optional().describe('Wallet proof type'),
+          walletProof: z.string().optional().describe('Wallet proof signature'),
+          walletProofChainId: z.number().optional().describe('Wallet proof chain id'),
+          walletProofDeadline: z.string().optional().describe('Wallet proof deadline (ISO)')
+        },
+        async (args, extra) => {
+          if (!allowApply) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Linking ERC-8004 wallet requires --apply flag.',
+                  wouldLink: args
+                })
+              }]
+            };
+          }
+          try {
+            const { setAgentWallet } = await import('./erc8004/index.js');
+            const identity = setAgentWallet(dbPath, {
+              agentRegistry: args.registry,
+              agentId: args.agentId,
+              agentWallet: args.agentWallet,
+              walletProofType: args.walletProofType || null,
+              walletProof: args.walletProof || null,
+              walletProofChainId: args.walletProofChainId || null,
+              walletProofDeadline: args.walletProofDeadline || null
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, identity }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'erc8004_get_identity',
+        'Get an ERC-8004 identity by registry + agent id.',
+        {
+          registry: z.string().describe('Agent registry URI'),
+          agentId: z.string().describe('Agent ID')
+        },
+        async ({ registry, agentId }) => {
+          try {
+            const { getIdentity } = await import('./erc8004/index.js');
+            const identity = getIdentity(dbPath, registry, agentId);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, identity }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'erc8004_get_by_wallet',
+        'Get an ERC-8004 identity by wallet address.',
+        {
+          wallet: z.string().describe('Wallet address')
+        },
+        async ({ wallet }) => {
+          try {
+            const { getIdentityByWallet } = await import('./erc8004/index.js');
+            const identity = getIdentityByWallet(dbPath, wallet);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, identity }, null, 2)
+              }]
+            };
+          } catch (error) {
+            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
+          }
+        }
+      ),
+
+      tool(
+        'erc8004_list_identities',
+        'List ERC-8004 identities.',
+        {
+          registry: z.string().optional().describe('Agent registry URI'),
+          agentId: z.string().optional().describe('Agent ID'),
+          wallet: z.string().optional().describe('Wallet address'),
+          active: z.boolean().optional().describe('Only active identities'),
+          limit: z.number().optional().default(50).describe('Max results')
+        },
+        async ({ registry, agentId, wallet, active, limit }) => {
+          try {
+            const { listIdentities } = await import('./erc8004/index.js');
+            const identities = listIdentities(dbPath, {
+              agentRegistry: registry || null,
+              agentId: agentId || null,
+              agentWallet: wallet || null,
+              active: active === undefined ? null : active,
+              limit
+            });
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, count: identities.length, identities }, null, 2)
               }]
             };
           } catch (error) {
@@ -6670,6 +7269,19 @@ export const TOOL_NAMES = [
   'mcp__stateset-commerce__create_payment',
   'mcp__stateset-commerce__complete_payment',
   'mcp__stateset-commerce__create_refund',
+  // Treasury
+  'mcp__stateset-commerce__treasury_balance',
+  'mcp__stateset-commerce__treasury_ledger',
+  'mcp__stateset-commerce__treasury_deposit',
+  'mcp__stateset-commerce__treasury_buy',
+  'mcp__stateset-commerce__treasury_list_tokens',
+  'mcp__stateset-commerce__treasury_register_token',
+  // ERC-8004
+  'mcp__stateset-commerce__erc8004_register_identity',
+  'mcp__stateset-commerce__erc8004_link_wallet',
+  'mcp__stateset-commerce__erc8004_get_identity',
+  'mcp__stateset-commerce__erc8004_get_by_wallet',
+  'mcp__stateset-commerce__erc8004_list_identities',
   // x402 Protocol (A2A + Metered Billing)
   'mcp__stateset-commerce__x402_create_payment_intent',
   'mcp__stateset-commerce__x402_sign_intent',

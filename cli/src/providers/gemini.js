@@ -86,7 +86,7 @@ export class GeminiProvider extends ModelProvider {
       text,
       model,
       provider: 'gemini',
-      cost: this._estimateCost(model, usage),
+      cost: this.estimateCost(usage, model),
       usage,
     };
   }
@@ -204,5 +204,10 @@ export class GeminiProvider extends ModelProvider {
     if (!p) return null;
 
     return (usage.inputTokens * p.input + usage.outputTokens * p.output) / 1_000_000;
+  }
+
+  estimateCost(usage, modelOverride = null) {
+    const resolvedModel = this.resolveModel(modelOverride);
+    return this._estimateCost(resolvedModel, usage);
   }
 }

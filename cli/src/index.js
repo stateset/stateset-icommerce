@@ -60,6 +60,34 @@ export {
   X402_MCP_TOOL_NAMES
 } from './x402-mcp-server.js';
 
+// ERC-8004 Identity Registry
+export {
+  registerIdentity as registerErc8004Identity,
+  setAgentWallet as setErc8004Wallet,
+  getIdentity as getErc8004Identity,
+  getIdentityByWallet as getErc8004IdentityByWallet,
+  listIdentities as listErc8004Identities
+} from './erc8004/index.js';
+
+// Treasury
+export {
+  loadTreasuryContext,
+  resolveToken as resolveTreasuryToken,
+  listTokens as listTreasuryTokens,
+  addRegistryToken as addTreasuryToken,
+  removeRegistryToken as removeTreasuryToken,
+  addPricingRule as addTreasuryPricingRule,
+  removePricingRuleEntry as removeTreasuryPricingRule,
+  getToolPricing as getTreasuryToolPricing,
+  computeBalanceDisplay as computeTreasuryBalanceDisplay,
+  recordDeposit as recordTreasuryDeposit,
+  recordWithdrawal as recordTreasuryWithdrawal,
+  recordFee as recordTreasuryFee,
+  buyTokens as buyTreasuryTokens,
+  syncOnChainBalance as syncTreasuryOnChainBalance,
+  ensureAgentWallet as ensureTreasuryAgentWallet
+} from './treasury/index.js';
+
 // Sync (Verifiable Event Sync)
 export {
   Outbox,

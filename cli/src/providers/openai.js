@@ -82,7 +82,7 @@ export class OpenAIProvider extends ModelProvider {
       text,
       model,
       provider: 'openai',
-      cost: this._estimateCost(model, usage),
+      cost: this.estimateCost(usage, model),
       usage,
     };
   }
@@ -155,5 +155,10 @@ export class OpenAIProvider extends ModelProvider {
     if (!p) return null;
 
     return (usage.inputTokens * p.input + usage.outputTokens * p.output) / 1_000_000;
+  }
+
+  estimateCost(usage, modelOverride = null) {
+    const resolvedModel = this.resolveModel(modelOverride);
+    return this._estimateCost(resolvedModel, usage);
   }
 }

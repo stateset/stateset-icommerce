@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.5.2
+**Version:** 0.6.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -171,6 +171,56 @@ stateset-pay --apply --to 9WzD...WWWM --amount 50 --chain solana
 
 # Machine-readable output
 stateset-pay --balance --chain solana --json --output balance.json
+```
+
+### Treasury (Funding + Token Purchases)
+
+```bash
+# Initialize treasury storage
+stateset-treasury init
+
+# Show an agent wallet to receive funds
+stateset-treasury wallet --agent default --chain base
+
+# Record a USDC deposit (use --apply to commit)
+stateset-treasury deposit --agent default --chain base --token USDC --amount 250 --apply
+
+# Enable LLM billing from treasury (USDC)
+export TREASURY_BILLING=true
+export TREASURY_CHAIN=base
+export TREASURY_TOKEN=USDC
+export TREASURY_AGENT=default
+export TREASURY_ERC8004_REGISTRY=https://registry.example
+
+# Register ERC-8004 identity (once)
+stateset-treasury identity register --registry https://registry.example --agent-id default --uri https://agents.example/default --apply
+
+# Run an agent call (LLM usage will debit USDC)
+stateset "summarize today's orders"
+
+# Or pass treasury config via CLI flags
+stateset --treasury --treasury-chain base --treasury-token USDC --treasury-agent default \
+  --treasury-erc8004-registry https://registry.example \
+  "summarize today's orders"
+
+# Optional: register a custom agent token (price used for mock swaps)
+stateset-treasury token add --symbol AGENTX --chain set_chain --decimals 18 --price 0.25 --apply
+
+# Optional: buy tokens using treasury funds
+stateset-treasury buy --agent default --chain set_chain --to AGENTX --amount 100 --apply
+
+# Check balances and ledger
+stateset-treasury balance --agent default --chain base
+stateset-treasury ledger --agent default --limit 10
+stateset-treasury ledger --agent default --task <tool-call-id>
+
+# Price tools in tokens (auto-debit on tool calls when --apply is set)
+stateset-treasury pricing set --tool list_orders --chain base --token USDC --amount 0.05 --apply
+stateset-treasury pricing list
+
+# Link ERC-8004 identity to agent wallet
+stateset-treasury identity register --registry https://registry.example --agent-id agent-001 --uri https://agents.example/agent-001 --apply
+stateset-treasury identity link-wallet --registry https://registry.example --agent-id agent-001 --chain set_chain --apply
 ```
 
 ### Install Gateway Service

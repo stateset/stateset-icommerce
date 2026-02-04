@@ -11,6 +11,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
 import { DEFAULT_MODEL, THINK_LEVELS } from './config.js';
 import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
@@ -92,6 +93,12 @@ function extractCompactionSummary(compactedHistory) {
   if (!summaryMsg) return null;
   const text = extractHistoryText(summaryMsg.content ?? summaryMsg.message?.content ?? '');
   return text || null;
+}
+
+function estimateTokensFromText(text) {
+  if (!text) return 0;
+  const len = typeof text === 'string' ? text.length : String(text).length;
+  return Math.max(1, Math.ceil(len / 4));
 }
 
 // ============================================================================
@@ -1535,7 +1542,8 @@ export async function runAgentLoop({
   hookRunner = null,
   enablePlugins = null,
   contextGuardOptions = null,
-  onEvent = null
+  onEvent = null,
+  treasury = null
 }) {
   const resolvedSettings = loadAgentSettings(settings || {});
   const retrySettings = { ...resolvedSettings.retry, ...(retry || {}) };
@@ -1551,11 +1559,58 @@ export async function runAgentLoop({
   const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
   const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
   const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+  const envTreasuryEnabled = process.env.TREASURY_BILLING === 'true';
+  const envTreasuryChain = process.env.TREASURY_CHAIN || null;
+  const envTreasuryToken = process.env.TREASURY_TOKEN || null;
+  const envTreasuryAgent = process.env.TREASURY_AGENT || 'default';
+  const envTreasuryDb = process.env.TREASURY_DB || null;
+  const envTreasuryLlm = process.env.TREASURY_LLM_BILLING === 'true';
+  const envTreasuryRegistry = process.env.TREASURY_ERC8004_REGISTRY || null;
+  const envTreasuryRegistryDb = process.env.TREASURY_ERC8004_DB || null;
 
   // Determine provider/model/think level with session restore
   let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
   let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
   let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+
+  const treasuryConfig = treasury
+    ? { ...treasury }
+    : (envTreasuryEnabled ? {
+      enabled: true,
+      chainId: envTreasuryChain || 'set_chain',
+      tokenSymbol: envTreasuryToken || 'USDC',
+      agentId: envTreasuryAgent,
+      dbPath: envTreasuryDb,
+      chargeLlm: envTreasuryLlm || envTreasuryEnabled
+    } : null);
+
+  if (treasuryConfig) {
+    if (!treasuryConfig.chainId && envTreasuryChain) {
+      treasuryConfig.chainId = envTreasuryChain;
+    }
+    if (!treasuryConfig.tokenSymbol && envTreasuryToken) {
+      treasuryConfig.tokenSymbol = envTreasuryToken;
+    }
+    if (!treasuryConfig.agentId && envTreasuryAgent) {
+      treasuryConfig.agentId = envTreasuryAgent;
+    }
+    if (!treasuryConfig.dbPath && envTreasuryDb) {
+      treasuryConfig.dbPath = envTreasuryDb;
+    }
+    if (treasuryConfig.chargeLlm === undefined) {
+      treasuryConfig.chargeLlm = envTreasuryLlm || envTreasuryEnabled || true;
+    }
+    if (!treasuryConfig.erc8004Registry && envTreasuryRegistry) {
+      treasuryConfig.erc8004Registry = envTreasuryRegistry;
+    }
+    if (!treasuryConfig.erc8004DbPath && envTreasuryRegistryDb) {
+      treasuryConfig.erc8004DbPath = envTreasuryRegistryDb;
+    }
+  }
+
+  let treasuryState = null;
+  let treasuryCharge = null;
+  let effectiveMaxBudgetUsd = maxBudgetUsd;
 
   const useSessionStore = resolvedSettings.sessionStore?.enabled !== false;
   let sessionStoreInstance = sessionStore || null;
@@ -1847,10 +1902,12 @@ export async function runAgentLoop({
   // Create MCP server with telemetry and permissions
   const mcpServer = createStatesetMcpServer({
     commerce,
+    dbPath,
     allowApply,
     telemetry: telem,
     permissionGate: gate,
-    hookRunner: hooks
+    hookRunner: hooks,
+    treasury: treasuryConfig
   });
 
   const mcpServers = {
@@ -1890,6 +1947,125 @@ export async function runAgentLoop({
     routingResult.alternatives
   );
 
+  if (treasuryConfig?.enabled) {
+    try {
+      const { loadTreasuryContext, resolveToken } = await import('./treasury/index.js');
+      const { fromSmallestUnit } = await import('./chains/config.js');
+      const ctx = await loadTreasuryContext({
+        dbPath: treasuryConfig.dbPath || undefined
+      });
+      const chainId = treasuryConfig.chainId || 'set_chain';
+      const tokenSymbol = treasuryConfig.tokenSymbol || 'USDC';
+      let agentId = treasuryConfig.agentId || 'default';
+      let erc8004Identity = null;
+      const erc8004Registry = treasuryConfig.erc8004Registry || null;
+      if (erc8004Registry) {
+        const { getIdentity } = await import('./erc8004/index.js');
+        const identityDbPath = treasuryConfig.erc8004DbPath || dbPath;
+        erc8004Identity = getIdentity(identityDbPath, erc8004Registry, agentId);
+        if (!erc8004Identity) {
+          throw new Error(`ERC-8004 identity not found for ${erc8004Registry}:${agentId}`);
+        }
+        agentId = erc8004Identity.agent_id;
+      }
+      const token = resolveToken(chainId, tokenSymbol, ctx.registry);
+      if (!token) {
+        throw new Error(`Unknown treasury token ${tokenSymbol} on ${chainId}.`);
+      }
+      const balance = ctx.store.getBalance({
+        agentId,
+        chainId,
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals
+      });
+      const balanceDisplay = fromSmallestUnit(balance.balanceSmallest, token.decimals);
+      const balanceUsd = Number.parseFloat(balanceDisplay);
+      if (!Number.isFinite(balanceUsd) || balanceUsd <= 0) {
+        throw new Error(`Treasury balance is empty for ${token.symbol} on ${chainId}.`);
+      }
+      const resolvedBudget = maxBudgetUsd ? Math.min(Number(maxBudgetUsd), balanceUsd) : balanceUsd;
+      if (!Number.isFinite(resolvedBudget) || resolvedBudget <= 0) {
+        throw new Error(`Treasury budget unavailable for ${token.symbol} on ${chainId}.`);
+      }
+      effectiveMaxBudgetUsd = resolvedBudget;
+      treasuryState = {
+        enabled: true,
+        chargeLlm: treasuryConfig.chargeLlm !== false,
+        ctx,
+        agentId,
+        chainId,
+        token,
+        balanceUsd,
+        requestId: randomUUID(),
+        erc8004Registry,
+        erc8004Identity
+      };
+    } catch (error) {
+      throw new Error(`Treasury billing failed: ${error.message}`);
+    }
+  }
+
+  const recordTreasuryLlmCharge = async ({ costUsd, sessionId: chargeSessionId, provider: chargeProvider, model: chargeModel, usage }) => {
+    if (!treasuryState?.enabled || !treasuryState.chargeLlm) return null;
+    const amount = Number(costUsd);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    try {
+      const { recordFee } = await import('./treasury/index.js');
+      const erc8004Meta = treasuryState.erc8004Identity
+        ? {
+          erc8004: {
+            registry: treasuryState.erc8004Registry,
+            agentId: treasuryState.erc8004Identity.agent_id,
+            wallet: treasuryState.erc8004Identity.agent_wallet,
+            owner: treasuryState.erc8004Identity.owner_address
+          }
+        }
+        : {};
+      const entry = await recordFee({
+        agentId: treasuryState.agentId,
+        chainId: treasuryState.chainId,
+        tokenSymbol: treasuryState.token.symbol,
+        amount,
+        source: 'llm',
+        metadata: {
+          provider: chargeProvider,
+          model: chargeModel,
+          usage: usage || null,
+          costUsd: amount,
+          ...erc8004Meta
+        },
+        taskId: treasuryState.requestId,
+        sessionId: chargeSessionId || null,
+        toolName: 'llm_inference',
+        requestId: treasuryState.requestId
+      }, treasuryState.ctx);
+      telem.logCustomEvent('treasury_llm_charge', {
+        amount,
+        token: treasuryState.token.symbol,
+        chainId: treasuryState.chainId,
+        provider: chargeProvider,
+        model: chargeModel,
+        sessionId: chargeSessionId || null,
+        requestId: treasuryState.requestId
+      });
+      return {
+        eventId: entry.event_id,
+        amount: entry.amount_display,
+        amountSmallest: entry.amount_smallest,
+        token: entry.token_symbol,
+        chainId: entry.chain_id
+      };
+    } catch (err) {
+      telem.logCustomEvent('treasury_llm_charge_failed', {
+        error: err.message,
+        amount,
+        provider: chargeProvider,
+        model: chargeModel
+      });
+      return null;
+    }
+  };
+
   // Build options
   const thinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
   const systemPrompt = systemPromptOverride || agentConfig.systemPrompt;
@@ -1914,7 +2090,7 @@ export async function runAgentLoop({
     // v0.2.8: Streaming partial messages
     ...(streaming ? { includePartialMessages: true } : {}),
     // v0.2.8: Budget controls
-    ...(maxBudgetUsd ? { maxBudgetUsd: parseFloat(maxBudgetUsd) } : {}),
+    ...(effectiveMaxBudgetUsd ? { maxBudgetUsd: parseFloat(effectiveMaxBudgetUsd) } : {}),
     ...(claudeEnv ? { env: claudeEnv } : {}),
     ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
   };
@@ -1955,6 +2131,67 @@ export async function runAgentLoop({
       if (!providerApiKey && typeof getApiKey === 'function') {
         providerApiKey = await getApiKey(effectiveProvider);
       }
+      let providerMaxTokens = null;
+      let treasuryBudgetUsd = null;
+      if (treasuryState?.enabled) {
+        treasuryBudgetUsd = effectiveMaxBudgetUsd ?? treasuryState.balanceUsd;
+        if (!Number.isFinite(treasuryBudgetUsd) || treasuryBudgetUsd <= 0) {
+          throw new Error(`Treasury balance is empty for ${treasuryState.token.symbol} on ${treasuryState.chainId}.`);
+        }
+
+        if (typeof providerInstance.estimateCost === 'function') {
+          const inputEstimate = estimateTokensFromText(systemPrompt)
+            + estimateTokensFromText(requestWithHistory);
+          const inputTokensEstimate = Math.ceil(inputEstimate * 1.3) + 32;
+          const safetyBudget = treasuryBudgetUsd * 0.95;
+          const defaultMaxTokens = 4096;
+
+          const estimateCost = (outputTokens) => providerInstance.estimateCost(
+            { inputTokens: inputTokensEstimate, outputTokens },
+            effectiveModel
+          );
+
+          const baseCost = estimateCost(0);
+          if (baseCost == null) {
+            telem.logCustomEvent('treasury_llm_estimate_unavailable', {
+              provider: effectiveProvider,
+              model: effectiveModel
+            });
+          } else if (baseCost > safetyBudget) {
+            throw new Error(`Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for estimated input tokens.`);
+          } else {
+            let low = 0;
+            let high = defaultMaxTokens;
+            let best = 0;
+            while (low <= high) {
+              const mid = Math.floor((low + high) / 2);
+              const cost = estimateCost(mid);
+              if (cost == null) break;
+              if (cost <= safetyBudget) {
+                best = mid;
+                low = mid + 1;
+              } else {
+                high = mid - 1;
+              }
+            }
+            if (best <= 0) {
+              const oneTokenCost = estimateCost(1);
+              if (oneTokenCost != null && oneTokenCost <= safetyBudget) {
+                providerMaxTokens = 1;
+              } else {
+                throw new Error(`Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for any output tokens.`);
+              }
+            } else {
+              providerMaxTokens = best;
+            }
+          }
+        } else {
+          telem.logCustomEvent('treasury_llm_estimate_unavailable', {
+            provider: effectiveProvider,
+            model: effectiveModel
+          });
+        }
+      }
       let assistantStarted = false;
       let partialText = '';
       const handlePartialMessage = (data) => {
@@ -1982,9 +2219,14 @@ export async function runAgentLoop({
         onPartialMessage: streaming ? handlePartialMessage : onPartialMessage,
         apiKey: providerApiKey,
         signal: effectiveSignal,
+        ...(providerMaxTokens ? { maxTokens: providerMaxTokens } : {})
       });
       process.argv = savedArgv;
       let providerResponse = providerResult.text;
+      let budgetExceeded = false;
+      if (treasuryState?.enabled && providerResult.cost != null && treasuryBudgetUsd != null) {
+        budgetExceeded = providerResult.cost > treasuryBudgetUsd;
+      }
       if (hooks?.hasHooks?.('before_send')) {
         const hookResult = await hooks.run('before_send', {
           request: effectiveRequest,
@@ -2028,7 +2270,14 @@ export async function runAgentLoop({
         provider: effectiveProvider,
         model: effectiveModel,
         cost: providerResult.cost || null,
-        budgetExceeded: false
+        budgetExceeded
+      });
+      treasuryCharge = await recordTreasuryLlmCharge({
+        costUsd: providerResult.cost,
+        sessionId: null,
+        provider: effectiveProvider,
+        model: providerResult.model || effectiveModel,
+        usage: providerResult.usage
       });
       return {
         response: responseForUser,
@@ -2039,6 +2288,12 @@ export async function runAgentLoop({
         provider: effectiveProvider,
         cost: providerResult.cost || null,
         thinkLevel: effectiveThinkLevel,
+        budgetExceeded,
+        treasury: treasuryState ? {
+          requestId: treasuryState.requestId,
+          charge: treasuryCharge,
+          identity: treasuryState.erc8004Identity
+        } : undefined
       };
     }
 
@@ -2412,6 +2667,14 @@ export async function runAgentLoop({
       });
     }
 
+    treasuryCharge = await recordTreasuryLlmCharge({
+      costUsd: totalCost,
+      sessionId,
+      provider: effectiveProvider,
+      model: usedModel || effectiveModel,
+      usage: null
+    });
+
     emitEvent(onEvent, {
       type: 'agent_end',
       response: redactEventText(response),
@@ -2435,6 +2698,11 @@ export async function runAgentLoop({
       routing: routingResult,
       telemetry: telem.getSummary(),
       traceId: telem.traceId,
+      treasury: treasuryState ? {
+        requestId: treasuryState.requestId,
+        charge: treasuryCharge,
+        identity: treasuryState.erc8004Identity
+      } : undefined,
       provider: effectiveProvider,
       cost: totalCost,
       thinkLevel: effectiveThinkLevel,
@@ -2686,6 +2954,7 @@ export async function* runAgentStream({
 
   const mcpServer = createStatesetMcpServer({
     commerce,
+    dbPath,
     allowApply,
     permissionGate: gate,
     hookRunner: hooks
@@ -2974,6 +3243,7 @@ export function createAgentStreamSession(options = {}) {
 
   const mcpServer = createStatesetMcpServer({
     commerce,
+    dbPath,
     allowApply,
     permissionGate: gate,
     hookRunner: hooks

@@ -70,6 +70,16 @@ export class ModelProvider {
   }
 
   /**
+   * Estimate cost given token usage (if pricing is known).
+   * @param {{ inputTokens: number, outputTokens: number }} usage
+   * @param {string} [model]
+   * @returns {number|null}
+   */
+  estimateCost(usage, model = null) {
+    return null;
+  }
+
+  /**
    * List available models for this provider.
    * @returns {string[]}
    */

@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "AI-powered command-line interface for StateSet Commerce",
   "type": "module",
   "bin": {
@@ -32,6 +32,7 @@
     "stateset-tutorial": "./bin/stateset-tutorial.js",
     "stateset-autonomous": "./bin/stateset-autonomous.js",
     "stateset-pay": "./bin/stateset-pay.js",
+    "stateset-treasury": "./bin/stateset-treasury.js",
     "stateset-whatsapp": "./bin/stateset-whatsapp.js",
     "stateset-telegram": "./bin/stateset-telegram.js",
     "stateset-slack": "./bin/stateset-slack.js",

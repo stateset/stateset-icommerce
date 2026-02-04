@@ -74,6 +74,13 @@ OPTIONS:
   --memory           Enable conversation memory (overrides settings)
   --no-memory        Disable conversation memory (overrides settings)
   --x402             Enable x402 MCP tools (reads X402_* config/env)
+  --treasury         Enable treasury billing (stablecoins)
+  --treasury-chain <id>    Treasury chain id (e.g., base, solana)
+  --treasury-token <sym>   Treasury token symbol (e.g., USDC)
+  --treasury-agent <id>    Treasury agent id (default: default)
+  --treasury-db <path>     Treasury DB path
+  --treasury-erc8004-registry <uri>  ERC-8004 registry URI
+  --treasury-erc8004-db <path>       ERC-8004 db path (defaults to --db)
   --resume <id>      Resume a previous session
   --json             Output as JSON
   --format <fmt>     Output format: table, json, csv, yaml (default: table)
@@ -258,7 +265,7 @@ async function readStdin() {
 /**
  * Process a single request in batch mode
  */
-async function processBatchRequest(request, index, total, config, values, output, onConfirmRequired) {
+async function processBatchRequest(request, index, total, config, values, output, treasuryConfig, onConfirmRequired) {
   const startTime = Date.now();
 
   try {
@@ -269,6 +276,7 @@ async function processBatchRequest(request, index, total, config, values, output
       allowApply: config.apply,
       agent: values.agent,
       verbose: false,
+      treasury: treasuryConfig,
       onConfirmRequired,
       enableX402: values.x402
     });
@@ -282,6 +290,7 @@ async function processBatchRequest(request, index, total, config, values, output
       response: result.response,
       agent: result.agent,
       sessionId: result.sessionId,
+      treasury: result.treasury,
       duration
     };
   } catch (error) {
@@ -298,7 +307,7 @@ async function processBatchRequest(request, index, total, config, values, output
 /**
  * Process requests sequentially (maintains session context)
  */
-async function processSequential(requests, config, values, output, onConfirmRequired) {
+async function processSequential(requests, config, values, output, treasuryConfig, onConfirmRequired) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let sessionId = values.resume;
@@ -322,6 +331,7 @@ async function processSequential(requests, config, values, output, onConfirmRequ
         resumeSessionId: sessionId,
         agent: values.agent,
         verbose: false,
+        treasury: treasuryConfig,
         onConfirmRequired,
         enableX402: values.x402
       });
@@ -336,6 +346,7 @@ async function processSequential(requests, config, values, output, onConfirmRequ
         response: result.response,
         agent: result.agent,
         sessionId: result.sessionId,
+        treasury: result.treasury,
         duration: Date.now() - startTime
       };
 
@@ -367,7 +378,7 @@ async function processSequential(requests, config, values, output, onConfirmRequ
 /**
  * Process requests in parallel with controlled concurrency
  */
-async function processParallel(requests, concurrency, config, values, output, onConfirmRequired) {
+async function processParallel(requests, concurrency, config, values, output, treasuryConfig, onConfirmRequired) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let completed = 0;
@@ -398,6 +409,7 @@ async function processParallel(requests, concurrency, config, values, output, on
         config,
         values,
         output,
+        treasuryConfig,
         onConfirmRequired
       );
 
@@ -436,7 +448,7 @@ async function processParallel(requests, concurrency, config, values, output, on
  * Handle batch mode - process multiple requests from stdin or file
  * Supports both sequential (default) and parallel processing
  */
-async function handleBatchMode(values, config, output) {
+async function handleBatchMode(values, config, output, treasuryConfig) {
   const fs = await import('node:fs/promises');
   const isJsonOutput = values.json || values.format === 'json';
   const isQuiet = values.quiet || isJsonOutput;
@@ -475,10 +487,10 @@ async function handleBatchMode(values, config, output) {
 
   if (parallelism > 0) {
     // Parallel processing mode
-    results = await processParallel(requests, parallelism, config, values, output, onConfirmRequired);
+    results = await processParallel(requests, parallelism, config, values, output, treasuryConfig, onConfirmRequired);
   } else {
     // Sequential processing mode (maintains session context)
-    results = await processSequential(requests, config, values, output, onConfirmRequired);
+    results = await processSequential(requests, config, values, output, treasuryConfig, onConfirmRequired);
   }
 
   // Sort results by original index for consistent output
@@ -494,6 +506,7 @@ async function handleBatchMode(values, config, output) {
         error: result.error,
         agent: result.agent,
         sessionId: result.sessionId,
+        treasury: result.treasury,
         duration: result.duration
       }));
     } else if (!isQuiet && parallelism > 0) {
@@ -556,6 +569,13 @@ async function main() {
       memory: { type: 'boolean', default: false },
       noMemory: { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
+      treasury: { type: 'boolean', default: false },
+      treasuryChain: { type: 'string' },
+      treasuryToken: { type: 'string' },
+      treasuryAgent: { type: 'string' },
+      treasuryDb: { type: 'string' },
+      treasuryErc8004Registry: { type: 'string' },
+      treasuryErc8004Db: { type: 'string' },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
       format: { type: 'string', default: 'table' },
@@ -585,6 +605,24 @@ async function main() {
   const isJsonOutput = values.json || values.format === 'json';
   const isQuiet = values.quiet || isJsonOutput;
   const memoryOverride = values.noMemory ? false : (values.memory ? true : null);
+  const treasuryEnabled = Boolean(
+    values.treasury
+      || values.treasuryChain
+      || values.treasuryToken
+      || values.treasuryAgent
+      || values.treasuryDb
+      || values.treasuryErc8004Registry
+      || values.treasuryErc8004Db
+  );
+  const treasuryConfig = treasuryEnabled ? {
+    enabled: true,
+    chainId: values.treasuryChain,
+    tokenSymbol: values.treasuryToken,
+    agentId: values.treasuryAgent,
+    dbPath: values.treasuryDb,
+    erc8004Registry: values.treasuryErc8004Registry,
+    erc8004DbPath: values.treasuryErc8004Db
+  } : null;
 
   // Initialize output formatter
   const output = new RichOutput({ color: !isQuiet });
@@ -615,7 +653,7 @@ async function main() {
 
   // Handle batch/stdin modes
   if (values.stdin || values.batch) {
-    await handleBatchMode(values, config, output);
+    await handleBatchMode(values, config, output, treasuryConfig);
     return;
   }
 
@@ -690,6 +728,7 @@ async function main() {
       resumeSessionId: values.resume,
       agent: values.agent,
       verbose: config.verbose,
+      treasury: treasuryConfig,
       onConfirmRequired,
       // v0.2.8: Extended thinking, streaming, budget, provider
       thinkLevel,
@@ -729,6 +768,7 @@ async function main() {
       sessionId: result.sessionId,
       traceId: result.traceId,
       agent: result.agent,
+      treasury: result.treasury,
       routing: result.routing ? {
         agent: result.routing.primary.agent,
         confidence: result.routing.primary.confidence,
