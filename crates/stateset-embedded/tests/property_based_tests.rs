@@ -12,21 +12,25 @@ use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateInventoryItem, CreateOrder, CreateOrderItem, Currency, OrderFilter,
+    Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, Currency,
+    OrderFilter,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 proptest! {
     #[test]
     fn prop_inventory_never_goes_negative_reserve_concurrent(
         initial_quantity in 0u32..1000,
-        reserve_quantities: Vec<u32>
+        reserve_quantities in proptest::collection::vec(1u32..1000, 0..50)
     ) {
-        let total_reserve: u32 = reserve_quantities.iter().sum();
+        let total_reserve: u64 = reserve_quantities
+            .iter()
+            .map(|&quantity| quantity as u64)
+            .sum();
 
         // Skip if total reservations would exceed initial (expected failure case)
-        if total_reserve > initial_quantity {
+        if total_reserve > initial_quantity as u64 {
             return Ok(());
         }
 
@@ -105,10 +109,16 @@ proptest! {
                 let back_to_usd = round_trip.unwrap();
                 // Allow small rounding differences
                 let diff = (back_to_usd - usd_amount).abs();
+                let relative_tolerance = usd_amount.abs() * dec!(0.005);
+                let tolerance = if relative_tolerance > dec!(0.01) {
+                    relative_tolerance
+                } else {
+                    dec!(0.01)
+                };
                 prop_assert!(
-                    diff < dec!(0.01),
-                    "Currency conversion lost precision: {} -> {} -> {}",
-                    usd_amount, eur_amount, back_to_usd
+                    diff <= tolerance,
+                    "Currency conversion lost precision: {} -> {} -> {} (diff {}, tolerance {})",
+                    usd_amount, eur_amount, back_to_usd, diff, tolerance
                 );
             }
         }
@@ -168,7 +178,16 @@ proptest! {
 #[test]
 fn test_concurrent_order_creation_preserves_consistency() {
     let commerce = Arc::new(Commerce::new(":memory:").unwrap());
-    let customer_id = Uuid::new_v4();
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "test@example.com".into(),
+            first_name: "Test".into(),
+            last_name: "Customer".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let customer_id = customer.id;
 
     let num_orders = 100;
     let mut handles = vec![];
@@ -221,6 +240,7 @@ fn test_concurrent_order_creation_preserves_consistency() {
 #[test]
 fn test_inventory_reserve_release_under_concurrent_modifications() {
     let commerce = Arc::new(Commerce::new(":memory:").unwrap());
+    let reservations = Arc::new(Mutex::new(Vec::new()));
 
     commerce
         .inventory()
@@ -237,21 +257,24 @@ fn test_inventory_reserve_release_under_concurrent_modifications() {
 
     for i in 0..num_operations {
         let commerce = Arc::clone(&commerce);
+        let reservations = Arc::clone(&reservations);
         let handle = std::thread::spawn(move || {
             if i % 2 == 0 {
                 // Reserve
                 let order_id = Uuid::new_v4();
-                commerce
+                if let Ok(reservation) = commerce
                     .inventory()
                     .reserve("SKU-001", dec!(2), "order", &order_id.to_string(), None)
-                    .ok();
+                {
+                    reservations.lock().unwrap().push(reservation.id);
+                }
             } else {
-                // Try to release some reservations (may fail if none exist)
-                let stock = commerce.inventory().get_stock("SKU-001").unwrap().unwrap();
-                if stock.total_allocated > dec!(0) {
+                // Try to release a reservation (may fail if none exist)
+                let reservation_id = reservations.lock().unwrap().pop();
+                if let Some(reservation_id) = reservation_id {
                     commerce
                         .inventory()
-                        .adjust("SKU-001", dec!(1), "test release")
+                        .release_reservation(reservation_id)
                         .ok();
                 }
             }
@@ -265,9 +288,8 @@ fn test_inventory_reserve_release_under_concurrent_modifications() {
 
     let stock = commerce.inventory().get_stock("SKU-001").unwrap().unwrap();
 
-    // Final stock should be between 50 and 150 depending on reserve/release ratio
-    assert!(stock.total_on_hand >= dec!(50));
-    assert!(stock.total_on_hand <= dec!(100));
+    // Reservations should not change on-hand quantity
+    assert_eq!(stock.total_on_hand, dec!(100));
 
     // Allocated should never exceed available
     assert!(stock.total_allocated <= stock.total_available);

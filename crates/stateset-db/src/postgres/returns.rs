@@ -307,7 +307,8 @@ impl PgReturnRepository {
             r#"
             UPDATE returns
             SET status = $1, tracking_number = $2, refund_amount = $3,
-                refund_method = $4, notes = $5, updated_at = $6
+                refund_method = $4, notes = $5, updated_at = $6,
+                version = version + 1
             WHERE id = $7
             "#,
         )
@@ -350,7 +351,9 @@ impl PgReturnRepository {
 
     /// Approve a return (async)
     pub async fn approve_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query("UPDATE returns SET status = 'approved', updated_at = $1 WHERE id = $2")
+        sqlx::query(
+            "UPDATE returns SET status = 'approved', updated_at = $1, version = version + 1 WHERE id = $2",
+        )
             .bind(Utc::now())
             .bind(id)
             .execute(&self.pool)
@@ -362,7 +365,9 @@ impl PgReturnRepository {
 
     /// Reject a return (async)
     pub async fn reject_async(&self, id: Uuid, reason: &str) -> Result<Return> {
-        sqlx::query("UPDATE returns SET status = 'rejected', notes = $1, updated_at = $2 WHERE id = $3")
+        sqlx::query(
+            "UPDATE returns SET status = 'rejected', notes = $1, updated_at = $2, version = version + 1 WHERE id = $3",
+        )
             .bind(reason)
             .bind(Utc::now())
             .bind(id)
@@ -375,7 +380,9 @@ impl PgReturnRepository {
 
     /// Complete a return (async)
     pub async fn complete_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query("UPDATE returns SET status = 'completed', updated_at = $1 WHERE id = $2")
+        sqlx::query(
+            "UPDATE returns SET status = 'completed', updated_at = $1, version = version + 1 WHERE id = $2",
+        )
             .bind(Utc::now())
             .bind(id)
             .execute(&self.pool)
@@ -387,7 +394,9 @@ impl PgReturnRepository {
 
     /// Cancel a return (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<Return> {
-        sqlx::query("UPDATE returns SET status = 'cancelled', updated_at = $1 WHERE id = $2")
+        sqlx::query(
+            "UPDATE returns SET status = 'cancelled', updated_at = $1, version = version + 1 WHERE id = $2",
+        )
             .bind(Utc::now())
             .bind(id)
             .execute(&self.pool)
@@ -612,7 +621,8 @@ impl PgReturnRepository {
                 r#"
                 UPDATE returns
                 SET status = $1, tracking_number = $2, refund_amount = $3,
-                    refund_method = $4, notes = $5, updated_at = $6
+                    refund_method = $4, notes = $5, updated_at = $6,
+                    version = version + 1
                 WHERE id = $7
                 "#,
             )

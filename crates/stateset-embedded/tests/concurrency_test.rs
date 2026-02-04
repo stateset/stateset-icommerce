@@ -1,6 +1,7 @@
 //! Concurrency and inventory reservation conflict tests
 //! Tests behavior under concurrent access, race conditions, and deadlocks
 
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem};
 use std::sync::{Arc, Barrier};
@@ -284,12 +285,52 @@ fn test_concurrent_order_creation_same_inventory() {
         .map(|h| h.join().expect("Thread panicked"))
         .collect();
 
-    let successful: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
+    let successful: Vec<_> = results.into_iter().filter_map(|r| r.ok()).collect();
 
     assert_eq!(
         successful.len(),
-        2,
-        "Only 2 orders should succeed (2 * 4 = 8 ≤ 10)"
+        3,
+        "All 3 orders should be created; shortfalls should be backordered"
+    );
+
+    let mut total_reserved = Decimal::ZERO;
+    let mut total_backordered = Decimal::ZERO;
+
+    for order in &successful {
+        let reservations = commerce
+            .inventory()
+            .list_reservations_by_reference("order", &order.id.to_string())
+            .expect("Failed to load reservations");
+        let reserved = reservations
+            .iter()
+            .fold(Decimal::ZERO, |acc, r| acc + r.quantity);
+
+        let backorders = commerce
+            .backorder()
+            .get_backorders_for_order(order.id)
+            .expect("Failed to load backorders");
+        let backordered = backorders
+            .iter()
+            .fold(Decimal::ZERO, |acc, b| acc + b.quantity_remaining);
+
+        assert_eq!(
+            reserved + backordered,
+            dec!(4),
+            "Each order should be fully accounted for via reservations + backorders"
+        );
+
+        total_reserved += reserved;
+        total_backordered += backordered;
+    }
+
+    assert!(
+        total_reserved <= dec!(10),
+        "Reservations must not exceed inventory"
+    );
+    assert_eq!(
+        total_reserved + total_backordered,
+        dec!(12),
+        "All requested quantities should be reserved or backordered"
     );
 }
 

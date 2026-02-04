@@ -4,7 +4,7 @@ use super::{
     build_in_clause, i64_params, map_db_error, params_refs, string_params,
     parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
     parse_decimal_strict, parse_enum_row, parse_uuid, parse_uuid_row,
-    with_immediate_transaction,
+    with_immediate_transaction, with_retry,
 };
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
@@ -257,68 +257,72 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 
     fn get_stock(&self, sku: &str) -> Result<Option<StockLevel>> {
-        let conn = self.conn()?;
+        with_retry(|| {
+            let conn = self.pool.get().map_err(|e| {
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                    Some(e.to_string()),
+                )
+            })?;
 
-        // Get item directly with this connection
-        let item_result = conn.query_row(
-            "SELECT * FROM inventory_items WHERE sku = ?",
-            [sku],
-            |row| {
-                Ok(InventoryItem {
-                    id: row.get("id")?,
-                    sku: row.get("sku")?,
-                    name: row.get("name")?,
-                    description: row.get("description")?,
-                    unit_of_measure: row.get("unit_of_measure")?,
-                    is_active: row.get::<_, i32>("is_active")? != 0,
-                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
-                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
-                })
-            },
-        );
+            // Get item directly with this connection
+            let item_result = conn.query_row(
+                "SELECT * FROM inventory_items WHERE sku = ?",
+                [sku],
+                |row| {
+                    Ok(InventoryItem {
+                        id: row.get("id")?,
+                        sku: row.get("sku")?,
+                        name: row.get("name")?,
+                        description: row.get("description")?,
+                        unit_of_measure: row.get("unit_of_measure")?,
+                        is_active: row.get::<_, i32>("is_active")? != 0,
+                        created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
+                        updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
+                    })
+                },
+            );
 
-        let item = match item_result {
-            Ok(item) => item,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(map_db_error(e)),
-        };
+            let item = match item_result {
+                Ok(item) => item,
+                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                Err(e) => return Err(e),
+            };
 
-        // Get all balances for item
-        let mut stmt = conn
-            .prepare(
+            // Get all balances for item
+            let mut stmt = conn.prepare(
                 "SELECT b.*, l.name as location_name
                  FROM inventory_balances b
                  LEFT JOIN inventory_locations l ON b.location_id = l.id
                  WHERE b.item_id = ?",
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-        let locations: Vec<LocationStock> = stmt
-            .query_map([item.id], |row| {
-                Ok(LocationStock {
-                    location_id: row.get("location_id")?,
-                    location_name: row.get("location_name")?,
-                    on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
-                    allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
-                    available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
-                })
-            })
-            .map_err(map_db_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(map_db_error)?;
+            let locations: Vec<LocationStock> = stmt
+                .query_map([item.id], |row| {
+                    Ok(LocationStock {
+                        location_id: row.get("location_id")?,
+                        location_name: row.get("location_name")?,
+                        on_hand: parse_decimal_row(&row.get::<_, String>("quantity_on_hand")?, "inventory_balance", "quantity_on_hand")?,
+                        allocated: parse_decimal_row(&row.get::<_, String>("quantity_allocated")?, "inventory_balance", "quantity_allocated")?,
+                        available: parse_decimal_row(&row.get::<_, String>("quantity_available")?, "inventory_balance", "quantity_available")?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
 
-        let total_on_hand: Decimal = locations.iter().map(|l| l.on_hand).sum();
-        let total_allocated: Decimal = locations.iter().map(|l| l.allocated).sum();
-        let total_available: Decimal = locations.iter().map(|l| l.available).sum();
+            let total_on_hand: Decimal = locations.iter().map(|l| l.on_hand).sum();
+            let total_allocated: Decimal = locations.iter().map(|l| l.allocated).sum();
+            let total_available: Decimal = locations.iter().map(|l| l.available).sum();
 
-        Ok(Some(StockLevel {
-            sku: item.sku,
-            name: item.name,
-            total_on_hand,
-            total_allocated,
-            total_available,
-            locations,
-        }))
+            Ok(Some(StockLevel {
+                sku: item.sku,
+                name: item.name,
+                total_on_hand,
+                total_allocated,
+                total_available,
+                locations,
+            }))
+        })
+        .map_err(map_db_error)
     }
 
     fn get_balance(&self, item_id: i64, location_id: i32) -> Result<Option<InventoryBalance>> {
@@ -893,6 +897,58 @@ impl InventoryRepository for SqliteInventoryRepository {
         }
 
         Ok(())
+    }
+
+    fn list_reservations_by_reference(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, item_id, location_id, quantity, status, reference_type, reference_id, expires_at, created_at
+                 FROM inventory_reservations
+                 WHERE reference_type = ? AND reference_id = ?
+                 ORDER BY created_at",
+            )
+            .map_err(map_db_error)?;
+
+        let reservations = stmt
+            .query_map(rusqlite::params![reference_type, reference_id], |row| {
+                Ok(InventoryReservation {
+                    id: parse_uuid_row(&row.get::<_, String>("id")?, "inventory_reservation", "id")?,
+                    item_id: row.get("item_id")?,
+                    location_id: row.get("location_id")?,
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>("quantity")?,
+                        "inventory_reservation",
+                        "quantity",
+                    )?,
+                    status: parse_enum_row(
+                        &row.get::<_, String>("status")?,
+                        "inventory_reservation",
+                        "status",
+                    )?,
+                    reference_type: row.get("reference_type")?,
+                    reference_id: row.get("reference_id")?,
+                    expires_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>("expires_at")?,
+                        "inventory_reservation",
+                        "expires_at",
+                    )?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>("created_at")?,
+                        "inventory_reservation",
+                        "created_at",
+                    )?,
+                })
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        Ok(reservations)
     }
 
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {

@@ -763,9 +763,9 @@ fn test_list_billing_cycles() {
         ..Default::default()
     }).expect("Failed to create subscription");
 
-    // Create a few billing cycles
+    // Create a few additional billing cycles (the initial cycle is created on subscribe)
     let now = chrono::Utc::now();
-    for i in 1i32..=3 {
+    for i in 2i32..=4 {
         let start = now + chrono::Duration::days((i - 1) as i64 * 30);
         let end = start + chrono::Duration::days(30);
         commerce.subscriptions().create_billing_cycle(subscription.id, i, start, end)
@@ -779,7 +779,7 @@ fn test_list_billing_cycles() {
         }
     ).expect("Failed to list billing cycles");
 
-    assert_eq!(cycles.len(), 3);
+    assert_eq!(cycles.len(), 4);
 }
 
 #[test]

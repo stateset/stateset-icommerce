@@ -617,6 +617,28 @@ impl PgInventoryRepository {
         }
     }
 
+    /// List reservations by reference (async)
+    pub async fn list_reservations_by_reference_async(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>> {
+        let rows = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE reference_type = $1 AND reference_id = $2 ORDER BY created_at",
+        )
+        .bind(reference_type)
+        .bind(reference_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        let mut reservations = Vec::with_capacity(rows.len());
+        for row in rows {
+            reservations.push(Self::row_to_reservation(row)?);
+        }
+        Ok(reservations)
+    }
+
     /// Release a reservation (async)
     pub async fn release_reservation_async(&self, reservation_id: Uuid) -> Result<()> {
         let now = Utc::now();
@@ -1188,6 +1210,14 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
         super::block_on(self.confirm_reservation_async(reservation_id))
+    }
+
+    fn list_reservations_by_reference(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>> {
+        super::block_on(self.list_reservations_by_reference_async(reference_type, reference_id))
     }
 
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {

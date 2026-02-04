@@ -2,8 +2,9 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Address, Commerce, CreateCustomer, CreateOrder, CreateOrderItem, Order, OrderFilter,
-    OrderStatus, PaymentStatus, FulfillmentStatus, UpdateOrder,
+    Address, BackorderStatus, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder,
+    CreateOrderItem, FulfillmentStatus, Order, OrderFilter, OrderStatus, PaymentStatus,
+    ReservationStatus, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -1553,4 +1554,156 @@ fn test_list_orders_with_combined_filters() {
 
     assert_eq!(confirmed_and_paid.len(), 1);
     assert_eq!(confirmed_and_paid[0].id, order1.id);
+}
+
+// ============================================================================
+// Inventory Reservation + Backorder Integration
+// ============================================================================
+
+#[test]
+fn test_order_creates_backorder_when_insufficient_stock() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+
+    commerce
+        .inventory()
+        .create_item(CreateInventoryItem {
+            sku: "BO-SKU-001".into(),
+            name: "Backorder Item".into(),
+            initial_quantity: Some(dec!(2)),
+            ..Default::default()
+        })
+        .expect("Failed to create inventory item");
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
+                sku: "BO-SKU-001".into(),
+                name: "Backorder Item".into(),
+                quantity: 5,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create order");
+
+    let backorders = commerce
+        .backorder()
+        .get_backorders_for_order(order.id)
+        .expect("Failed to load backorders");
+    assert_eq!(backorders.len(), 1);
+    assert_eq!(backorders[0].status, BackorderStatus::Pending);
+    assert_eq!(backorders[0].quantity_remaining, dec!(3));
+
+    let reservations = commerce
+        .inventory()
+        .list_reservations_by_reference("order", &order.id.to_string())
+        .expect("Failed to load reservations");
+    assert_eq!(reservations.len(), 1);
+    assert_eq!(reservations[0].status, ReservationStatus::Pending);
+    assert_eq!(reservations[0].quantity, dec!(2));
+}
+
+#[test]
+fn test_cancel_releases_reservations_and_cancels_backorders() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+
+    commerce
+        .inventory()
+        .create_item(CreateInventoryItem {
+            sku: "BO-SKU-002".into(),
+            name: "Backorder Item".into(),
+            initial_quantity: Some(dec!(1)),
+            ..Default::default()
+        })
+        .expect("Failed to create inventory item");
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
+                sku: "BO-SKU-002".into(),
+                name: "Backorder Item".into(),
+                quantity: 3,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create order");
+
+    let cancelled = commerce
+        .orders()
+        .cancel(order.id)
+        .expect("Failed to cancel order");
+    assert_eq!(cancelled.status, OrderStatus::Cancelled);
+
+    let reservations = commerce
+        .inventory()
+        .list_reservations_by_reference("order", &order.id.to_string())
+        .expect("Failed to load reservations");
+    assert!(reservations
+        .iter()
+        .all(|r| r.status == ReservationStatus::Released));
+
+    let backorders = commerce
+        .backorder()
+        .get_backorders_for_order(order.id)
+        .expect("Failed to load backorders");
+    assert!(backorders
+        .iter()
+        .all(|bo| bo.status == BackorderStatus::Cancelled));
+}
+
+#[test]
+fn test_ship_confirms_reservations() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+
+    commerce
+        .inventory()
+        .create_item(CreateInventoryItem {
+            sku: "SHIP-SKU-001".into(),
+            name: "Shippable Item".into(),
+            initial_quantity: Some(dec!(10)),
+            ..Default::default()
+        })
+        .expect("Failed to create inventory item");
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
+                sku: "SHIP-SKU-001".into(),
+                name: "Shippable Item".into(),
+                quantity: 2,
+                unit_price: dec!(12.00),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("Failed to create order");
+
+    commerce
+        .orders()
+        .ship(order.id, None)
+        .expect("Failed to ship order");
+
+    let reservations = commerce
+        .inventory()
+        .list_reservations_by_reference("order", &order.id.to_string())
+        .expect("Failed to load reservations");
+    assert!(!reservations.is_empty());
+    assert!(reservations
+        .iter()
+        .all(|r| r.status == ReservationStatus::Confirmed));
 }

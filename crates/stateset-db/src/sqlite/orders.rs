@@ -3,7 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row, sum_decimal_query,
+    parse_json_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -204,8 +204,6 @@ impl OrderRepository for SqliteOrderRepository {
     fn create(&self, input: CreateOrder) -> Result<Order> {
         Self::validate_order_input(&input)?;
 
-        let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let order_number = Self::generate_order_number();
         let now = Utc::now();
@@ -232,101 +230,101 @@ impl OrderRepository for SqliteOrderRepository {
             .as_ref()
             .map(|a| serde_json::to_string(a).unwrap_or_default());
 
-        tx.execute(
-            "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                                 currency, payment_status, fulfillment_status, payment_method,
-                                 shipping_method, notes, shipping_address, billing_address,
-                                 created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                &order_number,
-                input.customer_id.to_string(),
-                "pending",
-                now.to_rfc3339(),
-                total.to_string(),
-                &currency,
-                "pending",
-                "unfulfilled",
-                &input.payment_method,
-                &input.shipping_method,
-                &input.notes,
-                &shipping_address_json,
-                &billing_address_json,
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
+        let input = input.clone();
 
-        // Insert order items and build items vec
-        let mut items = Vec::with_capacity(input.items.len());
-        for item in &input.items {
-            let item_id = Uuid::new_v4();
-            let item_total = OrderItem::calculate_total(
-                item.quantity,
-                item.unit_price,
-                item.discount.unwrap_or_default(),
-                item.tax_amount.unwrap_or_default(),
-            );
-
+        with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
-                "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
-                                          quantity, unit_price, discount, tax_amount, total)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                     currency, payment_status, fulfillment_status, payment_method,
+                                     shipping_method, notes, shipping_address, billing_address,
+                                     created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
-                    item_id.to_string(),
                     id.to_string(),
-                    item.product_id.to_string(),
-                    item.variant_id.map(|v| v.to_string()),
-                    &item.sku,
-                    &item.name,
-                    item.quantity,
-                    item.unit_price.to_string(),
-                    item.discount.unwrap_or_default().to_string(),
-                    item.tax_amount.unwrap_or_default().to_string(),
-                    item_total.to_string(),
+                    &order_number,
+                    input.customer_id.to_string(),
+                    "pending",
+                    now.to_rfc3339(),
+                    total.to_string(),
+                    &currency,
+                    "pending",
+                    "unfulfilled",
+                    &input.payment_method,
+                    &input.shipping_method,
+                    &input.notes,
+                    &shipping_address_json,
+                    &billing_address_json,
+                    now.to_rfc3339(),
+                    now.to_rfc3339(),
                 ],
-            )
-            .map_err(map_db_error)?;
+            )?;
 
-            items.push(OrderItem {
-                id: item_id,
-                order_id: id,
-                product_id: item.product_id,
-                variant_id: item.variant_id,
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                discount: item.discount.unwrap_or_default(),
-                tax_amount: item.tax_amount.unwrap_or_default(),
-                total: item_total,
-            });
-        }
+            // Insert order items and build items vec
+            let mut items = Vec::with_capacity(input.items.len());
+            for item in &input.items {
+                let item_id = Uuid::new_v4();
+                let item_total = OrderItem::calculate_total(
+                    item.quantity,
+                    item.unit_price,
+                    item.discount.unwrap_or_default(),
+                    item.tax_amount.unwrap_or_default(),
+                );
 
-        tx.commit().map_err(map_db_error)?;
+                tx.execute(
+                    "INSERT INTO order_items (id, order_id, product_id, variant_id, sku, name,
+                                              quantity, unit_price, discount, tax_amount, total)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        item_id.to_string(),
+                        id.to_string(),
+                        item.product_id.to_string(),
+                        item.variant_id.map(|v| v.to_string()),
+                        &item.sku,
+                        &item.name,
+                        item.quantity,
+                        item.unit_price.to_string(),
+                        item.discount.unwrap_or_default().to_string(),
+                        item.tax_amount.unwrap_or_default().to_string(),
+                        item_total.to_string(),
+                    ],
+                )?;
 
-        Ok(Order {
-            id,
-            order_number,
-            customer_id: input.customer_id,
-            status: OrderStatus::Pending,
-            order_date: now,
-            total_amount: total,
-            currency,
-            payment_status: PaymentStatus::Pending,
-            fulfillment_status: FulfillmentStatus::Unfulfilled,
-            payment_method: input.payment_method,
-            shipping_method: input.shipping_method,
-            tracking_number: None,
-            notes: input.notes,
-            shipping_address: input.shipping_address,
-            billing_address: input.billing_address,
-            items,
-            version: 1,
-            created_at: now,
-            updated_at: now,
+                items.push(OrderItem {
+                    id: item_id,
+                    order_id: id,
+                    product_id: item.product_id,
+                    variant_id: item.variant_id,
+                    sku: item.sku.clone(),
+                    name: item.name.clone(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    discount: item.discount.unwrap_or_default(),
+                    tax_amount: item.tax_amount.unwrap_or_default(),
+                    total: item_total,
+                });
+            }
+
+            Ok(Order {
+                id,
+                order_number: order_number.clone(),
+                customer_id: input.customer_id,
+                status: OrderStatus::Pending,
+                order_date: now,
+                total_amount: total,
+                currency: currency.clone(),
+                payment_status: PaymentStatus::Pending,
+                fulfillment_status: FulfillmentStatus::Unfulfilled,
+                payment_method: input.payment_method.clone(),
+                shipping_method: input.shipping_method.clone(),
+                tracking_number: None,
+                notes: input.notes.clone(),
+                shipping_address: input.shipping_address.clone(),
+                billing_address: input.billing_address.clone(),
+                items,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            })
         })
     }
 

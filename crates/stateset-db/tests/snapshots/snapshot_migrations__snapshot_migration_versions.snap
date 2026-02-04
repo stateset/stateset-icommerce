@@ -1,5 +1,6 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
+assertion_line: 209
 expression: "migrations.collect::<Result<Vec<_>, _>>()"
 ---
 Ok(
@@ -30,7 +31,6 @@ Ok(
         "024_general_ledger",
         "025_performance_indexes",
         "026_idempotency_keys",
-        "027_vector_search",
         "028_bm25_search",
         "029_x402_a2a",
         "030_x402_credits",

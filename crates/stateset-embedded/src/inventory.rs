@@ -286,6 +286,17 @@ impl Inventory {
         Ok(())
     }
 
+    /// List reservations by reference (e.g., order id).
+    pub fn list_reservations_by_reference(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>> {
+        self.db
+            .inventory()
+            .list_reservations_by_reference(reference_type, reference_id)
+    }
+
     /// List inventory items with optional filtering.
     pub fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         self.db.inventory().list(filter)

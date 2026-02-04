@@ -77,7 +77,7 @@ use stateset_core::{
     ConversionResult, ConvertCurrency, Currency, ExchangeRate, ExchangeRateFilter,
     SetExchangeRate, StoreCurrencySettings,
     // Error types
-    Result,
+    CommerceError, Result,
 };
 use stateset_core::{
     // Tax types
@@ -378,9 +378,215 @@ impl AsyncOrders {
         Self { db }
     }
 
+    async fn reservations_for_order(&self, order_id: Uuid) -> Result<Vec<InventoryReservation>> {
+        self.db
+            .inventory()
+            .list_reservations_by_reference_async("order", &order_id.to_string())
+            .await
+    }
+
+    async fn confirm_reservations_for_order(&self, order_id: Uuid) -> Result<()> {
+        let reservations = self.reservations_for_order(order_id).await?;
+        let mut first_error = None;
+        for reservation in reservations {
+            if let Err(err) = self
+                .db
+                .inventory()
+                .confirm_reservation_async(reservation.id)
+                .await
+            {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    async fn release_reservations_for_order(&self, order_id: Uuid) -> Result<()> {
+        let reservations = self.reservations_for_order(order_id).await?;
+        let mut first_error = None;
+        for reservation in reservations {
+            if let Err(err) = self
+                .db
+                .inventory()
+                .release_reservation_async(reservation.id)
+                .await
+            {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    async fn cancel_backorders_for_order(&self, order_id: Uuid) -> Result<()> {
+        let backorders = self.db.backorder().get_backorders_for_order_async(order_id).await?;
+        let mut first_error = None;
+        for backorder in backorders {
+            if let Err(err) = self.db.backorder().cancel_backorder_async(backorder.id).await {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    async fn cleanup_order_after_failure(
+        &self,
+        order_id: Uuid,
+        reservation_ids: &[Uuid],
+        backorder_ids: &[Uuid],
+    ) {
+        for reservation_id in reservation_ids {
+            if let Err(err) = self
+                .db
+                .inventory()
+                .release_reservation_async(*reservation_id)
+                .await
+            {
+                tracing::warn!(
+                    reservation_id = %reservation_id,
+                    error = ?err,
+                    "failed to release inventory reservation during order rollback"
+                );
+            }
+        }
+
+        for backorder_id in backorder_ids {
+            if let Err(err) = self.db.backorder().cancel_backorder_async(*backorder_id).await {
+                tracing::warn!(
+                    backorder_id = %backorder_id,
+                    error = ?err,
+                    "failed to cancel backorder during order rollback"
+                );
+            }
+        }
+
+        if let Err(err) = self.db.orders().delete_async(order_id).await {
+            tracing::warn!(
+                order_id = %order_id,
+                error = ?err,
+                "failed to delete order during rollback"
+            );
+        }
+    }
+
     /// Create a new order.
     pub async fn create(&self, input: CreateOrder) -> Result<Order> {
-        self.db.orders().create_async(input).await
+        let order = self.db.orders().create_async(input).await?;
+
+        let mut reservation_ids = Vec::new();
+        let mut backorder_ids = Vec::new();
+        let reference_id = order.id.to_string();
+
+        for item in &order.items {
+            if item.quantity <= 0 {
+                continue;
+            }
+
+            let has_inventory = match self.db.inventory().get_item_by_sku_async(&item.sku).await {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(err) => {
+                    self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
+                        .await;
+                    return Err(err);
+                }
+            };
+
+            if !has_inventory {
+                continue;
+            }
+
+            let available = match self.db.inventory().get_stock_async(&item.sku).await {
+                Ok(Some(stock)) => stock.total_available,
+                Ok(None) => Decimal::ZERO,
+                Err(err) => {
+                    self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
+                        .await;
+                    return Err(err);
+                }
+            };
+
+            let requested = Decimal::from(item.quantity);
+            let reserve_qty = if available > Decimal::ZERO {
+                requested.min(available)
+            } else {
+                Decimal::ZERO
+            };
+
+            let mut reserved = Decimal::ZERO;
+            if reserve_qty > Decimal::ZERO {
+                match self
+                    .db
+                    .inventory()
+                    .reserve_async(ReserveInventory {
+                        sku: item.sku.clone(),
+                        location_id: None,
+                        quantity: reserve_qty,
+                        reference_type: "order".to_string(),
+                        reference_id: reference_id.clone(),
+                        expires_in_seconds: None,
+                    })
+                    .await
+                {
+                    Ok(reservation) => {
+                        reservation_ids.push(reservation.id);
+                        reserved = reserve_qty;
+                    }
+                    Err(CommerceError::InsufficientStock { .. }) => {
+                        reserved = Decimal::ZERO;
+                    }
+                    Err(err) => {
+                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
+                            .await;
+                        return Err(err);
+                    }
+                }
+            }
+
+            let remaining = requested - reserved;
+            if remaining > Decimal::ZERO {
+                match self
+                    .db
+                    .backorder()
+                    .create_backorder_async(CreateBackorder {
+                        order_id: order.id,
+                        order_line_id: Some(item.id),
+                        customer_id: order.customer_id,
+                        sku: item.sku.clone(),
+                        quantity: remaining,
+                        priority: None,
+                        expected_date: None,
+                        promised_date: None,
+                        source_location_id: None,
+                        notes: Some("Auto backorder: insufficient stock".to_string()),
+                    })
+                    .await
+                {
+                    Ok(backorder) => backorder_ids.push(backorder.id),
+                    Err(err) => {
+                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
+                            .await;
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Ok(order)
     }
 
     /// Get an order by ID.
@@ -395,7 +601,19 @@ impl AsyncOrders {
 
     /// Update an order.
     pub async fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        self.db.orders().update_async(id, input).await
+        let next_status = input.status;
+        if matches!(next_status, Some(OrderStatus::Shipped)) {
+            self.confirm_reservations_for_order(id).await?;
+        }
+
+        let updated = self.db.orders().update_async(id, input).await?;
+
+        if matches!(next_status, Some(OrderStatus::Cancelled)) {
+            self.release_reservations_for_order(id).await?;
+            self.cancel_backorders_for_order(id).await?;
+        }
+
+        Ok(updated)
     }
 
     /// Update order status.
@@ -412,18 +630,16 @@ impl AsyncOrders {
         if status == OrderStatus::Refunded {
             payment_status = Some(PaymentStatus::Refunded);
         }
-        self.db
-            .orders()
-            .update_async(
-                id,
-                UpdateOrder {
-                    status: Some(status),
-                    payment_status,
-                    tracking_number,
-                    ..Default::default()
-                },
-            )
-            .await
+        self.update(
+            id,
+            UpdateOrder {
+                status: Some(status),
+                payment_status,
+                tracking_number,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// List orders with optional filtering.
@@ -481,17 +697,15 @@ impl AsyncOrders {
                 _ => {}
             }
         }
-        self.db
-            .orders()
-            .update_async(
-                id,
-                UpdateOrder {
-                    status: Some(OrderStatus::Shipped),
-                    tracking_number: tracking_number.map(|s| s.to_string()),
-                    ..Default::default()
-                },
-            )
-            .await
+        self.update(
+            id,
+            UpdateOrder {
+                status: Some(OrderStatus::Shipped),
+                tracking_number: tracking_number.map(|s| s.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Mark an order as delivered.
@@ -575,6 +789,18 @@ impl AsyncInventory {
     /// Confirm a reservation.
     pub async fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
         self.db.inventory().confirm_reservation_async(reservation_id).await
+    }
+
+    /// List reservations by reference (e.g., order id).
+    pub async fn list_reservations_by_reference(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>> {
+        self.db
+            .inventory()
+            .list_reservations_by_reference_async(reference_type, reference_id)
+            .await
     }
 
     /// List inventory items.

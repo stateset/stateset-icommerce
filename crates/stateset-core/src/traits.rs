@@ -93,6 +93,13 @@ pub trait InventoryRepository {
     /// Confirm reservation (convert to allocation)
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()>;
 
+    /// List reservations by reference (e.g., order id)
+    fn list_reservations_by_reference(
+        &self,
+        reference_type: &str,
+        reference_id: &str,
+    ) -> Result<Vec<InventoryReservation>>;
+
     /// List inventory items with filter
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>>;
 

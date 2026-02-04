@@ -327,7 +327,7 @@ impl ReturnRepository for SqliteReturnRepository {
         let conn = self.conn()?;
         let now = Utc::now();
 
-        let mut updates = vec!["updated_at = ?"];
+        let mut updates = vec!["updated_at = ?", "version = version + 1"];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
 
         if let Some(status) = &input.status {

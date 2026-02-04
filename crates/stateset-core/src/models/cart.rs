@@ -687,6 +687,7 @@ mod tests {
             metadata: None,
             inventory_reserved: false,
             reservation_expires_at: None,
+            x402_payment: None,
             expires_at: None,
             completed_at: None,
             created_at: Utc::now(),
