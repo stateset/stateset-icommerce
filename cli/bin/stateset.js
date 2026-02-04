@@ -15,8 +15,6 @@
  */
 
 import { parseArgs } from 'node:util';
-import * as readline from 'node:readline';
-
 // IMPORTANT: Save and clean argv BEFORE importing SDK modules
 // The Claude Agent SDK reads process.argv and passes it to the spawned process
 const __savedArgv = [...process.argv];
@@ -25,6 +23,8 @@ process.argv = process.argv.slice(0, 2);
 // Use dynamic imports after cleaning argv
 const { runAgentLoop, RichOutput, ICONS, AgentTelemetry, AGENTS } = await import('../src/claude-harness.js');
 const { DEFAULT_MODEL, CLI_VERSION } = await import('../src/config.js');
+const { formatStructuredOutput } = await import('../src/output.js');
+const { createConfirmHandler } = await import('../src/utils/confirm.js');
 const { getProfileConfig } = await import('./stateset-config.js');
 
 // Available agent names for validation
@@ -43,7 +43,7 @@ function loadConfigWithProfile(profileName) {
 }
 
 const HELP = `
-StateSet iCommerce CLI v0.5.0 - AI-powered commerce operations
+StateSet iCommerce CLI v${CLI_VERSION} - AI-powered commerce operations
 
 QUICK START:
   1. Set up your API key (required):
@@ -71,7 +71,8 @@ OPTIONS:
   --think <level>    Extended thinking: off, low, medium, high (default: off)
   --stream           Enable streaming output (token-by-token)
   --budget <usd>     Maximum spend per query in USD (e.g., --budget 1.00)
-  --memory           Enable conversation memory (SQLite + Markdown)
+  --memory           Enable conversation memory (overrides settings)
+  --no-memory        Disable conversation memory (overrides settings)
   --x402             Enable x402 MCP tools (reads X402_* config/env)
   --resume <id>      Resume a previous session
   --json             Output as JSON
@@ -234,49 +235,13 @@ MORE INFO:
 `;
 
 /**
- * Prompt user for confirmation
- * @param {string} message - Confirmation message
- * @returns {Promise<boolean>} - True if confirmed
- */
-async function confirm(message) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`${message} [y/N] `, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
-    });
-  });
-}
-
-/**
  * Format output in specified format
  * @param {object} data - Data to format
  * @param {string} format - Output format (table, json, csv, yaml)
  * @returns {string} - Formatted output
  */
 function formatOutput(data, format) {
-  switch (format) {
-    case 'json':
-      return JSON.stringify(data, null, 2);
-    case 'csv':
-      if (Array.isArray(data) && data.length > 0) {
-        const headers = Object.keys(data[0]);
-        const rows = data.map(row => headers.map(h => JSON.stringify(row[h] ?? '')).join(','));
-        return [headers.join(','), ...rows].join('\n');
-      }
-      return '';
-    case 'yaml':
-      // Simple YAML-like output
-      return Object.entries(data)
-        .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
-        .join('\n');
-    default:
-      return data;
-  }
+  return formatStructuredOutput(data, format);
 }
 
 /**
@@ -293,8 +258,7 @@ async function readStdin() {
 /**
  * Process a single request in batch mode
  */
-async function processBatchRequest(request, index, total, config, values, output) {
-  const isQuiet = values.quiet || values.json;
+async function processBatchRequest(request, index, total, config, values, output, onConfirmRequired) {
   const startTime = Date.now();
 
   try {
@@ -305,7 +269,7 @@ async function processBatchRequest(request, index, total, config, values, output
       allowApply: config.apply,
       agent: values.agent,
       verbose: false,
-      onConfirmRequired: values.yes ? null : async () => true,
+      onConfirmRequired,
       enableX402: values.x402
     });
 
@@ -334,8 +298,8 @@ async function processBatchRequest(request, index, total, config, values, output
 /**
  * Process requests sequentially (maintains session context)
  */
-async function processSequential(requests, config, values, output) {
-  const isQuiet = values.quiet || values.json;
+async function processSequential(requests, config, values, output, onConfirmRequired) {
+  const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let sessionId = values.resume;
 
@@ -358,7 +322,7 @@ async function processSequential(requests, config, values, output) {
         resumeSessionId: sessionId,
         agent: values.agent,
         verbose: false,
-        onConfirmRequired: values.yes ? null : async () => true,
+        onConfirmRequired,
         enableX402: values.x402
       });
 
@@ -403,8 +367,8 @@ async function processSequential(requests, config, values, output) {
 /**
  * Process requests in parallel with controlled concurrency
  */
-async function processParallel(requests, concurrency, config, values, output) {
-  const isQuiet = values.quiet || values.json;
+async function processParallel(requests, concurrency, config, values, output, onConfirmRequired) {
+  const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let completed = 0;
   let inProgress = 0;
@@ -433,7 +397,8 @@ async function processParallel(requests, concurrency, config, values, output) {
         total,
         config,
         values,
-        output
+        output,
+        onConfirmRequired
       );
 
       results.push(result);
@@ -473,8 +438,14 @@ async function processParallel(requests, concurrency, config, values, output) {
  */
 async function handleBatchMode(values, config, output) {
   const fs = await import('node:fs/promises');
-  const isQuiet = values.quiet || values.json;
+  const isJsonOutput = values.json || values.format === 'json';
+  const isQuiet = values.quiet || isJsonOutput;
   const parallelism = values.parallel ? parseInt(values.parallel, 10) : 0;
+  const onConfirmRequired = createConfirmHandler({
+    output,
+    assumeYes: values.yes,
+    nonInteractive: true
+  });
 
   // Read requests
   let requests = [];
@@ -504,10 +475,10 @@ async function handleBatchMode(values, config, output) {
 
   if (parallelism > 0) {
     // Parallel processing mode
-    results = await processParallel(requests, parallelism, config, values, output);
+    results = await processParallel(requests, parallelism, config, values, output, onConfirmRequired);
   } else {
     // Sequential processing mode (maintains session context)
-    results = await processSequential(requests, config, values, output);
+    results = await processSequential(requests, config, values, output, onConfirmRequired);
   }
 
   // Sort results by original index for consistent output
@@ -515,7 +486,7 @@ async function handleBatchMode(values, config, output) {
 
   // Output results
   for (const result of results) {
-    if (values.json) {
+    if (isJsonOutput) {
       console.log(JSON.stringify({
         request: result.request,
         success: result.success,
@@ -540,7 +511,7 @@ async function handleBatchMode(values, config, output) {
   const totalDuration = Date.now() - startTime;
 
   // Summary
-  if (!isQuiet && !values.json) {
+  if (!isQuiet && !isJsonOutput) {
     const succeeded = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
     const avgDuration = results.length > 0
@@ -583,6 +554,7 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
+      noMemory: { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
       resume: { type: 'string' },
       json: { type: 'boolean', default: false },
@@ -610,9 +582,12 @@ async function main() {
     verbose: values.verbose || profileConfig.verbose || false
   };
 
+  const isJsonOutput = values.json || values.format === 'json';
+  const isQuiet = values.quiet || isJsonOutput;
+  const memoryOverride = values.noMemory ? false : (values.memory ? true : null);
+
   // Initialize output formatter
-  const output = new RichOutput({ color: !values.json && !values.quiet });
-  const isQuiet = values.quiet || values.json;
+  const output = new RichOutput({ color: !isQuiet });
 
   // Handle help
   if (values.help) {
@@ -624,6 +599,11 @@ async function main() {
   if (values.version) {
     console.log(`@stateset/cli v${CLI_VERSION}`);
     process.exit(0);
+  }
+
+  if (values.stream && isJsonOutput) {
+    console.error('Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.');
+    process.exit(1);
   }
 
   // Validate agent name if provided
@@ -681,6 +661,9 @@ async function main() {
     if (values.budget) {
       console.log(`   ${output.dim('Budget:')}   ${output.cyan('$' + values.budget)}`);
     }
+    if (memoryOverride !== null) {
+      console.log(`   ${output.dim('Memory:')}   ${memoryOverride ? output.cyan('Enabled') : output.yellow('Disabled')}`);
+    }
     if (config.verbose) {
       console.log(`   ${output.dim('Verbose:')}  ${output.cyan('Enabled')}`);
     }
@@ -690,20 +673,14 @@ async function main() {
     console.log();
   }
 
+  const nonInteractive = !process.stdin.isTTY || values.quiet || isJsonOutput;
+  const onConfirmRequired = createConfirmHandler({
+    output,
+    assumeYes: values.yes,
+    nonInteractive
+  });
+
   try {
-    // Confirmation callback for high-risk operations
-    const onConfirmRequired = values.yes ? null : async ({ operation, details, amount }) => {
-      if (isQuiet) return true; // Auto-confirm in quiet mode with --yes
-
-      let message = `\n${output.yellow('⚠️  Confirmation required')}\n`;
-      message += `   Operation: ${operation}\n`;
-      if (details) message += `   Details: ${details}\n`;
-      if (amount) message += `   Amount: ${output.bold('$' + amount.toFixed(2))}\n`;
-      message += `\n   Proceed?`;
-
-      console.log(message);
-      return await confirm('');
-    };
 
     const result = await runAgentLoop({
       request,
@@ -719,6 +696,7 @@ async function main() {
       streaming: values.stream,
       maxBudgetUsd: values.budget || null,
       provider: providerName,
+      enableMemory: memoryOverride === null ? null : memoryOverride,
       enableX402: values.x402,
       onPartialMessage: values.stream ? (event) => {
         // Write partial text to stdout for streaming display
@@ -776,7 +754,7 @@ async function main() {
       if (!isQuiet) {
         console.log(`${output.green('✓')} Output written to ${values.output}`);
       }
-    } else if (values.json || values.format === 'json') {
+    } else if (isJsonOutput) {
       // JSON output with extended telemetry
       console.log(JSON.stringify(outputData, null, 2));
     } else {

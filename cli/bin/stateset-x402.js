@@ -43,9 +43,21 @@ program
   .option('--max-amount <amount>', 'Absolute max amount allowed per payment')
   .option('--api-key <key>', 'Sequencer API key')
   .option('--jwt <token>', 'Sequencer JWT token')
+  .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .option('--force', 'Overwrite existing config', false)
   .action(async (options) => {
-    const spinner = ora('Initializing x402 configuration...').start();
+    const jsonOutput = Boolean(options.json || options.output);
+    const writeJson = (data) => {
+      const payload = JSON.stringify(data, null, 2);
+      if (options.output) {
+        fs.writeFileSync(options.output, payload);
+        return;
+      }
+      console.log(payload);
+    };
+
+    const spinner = ora({ text: 'Initializing x402 configuration...', isEnabled: !jsonOutput }).start();
 
     try {
       const configDir = options.configDir;
@@ -56,7 +68,11 @@ program
       });
 
       if (fs.existsSync(configPath) && !options.force) {
-        spinner.fail('x402 config already exists. Use --force to overwrite.');
+        if (jsonOutput) {
+          writeJson({ error: 'x402 config already exists. Use --force to overwrite.', configPath });
+        } else {
+          spinner.fail('x402 config already exists. Use --force to overwrite.');
+        }
         process.exit(1);
       }
 
@@ -91,6 +107,21 @@ program
 
       saveX402Config(configPath, config);
 
+      if (jsonOutput) {
+        writeJson({
+          success: true,
+          configPath,
+          agentKeyId: config.agentKeyId,
+          payerAddress,
+          network: options.network,
+          sequencerUrl: options.sequencerUrl,
+          tenantId: options.tenantId,
+          storeId: options.storeId,
+          agentId: options.agentId
+        });
+        return;
+      }
+
       spinner.succeed('x402 configuration saved.');
       console.log();
       console.log(chalk.green(`Config file: ${configPath}`));
@@ -105,7 +136,11 @@ program
       console.log(chalk.dim('Environment override (optional):'));
       console.log(chalk.cyan(`   export X402_CONFIG_FILE=${configPath}`));
     } catch (error) {
-      spinner.fail(`Initialization failed: ${error.message}`);
+      if (jsonOutput) {
+        writeJson({ error: `Initialization failed: ${error.message}` });
+      } else {
+        spinner.fail(`Initialization failed: ${error.message}`);
+      }
       process.exit(1);
     }
   });

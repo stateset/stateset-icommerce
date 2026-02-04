@@ -18,8 +18,10 @@
  */
 
 import { parseArgs } from 'node:util';
+import fs from 'node:fs/promises';
 import chalk from 'chalk';
 import ora from 'ora';
+import { createConfirmHandler } from '../src/utils/confirm.js';
 import {
   executePayment,
   getBalance,
@@ -64,6 +66,8 @@ const options = {
   // Execution options
   apply: { type: 'boolean', default: false, description: 'Actually execute (default: simulate)' },
   json: { type: 'boolean', default: false, description: 'JSON output' },
+  output: { type: 'string', description: 'Write JSON output to file' },
+  yes: { type: 'boolean', short: 'y', default: false, description: 'Skip confirmation prompts' },
 
   // Help
   help: { type: 'boolean', short: 'h', default: false },
@@ -96,7 +100,9 @@ ${chalk.bold('QUERY OPTIONS:')}
 ${chalk.bold('EXECUTION:')}
       --apply             Actually execute payment (default: simulate)
       --json              Output as JSON
+      --output <file>     Write JSON output to file (implies --json)
       --agent <id>        Agent ID (default: 'default')
+  -y, --yes              Skip confirmation prompts
 
 ${chalk.bold('SUPPORTED CHAINS:')}
   ${chalk.green('solana')}         Solana mainnet (USDC) - Fast, cheap, proven
@@ -135,6 +141,20 @@ ${chalk.bold('SECURITY:')}
 
 async function main() {
   const { values } = parseArgs({ options, allowPositionals: true });
+  const outputPath = values.output || null;
+  if (outputPath) {
+    values.json = true;
+  }
+  const isJsonOutput = values.json;
+  const jsonReplacer = (key, value) => (typeof value === 'bigint' ? value.toString() : value);
+  const writeJson = async (data) => {
+    const payload = JSON.stringify(data, jsonReplacer, 2);
+    if (outputPath) {
+      await fs.writeFile(outputPath, payload);
+    } else {
+      console.log(payload);
+    }
+  };
 
   if (values.help) {
     console.log(HELP);
@@ -148,28 +168,42 @@ async function main() {
 
   // Handle query commands
   if (values.chains) {
-    await showChains(values);
+    await showChains(values, writeJson);
     return;
   }
 
   if (values.wallet) {
-    await showWallet(values);
+    await showWallet(values, writeJson);
     return;
   }
 
   if (values.balance) {
-    await showBalance(values);
+    await showBalance(values, writeJson);
     return;
   }
 
   // Payment execution requires --to and --amount
   if (!values.to || !values.amount) {
-    console.error(chalk.red('Error: --to and --amount are required for payments'));
-    console.error('Run stateset pay --help for usage');
+    if (isJsonOutput) {
+      await writeJson({ error: '--to and --amount are required for payments' });
+    } else {
+      console.error(chalk.red('Error: --to and --amount are required for payments'));
+      console.error('Run stateset pay --help for usage');
+    }
     process.exit(1);
   }
 
-  await executePaymentCommand(values);
+  const nonInteractive = !process.stdin.isTTY || isJsonOutput;
+  const onConfirmRequired = createConfirmHandler({
+    output: {
+      yellow: chalk.yellow,
+      bold: chalk.bold
+    },
+    assumeYes: values.yes,
+    nonInteractive
+  });
+
+  await executePaymentCommand(values, onConfirmRequired, writeJson);
 }
 
 // =============================================================================
@@ -179,7 +213,7 @@ async function main() {
 /**
  * List supported chains
  */
-async function showChains(values) {
+async function showChains(values, writeJson) {
   const chains = listChains();
 
   if (values.json) {
@@ -194,7 +228,7 @@ async function showChains(values) {
         explorerUrl: chain.explorerUrl,
       };
     });
-    console.log(JSON.stringify(chainData, null, 2));
+    await writeJson(chainData);
     return;
   }
 
@@ -213,7 +247,7 @@ async function showChains(values) {
 /**
  * Show agent wallet addresses
  */
-async function showWallet(values) {
+async function showWallet(values, writeJson) {
   const { agent, chain } = values;
   const configDir = '.stateset';
 
@@ -227,12 +261,12 @@ async function showWallet(values) {
     const chainConfig = getChain(chain);
 
     if (values.json) {
-      console.log(JSON.stringify({
+      await writeJson({
         agent,
         chain,
         address,
         explorerUrl: getExplorerAddressUrl(chain, address),
-      }, null, 2));
+      });
       return;
     }
 
@@ -247,7 +281,7 @@ async function showWallet(values) {
     const addresses = await listWalletAddresses(agent, { configDir });
 
     if (values.json) {
-      console.log(JSON.stringify({ agent, wallets: addresses }, null, 2));
+      await writeJson({ agent, wallets: addresses });
       return;
     }
 
@@ -266,26 +300,29 @@ async function showWallet(values) {
 /**
  * Show wallet balance
  */
-async function showBalance(values) {
+async function showBalance(values, writeJson) {
   const { agent, chain, token } = values;
   const configDir = '.stateset';
 
-  const spinner = ora('Checking balance...').start();
+  const useSpinner = process.stdout.isTTY && !values.json;
+  const spinner = useSpinner ? ora('Checking balance...').start() : null;
 
   try {
     const address = await getWalletAddress(agent, chain, { configDir });
     const balanceInfo = await getBalance(address, chain, token);
 
-    spinner.stop();
+    if (spinner) {
+      spinner.stop();
+    }
 
     if (values.json) {
-      console.log(JSON.stringify({
+      await writeJson({
         agent,
         chain,
         address,
         balance: balanceInfo.balance,
         symbol: balanceInfo.symbol,
-      }, null, 2));
+      });
       return;
     }
 
@@ -297,7 +334,11 @@ async function showBalance(values) {
     console.log();
 
   } catch (error) {
-    spinner.fail(`Failed to check balance: ${error.message}`);
+    if (spinner) {
+      spinner.fail(`Failed to check balance: ${error.message}`);
+    } else if (values.json) {
+      await writeJson({ error: `Failed to check balance: ${error.message}` });
+    }
     process.exit(1);
   }
 }
@@ -305,7 +346,7 @@ async function showBalance(values) {
 /**
  * Execute a stablecoin payment
  */
-async function executePaymentCommand(values) {
+async function executePaymentCommand(values, onConfirmRequired, writeJson) {
   const {
     to,
     amount,
@@ -333,14 +374,37 @@ async function executePaymentCommand(values) {
   const tokenConfig = token ? getToken(chain, token) : getDefaultStablecoin(chain);
 
   if (!chainConfig) {
-    console.error(chalk.red(`Unknown chain: ${chain}`));
-    console.error(`Run 'stateset pay --chains' to see supported chains`);
+    if (json) {
+      await writeJson({ error: `Unknown chain: ${chain}` });
+    } else {
+      console.error(chalk.red(`Unknown chain: ${chain}`));
+      console.error(`Run 'stateset pay --chains' to see supported chains`);
+    }
     process.exit(1);
   }
 
   if (!tokenConfig) {
-    console.error(chalk.red(`No stablecoin found for chain ${chain}`));
+    if (json) {
+      await writeJson({ error: `No stablecoin found for chain ${chain}` });
+    } else {
+      console.error(chalk.red(`No stablecoin found for chain ${chain}`));
+    }
     process.exit(1);
+  }
+
+  if (!simulate) {
+    const numericAmount = parseFloat(amount);
+    const confirmed = await onConfirmRequired({
+      operation: 'execute_payment',
+      details: `${formatAmount(numericAmount)} ${tokenConfig.symbol} to ${to} on ${chain}`,
+      amount: Number.isFinite(numericAmount) ? numericAmount : null
+    });
+    if (!confirmed) {
+      if (json) {
+        await writeJson({ error: 'Confirmation required' });
+      }
+      process.exit(1);
+    }
   }
 
   // Show header
@@ -358,27 +422,43 @@ async function executePaymentCommand(values) {
   }
 
   // Check balance first
-  const spinner = ora('Checking balance...').start();
+  const useSpinner = process.stdout.isTTY && !json;
+  const spinner = useSpinner ? ora('Checking balance...').start() : null;
 
   try {
     const agentAddress = await getWalletAddress(agent, chain, { configDir });
     const balanceCheck = await hasSufficientBalance(agentAddress, chain, parseFloat(amount), token);
 
     if (!balanceCheck.sufficient) {
-      spinner.fail(chalk.red(`Insufficient balance`));
-      console.log(`  Balance:  ${balanceCheck.balance} ${balanceCheck.symbol}`);
-      console.log(`  Required: ${balanceCheck.required} ${balanceCheck.symbol}`);
+      if (spinner) {
+        spinner.fail(chalk.red('Insufficient balance'));
+      }
+      if (json) {
+        await writeJson({
+          error: 'Insufficient balance',
+          balance: balanceCheck.balance,
+          required: balanceCheck.required,
+          symbol: balanceCheck.symbol
+        });
+      } else {
+        console.log(`  Balance:  ${balanceCheck.balance} ${balanceCheck.symbol}`);
+        console.log(`  Required: ${balanceCheck.required} ${balanceCheck.symbol}`);
+      }
       process.exit(1);
     }
 
-    spinner.succeed(`Balance: ${balanceCheck.balance} ${balanceCheck.symbol}`);
+    if (spinner) {
+      spinner.succeed(`Balance: ${balanceCheck.balance} ${balanceCheck.symbol}`);
+    }
 
   } catch (error) {
-    spinner.warn(`Could not verify balance: ${error.message}`);
+    if (spinner) {
+      spinner.warn(`Could not verify balance: ${error.message}`);
+    }
   }
 
   // Execute payment
-  const paymentSpinner = ora(simulate ? 'Simulating payment...' : 'Executing payment...').start();
+  const paymentSpinner = useSpinner ? ora(simulate ? 'Simulating payment...' : 'Executing payment...').start() : null;
 
   const result = await executePayment({
     agentId: agent,
@@ -391,19 +471,25 @@ async function executePaymentCommand(values) {
     configDir,
     simulate,
     onProgress: (progress) => {
-      paymentSpinner.text = progress.message;
+      if (paymentSpinner) {
+        paymentSpinner.text = progress.message;
+      }
     },
   });
 
   if (result.success) {
     if (simulate) {
-      paymentSpinner.succeed(chalk.green('Simulation successful'));
+      if (paymentSpinner) {
+        paymentSpinner.succeed(chalk.green('Simulation successful'));
+      }
 
       if (!json) {
         console.log(chalk.dim('\n  Run with --apply to execute this payment\n'));
       }
     } else {
-      paymentSpinner.succeed(chalk.green('Payment confirmed!'));
+      if (paymentSpinner) {
+        paymentSpinner.succeed(chalk.green('Payment confirmed!'));
+      }
 
       if (!json) {
         console.log(`\n  Transaction: ${chalk.cyan(result.txHash)}`);
@@ -415,16 +501,16 @@ async function executePaymentCommand(values) {
     }
 
     if (json) {
-      console.log(JSON.stringify(result, (key, value) =>
-        typeof value === 'bigint' ? value.toString() : value
-      , null, 2));
+      await writeJson(result);
     }
 
   } else {
-    paymentSpinner.fail(chalk.red(`Payment failed: ${result.error}`));
+    if (paymentSpinner) {
+      paymentSpinner.fail(chalk.red(`Payment failed: ${result.error}`));
+    }
 
     if (json) {
-      console.log(JSON.stringify(result, null, 2));
+      await writeJson(result);
     }
 
     process.exit(1);

@@ -549,6 +549,116 @@ export class RichOutput {
 }
 
 // ============================================================================
+// Structured Output Formatting (File/Programmatic Output)
+// ============================================================================
+
+function normalizeScalar(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function normalizeRowsForTable(data) {
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return { rows: [], columns: [] };
+    }
+    const first = data[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      const keys = Array.from(new Set(data.flatMap(row => Object.keys(row || {}))));
+      const rows = data.map(row => {
+        const out = {};
+        for (const key of keys) {
+          out[key] = normalizeScalar(row?.[key]);
+        }
+        return out;
+      });
+      const columns = keys.map(key => ({ key, header: key }));
+      return { rows, columns };
+    }
+    const rows = data.map(value => ({ value: normalizeScalar(value) }));
+    return { rows, columns: [{ key: 'value', header: 'value' }] };
+  }
+
+  if (data && typeof data === 'object') {
+    const rows = Object.entries(data).map(([key, value]) => ({
+      key,
+      value: normalizeScalar(value)
+    }));
+    return { rows, columns: [{ key: 'key', header: 'key' }, { key: 'value', header: 'value' }] };
+  }
+
+  return {
+    rows: [{ value: normalizeScalar(data) }],
+    columns: [{ key: 'value', header: 'value' }]
+  };
+}
+
+function formatAsTable(data) {
+  const { rows, columns } = normalizeRowsForTable(data);
+  const output = new RichOutput({ color: false, format: 'pretty' });
+  if (!rows.length) {
+    return output.dim('  (no data)');
+  }
+  return output.table(rows, columns);
+}
+
+function formatAsCsv(data) {
+  const { rows, columns } = normalizeRowsForTable(data);
+  if (!rows.length) return '';
+  const headers = columns.map(col => col.header);
+  const keys = columns.map(col => col.key);
+  const lines = rows.map(row =>
+    keys.map(key => JSON.stringify(row[key] ?? '')).join(',')
+  );
+  return [headers.join(','), ...lines].join('\n');
+}
+
+function formatYamlValue(value) {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') {
+    return /[:#\-\n]/.test(value) ? JSON.stringify(value) : value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function formatAsYaml(data) {
+  if (data === null || data === undefined) return '';
+  if (Array.isArray(data)) {
+    return data.map(item => `- ${formatYamlValue(item)}`).join('\n');
+  }
+  if (typeof data === 'object') {
+    return Object.entries(data)
+      .map(([key, value]) => `${key}: ${formatYamlValue(value)}`)
+      .join('\n');
+  }
+  return String(data);
+}
+
+/**
+ * Format structured data for file or programmatic output.
+ *
+ * @param {any} data
+ * @param {'table'|'json'|'csv'|'yaml'} format
+ * @returns {string}
+ */
+export function formatStructuredOutput(data, format = 'table') {
+  switch (format) {
+    case 'json':
+      return JSON.stringify(data, null, 2);
+    case 'csv':
+      return formatAsCsv(data);
+    case 'yaml':
+      return formatAsYaml(data);
+    case 'table':
+    default:
+      return formatAsTable(data);
+  }
+}
+
+// ============================================================================
 // Convenience Functions
 // ============================================================================
 

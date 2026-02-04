@@ -68,7 +68,7 @@ export const DEFAULT_AGENT_SETTINGS = {
     ]
   },
   memory: {
-    enabled: true,
+    enabled: false,
     useMarkdown: true,
     maxSummaries: 5
   },

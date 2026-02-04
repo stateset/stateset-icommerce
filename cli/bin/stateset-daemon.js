@@ -87,10 +87,15 @@ ${chalk.dim('OPTIONS:')}
   --port <n>           HTTP gateway port (default: 8080)
   --user               Install/manage as user service (no sudo)
   --follow, -f         Follow logs in real-time
+  --json               Output supported commands as JSON
+  --output <file>      Write JSON output to file (implies --json)
   --reverse            Create reverse SSH tunnel
   --persistent         Create persistent SSH tunnel via systemd
   --name <n>           Name for persistent tunnel
   --help, -h           Show this help
+
+${chalk.dim('JSON OUTPUT:')}
+  Supported commands: status, health, config, validate, logs (non-follow), tailscale status, ssh-tunnel list/status
 
 ${chalk.dim('EXAMPLES:')}
   ${chalk.dim('# Install and start')}
@@ -171,7 +176,13 @@ function getUserPaths(isUserMode) {
 
 function run(cmd, opts = {}) {
   try {
-    return execSync(cmd, { encoding: 'utf-8', stdio: opts.silent ? 'pipe' : 'inherit', ...opts }).trim();
+    const result = execSync(cmd, {
+      encoding: 'utf-8',
+      stdio: opts.silent ? 'pipe' : 'inherit',
+      ...opts,
+    });
+    if (result == null) return '';
+    return typeof result === 'string' ? result.trim() : String(result).trim();
   } catch (err) {
     if (opts.ignoreError) return '';
     throw err;
@@ -206,60 +217,361 @@ function isRunning(paths) {
 // Config Validation
 // ============================================================================
 
-function validateConfig(configPath) {
+function validateConfigDetailed(configPath) {
+  const result = {
+    path: configPath,
+    valid: true,
+    errors: [],
+    warnings: [],
+    channels: { enabled: [], count: 0 },
+    httpGateway: null,
+    env: { path: join(dirname(configPath), 'env'), exists: false, anthropicKeySet: null }
+  };
+
   if (!existsSync(configPath)) {
-    console.error(chalk.red(`Config file not found: ${configPath}`));
-    return false;
+    result.valid = false;
+    result.errors.push(`Config file not found: ${configPath}`);
+    return result;
   }
 
-  let valid = true;
   try {
     const raw = readFileSync(configPath, 'utf-8');
     const config = JSON.parse(raw);
 
-    // Required sections
     if (!config.channels || typeof config.channels !== 'object') {
-      console.error(chalk.red('  Config error: missing "channels" section'));
-      valid = false;
+      result.errors.push('Config error: missing "channels" section');
     }
     if (!config.shared || typeof config.shared !== 'object') {
-      console.error(chalk.red('  Config error: missing "shared" section'));
-      valid = false;
+      result.errors.push('Config error: missing "shared" section');
     }
 
-    // Check env file has ANTHROPIC_API_KEY set
-    const envPath = join(dirname(configPath), 'env');
+    const envPath = result.env.path;
     if (existsSync(envPath)) {
+      result.env.exists = true;
       const env = readFileSync(envPath, 'utf-8');
-      if (!env.match(/^ANTHROPIC_API_KEY=\S+/m)) {
-        console.warn(chalk.yellow('  Warning: ANTHROPIC_API_KEY is not set in env file'));
+      const hasKey = Boolean(env.match(/^ANTHROPIC_API_KEY=\S+/m));
+      result.env.anthropicKeySet = hasKey;
+      if (!hasKey) {
+        result.warnings.push('Warning: ANTHROPIC_API_KEY is not set in env file');
       }
     }
 
-    // Check at least one channel is enabled
-    if (config.channels) {
+    if (config.channels && typeof config.channels === 'object') {
       const enabledChannels = Object.entries(config.channels)
-        .filter(([, c]) => c && c.enabled !== false);
+        .filter(([, c]) => c && c.enabled !== false)
+        .map(([key]) => key);
+      result.channels.enabled = enabledChannels;
+      result.channels.count = enabledChannels.length;
       if (enabledChannels.length === 0) {
-        console.warn(chalk.yellow('  Warning: No channels are enabled in config'));
-      } else {
-        console.log(chalk.green(`  ${enabledChannels.length} channel(s) enabled: ${enabledChannels.map(([k]) => k).join(', ')}`));
+        result.warnings.push('Warning: No channels are enabled in config');
       }
     }
 
-    // Check httpGateway
     if (config.httpGateway) {
-      console.log(chalk.green(`  HTTP gateway: port ${config.httpGateway.port || 8080}`));
+      result.httpGateway = { port: config.httpGateway.port || 8080 };
     }
 
-    if (valid) {
-      console.log(chalk.green('  Config is valid.'));
-    }
-    return valid;
+    result.valid = result.errors.length === 0;
+    return result;
   } catch (err) {
-    console.error(chalk.red(`  Config parse error: ${err.message}`));
+    result.valid = false;
+    result.errors.push(`Config parse error: ${err.message}`);
+    return result;
+  }
+}
+
+function validateConfig(configPath) {
+  const result = validateConfigDetailed(configPath);
+
+  if (result.errors.length > 0) {
+    for (const err of result.errors) {
+      const prefix = err.startsWith('Config file not found') ? '' : '  ';
+      console.error(chalk.red(`${prefix}${err}`));
+    }
     return false;
   }
+
+  for (const warning of result.warnings) {
+    console.warn(chalk.yellow(`  ${warning}`));
+  }
+
+  if (result.channels.count > 0) {
+    console.log(chalk.green(`  ${result.channels.count} channel(s) enabled: ${result.channels.enabled.join(', ')}`));
+  }
+
+  if (result.httpGateway) {
+    console.log(chalk.green(`  HTTP gateway: port ${result.httpGateway.port}`));
+  }
+
+  console.log(chalk.green('  Config is valid.'));
+  return true;
+}
+
+// ============================================================================
+// JSON Output Helpers
+// ============================================================================
+
+function collectStatus(paths, port = 8080) {
+  const active = runQuiet(`${paths.systemctl} is-active ${SERVICE_NAME}`);
+  const enabled = runQuiet(`${paths.systemctl} is-enabled ${SERVICE_NAME}`);
+
+  const data = {
+    service: {
+      name: SERVICE_NAME,
+      active: active === 'active',
+      activeState: active || 'unknown',
+      enabled: enabled === 'enabled',
+      enabledState: enabled || 'unknown',
+      mode: paths.isUser ? 'user' : 'system'
+    },
+    port
+  };
+
+  if (active === 'active') {
+    const pid = runQuiet(`${paths.systemctl} show -p MainPID --value ${SERVICE_NAME}`);
+    if (pid && pid !== '0') {
+      data.service.pid = pid;
+      const uptime = runQuiet(`ps -p ${pid} -o etime= 2>/dev/null`);
+      if (uptime) data.service.uptime = uptime.trim();
+    }
+  }
+
+  const healthBody = runQuiet(`curl -s http://127.0.0.1:${port}/health`);
+  if (healthBody) {
+    try {
+      const health = JSON.parse(healthBody);
+      data.health = {
+        available: true,
+        status: health.status,
+        uptimeMs: health.uptime,
+        uptimeSec: typeof health.uptime === 'number' ? Math.floor(health.uptime / 1000) : undefined,
+        timestamp: health.timestamp
+      };
+    } catch {
+      data.health = { available: false };
+    }
+  } else {
+    data.health = { available: false };
+  }
+
+  const tsStatus = runQuiet('tailscale status --json 2>/dev/null');
+  if (tsStatus) {
+    try {
+      const ts = JSON.parse(tsStatus);
+      const hostname = ts.Self?.HostName || null;
+      const tailnet = ts.MagicDNSSuffix || null;
+      const url = hostname && tailnet ? `https://${hostname}.${tailnet}` : null;
+
+      const serveStatus = runQuiet('tailscale serve status --json 2>/dev/null');
+      let serveActive = false;
+      if (serveStatus) {
+        try {
+          const serve = JSON.parse(serveStatus);
+          serveActive = Object.keys(serve).length > 0;
+        } catch {}
+      }
+
+      const funnelStatus = runQuiet('tailscale funnel status --json 2>/dev/null');
+      let funnelActive = false;
+      if (funnelStatus) {
+        try {
+          const funnel = JSON.parse(funnelStatus);
+          funnelActive = Object.keys(funnel).length > 0;
+        } catch {}
+      }
+
+      data.tailscale = {
+        connected: true,
+        hostname,
+        tailnet,
+        url,
+        serveActive,
+        funnelActive
+      };
+    } catch {
+      data.tailscale = { connected: false };
+    }
+  } else {
+    data.tailscale = { connected: false };
+  }
+
+  const tunnelServices = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const serviceList = tunnelServices ? tunnelServices.split('\n').filter(Boolean) : [];
+  const persistentRunning = serviceList.filter(line => line.includes('running')).length;
+  const tunnelProcs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
+  const adhocCount = parseInt(tunnelProcs || '0', 10);
+
+  data.sshTunnels = {
+    persistentTotal: serviceList.length,
+    persistentRunning,
+    adhocCount
+  };
+
+  if (active === 'active') {
+    const mem = runQuiet(`${paths.systemctl} show -p MemoryCurrent --value ${SERVICE_NAME}`);
+    const bytes = parseInt(mem, 10);
+    if (!Number.isNaN(bytes)) {
+      data.memory = {
+        bytes,
+        mb: Math.round(bytes / 1024 / 1024)
+      };
+    }
+  }
+
+  return data;
+}
+
+function collectHealth(port = 8080) {
+  const url = `http://127.0.0.1:${port}/health`;
+  const result = {
+    ok: false,
+    port,
+    url,
+    httpStatus: null
+  };
+
+  const status = runQuiet(`curl -s -o /dev/null -w "%{http_code}" ${url}`);
+  if (status) {
+    const code = parseInt(status, 10);
+    result.httpStatus = Number.isNaN(code) ? null : code;
+  }
+
+  if (status === '200') {
+    const body = runQuiet(`curl -s ${url}`);
+    try {
+      const data = JSON.parse(body);
+      result.ok = true;
+      result.health = data;
+      if (typeof data.uptime === 'number') {
+        result.uptimeSec = Math.floor(data.uptime / 1000);
+      }
+    } catch (err) {
+      result.error = `Health response parse error: ${err.message}`;
+    }
+
+    const metricsBody = runQuiet(`curl -s http://127.0.0.1:${port}/metrics`);
+    if (metricsBody) {
+      try {
+        result.metrics = JSON.parse(metricsBody);
+      } catch {}
+    }
+  } else if (status) {
+    result.error = `Health check failed (HTTP ${status})`;
+  } else {
+    result.error = `Health check failed: Gateway not reachable at ${url}`;
+  }
+
+  return result;
+}
+
+function collectLogs(lines, paths) {
+  const flag = paths.systemctlFlag ? ' ' + paths.systemctlFlag : '';
+  const output = runQuiet(`journalctl -u ${SERVICE_NAME}${flag} --no-pager -n ${lines} --output cat`);
+  const entries = output ? output.split('\n').filter(Boolean) : [];
+  return { lines: entries, count: entries.length };
+}
+
+function collectConfig(paths) {
+  const configPath = join(paths.configDir, 'gateway.json');
+  if (!existsSync(configPath)) {
+    return { error: `No config file found at ${configPath}`, path: configPath };
+  }
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return { path: configPath, config };
+  } catch (err) {
+    return { error: `Config parse error: ${err.message}`, path: configPath };
+  }
+}
+
+function collectTailscaleStatus() {
+  const tsStatus = runQuiet('tailscale status --json 2>/dev/null');
+  if (!tsStatus) {
+    return { connected: false };
+  }
+
+  try {
+    const ts = JSON.parse(tsStatus);
+    const hostname = ts.Self?.HostName || null;
+    const tailnet = ts.MagicDNSSuffix || null;
+    const url = hostname && tailnet ? `https://${hostname}.${tailnet}` : null;
+
+    let serveActive = false;
+    const serveStatus = runQuiet('tailscale serve status --json 2>/dev/null');
+    if (serveStatus) {
+      try {
+        const serve = JSON.parse(serveStatus);
+        serveActive = Object.keys(serve).length > 0;
+      } catch {}
+    }
+
+    let funnelActive = false;
+    const funnelStatus = runQuiet('tailscale funnel status --json 2>/dev/null');
+    if (funnelStatus) {
+      try {
+        const funnel = JSON.parse(funnelStatus);
+        funnelActive = Object.keys(funnel).length > 0;
+      } catch {}
+    }
+
+    const proxyService = runQuiet(`systemctl is-active ${TAILSCALE_SERVICE}`);
+
+    return {
+      connected: true,
+      hostname,
+      tailnet,
+      url,
+      serveActive,
+      funnelActive,
+      proxyService: proxyService || null,
+      status: ts
+    };
+  } catch {
+    return { connected: false, error: 'Unable to parse Tailscale status', raw: tsStatus };
+  }
+}
+
+function collectSshTunnelList(paths) {
+  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend 2>/dev/null`);
+  const persistent = [];
+  if (services && services.trim()) {
+    for (const line of services.split('\n').filter(Boolean)) {
+      const parts = line.trim().split(/\s+/);
+      const name = parts[0];
+      const state = parts[3] || 'unknown';
+      persistent.push({ name, state, active: state === 'running' });
+    }
+  }
+
+  const procs = runQuiet('pgrep -a -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
+  const adhoc = [];
+  if (procs && procs.trim()) {
+    for (const line of procs.split('\n').filter(Boolean)) {
+      const [pid, ...cmdParts] = line.split(' ');
+      adhoc.push({ pid: parseInt(pid, 10), command: cmdParts.join(' ') });
+    }
+  }
+
+  return { persistent, adhoc };
+}
+
+function collectSshTunnelStatus(paths) {
+  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const serviceList = services ? services.split('\n').filter(Boolean) : [];
+  const running = serviceList.filter(line => line.includes('running')).length;
+
+  const procs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
+  const adhocCount = parseInt(procs || '0', 10);
+
+  const keyPath = join(homedir(), '.ssh', 'stateset_gateway');
+  const autossh = runQuiet('which autossh 2>/dev/null');
+
+  return {
+    persistent: { configured: serviceList.length, running },
+    adhoc: { count: adhocCount },
+    sshKey: { path: keyPath, present: existsSync(keyPath) },
+    autossh: { available: Boolean(autossh), path: autossh || null }
+  };
 }
 
 // ============================================================================
@@ -416,6 +728,10 @@ function cmdStart(paths) {
 }
 
 function cmdStop(paths) {
+  if (!serviceExists(paths)) {
+    console.log(chalk.yellow('Service not installed. Nothing to stop.'));
+    return;
+  }
   console.log('Stopping StateSet Gateway...');
   if (paths.isUser) {
     run(`${paths.systemctl} stop ${SERVICE_NAME}`);
@@ -1321,6 +1637,8 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', default: '8080' },
     user: { type: 'boolean', default: false },
     follow: { type: 'boolean', short: 'f', default: false },
+    json: { type: 'boolean', default: false },
+    output: { type: 'string' },
     reverse: { type: 'boolean', default: false },
     persistent: { type: 'boolean', default: false },
     name: { type: 'string' },
@@ -1337,6 +1655,52 @@ if (values.help || positionals.length === 0) {
 const command = positionals[0];
 const port = parseInt(values.port, 10);
 const paths = getUserPaths(values.user);
+const outputPath = values.output || null;
+if (outputPath) {
+  values.json = true;
+}
+const isJsonOutput = values.json;
+const writeJson = (data) => {
+  const payload = JSON.stringify(data, null, 2);
+  if (outputPath) {
+    writeFileSync(outputPath, payload);
+    return;
+  }
+  console.log(payload);
+};
+const emitError = (message, code = 1) => {
+  if (isJsonOutput) {
+    writeJson({ error: message });
+  } else {
+    console.error(message);
+  }
+  process.exit(code);
+};
+
+if (Number.isNaN(port)) {
+  emitError(`Invalid port: ${values.port}`);
+}
+
+if (isJsonOutput) {
+  const subcommand = positionals[1];
+  const supportedCommands = new Set(['status', 'health', 'config', 'validate', 'logs', 'tailscale', 'ssh-tunnel', 'ssh']);
+
+  if (!supportedCommands.has(command)) {
+    emitError('JSON output is supported for: status, health, config, validate, logs (non-follow), tailscale status, ssh-tunnel list/status.');
+  }
+
+  if (command === 'logs' && values.follow) {
+    emitError('JSON output is not supported with --follow.');
+  }
+
+  if (command === 'tailscale' && subcommand !== 'status') {
+    emitError('JSON output is only supported for "tailscale status".');
+  }
+
+  if ((command === 'ssh-tunnel' || command === 'ssh') && subcommand !== 'list' && subcommand !== 'status') {
+    emitError('JSON output is only supported for "ssh-tunnel list" and "ssh-tunnel status".');
+  }
+}
 
 switch (command) {
   case 'install':
@@ -1358,35 +1722,83 @@ switch (command) {
     cmdDisable(paths);
     break;
   case 'status':
-    cmdStatus(paths, port);
+    if (isJsonOutput) {
+      writeJson(collectStatus(paths, port));
+    } else {
+      cmdStatus(paths, port);
+    }
     break;
   case 'logs':
-    cmdLogs(parseInt(positionals[1], 10) || 50, values.follow, paths);
+    if (isJsonOutput) {
+      const lines = parseInt(positionals[1], 10) || 50;
+      writeJson(collectLogs(lines, paths));
+    } else {
+      cmdLogs(parseInt(positionals[1], 10) || 50, values.follow, paths);
+    }
     break;
   case 'config':
-    cmdConfig(paths);
+    if (isJsonOutput) {
+      const config = collectConfig(paths);
+      if (config.error) {
+        emitError(config.error);
+      }
+      writeJson(config);
+    } else {
+      cmdConfig(paths);
+    }
     break;
   case 'validate':
-    cmdValidate(paths, values.config);
+    if (isJsonOutput) {
+      const configPath = values.config || join(paths.configDir, 'gateway.json');
+      const result = validateConfigDetailed(configPath);
+      writeJson(result);
+      process.exit(result.valid ? 0 : 1);
+    } else {
+      cmdValidate(paths, values.config);
+    }
     break;
   case 'update':
     cmdUpdate(paths);
     break;
   case 'tailscale':
-    cmdTailscale(positionals[1], positionals[2], port);
+    if (isJsonOutput) {
+      writeJson(collectTailscaleStatus());
+    } else {
+      cmdTailscale(positionals[1], positionals[2], port);
+    }
     break;
   case 'ssh-tunnel':
   case 'ssh':
-    cmdSshTunnel(positionals[1], port, values, paths);
+    if (isJsonOutput) {
+      if (positionals[1] === 'list') {
+        writeJson(collectSshTunnelList(paths));
+      } else {
+        writeJson(collectSshTunnelStatus(paths));
+      }
+    } else {
+      cmdSshTunnel(positionals[1], port, values, paths);
+    }
     break;
   case 'health':
-    cmdHealth(port);
+    if (isJsonOutput) {
+      const result = collectHealth(port);
+      writeJson(result);
+      if (!result.ok) {
+        process.exit(1);
+      }
+    } else {
+      cmdHealth(port);
+    }
     break;
   case 'uninstall':
     cmdUninstall(paths);
     break;
   default:
-    console.error(`Unknown command: ${command}`);
-    console.error('Run stateset-daemon --help for usage');
-    process.exit(1);
+    if (isJsonOutput) {
+      emitError(`Unknown command: ${command}`);
+    } else {
+      console.error(`Unknown command: ${command}`);
+      console.error('Run stateset-daemon --help for usage');
+      process.exit(1);
+    }
 }

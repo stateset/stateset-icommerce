@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { RichOutput, ICONS, createOutput } from '../../src/output.js';
+import { RichOutput, ICONS, createOutput, formatStructuredOutput } from '../../src/output.js';
 
 describe('output', () => {
   describe('ICONS', () => {
@@ -300,6 +300,33 @@ describe('output', () => {
     it('should pass options', () => {
       const output = createOutput({ format: 'json' });
       assert.strictEqual(output.format, 'json');
+    });
+  });
+
+  describe('formatStructuredOutput', () => {
+    it('should format object data as a table', () => {
+      const result = formatStructuredOutput({ foo: 1, bar: 'baz' }, 'table');
+      assert.ok(result.includes('key'));
+      assert.ok(result.includes('foo'));
+      assert.ok(result.includes('bar'));
+    });
+
+    it('should format array data as csv', () => {
+      const data = [
+        { id: 1, name: 'Alice' },
+        { id: 2, name: 'Bob' }
+      ];
+      const result = formatStructuredOutput(data, 'csv');
+      assert.ok(result.startsWith('id,name'));
+      assert.ok(result.includes('Alice'));
+      assert.ok(result.includes('Bob'));
+    });
+
+    it('should format data as json', () => {
+      const data = [{ id: '1', name: 'Alice' }];
+      const result = formatStructuredOutput(data, 'json');
+      const parsed = JSON.parse(result);
+      assert.deepStrictEqual(parsed, data);
     });
   });
 });

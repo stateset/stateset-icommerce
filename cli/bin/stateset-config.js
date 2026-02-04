@@ -68,6 +68,7 @@ COMMANDS:
 OPTIONS:
   --profile, -p <name>    Target a specific profile
   --json                  Output as JSON
+  --output <file>         Write output to file (implies --json)
   --help, -h              Show this help message
 
 API KEY SETUP (Quick Start):
@@ -289,7 +290,7 @@ async function setApiKey(provider, output) {
 }
 
 // Show all configured API keys
-function showApiKeys(output, json = false) {
+async function showApiKeys(output, json = false, writeJson = null) {
   const results = {};
 
   for (const [provider, config] of Object.entries(API_KEY_PROVIDERS)) {
@@ -305,7 +306,11 @@ function showApiKeys(output, json = false) {
   }
 
   if (json) {
-    console.log(JSON.stringify(results, null, 2));
+    if (writeJson) {
+      await writeJson(results);
+    } else {
+      console.log(JSON.stringify(results, null, 2));
+    }
     return;
   }
 
@@ -337,6 +342,7 @@ async function main() {
     options: {
       profile: { type: 'string', short: 'p' },
       json: { type: 'boolean', default: false },
+      output: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false }
     },
     allowPositionals: true
@@ -347,7 +353,27 @@ async function main() {
     process.exit(0);
   }
 
+  const outputPath = values.output || null;
+  if (outputPath) {
+    values.json = true;
+  }
+
   const output = new RichOutput({ color: !values.json });
+  const writeJson = async (data) => {
+    const payload = JSON.stringify(data, null, 2);
+    if (outputPath) {
+      await fs.promises.writeFile(outputPath, payload);
+      return;
+    }
+    console.log(payload);
+  };
+  const emitError = async (message) => {
+    if (values.json) {
+      await writeJson({ error: message });
+      return;
+    }
+    console.error(message);
+  };
   const command = positionals[0];
   const args = positionals.slice(1);
   const config = loadConfig();
@@ -360,14 +386,14 @@ async function main() {
     }
 
     case 'show-keys': {
-      showApiKeys(output, values.json);
+      await showApiKeys(output, values.json, writeJson);
       break;
     }
 
     case 'list': {
       const profiles = listProfiles();
       if (values.json) {
-        console.log(JSON.stringify({ profiles, default: config.defaultProfile }, null, 2));
+        await writeJson({ profiles, default: config.defaultProfile });
       } else {
         console.log(`\n${ICONS.session} ${output.bold('Configuration Profiles')}\n`);
         if (profiles.length === 0) {
@@ -388,7 +414,7 @@ async function main() {
       const profileName = args[0] || values.profile || config.defaultProfile || 'default';
       const profile = loadProfile(profileName);
       if (values.json) {
-        console.log(JSON.stringify(profile, null, 2));
+        await writeJson(profile);
       } else {
         console.log(`\n${ICONS.session} ${output.bold(`Profile: ${profileName}`)}\n`);
         for (const [key, value] of Object.entries(profile)) {
@@ -402,38 +428,52 @@ async function main() {
     case 'create': {
       const name = args[0];
       if (!name) {
-        console.error('Error: Profile name required');
-        console.error('Usage: stateset-config create <profile-name>');
+        await emitError('Error: Profile name required');
+        if (!values.json) {
+          console.error('Usage: stateset-config create <profile-name>');
+        }
         process.exit(1);
       }
       const profiles = listProfiles();
       if (profiles.includes(name)) {
-        console.error(`Error: Profile '${name}' already exists`);
+        await emitError(`Error: Profile '${name}' already exists`);
         process.exit(1);
       }
       const profile = loadProfile(name);
       saveProfile(name, profile);
-      console.log(output.green(`✓ Created profile: ${name}`));
-      console.log(output.dim(`  Configure it with: stateset-config --profile ${name} set <key> <value>`));
+      if (values.json) {
+        await writeJson({ profile: name, created: true });
+      } else {
+        console.log(output.green(`✓ Created profile: ${name}`));
+        console.log(output.dim(`  Configure it with: stateset-config --profile ${name} set <key> <value>`));
+      }
       break;
     }
 
     case 'use': {
       const name = args[0];
       if (!name) {
-        console.error('Error: Profile name required');
-        console.error('Usage: stateset-config use <profile-name>');
+        await emitError('Error: Profile name required');
+        if (!values.json) {
+          console.error('Usage: stateset-config use <profile-name>');
+        }
         process.exit(1);
       }
       const profiles = listProfiles();
       if (!profiles.includes(name)) {
-        console.error(`Error: Profile '${name}' not found`);
-        console.error(`Available profiles: ${profiles.join(', ') || '(none)'}`);
+        await emitError(`Error: Profile '${name}' not found`);
+        if (!values.json) {
+          console.error(`Available profiles: ${profiles.join(', ') || '(none)'}`);
+        }
         process.exit(1);
       }
       config.defaultProfile = name;
       saveConfig(config);
-      console.log(output.green(`✓ Now using profile: ${name}`));
+      if (values.json) {
+        await writeJson({ defaultProfile: name });
+      } else {
+        console.log(output.green(`✓ Now using profile: ${name}`));
+      }
       break;
     }
 
@@ -441,8 +481,10 @@ async function main() {
       const key = args[0];
       const value = args.slice(1).join(' ');
       if (!key || !value) {
-        console.error('Error: Key and value required');
-        console.error('Usage: stateset-config set <key> <value>');
+        await emitError('Error: Key and value required');
+        if (!values.json) {
+          console.error('Usage: stateset-config set <key> <value>');
+        }
         process.exit(1);
       }
       const profileName = values.profile || config.defaultProfile || 'default';
@@ -455,26 +497,32 @@ async function main() {
 
       profile[key] = parsedValue;
       saveProfile(profileName, profile);
-      console.log(output.green(`✓ Set ${key}=${value} in profile '${profileName}'`));
+      if (values.json) {
+        await writeJson({ profile: profileName, key, value: parsedValue });
+      } else {
+        console.log(output.green(`✓ Set ${key}=${value} in profile '${profileName}'`));
+      }
       break;
     }
 
     case 'get': {
       const key = args[0];
       if (!key) {
-        console.error('Error: Key required');
-        console.error('Usage: stateset-config get <key>');
+        await emitError('Error: Key required');
+        if (!values.json) {
+          console.error('Usage: stateset-config get <key>');
+        }
         process.exit(1);
       }
       const profileName = values.profile || config.defaultProfile || 'default';
       const profile = loadProfile(profileName);
       const value = profile[key];
       if (values.json) {
-        console.log(JSON.stringify({ [key]: value }));
+        await writeJson({ [key]: value });
       } else if (value !== undefined) {
         console.log(value);
       } else {
-        console.error(`Key '${key}' not found in profile '${profileName}'`);
+        await emitError(`Key '${key}' not found in profile '${profileName}'`);
         process.exit(1);
       }
       break;
@@ -482,7 +530,7 @@ async function main() {
 
     case 'path': {
       if (values.json) {
-        console.log(JSON.stringify({ configDir: CONFIG_DIR, configFile: CONFIG_FILE, profilesDir: PROFILES_DIR }));
+        await writeJson({ configDir: CONFIG_DIR, configFile: CONFIG_FILE, profilesDir: PROFILES_DIR });
       } else {
         console.log(`Config directory: ${CONFIG_DIR}`);
         console.log(`Config file: ${CONFIG_FILE}`);
@@ -492,8 +540,10 @@ async function main() {
     }
 
     default:
-      console.error(`Unknown command: ${command}`);
-      console.error('Run stateset-config --help for usage');
+      await emitError(`Unknown command: ${command}`);
+      if (!values.json) {
+        console.error('Run stateset-config --help for usage');
+      }
       process.exit(1);
   }
 }

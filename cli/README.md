@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 0.5.0
+**Version:** 0.5.2
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -119,11 +119,11 @@ stateset-direct customers get alice@example.com
 
 # Order operations
 stateset-direct orders list
-stateset-direct orders ship <order-id> TRACK123
+stateset-direct --apply orders ship <order-id> TRACK123
 
 # Inventory operations
 stateset-direct inventory stock WIDGET-001
-stateset-direct inventory adjust WIDGET-001 -5 "Sold 5 units"
+stateset-direct --apply inventory adjust WIDGET-001 -5 "Sold 5 units"
 
 # Vector search (hybrid semantic + BM25)
 stateset-direct vector search products "wireless earbuds" 5
@@ -181,7 +181,9 @@ stateset --apply --batch orders.txt --parallel 3
 
 | Command | Description |
 |---------|-------------|
+| `stateset-channels` | Multi-channel gateway runtime |
 | `stateset-config` | Profile and configuration management |
+| `stateset-daemon` | Systemd service manager for the gateway |
 | `stateset-doctor` | Health check and diagnostics |
 | `stateset-events` | Event management and webhooks |
 | `stateset-sync` | Verifiable Event Sync with sequencer |
@@ -407,6 +409,9 @@ stateset "create a customer named Bob"
 # Actually create the customer
 stateset --apply "create a customer named Bob"
 # Output: "Created customer: abc-123-def"
+
+# Direct mode writes also require --apply
+stateset-direct --apply inventory adjust WIDGET-001 -5 "Sold 5 units"
 ```
 
 ### Permission Controls
@@ -545,6 +550,9 @@ stateset pay --apply --to 0x1234...5678 --amount 100 --chain set_chain
 
 # Include order metadata for audit trail
 stateset pay --apply --to <addr> --amount 50 --chain solana --order ORD-123 --memo "Widget purchase"
+
+# Write JSON output to file
+stateset pay --wallet --output wallets.json
 
 # AI-powered payments
 stateset --apply "pay 50 USDC to 9WzDXwBb...WWWM on Solana"
@@ -809,9 +817,19 @@ stateset [options] "<request>"
 Options:
   --db <path>       Database path (default: ./store.db)
   --apply           Enable write operations
-  --model <name>    Claude model
+  --model <name>    Model name
+  --provider <name> Model provider (default: claude)
+  --think <level>   Extended thinking: off, low, medium, high
+  --stream          Stream partial responses
+  --budget <usd>    Maximum spend per query in USD
+  --memory          Enable memory
+  --no-memory       Disable memory
+  --x402            Enable x402 MCP tools
   --resume <id>     Resume previous session
   --json            JSON output
+  --format <fmt>    Output format: table, json, csv, yaml
+  --output <file>   Write output to file
+  --yes             Skip confirmation prompts
   --verbose         Show telemetry
   --stats           Show execution stats
   --parallel <n>    Parallel batch processing
@@ -826,9 +844,16 @@ Options:
 stateset-chat [options]
 
 Options:
-  --db <path>     Database path
-  --apply         Start with write enabled
-  --model <name>  Claude model
+  --db <path>       Database path
+  --apply           Start with write enabled
+  --model <name>    Model name
+  --provider <name> Model provider (default: claude)
+  --think <level>   Extended thinking: off, low, medium, high
+  --stream          Stream partial responses
+  --budget <usd>    Maximum spend per query in USD
+  --memory          Enable memory
+  --no-memory       Disable memory
+  --x402            Enable x402 MCP tools
 
 In-chat commands:
   /help           Show commands
@@ -846,7 +871,11 @@ stateset-direct [options] <resource> <action> [args]
 
 Options:
   --db <path>     Database path
+  --apply         Enable write operations
   --json          JSON output
+  --format <fmt>  Output format: table, json
+  --output <file> Write output to file
+  --yes           Skip confirmation prompts
   --help          Show help
 
 Resources:
@@ -855,6 +884,119 @@ Resources:
   products        Product catalog
   inventory       Stock management
   returns         Return processing
+```
+
+### `stateset-config` - Configuration
+
+```
+stateset-config <command> [options]
+
+Options:
+  --profile, -p <name>  Target a specific profile
+  --json                JSON output
+  --output <file>       Write output to file (implies --json)
+  --help                Show help
+```
+
+### `stateset-events` - Event Streaming
+
+```
+stateset-events [options]
+
+Options:
+  --db <path>      Database path
+  --filter <type>  Filter events (orders, inventory, customers, products, returns)
+  --json           JSON output (one per line)
+  --output <file>  Write output to file (implies --json)
+  --quiet          Only output event data, no headers
+  --help           Show help
+```
+
+### `stateset-channels` - Multi-Channel Gateway
+
+```
+stateset-channels --config <path> [options]
+
+Options:
+  --config <path>  Path to YAML or JSON config file (required)
+  --verbose        Enable verbose logging
+  --json           Output status as JSON
+  --output <file>  Write JSON output to file (implies --json)
+  --help           Show help
+```
+
+### `stateset-daemon` - Gateway Service Manager
+
+```
+stateset-daemon <command> [options]
+
+Options:
+  --config <path>  Config file path
+  --port <n>       HTTP gateway port (default: 8080)
+  --user           Manage as user service (no sudo)
+  --follow, -f     Follow logs in real-time
+  --json           JSON output (supported commands only)
+  --output <file>  Write JSON output to file (implies --json)
+  --reverse        Reverse SSH tunnel
+  --persistent     Persistent SSH tunnel via systemd
+  --name <n>       Name for persistent tunnel
+  --help           Show help
+```
+
+### `stateset-sync` - Verifiable Event Sync
+
+```
+stateset-sync <command> [options]
+
+Options:
+  --db <path>      Database path
+  --json           JSON output
+  --output <file>  Write JSON output to file (implies --json)
+  --help           Show help
+```
+
+### `stateset-skills` - Skills Marketplace
+
+```
+stateset-skills <command> [options]
+
+Options:
+  --json           JSON output
+  --output <file>  Write JSON output to file (implies --json)
+  --category <cat> Filter by category
+  --origin <name>  Filter by origin (bundled, installed, workspace)
+  --force          Overwrite on install
+  --help           Show help
+```
+
+### `stateset-x402` - x402 Configuration
+
+```
+stateset-x402 init [options]
+
+Options:
+  --sequencer-url <url>  Sequencer URL (required)
+  --tenant-id <uuid>     Tenant UUID (required)
+  --store-id <uuid>      Store UUID (required)
+  --agent-id <id>        Agent ID (required)
+  --network <network>    Preferred network (default: set_chain)
+  --config-dir <path>    Config directory (default: .stateset)
+  --config-file <path>   Override config file path
+  --json                 JSON output
+  --output <file>        Write JSON output to file (implies --json)
+  --force                Overwrite existing config
+  --help                 Show help
+```
+
+### `stateset-x402-mcp` - x402 MCP Server
+
+```
+stateset-x402-mcp [options]
+
+Options:
+  --config-dir <path>  Config directory (default: .stateset)
+  --help               Show help
+  --version            Show version
 ```
 
 ## Error Handling
@@ -888,6 +1030,9 @@ stateset-doctor
 
 # Check specific components
 stateset-doctor --checks api,db,permissions
+
+# JSON output for automation
+stateset-doctor --json --output health.json
 ```
 
 ## Development

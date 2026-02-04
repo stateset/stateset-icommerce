@@ -44,7 +44,8 @@ export {
 export {
   RichOutput,
   createOutput,
-  ICONS
+  ICONS,
+  formatStructuredOutput
 } from './output.js';
 
 // Scaffolding Server (Storefront Creation)

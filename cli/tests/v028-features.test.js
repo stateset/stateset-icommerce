@@ -117,8 +117,8 @@ describe('Config v0.2.8', () => {
     assert.ok(opts.memory, 'should have memory option');
   });
 
-  it('should have CLI_VERSION set to 0.5.0', () => {
-    assert.equal(config.CLI_VERSION, '0.5.0');
+  it('should have CLI_VERSION set to 0.5.2', () => {
+    assert.equal(config.CLI_VERSION, '0.5.2');
   });
 });
 

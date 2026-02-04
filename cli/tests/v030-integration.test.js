@@ -67,14 +67,14 @@ function request(port, method, path, body = null, headers = {}) {
 // ============================================================================
 
 describe('v0.3.0 — Package version', () => {
-  it('package.json version should be 0.5.0', () => {
+  it('package.json version should be 0.5.2', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.equal(pkg.version, '0.5.0');
+    assert.equal(pkg.version, '0.5.2');
   });
 
-  it('config CLI_VERSION should be 0.5.0', async () => {
+  it('config CLI_VERSION should be 0.5.2', async () => {
     const config = await import('../src/config.js');
-    assert.equal(config.CLI_VERSION, '0.5.0');
+    assert.equal(config.CLI_VERSION, '0.5.2');
   });
 
   it('package.json should have botbuilder in optionalDependencies', () => {

@@ -16,6 +16,7 @@ import { Commerce } from '@stateset/embedded';
 import { parseArgs } from 'node:util';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { createConfirmHandler } from '../src/utils/confirm.js';
 
 // ============================================================================
 // Resource & Action Aliases
@@ -76,7 +77,11 @@ USAGE:
 
 GLOBAL OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
+  --apply            Enable write operations
   --json             Output as JSON
+  --format <fmt>     Output format: table, json (default: table)
+  --output <file>    Write output to file
+  --yes, -y          Skip confirmation prompts
   --help, -h         Show this help message
 
 RESOURCES & ACTIONS:
@@ -130,10 +135,10 @@ EXAMPLES:
   stateset-direct customers list
   stateset-direct c l                         # Same as: customers list
   stateset-direct o g 8aeb                    # orders get (short ID)
-  stateset-direct o x 8aeb                    # orders cancel
+  stateset-direct --apply o x 8aeb            # orders cancel
   stateset-direct inv stock WIDGET-001
   stateset-direct i stock WIDGET              # Fuzzy SKU match
-  stateset-direct inv a WIDGET -5 "Sold"      # inventory adjust
+  stateset-direct --apply inv a WIDGET -5 "Sold"  # inventory adjust
   stateset-direct o #                         # orders count
   stateset-direct v search products "wireless earbuds" 5
   stateset-direct --json p l                  # products list as JSON
@@ -141,6 +146,10 @@ EXAMPLES:
 SMART MATCHING:
   - IDs: Use any unique prefix (like git). "8aeb" matches "8aeb3f12-..."
   - SKUs: Partial match supported. "WIDGET" matches "WIDGET-001"
+
+SAFETY:
+  - Write operations require --apply
+  - Confirmation prompts appear unless --yes is provided
 `;
 
 async function main() {
@@ -148,7 +157,12 @@ async function main() {
 
   // Find global options
   let dbPath = './store.db';
+  let apply = false;
   let jsonOutput = false;
+  let format = 'table';
+  let formatProvided = false;
+  let outputPath = null;
+  let skipConfirm = false;
   let showHelp = false;
 
   // Extract global options
@@ -156,8 +170,20 @@ async function main() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--db' && args[i + 1]) {
       dbPath = args[++i];
+    } else if (args[i] === '--apply') {
+      apply = true;
     } else if (args[i] === '--json') {
       jsonOutput = true;
+    } else if (args[i] === '--format' && args[i + 1]) {
+      format = args[++i];
+      formatProvided = true;
+    } else if (args[i].startsWith('--format=')) {
+      format = args[i].split('=')[1] || 'table';
+      formatProvided = true;
+    } else if (args[i] === '--output' && args[i + 1]) {
+      outputPath = args[++i];
+    } else if (args[i] === '--yes' || args[i] === '-y') {
+      skipConfirm = true;
     } else if (args[i] === '--help' || args[i] === '-h') {
       showHelp = true;
     } else {
@@ -176,6 +202,13 @@ async function main() {
   const resource = expandResource(rawResource);
   const action = expandAction(rawAction);
 
+  const outputFormat = formatProvided ? format : (jsonOutput ? 'json' : format);
+  if (!['table', 'json'].includes(outputFormat)) {
+    throw new Error(`Unsupported format: ${outputFormat}. Use table or json.`);
+  }
+  const isJsonOutput = outputFormat === 'json';
+  jsonOutput = isJsonOutput;
+
   // Validate database path exists (for file-based databases)
   if (dbPath !== ':memory:') {
     const dir = path.dirname(path.resolve(dbPath));
@@ -187,11 +220,43 @@ async function main() {
   // Initialize commerce
   const commerce = new Commerce(dbPath);
 
+  const outputLines = [];
   const output = (data) => {
-    if (jsonOutput) {
-      console.log(JSON.stringify(data, null, 2));
-    } else {
-      console.log(data);
+    const line = jsonOutput ? JSON.stringify(data, null, 2) : String(data);
+    outputLines.push(line);
+    if (!outputPath) {
+      console.log(line);
+    }
+  };
+
+  const isWriteAction = (res, act) => {
+    const writeActions = {
+      customers: new Set(['create']),
+      orders: new Set(['ship', 'cancel']),
+      inventory: new Set(['adjust', 'create']),
+      returns: new Set(['approve', 'reject']),
+      vector: new Set(['index', 'index-all', 'clear', 'clear-all'])
+    };
+    return Boolean(writeActions[res]?.has(act));
+  };
+
+  const ensureWriteAllowed = async (res, act, details) => {
+    if (!isWriteAction(res, act)) return;
+    if (!apply) {
+      throw new Error(`Preview mode: would execute '${res} ${act}'. Re-run with --apply to proceed.`);
+    }
+    const nonInteractive = !process.stdin.isTTY || jsonOutput;
+    const confirm = createConfirmHandler({
+      output: null,
+      assumeYes: skipConfirm,
+      nonInteractive
+    });
+    const confirmed = await confirm({
+      operation: `${res}.${act}`,
+      details
+    });
+    if (!confirmed) {
+      throw new Error('Confirmation declined');
     }
   };
 
@@ -394,6 +459,7 @@ Created: ${customer.createdAt}
             if (!email || !firstName || !lastName) {
               throw new Error('Usage: customers create <email> <firstName> <lastName>');
             }
+            await ensureWriteAllowed('customers', 'create', `${email} ${firstName} ${lastName}`);
             const customer = await commerce.customers.create({ email, firstName, lastName });
             output(jsonOutput ? customer : `Created customer: ${customer.id}`);
             break;
@@ -447,6 +513,7 @@ Created: ${order.createdAt}
           case 'ship': {
             const [orderIdArg, trackingNumber] = actionArgs;
             if (!orderIdArg) throw new Error('Usage: orders ship <id> [tracking]');
+            await ensureWriteAllowed('orders', 'ship', `order ${orderIdArg}${trackingNumber ? ` tracking ${trackingNumber}` : ''}`);
             const orderId = await resolveId(orderIdArg, 'orders');
             const order = await commerce.orders.ship(orderId, trackingNumber);
             output(jsonOutput ? order : `Order ${order.orderNumber} shipped${trackingNumber ? ` (${trackingNumber})` : ''}`);
@@ -455,6 +522,7 @@ Created: ${order.createdAt}
           case 'cancel': {
             const orderIdArg = actionArgs[0];
             if (!orderIdArg) throw new Error('Usage: orders cancel <id>');
+            await ensureWriteAllowed('orders', 'cancel', `order ${orderIdArg}`);
             const orderId = await resolveId(orderIdArg, 'orders');
             const order = await commerce.orders.cancel(orderId);
             output(jsonOutput ? order : `Order ${order.orderNumber} cancelled`);
@@ -573,6 +641,7 @@ Stock for ${stock.sku} (${stock.name}):
             if (!skuArg || isNaN(qty) || !reason) {
               throw new Error('Usage: inventory adjust <sku> <quantity> <reason>');
             }
+            await ensureWriteAllowed('inventory', 'adjust', `${skuArg} ${qty > 0 ? '+' : ''}${qty} (${reason})`);
             const sku = await resolveSku(skuArg);
             await commerce.inventory.adjust(sku, qty, reason);
             const stock = await commerce.inventory.getStock(sku);
@@ -585,6 +654,7 @@ Stock for ${stock.sku} (${stock.name}):
             if (!sku || !name) {
               throw new Error('Usage: inventory create <sku> <name> [initialQuantity]');
             }
+            await ensureWriteAllowed('inventory', 'create', `${sku} (${name})`);
             const item = await commerce.inventory.createItem({ sku, name, initialQuantity });
             output(jsonOutput ? item : `Created inventory item: ${item.sku} (${item.name})`);
             break;
@@ -628,6 +698,7 @@ Created: ${ret.createdAt}
           case 'approve': {
             const idArg = actionArgs[0];
             if (!idArg) throw new Error('Usage: returns approve <id>');
+            await ensureWriteAllowed('returns', 'approve', idArg);
             const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.approve(id);
             output(jsonOutput ? ret : `Return ${ret.id} approved`);
@@ -639,6 +710,7 @@ Created: ${ret.createdAt}
             if (!idArg || !reason) {
               throw new Error('Usage: returns reject <id> <reason>');
             }
+            await ensureWriteAllowed('returns', 'reject', `${idArg} (${reason})`);
             const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.reject(id, reason);
             output(jsonOutput ? ret : `Return ${ret.id} rejected`);
@@ -742,6 +814,7 @@ Created: ${ret.createdAt}
             if (!scope || !id) {
               throw new Error('Usage: vector index <products|customers|orders|inventory> <id>');
             }
+            await ensureWriteAllowed('vector', 'index', `${scope} ${id}`);
 
             const resolvedId = scope === 'inventory' ? id : await resolveId(id, scope);
 
@@ -769,6 +842,7 @@ Created: ${ret.createdAt}
             if (!scope) {
               throw new Error('Usage: vector index-all <products|customers|orders|inventory>');
             }
+            await ensureWriteAllowed('vector', 'index-all', scope);
 
             let count = 0;
             switch (scope) {
@@ -812,12 +886,14 @@ Created: ${ret.createdAt}
             if (!scope) {
               throw new Error('Usage: vector clear <products|customers|orders|inventory>');
             }
+            await ensureWriteAllowed('vector', 'clear', scope);
             const count = await vector.clear(scope);
             output(jsonOutput ? { scope, cleared: count } : `Cleared ${count} ${scope} embeddings`);
             break;
           }
 
           case 'clear-all': {
+            await ensureWriteAllowed('vector', 'clear-all', 'all embeddings');
             const count = await vector.clearAll();
             output(jsonOutput ? { cleared: count } : `Cleared ${count} embeddings`);
             break;
@@ -840,6 +916,13 @@ Created: ${ret.createdAt}
 
       default:
         throw new Error(`Unknown resource: ${resource}\nUse --help for available commands.`);
+    }
+
+    if (outputPath) {
+      await fs.promises.writeFile(outputPath, outputLines.join('\n'));
+      if (!jsonOutput) {
+        console.log(`Output written to ${outputPath}`);
+      }
     }
 
     process.exit(0);

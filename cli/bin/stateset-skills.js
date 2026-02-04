@@ -4,17 +4,18 @@
  * stateset-skills — Browse and manage iCommerce skills marketplace.
  *
  * Usage:
- *   stateset-skills list [--category <cat>] [--origin <origin>] [--json]
- *   stateset-skills search <query> [--json]
- *   stateset-skills install <name> [--force]
- *   stateset-skills uninstall <name>
- *   stateset-skills info <name> [--json]
- *   stateset-skills categories [--json]
- *   stateset-skills marketplace [--json]
+ *   stateset-skills list [--category <cat>] [--origin <origin>] [--json] [--output <file>]
+ *   stateset-skills search <query> [--json] [--output <file>]
+ *   stateset-skills install <name> [--force] [--json] [--output <file>]
+ *   stateset-skills uninstall <name> [--json] [--output <file>]
+ *   stateset-skills info <name> [--json] [--output <file>]
+ *   stateset-skills categories [--json] [--output <file>]
+ *   stateset-skills marketplace [--json] [--output <file>]
  *   stateset-skills doctor
  */
 
 import { parseArgs } from 'node:util';
+import fs from 'node:fs';
 import { discoverSkills } from '../src/skills/loader.js';
 import { SkillRegistry, getSkillRegistry, CATEGORY_MAP } from '../src/skills/registry.js';
 import { MarketplaceClient, getMarketplaceClient } from '../src/skills/marketplace.js';
@@ -27,6 +28,7 @@ const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: 'boolean', default: false },
+    output: { type: 'string' },
     force: { type: 'boolean', default: false },
     category: { type: 'string', short: 'c' },
     origin: { type: 'string', short: 'o' },
@@ -37,6 +39,10 @@ const { values: flags, positionals } = parseArgs({
 
 const command = positionals[0] || 'list';
 const arg = positionals[1] || '';
+const outputPath = flags.output || null;
+if (outputPath) {
+  flags.json = true;
+}
 
 // ============================================================================
 // Helpers
@@ -68,6 +74,15 @@ function printTable(rows, headers) {
   }
 }
 
+function writeJson(data) {
+  const payload = JSON.stringify(data, null, 2);
+  if (outputPath) {
+    fs.writeFileSync(outputPath, payload);
+    return;
+  }
+  console.log(payload);
+}
+
 // ============================================================================
 // Initialize
 // ============================================================================
@@ -92,9 +107,9 @@ async function cmdList() {
   const skills = registry.list(opts);
 
   if (flags.json) {
-    console.log(JSON.stringify(skills.map((s) => ({
+    writeJson(skills.map((s) => ({
       name: s.name, description: s.description, category: s.category, origin: s.origin,
-    })), null, 2));
+    })));
     return;
   }
 
@@ -116,9 +131,9 @@ async function cmdSearch() {
   const results = registry.search(arg);
 
   if (flags.json) {
-    console.log(JSON.stringify(results.map((s) => ({
+    writeJson(results.map((s) => ({
       name: s.name, description: s.description, category: s.category,
-    })), null, 2));
+    })));
     return;
   }
 
@@ -139,7 +154,10 @@ async function cmdInstall() {
   const result = await marketplace.install(arg, { force: flags.force });
 
   if (flags.json) {
-    console.log(JSON.stringify(result, null, 2));
+    writeJson(result);
+    if (!result.installed) {
+      process.exit(1);
+    }
     return;
   }
 
@@ -161,7 +179,10 @@ async function cmdUninstall() {
   const result = marketplace.uninstall(arg);
 
   if (flags.json) {
-    console.log(JSON.stringify(result, null, 2));
+    writeJson(result);
+    if (!result.removed) {
+      process.exit(1);
+    }
     return;
   }
 
@@ -188,7 +209,7 @@ async function cmdInfo() {
     const entry = marketplace.getCatalogEntry(arg);
     if (entry) {
       if (flags.json) {
-        console.log(JSON.stringify({ ...entry, installed: false, source: 'marketplace' }, null, 2));
+        writeJson({ ...entry, installed: false, source: 'marketplace' });
         return;
       }
       console.log(`\nSkill: ${entry.name} (not installed)`);
@@ -205,7 +226,7 @@ async function cmdInfo() {
   }
 
   if (flags.json) {
-    console.log(JSON.stringify({
+    writeJson({
       name: skill.name,
       description: skill.description,
       category: skill.category,
@@ -217,7 +238,7 @@ async function cmdInfo() {
       sections: skill.parsed.sections,
       mcpTools: skill.parsed.mcpTools,
       cliCommands: skill.parsed.cliCommands,
-    }, null, 2));
+    });
     return;
   }
 
@@ -246,7 +267,7 @@ async function cmdCategories() {
   const stats = registry.getStats();
 
   if (flags.json) {
-    console.log(JSON.stringify(stats.categories, null, 2));
+    writeJson(stats.categories);
     return;
   }
 
@@ -265,7 +286,7 @@ async function cmdMarketplace() {
   const stats = marketplace.getCatalogStats();
 
   if (flags.json) {
-    console.log(JSON.stringify(stats, null, 2));
+    writeJson(stats);
     return;
   }
 
@@ -287,9 +308,7 @@ async function cmdMarketplace() {
 async function cmdDoctor() {
   const registry = initRegistry();
   const skills = registry.list();
-  let issues = 0;
-
-  console.log(`\nChecking ${skills.length} skills...\n`);
+  const problemList = [];
 
   for (const skill of skills) {
     const problems = [];
@@ -305,15 +324,28 @@ async function cmdDoctor() {
     }
 
     if (problems.length > 0) {
-      console.log(`  ${skill.name}: ${problems.join(', ')}`);
-      issues++;
+      problemList.push({ name: skill.name, problems });
     }
   }
 
-  if (issues === 0) {
+  if (flags.json) {
+    writeJson({
+      total: skills.length,
+      issues: problemList.length,
+      problems: problemList
+    });
+    return;
+  }
+
+  console.log(`\nChecking ${skills.length} skills...\n`);
+  for (const entry of problemList) {
+    console.log(`  ${entry.name}: ${entry.problems.join(', ')}`);
+  }
+
+  if (problemList.length === 0) {
     console.log('  All skills are healthy.');
   } else {
-    console.log(`\n  ${issues} skill(s) have issues.`);
+    console.log(`\n  ${problemList.length} skill(s) have issues.`);
   }
 
   console.log();
@@ -335,6 +367,7 @@ COMMANDS:
 
 OPTIONS:
   --json                  Output as JSON
+  --output <file>         Write JSON output to file (implies --json)
   --category, -c <cat>    Filter by category
   --origin, -o <origin>   Filter by origin (bundled, installed, workspace)
   --force                 Overwrite on install

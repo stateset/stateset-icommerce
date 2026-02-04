@@ -10,8 +10,11 @@
  *   stateset-doctor --checks api,db  Run specific checks
  */
 
-// Suppress logging early if --json flag is present to prevent stdout pollution
-if (process.argv.includes('--json')) {
+// Suppress logging early if --json/--output is present to prevent stdout pollution
+const argv = process.argv;
+const hasJsonFlag = argv.includes('--json');
+const hasOutputFlag = argv.includes('--output') || argv.some(arg => arg.startsWith('--output='));
+if (hasJsonFlag || hasOutputFlag) {
   process.env.LOG_LEVEL = 'silent';
 }
 
@@ -34,6 +37,7 @@ OPTIONS:
   --db <path>        Path to SQLite database to check (default: ./store.db)
   --verbose, -V      Show detailed diagnostics
   --json             Output as JSON
+  --output <file>    Write JSON output to file (implies --json)
   --checks <list>    Run specific checks (comma-separated)
   --fix              Attempt to fix issues automatically
   --help, -h         Show this help message
@@ -323,6 +327,7 @@ async function main() {
       db: { type: 'string', default: './store.db' },
       verbose: { type: 'boolean', short: 'V', default: false },
       json: { type: 'boolean', default: false },
+      output: { type: 'string' },
       checks: { type: 'string', default: '' },
       fix: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false }
@@ -335,7 +340,21 @@ async function main() {
     process.exit(0);
   }
 
-  const output = new RichOutput({ color: !values.json });
+  const outputPath = values.output || null;
+  const wantsJsonOutput = values.json || Boolean(outputPath);
+  if (outputPath) {
+    values.json = true;
+  }
+
+  const output = new RichOutput({ color: !wantsJsonOutput });
+  const writeJson = (data) => {
+    const payload = JSON.stringify(data, null, 2);
+    if (outputPath) {
+      fs.writeFileSync(outputPath, payload);
+      return;
+    }
+    console.log(payload);
+  };
 
   // Check all API keys
   async function checkAllApiKeys() {
@@ -431,12 +450,12 @@ async function main() {
     }
   }
 
-  if (values.json) {
-    console.log(JSON.stringify({
+  if (wantsJsonOutput) {
+    writeJson({
       healthy: Object.values(checks).every(c => c.status !== 'error'),
       checks,
       timestamp: new Date().toISOString()
-    }, null, 2));
+    });
     process.exit(0);
   }
 

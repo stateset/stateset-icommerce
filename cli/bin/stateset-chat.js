@@ -12,6 +12,7 @@
  */
 
 import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
+import { createConfirmHandler } from '../src/utils/confirm.js';
 import { DEFAULT_MODEL, CLI_VERSION, THINK_LEVELS } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
@@ -30,9 +31,11 @@ OPTIONS:
   --think <level>    Extended thinking: off, low, medium, high (default: off)
   --stream           Enable streaming output
   --budget <usd>     Maximum spend per query in USD
-  --memory           Enable conversation memory
+  --memory           Enable conversation memory (overrides settings)
+  --no-memory        Disable conversation memory (overrides settings)
   --x402             Enable x402 MCP tools
   --verbose, -V      Enable verbose telemetry
+  --yes, -y          Skip confirmation prompts
   --help, -h         Show this help message
 
 IN-CHAT COMMANDS:
@@ -43,7 +46,7 @@ IN-CHAT COMMANDS:
   /stream            Toggle streaming mode
   /provider <name>   Switch AI provider
   /budget <usd>      Set budget per query ($)
-  /memory            Toggle conversation memory
+  /memory            Toggle conversation memory (overrides settings)
   /verbose on|off    Toggle verbose mode
   /db <path>         Switch database
   /new               Start new session (clear context)
@@ -61,8 +64,10 @@ async function main() {
       stream: { type: 'boolean', default: false },
       budget: { type: 'string' },
       memory: { type: 'boolean', default: false },
+      noMemory: { type: 'boolean', default: false },
       x402: { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'V', default: false },
+      yes: { type: 'boolean', short: 'y', default: false },
       help: { type: 'boolean', short: 'h', default: false }
     },
     allowPositionals: true
@@ -86,13 +91,26 @@ async function main() {
   let streaming = values.stream || false;
   let provider = values.provider || 'claude';
   let budget = values.budget || null;
-  let memoryEnabled = values.memory || false;
+  let memoryEnabled = values.noMemory ? false : (values.memory ? true : null);
   let x402Enabled = values.x402 || false;
 
   // Create readline interface
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
+  });
+
+  const confirmPrompt = (message) => new Promise((resolve) => {
+    rl.question(`${message} [y/N] `, (answer) => {
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+    });
+  });
+
+  const onConfirmRequired = createConfirmHandler({
+    output,
+    assumeYes: values.yes,
+    nonInteractive: false,
+    confirmPrompt
   });
 
   const prompt = () => {
@@ -111,7 +129,10 @@ async function main() {
     if (budget) {
       console.log(`   ${output.dim('Budget:')}    ${output.cyan('$' + budget)}/query`);
     }
-    console.log(`   ${output.dim('Memory:')}    ${memoryEnabled ? output.cyan('On') : 'Off'}`);
+    const memoryLabel = memoryEnabled === null
+      ? output.dim('Default')
+      : (memoryEnabled ? output.cyan('On') : 'Off');
+    console.log(`   ${output.dim('Memory:')}    ${memoryLabel}`);
     console.log(`   ${output.dim('x402:')}      ${x402Enabled ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Verbose:')}   ${verbose ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Session:')}   ${sessionId || output.dim('(none)')}`);
@@ -241,7 +262,11 @@ ${output.bold('Example Queries:')}
           break;
 
         case 'memory':
-          memoryEnabled = !memoryEnabled;
+          if (memoryEnabled === null) {
+            memoryEnabled = true;
+          } else {
+            memoryEnabled = !memoryEnabled;
+          }
           console.log(output.status('info', `Memory: ${memoryEnabled ? 'on' : 'off'}`));
           break;
 
@@ -287,10 +312,12 @@ ${output.bold('Example Queries:')}
         allowApply,
         verbose,
         resumeSessionId: sessionId,
+        onConfirmRequired,
         thinkLevel,
         streaming,
         maxBudgetUsd: budget,
         provider,
+        enableMemory: memoryEnabled === null ? null : memoryEnabled,
         enableX402: x402Enabled,
         onPartialMessage: streaming ? (event) => {
           if (event?.content) {

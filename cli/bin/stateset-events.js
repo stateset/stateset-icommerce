@@ -14,6 +14,7 @@ import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
 import { CLI_VERSION } from '../src/config.js';
 import { Commerce } from '@stateset/embedded';
+import fs from 'node:fs/promises';
 
 const HELP = `
 StateSet iCommerce CLI - Event Streaming
@@ -26,6 +27,7 @@ OPTIONS:
   --db <path>        Path to SQLite database (default: ./store.db)
   --filter <type>    Filter events by type: orders, inventory, customers, products, returns
   --json             Output events as JSON (one per line)
+  --output <file>    Write output to file (implies --json)
   --quiet, -q        Only output event data, no headers
   --help, -h         Show this help message
 
@@ -119,7 +121,7 @@ function formatEvent(event, output, isJson) {
   return `${output.dim(timestamp)} ${icon} ${output.bold(type)}${output.dim(details)}`;
 }
 
-async function streamEvents(commerce, filter, output, isJson, isQuiet) {
+async function streamEvents(commerce, filter, output, isJson, isQuiet, emit) {
   if (!isQuiet && !isJson) {
     console.log(`\n${ICONS.analytics} ${output.bold('Event Stream')}`);
     if (filter) {
@@ -157,7 +159,7 @@ async function streamEvents(commerce, filter, output, isJson, isQuiet) {
       const event = await subscription.recv();
       if (!event) break;
 
-      console.log(formatEvent(event, output, isJson));
+      await emit(formatEvent(event, output, isJson));
     }
   } catch (error) {
     if (!isQuiet) {
@@ -166,14 +168,12 @@ async function streamEvents(commerce, filter, output, isJson, isQuiet) {
   }
 }
 
-async function handleWebhooks(command, args, commerce, output, isJson) {
-  const events = commerce.events();
-
+async function handleWebhooks(command, args, commerce, output, isJson, emit) {
   switch (command) {
     case 'list': {
       const webhooks = commerce.list_webhooks();
       if (isJson) {
-        console.log(JSON.stringify(webhooks, null, 2));
+        await emit(JSON.stringify(webhooks, null, 2));
       } else {
         console.log(`\n${ICONS.session} ${output.bold('Registered Webhooks')}\n`);
         if (webhooks.length === 0) {
@@ -195,8 +195,12 @@ async function handleWebhooks(command, args, commerce, output, isJson) {
     case 'add': {
       const url = args[0];
       if (!url) {
-        console.error('Error: URL required');
-        console.error('Usage: stateset-events webhooks add <url> [--secret <secret>]');
+        if (isJson) {
+          await emit(JSON.stringify({ error: 'URL required' }));
+        } else {
+          console.error('Error: URL required');
+          console.error('Usage: stateset-events webhooks add <url> [--secret <secret>]');
+        }
         process.exit(1);
       }
 
@@ -207,7 +211,16 @@ async function handleWebhooks(command, args, commerce, output, isJson) {
       const eventsIndex = args.indexOf('--events');
       const eventTypes = eventsIndex >= 0 ? args[eventsIndex + 1].split(',') : [];
 
-      // Note: This would need the Webhook class to be exported
+      if (isJson) {
+        await emit(JSON.stringify({
+          warning: 'Webhook management requires the events feature',
+          url,
+          secret: Boolean(secret),
+          events: eventTypes
+        }));
+        break;
+      }
+
       console.log(output.yellow('⚠️  Webhook management requires the events feature'));
       console.log(output.dim('   The webhook would be registered at: ' + url));
       if (secret) console.log(output.dim('   With HMAC secret configured'));
@@ -217,9 +230,17 @@ async function handleWebhooks(command, args, commerce, output, isJson) {
     case 'remove': {
       const id = args[0];
       if (!id) {
-        console.error('Error: Webhook ID required');
-        console.error('Usage: stateset-events webhooks remove <id>');
+        if (isJson) {
+          await emit(JSON.stringify({ error: 'Webhook ID required' }));
+        } else {
+          console.error('Error: Webhook ID required');
+          console.error('Usage: stateset-events webhooks remove <id>');
+        }
         process.exit(1);
+      }
+      if (isJson) {
+        await emit(JSON.stringify({ warning: 'Webhook management requires the events feature', id }));
+        break;
       }
       console.log(output.yellow('⚠️  Webhook management requires the events feature'));
       break;
@@ -228,17 +249,29 @@ async function handleWebhooks(command, args, commerce, output, isJson) {
     case 'test': {
       const id = args[0];
       if (!id) {
-        console.error('Error: Webhook ID required');
-        console.error('Usage: stateset-events webhooks test <id>');
+        if (isJson) {
+          await emit(JSON.stringify({ error: 'Webhook ID required' }));
+        } else {
+          console.error('Error: Webhook ID required');
+          console.error('Usage: stateset-events webhooks test <id>');
+        }
         process.exit(1);
+      }
+      if (isJson) {
+        await emit(JSON.stringify({ warning: 'Webhook testing requires the events feature', id }));
+        break;
       }
       console.log(output.yellow('⚠️  Webhook testing requires the events feature'));
       break;
     }
 
     default:
-      console.error(`Unknown webhook command: ${command}`);
-      console.error('Available commands: list, add, remove, test');
+      if (isJson) {
+        await emit(JSON.stringify({ error: `Unknown webhook command: ${command}` }));
+      } else {
+        console.error(`Unknown webhook command: ${command}`);
+        console.error('Available commands: list, add, remove, test');
+      }
       process.exit(1);
   }
 }
@@ -249,6 +282,7 @@ async function main() {
       db: { type: 'string', default: './store.db' },
       filter: { type: 'string' },
       json: { type: 'boolean', default: false },
+      output: { type: 'string' },
       quiet: { type: 'boolean', short: 'q', default: false },
       secret: { type: 'string' },
       events: { type: 'string' },
@@ -262,39 +296,68 @@ async function main() {
     process.exit(0);
   }
 
+  const outputPath = values.output || null;
+  if (outputPath) {
+    values.json = true;
+  }
+
   const output = new RichOutput({ color: !values.json });
+  const emit = async (line) => {
+    if (outputPath) {
+      await fs.appendFile(outputPath, line + '\n');
+      return;
+    }
+    console.log(line);
+  };
+  const emitError = async (message) => {
+    if (values.json) {
+      await emit(JSON.stringify({ error: message }));
+      return;
+    }
+    console.error(message);
+  };
+
+  if (outputPath) {
+    await fs.writeFile(outputPath, '');
+  }
 
   // Initialize commerce
   let commerce;
   try {
     commerce = new Commerce(values.db);
   } catch (error) {
-    console.error(`Database error: ${error.message}`);
+    await emitError(`Database error: ${error.message}`);
     process.exit(1);
   }
 
   // Check for webhook subcommand
   if (positionals[0] === 'webhooks') {
-    await handleWebhooks(positionals[1], positionals.slice(2), commerce, output, values.json);
+    await handleWebhooks(positionals[1], positionals.slice(2), commerce, output, values.json, emit);
     return;
   }
 
   // Validate filter
   if (values.filter && !FILTER_MAP[values.filter]) {
-    console.error(`Unknown filter: ${values.filter}`);
-    console.error(`Available filters: ${Object.keys(FILTER_MAP).join(', ')}`);
+    await emitError(`Unknown filter: ${values.filter}`);
+    if (!values.json) {
+      console.error(`Available filters: ${Object.keys(FILTER_MAP).join(', ')}`);
+    }
     process.exit(1);
   }
 
   // Check if events feature is available
   if (typeof commerce.events !== 'function') {
-    console.error(output.red('Event streaming requires the "events" feature'));
-    console.error(output.dim('Rebuild stateset-embedded with: cargo build --features events'));
+    if (values.json) {
+      await emit(JSON.stringify({ error: 'Event streaming requires the "events" feature' }));
+    } else {
+      console.error(output.red('Event streaming requires the "events" feature'));
+      console.error(output.dim('Rebuild stateset-embedded with: cargo build --features events'));
+    }
     process.exit(1);
   }
 
   // Stream events
-  await streamEvents(commerce, values.filter, output, values.json, values.quiet);
+  await streamEvents(commerce, values.filter, output, values.json, values.quiet, emit);
 }
 
 main().catch(error => {

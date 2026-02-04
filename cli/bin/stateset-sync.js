@@ -26,6 +26,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import Database from 'better-sqlite3';
 import ora from 'ora';
+import fs from 'node:fs';
 import {
   loadSyncConfig,
   saveSyncConfig,
@@ -42,13 +43,31 @@ import { getKeyManager } from '../src/sync/keys.js';
 import { getRotationPolicyManager } from '../src/sync/rotation-policy.js';
 import { getGroupManager } from '../src/sync/groups.js';
 import { bufferToHex } from '../src/sync/crypto.js';
+import { CLI_VERSION } from '../src/config.js';
 
 const program = new Command();
+
+function wantsJsonOutput(options) {
+  return Boolean(options?.json || options?.output);
+}
+
+function writeJsonOutput(options, data) {
+  const payload = JSON.stringify(data, null, 2);
+  if (options?.output) {
+    fs.writeFileSync(options.output, payload);
+    return;
+  }
+  console.log(payload);
+}
+
+function createSpinner(text, jsonOutput) {
+  return ora({ text, isEnabled: !jsonOutput });
+}
 
 program
   .name('stateset-sync')
   .description('Verifiable Event Sync (VES) for StateSet CLI')
-  .version('0.5.0');
+  .version(CLI_VERSION);
 
 // ============================================================================
 // init command
@@ -266,9 +285,11 @@ program
   .command('status')
   .description('Show sync status')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .option('--db <path>', 'Database path', './store.db')
   .option('--verbose', 'Show detailed stats')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -285,8 +306,8 @@ program
       const outbox = createOutbox(db);
       const stats = outbox.getStats();
 
-      if (options.json) {
-        console.log(JSON.stringify({ status, stats }, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, { status, stats });
       } else {
         console.log();
         console.log(chalk.bold('Sync Status'));
@@ -393,8 +414,10 @@ program
   .command('conflicts')
   .description('List unresolved sync conflicts')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .option('--db <path>', 'Database path', './store.db')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -409,8 +432,8 @@ program
 
       const conflicts = await engine.getConflicts();
 
-      if (options.json) {
-        console.log(JSON.stringify(conflicts, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, conflicts);
         await engine.shutdown();
         db.close();
         return;
@@ -675,7 +698,9 @@ program
   .option('--signing-only', 'Generate only signing key')
   .option('--encryption-only', 'Generate only encryption key')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -688,7 +713,7 @@ program
       process.exit(1);
     }
 
-    const spinner = ora('Generating keys...').start();
+    const spinner = createSpinner('Generating keys...', jsonOutput).start();
 
     try {
       const keyManager = getKeyManager(getConfigDir());
@@ -716,8 +741,8 @@ program
 
       spinner.succeed('Keys generated successfully');
 
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, result);
       } else {
         console.log();
         console.log(chalk.bold('Generated Keys:'));
@@ -754,8 +779,10 @@ program
   .description('List keys for an agent')
   .option('--agent-id <uuid>', 'Agent UUID (uses configured agent if not specified)')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .option('--include-revoked', 'Include revoked keys')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -789,8 +816,8 @@ program
         encryptionKeys: formatKeys(encryptionKeys),
       };
 
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, result);
         return;
       }
 
@@ -1044,6 +1071,7 @@ program
   .description('Export public keys for sharing')
   .option('--agent-id <uuid>', 'Agent UUID (uses configured agent if not specified)')
   .option('--format <format>', 'Output format (json, hex)', 'json')
+  .option('--output <file>', 'Write output to file')
   .action(async (options) => {
     const config = loadSyncConfig();
     if (!config) {
@@ -1083,17 +1111,25 @@ program
       };
 
       if (options.format === 'json') {
-        console.log(JSON.stringify(exported, null, 2));
+        writeJsonOutput(options, exported);
       } else if (options.format === 'hex') {
-        console.log('# Agent Public Keys');
-        console.log(`agent_id=${agentId}`);
+        const lines = [
+          '# Agent Public Keys',
+          `agent_id=${agentId}`,
+        ];
         if (signingKey) {
-          console.log(`signing_key_id=${signingKey.keyId}`);
-          console.log(`signing_public_key=${bufferToHex(signingKey.publicKey)}`);
+          lines.push(`signing_key_id=${signingKey.keyId}`);
+          lines.push(`signing_public_key=${bufferToHex(signingKey.publicKey)}`);
         }
         if (encryptionKey) {
-          console.log(`encryption_key_id=${encryptionKey.keyId}`);
-          console.log(`encryption_public_key=${bufferToHex(encryptionKey.publicKey)}`);
+          lines.push(`encryption_key_id=${encryptionKey.keyId}`);
+          lines.push(`encryption_public_key=${bufferToHex(encryptionKey.publicKey)}`);
+        }
+        const payload = lines.join('\n') + '\n';
+        if (options.output) {
+          fs.writeFileSync(options.output, payload);
+        } else {
+          console.log(payload.trimEnd());
         }
       } else {
         console.error(chalk.red(`Unknown format: ${options.format}`));
@@ -1124,7 +1160,9 @@ program
   .option('--show', 'Show current policy')
   .option('--reset', 'Reset policy to defaults')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1150,8 +1188,8 @@ program
       if (options.show) {
         const policy = await policyManager.getPolicy(agentId, options.keyType);
 
-        if (options.json) {
-          console.log(JSON.stringify({ agentId, keyType: options.keyType, policy }, null, 2));
+        if (jsonOutput) {
+          writeJsonOutput(options, { agentId, keyType: options.keyType, policy });
         } else {
           console.log();
           console.log(chalk.bold(`Rotation Policy for ${agentId}`));
@@ -1227,7 +1265,9 @@ program
   .description('Check key expiration warnings')
   .option('--agent-id <uuid>', 'Agent UUID (all configured agents if not specified)')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1242,8 +1282,8 @@ program
 
       const warnings = await policyManager.getExpiryWarnings(keyManager, agentId);
 
-      if (options.json) {
-        console.log(JSON.stringify(warnings, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, warnings);
         return;
       }
 
@@ -1304,7 +1344,9 @@ program
   .option('--key-type <type>', 'Key type to rotate for all configured agents (signing, encryption, all)')
   .option('--register', 'Auto-register new signing keys with sequencer')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1343,7 +1385,7 @@ program
       process.exit(1);
     }
 
-    const spinner = ora(`Rotating ${rotations.length} key(s)...`).start();
+    const spinner = createSpinner(`Rotating ${rotations.length} key(s)...`, jsonOutput).start();
 
     try {
       const keyManager = getKeyManager(getConfigDir());
@@ -1351,8 +1393,8 @@ program
 
       spinner.stop();
 
-      if (options.json) {
-        console.log(JSON.stringify(results, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, results);
         return;
       }
 
@@ -1419,14 +1461,16 @@ program
   .requiredOption('--name <name>', 'Group name (unique within tenant)')
   .option('--description <desc>', 'Group description')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
       process.exit(1);
     }
 
-    const spinner = ora('Creating encryption group...').start();
+    const spinner = createSpinner('Creating encryption group...', jsonOutput).start();
 
     try {
       const groupManager = getGroupManager(getConfigDir());
@@ -1439,8 +1483,8 @@ program
 
       spinner.succeed(`Group '${options.name}' created successfully`);
 
-      if (options.json) {
-        console.log(JSON.stringify(group, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, group);
       } else {
         console.log();
         console.log(chalk.bold('Encryption Group Created:'));
@@ -1468,7 +1512,9 @@ program
   .command('groups:list')
   .description('List encryption groups')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1481,8 +1527,8 @@ program
 
       const groups = await groupManager.listGroups(tenantId);
 
-      if (options.json) {
-        console.log(JSON.stringify(groups, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, groups);
         return;
       }
 
@@ -1524,7 +1570,9 @@ program
   .command('groups:show <group-id>')
   .description('Show group details')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (groupId, options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1540,8 +1588,8 @@ program
         process.exit(1);
       }
 
-      if (options.json) {
-        console.log(JSON.stringify(group, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, group);
         return;
       }
 
@@ -1586,14 +1634,16 @@ program
   .requiredOption('--agent-id <id>', 'Agent ID to add')
   .option('--role <role>', 'Role for the new member (admin, member)', 'member')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
       process.exit(1);
     }
 
-    const spinner = ora('Adding member to group...').start();
+    const spinner = createSpinner('Adding member to group...', jsonOutput).start();
 
     try {
       const groupManager = getGroupManager(getConfigDir());
@@ -1608,8 +1658,8 @@ program
 
       spinner.succeed(`Agent ${options.agentId.substring(0, 8)}... added to group`);
 
-      if (options.json) {
-        console.log(JSON.stringify(group, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, group);
       } else {
         console.log();
         console.log(chalk.bold('Member Added:'));
@@ -1740,7 +1790,9 @@ program
   .command('groups:my-groups')
   .description('List groups you are a member of')
   .option('--json', 'Output as JSON')
+  .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
+    const jsonOutput = wantsJsonOutput(options);
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -1754,8 +1806,8 @@ program
 
       const groups = await groupManager.getAgentGroups(myAgentId, tenantId);
 
-      if (options.json) {
-        console.log(JSON.stringify(groups, null, 2));
+      if (jsonOutput) {
+        writeJsonOutput(options, groups);
         return;
       }
 
