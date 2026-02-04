@@ -85,7 +85,7 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-0.5.0.jar
+java -jar build/libs/kotlin-0.6.0.jar
 ```
 
 ### Swift

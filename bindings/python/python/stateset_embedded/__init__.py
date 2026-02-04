@@ -86,7 +86,7 @@ from stateset_embedded.stateset_embedded import (
     EmbeddingStats,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     # Main entry point

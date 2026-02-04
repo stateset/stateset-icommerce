@@ -10,14 +10,14 @@ The Java binding provides `com.stateset.embedded.Commerce` for building commerce
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>stateset-embedded</artifactId>
-    <version>0.5.0</version>
+    <version>0.6.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.stateset:stateset-embedded:0.5.0'
+implementation 'com.stateset:stateset-embedded:0.6.0'
 ```
 
 ## Quick Start

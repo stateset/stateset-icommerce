@@ -1,5 +1,5 @@
 /**
- * Plugin System Tests for StateSet iCommerce v0.5.0
+ * Plugin System Tests for StateSet iCommerce v0.6.0
  *
  * Tests: CommandRegistry, HookRunner, PluginRegistry, PluginConfigState,
  *        Manifest validation, ReplyPipeline, Capabilities, and integration.

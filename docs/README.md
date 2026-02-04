@@ -28,5 +28,5 @@ Generate per-binding API docs into `docs/api/` (requires language-specific doc t
 Create a versioned snapshot under `docs/versions/`:
 
 ```bash
-./docs/scripts/snapshot-version.sh v0.5.0
+./docs/scripts/snapshot-version.sh v0.6.0
 ```

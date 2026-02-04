@@ -26,7 +26,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/stateset/stateset-icommerce"
@@ -63,8 +63,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 # Internal crates
-stateset-core = { path = "crates/stateset-core", version = "0.5.0" }
-stateset-db = { path = "crates/stateset-db", version = "0.5.0" }
-stateset-embedded = { path = "crates/stateset-embedded", version = "0.5.0" }
+stateset-core = { path = "crates/stateset-core", version = "0.6.0" }
+stateset-db = { path = "crates/stateset-db", version = "0.6.0" }
+stateset-embedded = { path = "crates/stateset-embedded", version = "0.6.0" }
 
 # Note: Testing dependencies (criterion, proptest) are added to individual crates

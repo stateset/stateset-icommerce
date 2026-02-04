@@ -627,10 +627,10 @@ describe('Deploy Files', () => {
     assert.equal(config.remoteAccess.sshTunnels[0].mode, 'reverse', 'example should be reverse mode');
   });
 
-  it('should have config version 0.5.0', () => {
+  it('should have config version 0.6.0', () => {
     const path = join(__dirname, '..', 'deploy', 'gateway.config.example.json');
     const config = JSON.parse(readFileSync(path, 'utf-8'));
-    assert.equal(config._version, '0.5.0');
+    assert.equal(config._version, '0.6.0');
   });
 
   it('should have gateway service with security hardening', () => {
