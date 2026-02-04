@@ -1324,7 +1324,7 @@ impl SqliteOrderRepository {
             "order_item",
             "total",
         )?;
-        let total = format!("{:.2}", total);
+        let total = total.to_string();
 
         let rows_affected = conn
             .execute(

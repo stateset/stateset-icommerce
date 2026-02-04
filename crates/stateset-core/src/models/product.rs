@@ -207,6 +207,7 @@ pub struct ProductFilter {
     pub status: Option<ProductStatus>,
     pub product_type: Option<ProductType>,
     pub search: Option<String>,
+    /// Matches product attributes with name/group "category" and the given value.
     pub category: Option<String>,
     pub min_price: Option<Decimal>,
     pub max_price: Option<Decimal>,

@@ -3,6 +3,7 @@
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_json_row,
     parse_enum, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
+    json1_available,
     with_immediate_transaction,
 };
 use chrono::Utc;
@@ -328,6 +329,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
     fn list(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
         let conn = self.conn()?;
+        let use_json = json1_available(&conn);
         let mut sql = "SELECT * FROM customers WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
@@ -342,8 +344,13 @@ impl CustomerRepository for SqliteCustomerRepository {
             sql.push_str(" AND status != 'deleted'");
         }
         if let Some(tag) = &filter.tag {
-            sql.push_str(" AND tags LIKE ?");
-            params.push(Box::new(format!("%\"{}\"%", tag)));
+            if use_json {
+                sql.push_str(" AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)");
+                params.push(Box::new(tag.clone()));
+            } else {
+                sql.push_str(" AND tags LIKE ?");
+                params.push(Box::new(format!("%\"{}\"%", tag)));
+            }
         }
         if let Some(accepts_marketing) = &filter.accepts_marketing {
             sql.push_str(" AND accepts_marketing = ?");
@@ -680,6 +687,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
     fn count(&self, filter: CustomerFilter) -> Result<u64> {
         let conn = self.conn()?;
+        let use_json = json1_available(&conn);
         let mut sql = "SELECT COUNT(*) FROM customers WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
@@ -694,8 +702,13 @@ impl CustomerRepository for SqliteCustomerRepository {
             sql.push_str(" AND status != 'deleted'");
         }
         if let Some(tag) = &filter.tag {
-            sql.push_str(" AND tags LIKE ?");
-            params.push(Box::new(format!("%\"{}\"%", tag)));
+            if use_json {
+                sql.push_str(" AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)");
+                params.push(Box::new(tag.clone()));
+            } else {
+                sql.push_str(" AND tags LIKE ?");
+                params.push(Box::new(format!("%\"{}\"%", tag)));
+            }
         }
         if let Some(accepts_marketing) = &filter.accepts_marketing {
             sql.push_str(" AND accepts_marketing = ?");

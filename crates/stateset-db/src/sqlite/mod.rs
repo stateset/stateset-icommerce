@@ -400,6 +400,13 @@ pub(crate) fn build_in_clause(count: usize) -> String {
         .join(", ")
 }
 
+/// Check if SQLite JSON1 functions are available.
+pub(crate) fn json1_available(conn: &rusqlite::Connection) -> bool {
+    conn.query_row("SELECT json_valid('[]')", [], |row| row.get::<_, i32>(0))
+        .map(|value| value == 1)
+        .unwrap_or(false)
+}
+
 /// Sum a single decimal column from a query using exact Decimal parsing.
 pub(crate) fn sum_decimal_query(
     conn: &rusqlite::Connection,

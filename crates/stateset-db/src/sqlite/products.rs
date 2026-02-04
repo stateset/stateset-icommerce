@@ -2,8 +2,8 @@
 
 use super::{
     build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_row,
-    uuid_params,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid,
+    parse_uuid_row, uuid_params, json1_available,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -298,51 +298,59 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn list(&self, filter: ProductFilter) -> Result<Vec<Product>> {
+        let ProductFilter {
+            status,
+            product_type,
+            search,
+            category,
+            min_price,
+            max_price,
+            in_stock,
+            limit,
+            offset,
+        } = filter;
         let conn = self.conn()?;
+        let use_json = json1_available(&conn);
         let mut sql = "SELECT * FROM products WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
-        if let Some(status) = &filter.status {
+        if let Some(status) = status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
         } else {
             sql.push_str(" AND status != 'archived'");
         }
-        if let Some(product_type) = &filter.product_type {
+        if let Some(product_type) = product_type {
             sql.push_str(" AND product_type = ?");
             params.push(Box::new(product_type.to_string()));
         }
-        if let Some(search) = &filter.search {
+        if let Some(search) = search {
             sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
             params.push(Box::new(format!("%{}%", search)));
             params.push(Box::new(format!("%{}%", search)));
         }
-        if let Some(category) = &filter.category {
-            sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-            params.push(Box::new(format!(
-                "%\"name\":\"category\",\"value\":\"{}\"%",
-                category
-            )));
-            params.push(Box::new(format!(
-                "%\"group\":\"category\",\"value\":\"{}\"%",
-                category
-            )));
-        }
-        if filter.min_price.is_some() || filter.max_price.is_some() {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = products.id AND pv.is_active = 1",
-            );
-            if let Some(min_price) = &filter.min_price {
-                sql.push_str(" AND CAST(pv.price AS REAL) >= ?");
-                params.push(Box::new(min_price.to_string()));
+        if let Some(category) = category {
+            if use_json {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM json_each(attributes) attr \
+                     WHERE (json_extract(attr.value, '$.name') = 'category' \
+                        OR json_extract(attr.value, '$.group') = 'category') \
+                       AND json_extract(attr.value, '$.value') = ?)",
+                );
+                params.push(Box::new(category));
+            } else {
+                sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
+                params.push(Box::new(format!(
+                    "%\"name\":\"category\",\"value\":\"{}\"%",
+                    category
+                )));
+                params.push(Box::new(format!(
+                    "%\"value\":\"{}\",\"group\":\"category\"%",
+                    category
+                )));
             }
-            if let Some(max_price) = &filter.max_price {
-                sql.push_str(" AND CAST(pv.price AS REAL) <= ?");
-                params.push(Box::new(max_price.to_string()));
-            }
-            sql.push(')');
         }
-        if let Some(in_stock) = filter.in_stock {
+        if let Some(in_stock) = in_stock {
             let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
             sql.push_str(&format!(
                 " AND {} (SELECT 1 FROM product_variants pv_stock \
@@ -357,11 +365,14 @@ impl ProductRepository for SqliteProductRepository {
 
         sql.push_str(" ORDER BY name");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
-        }
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        let apply_price_filter = min_price.is_some() || max_price.is_some();
+        if !apply_price_filter {
+            if let Some(limit) = limit {
+                sql.push_str(&format!(" LIMIT {}", limit));
+            }
+            if let Some(offset) = offset {
+                sql.push_str(&format!(" OFFSET {}", offset));
+            }
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -372,6 +383,44 @@ impl ProductRepository for SqliteProductRepository {
             .map_err(map_db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(map_db_error)?;
+
+        if apply_price_filter {
+            let min_price = min_price.as_ref();
+            let max_price = max_price.as_ref();
+            let mut filtered = Vec::with_capacity(products.len());
+            for product in products {
+                let variants = self.get_variants(product.id)?;
+                let mut matches = false;
+                for variant in variants {
+                    if !variant.is_active {
+                        continue;
+                    }
+                    if let Some(min) = min_price {
+                        if variant.price < *min {
+                            continue;
+                        }
+                    }
+                    if let Some(max) = max_price {
+                        if variant.price > *max {
+                            continue;
+                        }
+                    }
+                    matches = true;
+                    break;
+                }
+                if matches {
+                    filtered.push(product);
+                }
+            }
+            let mut filtered = filtered;
+            if let Some(offset) = offset {
+                filtered = filtered.into_iter().skip(offset as usize).collect();
+            }
+            if let Some(limit) = limit {
+                filtered.truncate(limit as usize);
+            }
+            return Ok(filtered);
+        }
 
         Ok(products)
     }
@@ -568,51 +617,60 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     fn count(&self, filter: ProductFilter) -> Result<u64> {
+        let ProductFilter {
+            status,
+            product_type,
+            search,
+            category,
+            min_price,
+            max_price,
+            in_stock,
+            limit: _,
+            offset: _,
+        } = filter;
+
         let conn = self.conn()?;
-        let mut sql = "SELECT COUNT(*) FROM products WHERE 1=1".to_string();
+        let use_json = json1_available(&conn);
+        let mut sql = "SELECT id FROM products WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
-        if let Some(status) = &filter.status {
+        if let Some(status) = status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
         } else {
             sql.push_str(" AND status != 'archived'");
         }
-        if let Some(product_type) = &filter.product_type {
+        if let Some(product_type) = product_type {
             sql.push_str(" AND product_type = ?");
             params.push(Box::new(product_type.to_string()));
         }
-        if let Some(search) = &filter.search {
+        if let Some(search) = search {
             sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
             params.push(Box::new(format!("%{}%", search)));
             params.push(Box::new(format!("%{}%", search)));
         }
-        if let Some(category) = &filter.category {
-            sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
-            params.push(Box::new(format!(
-                "%\"name\":\"category\",\"value\":\"{}\"%",
-                category
-            )));
-            params.push(Box::new(format!(
-                "%\"group\":\"category\",\"value\":\"{}\"%",
-                category
-            )));
-        }
-        if filter.min_price.is_some() || filter.max_price.is_some() {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = products.id AND pv.is_active = 1",
-            );
-            if let Some(min_price) = &filter.min_price {
-                sql.push_str(" AND CAST(pv.price AS REAL) >= ?");
-                params.push(Box::new(min_price.to_string()));
+        if let Some(category) = category {
+            if use_json {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM json_each(attributes) attr \
+                     WHERE (json_extract(attr.value, '$.name') = 'category' \
+                        OR json_extract(attr.value, '$.group') = 'category') \
+                       AND json_extract(attr.value, '$.value') = ?)",
+                );
+                params.push(Box::new(category));
+            } else {
+                sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
+                params.push(Box::new(format!(
+                    "%\"name\":\"category\",\"value\":\"{}\"%",
+                    category
+                )));
+                params.push(Box::new(format!(
+                    "%\"value\":\"{}\",\"group\":\"category\"%",
+                    category
+                )));
             }
-            if let Some(max_price) = &filter.max_price {
-                sql.push_str(" AND CAST(pv.price AS REAL) <= ?");
-                params.push(Box::new(max_price.to_string()));
-            }
-            sql.push(')');
         }
-        if let Some(in_stock) = filter.in_stock {
+        if let Some(in_stock) = in_stock {
             let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
             sql.push_str(&format!(
                 " AND {} (SELECT 1 FROM product_variants pv_stock \
@@ -626,11 +684,48 @@ impl ProductRepository for SqliteProductRepository {
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn
-            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
-            .map_err(map_db_error)?;
+        let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
+        let ids = stmt
+            .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?
+            .into_iter()
+            .map(|id_str| parse_uuid(&id_str, "product", "id"))
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(count as u64)
+        if min_price.is_some() || max_price.is_some() {
+            let min_price = min_price.as_ref();
+            let max_price = max_price.as_ref();
+            let mut count = 0u64;
+            for id in ids {
+                let variants = self.get_variants(id)?;
+                let mut matches = false;
+                for variant in variants {
+                    if !variant.is_active {
+                        continue;
+                    }
+                    if let Some(min) = min_price {
+                        if variant.price < *min {
+                            continue;
+                        }
+                    }
+                    if let Some(max) = max_price {
+                        if variant.price > *max {
+                            continue;
+                        }
+                    }
+                    matches = true;
+                    break;
+                }
+                if matches {
+                    count += 1;
+                }
+            }
+            return Ok(count);
+        }
+
+        Ok(ids.len() as u64)
     }
 
     // === Batch Operations ===
