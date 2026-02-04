@@ -413,9 +413,29 @@ impl ReturnRepository for SqliteReturnRepository {
             sql.push_str(" AND customer_id = ?");
             params.push(Box::new(customer_id.to_string()));
         }
+        if let Some(order_id) = &filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params.push(Box::new(order_id.to_string()));
+        }
+        if let Some(customer_id) = &filter.customer_id {
+            sql.push_str(" AND customer_id = ?");
+            params.push(Box::new(customer_id.to_string()));
+        }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        }
+        if let Some(reason) = &filter.reason {
+            sql.push_str(" AND reason = ?");
+            params.push(Box::new(reason.to_string()));
+        }
+        if let Some(from) = &filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params.push(Box::new(from.to_rfc3339()));
+        }
+        if let Some(to) = &filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params.push(Box::new(to.to_rfc3339()));
         }
         if let Some(reason) = &filter.reason {
             sql.push_str(" AND reason = ?");

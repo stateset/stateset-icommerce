@@ -97,6 +97,7 @@ impl Default for WebhookConfig {
 enum WebhookRuntime {
     Handle(tokio::runtime::Handle),
     Owned(tokio::runtime::Runtime),
+    Disabled(String),
 }
 
 impl WebhookRuntime {
@@ -104,9 +105,25 @@ impl WebhookRuntime {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             Self::Handle(handle)
         } else {
-            let runtime = tokio::runtime::Runtime::new()
-                .expect("Failed to create webhook runtime");
-            Self::Owned(runtime)
+            match tokio::runtime::Runtime::new() {
+                Ok(runtime) => Self::Owned(runtime),
+                Err(err) => {
+                    let fallback = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build();
+                    match fallback {
+                        Ok(runtime) => Self::Owned(runtime),
+                        Err(fallback_err) => {
+                            let message = format!(
+                                "Failed to create webhook runtime: {}; fallback failed: {}",
+                                err, fallback_err
+                            );
+                            tracing::error!("{}", message);
+                            Self::Disabled(message)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -121,6 +138,9 @@ impl WebhookRuntime {
             }
             Self::Owned(runtime) => {
                 runtime.spawn(fut);
+            }
+            Self::Disabled(message) => {
+                tracing::error!("Webhook runtime unavailable: {}", message);
             }
         }
     }
@@ -166,7 +186,10 @@ impl WebhookManager {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|err| {
+                tracing::error!("Failed to create HTTP client: {}", err);
+                reqwest::Client::new()
+            });
         let runtime = WebhookRuntime::new();
 
         Self {

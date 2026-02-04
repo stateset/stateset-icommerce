@@ -4,7 +4,7 @@ use rust_decimal_macros::dec;
 use rusqlite::params;
 use stateset_core::{
     CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CustomerRepository,
-    InventoryRepository, OrderRepository, OrderStatus, PaymentStatus, UpdateOrder,
+    InventoryRepository, OrderRepository, OrderStatus, PaymentStatus, ReservationStatus, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -208,4 +208,104 @@ fn sqlite_ship_fails_when_reservation_expired() {
         )
         .expect("get reservation status");
     assert_eq!(status, "expired");
+}
+
+#[test]
+fn sqlite_ship_does_not_confirm_other_reservations_when_one_expired() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let customer = create_customer(&db, "partial-expire@example.com");
+
+    db.inventory()
+        .create_item(CreateInventoryItem {
+            sku: "EXP-SKU-A".to_string(),
+            name: "Expirable Item A".to_string(),
+            initial_quantity: Some(dec!(1)),
+            ..Default::default()
+        })
+        .expect("create inventory item A");
+    db.inventory()
+        .create_item(CreateInventoryItem {
+            sku: "EXP-SKU-B".to_string(),
+            name: "Expirable Item B".to_string(),
+            initial_quantity: Some(dec!(1)),
+            ..Default::default()
+        })
+        .expect("create inventory item B");
+
+    let order = db
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![
+                CreateOrderItem {
+                    product_id: Uuid::new_v4(),
+                    sku: "EXP-SKU-A".to_string(),
+                    name: "Expirable Item A".to_string(),
+                    quantity: 1,
+                    unit_price: dec!(10.00),
+                    ..Default::default()
+                },
+                CreateOrderItem {
+                    product_id: Uuid::new_v4(),
+                    sku: "EXP-SKU-B".to_string(),
+                    name: "Expirable Item B".to_string(),
+                    quantity: 1,
+                    unit_price: dec!(12.00),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .expect("create order");
+
+    set_status(&db, order.id, OrderStatus::Confirmed);
+    set_status(&db, order.id, OrderStatus::Processing);
+
+    let reservations = db
+        .inventory()
+        .list_reservations_by_reference("order", &order.id.to_string())
+        .expect("list reservations");
+    assert_eq!(reservations.len(), 2);
+
+    let expire_id = reservations[0].id;
+    let keep_id = reservations[1].id;
+
+    let conn = db.conn().expect("get sqlite connection");
+    conn.execute(
+        "UPDATE inventory_reservations SET expires_at = datetime('now', '-1 hour') WHERE id = ?",
+        params![expire_id.to_string()],
+    )
+    .expect("expire reservation");
+
+    let result = db.orders().update(
+        order.id,
+        UpdateOrder {
+            status: Some(OrderStatus::Shipped),
+            ..Default::default()
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(CommerceError::ReservationExpired(id)) if id == expire_id
+    ));
+
+    let refreshed = db
+        .inventory()
+        .list_reservations_by_reference("order", &order.id.to_string())
+        .expect("list reservations");
+
+    let status_by_id = refreshed
+        .into_iter()
+        .map(|r| (r.id, r.status))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(
+        status_by_id.get(&expire_id),
+        Some(&ReservationStatus::Expired)
+    );
+    assert_eq!(
+        status_by_id.get(&keep_id),
+        Some(&ReservationStatus::Pending)
+    );
 }

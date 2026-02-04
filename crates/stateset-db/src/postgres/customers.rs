@@ -3,7 +3,7 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, validate_email, validate_phone, validate_postal_code,
     validate_required_text, validate_required_uuid, AddressType, BatchResult, CommerceError,
@@ -332,17 +332,49 @@ impl PgCustomerRepository {
 
     /// List customers (async)
     pub async fn list_async(&self, filter: CustomerFilter) -> Result<Vec<Customer>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let CustomerFilter {
+            email,
+            status,
+            tag,
+            accepts_marketing,
+            limit,
+            offset,
+        } = filter;
 
-        let rows = sqlx::query_as::<_, CustomerRow>(
-            "SELECT * FROM customers WHERE status != 'deleted' ORDER BY created_at DESC LIMIT $1 OFFSET $2"
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::new("SELECT * FROM customers WHERE 1=1");
+
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        } else {
+            builder.push(" AND status != 'deleted'");
+        }
+        if let Some(email) = email {
+            let pattern = format!("%{}%", email);
+            builder.push(" AND email ILIKE ").push_bind(pattern);
+        }
+        if let Some(tag) = tag {
+            builder.push(" AND tags ? ").push_bind(tag);
+        }
+        if let Some(accepts_marketing) = accepts_marketing {
+            builder
+                .push(" AND accepts_marketing = ")
+                .push_bind(accepts_marketing);
+        }
+
+        builder.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ").push_bind(limit as i64);
+        }
+        if let Some(offset) = offset {
+            builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build_query_as::<CustomerRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(rows
             .into_iter()
@@ -727,13 +759,41 @@ impl PgCustomerRepository {
     }
 
     /// Count customers (async)
-    pub async fn count_async(&self, _filter: CustomerFilter) -> Result<u64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM customers WHERE status != 'deleted'"
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+    pub async fn count_async(&self, filter: CustomerFilter) -> Result<u64> {
+        let CustomerFilter {
+            email,
+            status,
+            tag,
+            accepts_marketing,
+            limit: _,
+            offset: _,
+        } = filter;
+
+        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM customers WHERE 1=1");
+
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        } else {
+            builder.push(" AND status != 'deleted'");
+        }
+        if let Some(email) = email {
+            let pattern = format!("%{}%", email);
+            builder.push(" AND email ILIKE ").push_bind(pattern);
+        }
+        if let Some(tag) = tag {
+            builder.push(" AND tags ? ").push_bind(tag);
+        }
+        if let Some(accepts_marketing) = accepts_marketing {
+            builder
+                .push(" AND accepts_marketing = ")
+                .push_bind(accepts_marketing);
+        }
+
+        let count: (i64,) = builder
+            .build_query_as()
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(count.0 as u64)
     }

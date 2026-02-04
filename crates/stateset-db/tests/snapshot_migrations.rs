@@ -38,7 +38,7 @@ fn get_table_indexes(conn: &Connection, table_name: &str) -> Result<Vec<String>,
 fn snapshot_database_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let tables = get_all_tables(&conn).expect("Failed to get tables");
 
@@ -49,7 +49,7 @@ fn snapshot_database_schema() {
 fn snapshot_customer_table_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(customers)")
@@ -75,7 +75,7 @@ fn snapshot_customer_table_schema() {
 fn snapshot_orders_table_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(orders)")
@@ -101,7 +101,7 @@ fn snapshot_orders_table_schema() {
 fn snapshot_inventory_items_table_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(inventory_items)")
@@ -127,7 +127,7 @@ fn snapshot_inventory_items_table_schema() {
 fn snapshot_subscriptions_table_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(subscriptions)")
@@ -153,7 +153,7 @@ fn snapshot_subscriptions_table_schema() {
 fn snapshot_payments_table_schema() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     let mut stmt = conn
         .prepare("PRAGMA table_info(payments)")
@@ -179,7 +179,7 @@ fn snapshot_payments_table_schema() {
 fn snapshot_indexes_for_performance() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     // Check indexes on orders table
     let order_indexes = get_table_indexes(&conn, "orders").expect("Failed to get order indexes");
@@ -195,7 +195,7 @@ fn snapshot_indexes_for_performance() {
 fn snapshot_migration_versions() {
     let mut conn = Connection::open_in_memory().expect("Failed to create in-memory database");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     // Only capture migration names (not timestamps which change between runs)
     let mut stmt = conn
@@ -217,7 +217,7 @@ fn snapshot_foreign_key_constraints() {
     conn.execute("PRAGMA foreign_keys = ON", [])
         .expect("Failed to enable FKs");
 
-    run_migrations(&conn).expect("Failed to run migrations");
+    run_migrations(&mut conn).expect("Failed to run migrations");
 
     // Query foreign key information
     // pragma_foreign_key_list returns: id, seq, table, from, to, on_update, on_delete, match

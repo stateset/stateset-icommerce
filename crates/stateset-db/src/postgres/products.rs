@@ -4,7 +4,7 @@ use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product,
     ProductAttribute, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
@@ -275,17 +275,96 @@ impl PgProductRepository {
 
     /// List products (async)
     pub async fn list_async(&self, filter: ProductFilter) -> Result<Vec<Product>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let ProductFilter {
+            status,
+            product_type,
+            search,
+            category,
+            min_price,
+            max_price,
+            in_stock,
+            limit,
+            offset,
+        } = filter;
 
-        let rows = sqlx::query_as::<_, ProductRow>(
-            "SELECT * FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::new("SELECT * FROM products WHERE 1=1");
+
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        } else {
+            builder.push(" AND status != 'archived'");
+        }
+        if let Some(product_type) = product_type {
+            builder
+                .push(" AND product_type = ")
+                .push_bind(product_type.to_string());
+        }
+        if let Some(search) = search {
+            let pattern = format!("%{}%", search);
+            builder
+                .push(" AND (name ILIKE ")
+                .push_bind(&pattern)
+                .push(" OR description ILIKE ")
+                .push_bind(&pattern)
+                .push(')');
+        }
+        if let Some(category) = category {
+            builder.push(
+                " AND EXISTS (SELECT 1 FROM jsonb_array_elements(attributes) attr \
+                 WHERE (attr->>'name' = 'category' OR attr->>'group' = 'category') \
+                   AND attr->>'value' = ",
+            );
+            builder.push_bind(category).push(')');
+        }
+        if min_price.is_some() || max_price.is_some() {
+            builder.push(
+                " AND EXISTS (SELECT 1 FROM product_variants pv \
+                 WHERE pv.product_id = products.id AND pv.is_active = true",
+            );
+            if let Some(min_price) = min_price {
+                builder.push(" AND pv.price >= ").push_bind(min_price);
+            }
+            if let Some(max_price) = max_price {
+                builder.push(" AND pv.price <= ").push_bind(max_price);
+            }
+            builder.push(')');
+        }
+        if let Some(in_stock) = in_stock {
+            if in_stock {
+                builder.push(
+                    " AND EXISTS (SELECT 1 FROM product_variants pv_stock \
+                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                     JOIN inventory_balances ib ON ib.item_id = ii.id \
+                     WHERE pv_stock.product_id = products.id \
+                       AND pv_stock.is_active = true \
+                       AND ib.quantity_available > 0)",
+                );
+            } else {
+                builder.push(
+                    " AND NOT EXISTS (SELECT 1 FROM product_variants pv_stock \
+                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                     JOIN inventory_balances ib ON ib.item_id = ii.id \
+                     WHERE pv_stock.product_id = products.id \
+                       AND pv_stock.is_active = true \
+                       AND ib.quantity_available > 0)",
+                );
+            }
+        }
+
+        builder.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ").push_bind(limit as i64);
+        }
+        if let Some(offset) = offset {
+            builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build_query_as::<ProductRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut products = Vec::with_capacity(rows.len());
         for row in rows {
@@ -476,8 +555,85 @@ impl PgProductRepository {
     }
 
     /// Count products (async)
-    pub async fn count_async(&self, _filter: ProductFilter) -> Result<u64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM products WHERE status != 'archived'")
+    pub async fn count_async(&self, filter: ProductFilter) -> Result<u64> {
+        let ProductFilter {
+            status,
+            product_type,
+            search,
+            category,
+            min_price,
+            max_price,
+            in_stock,
+            limit: _,
+            offset: _,
+        } = filter;
+
+        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM products WHERE 1=1");
+
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        } else {
+            builder.push(" AND status != 'archived'");
+        }
+        if let Some(product_type) = product_type {
+            builder
+                .push(" AND product_type = ")
+                .push_bind(product_type.to_string());
+        }
+        if let Some(search) = search {
+            let pattern = format!("%{}%", search);
+            builder
+                .push(" AND (name ILIKE ")
+                .push_bind(&pattern)
+                .push(" OR description ILIKE ")
+                .push_bind(&pattern)
+                .push(')');
+        }
+        if let Some(category) = category {
+            builder.push(
+                " AND EXISTS (SELECT 1 FROM jsonb_array_elements(attributes) attr \
+                 WHERE (attr->>'name' = 'category' OR attr->>'group' = 'category') \
+                   AND attr->>'value' = ",
+            );
+            builder.push_bind(category).push(')');
+        }
+        if min_price.is_some() || max_price.is_some() {
+            builder.push(
+                " AND EXISTS (SELECT 1 FROM product_variants pv \
+                 WHERE pv.product_id = products.id AND pv.is_active = true",
+            );
+            if let Some(min_price) = min_price {
+                builder.push(" AND pv.price >= ").push_bind(min_price);
+            }
+            if let Some(max_price) = max_price {
+                builder.push(" AND pv.price <= ").push_bind(max_price);
+            }
+            builder.push(')');
+        }
+        if let Some(in_stock) = in_stock {
+            if in_stock {
+                builder.push(
+                    " AND EXISTS (SELECT 1 FROM product_variants pv_stock \
+                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                     JOIN inventory_balances ib ON ib.item_id = ii.id \
+                     WHERE pv_stock.product_id = products.id \
+                       AND pv_stock.is_active = true \
+                       AND ib.quantity_available > 0)",
+                );
+            } else {
+                builder.push(
+                    " AND NOT EXISTS (SELECT 1 FROM product_variants pv_stock \
+                     JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                     JOIN inventory_balances ib ON ib.item_id = ii.id \
+                     WHERE pv_stock.product_id = products.id \
+                       AND pv_stock.is_active = true \
+                       AND ib.quantity_available > 0)",
+                );
+            }
+        }
+
+        let count: (i64,) = builder
+            .build_query_as()
             .fetch_one(&self.pool)
             .await
             .map_err(map_db_error)?;

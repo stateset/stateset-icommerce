@@ -4,7 +4,7 @@ use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder,
     CreateWorkOrderTask, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
@@ -383,17 +383,62 @@ impl PgWorkOrderRepository {
 
     /// List work orders (async)
     pub async fn list_async(&self, filter: WorkOrderFilter) -> Result<Vec<WorkOrder>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let WorkOrderFilter {
+            product_id,
+            bom_id,
+            status,
+            priority,
+            assigned_to,
+            work_center_id,
+            overdue_only,
+            limit,
+            offset,
+        } = filter;
 
-        let rows = sqlx::query_as::<_, WorkOrderRow>(
-            "SELECT * FROM manufacturing_work_orders ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::new("SELECT * FROM manufacturing_work_orders WHERE 1=1");
+
+        if let Some(product_id) = product_id {
+            builder.push(" AND product_id = ").push_bind(product_id);
+        }
+        if let Some(bom_id) = bom_id {
+            builder.push(" AND bom_id = ").push_bind(bom_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(priority) = priority {
+            builder
+                .push(" AND priority = ")
+                .push_bind(priority.to_string());
+        }
+        if let Some(assigned_to) = assigned_to {
+            builder.push(" AND assigned_to = ").push_bind(assigned_to);
+        }
+        if let Some(work_center_id) = work_center_id {
+            builder.push(" AND work_center_id = ").push_bind(work_center_id);
+        }
+        if overdue_only.unwrap_or(false) {
+            let now = Utc::now();
+            builder
+                .push(" AND scheduled_end IS NOT NULL AND scheduled_end < ")
+                .push_bind(now)
+                .push(" AND status NOT IN ('completed', 'cancelled')");
+        }
+
+        builder.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ").push_bind(limit as i64);
+        }
+        if let Some(offset) = offset {
+            builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build_query_as::<WorkOrderRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut work_orders = Vec::new();
         for row in rows {
@@ -656,8 +701,51 @@ impl PgWorkOrderRepository {
     }
 
     /// Count work orders (async)
-    pub async fn count_async(&self, _filter: WorkOrderFilter) -> Result<u64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM manufacturing_work_orders")
+    pub async fn count_async(&self, filter: WorkOrderFilter) -> Result<u64> {
+        let WorkOrderFilter {
+            product_id,
+            bom_id,
+            status,
+            priority,
+            assigned_to,
+            work_center_id,
+            overdue_only,
+            limit: _,
+            offset: _,
+        } = filter;
+
+        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM manufacturing_work_orders WHERE 1=1");
+
+        if let Some(product_id) = product_id {
+            builder.push(" AND product_id = ").push_bind(product_id);
+        }
+        if let Some(bom_id) = bom_id {
+            builder.push(" AND bom_id = ").push_bind(bom_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(priority) = priority {
+            builder
+                .push(" AND priority = ")
+                .push_bind(priority.to_string());
+        }
+        if let Some(assigned_to) = assigned_to {
+            builder.push(" AND assigned_to = ").push_bind(assigned_to);
+        }
+        if let Some(work_center_id) = work_center_id {
+            builder.push(" AND work_center_id = ").push_bind(work_center_id);
+        }
+        if overdue_only.unwrap_or(false) {
+            let now = Utc::now();
+            builder
+                .push(" AND scheduled_end IS NOT NULL AND scheduled_end < ")
+                .push_bind(now)
+                .push(" AND status NOT IN ('completed', 'cancelled')");
+        }
+
+        let count: (i64,) = builder
+            .build_query_as()
             .fetch_one(&self.pool)
             .await
             .map_err(map_db_error)?;

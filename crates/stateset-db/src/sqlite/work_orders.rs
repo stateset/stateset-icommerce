@@ -478,6 +478,10 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 sql.push_str(" AND work_center_id = ?");
                 params.push(Box::new(work_center_id));
             }
+            if filter.overdue_only.unwrap_or(false) {
+                sql.push_str(" AND scheduled_end IS NOT NULL AND scheduled_end < ? AND status NOT IN ('completed', 'cancelled')");
+                params.push(Box::new(Utc::now().to_rfc3339()));
+            }
 
             sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
             params.push(Box::new(limit));
@@ -881,6 +885,10 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         if let Some(work_center_id) = filter.work_center_id {
             sql.push_str(" AND work_center_id = ?");
             params.push(Box::new(work_center_id));
+        }
+        if filter.overdue_only.unwrap_or(false) {
+            sql.push_str(" AND scheduled_end IS NOT NULL AND scheduled_end < ? AND status NOT IN ('completed', 'cancelled')");
+            params.push(Box::new(Utc::now().to_rfc3339()));
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

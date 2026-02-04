@@ -566,12 +566,30 @@ impl OrderRepository for SqliteOrderRepository {
                         "order",
                         &id.to_string(),
                     )?;
-                    for reservation_id in reservation_ids {
-                        match SqliteInventoryRepository::confirm_reservation_in_tx(tx, reservation_id)? {
-                            ReservationConfirmOutcome::Confirmed => {}
-                            ReservationConfirmOutcome::Expired => {
-                                if reservation_expired.is_none() {
-                                    reservation_expired = Some(reservation_id);
+                    for reservation_id in &reservation_ids {
+                        if SqliteInventoryRepository::expire_reservation_if_needed_in_tx(
+                            tx,
+                            *reservation_id,
+                            now,
+                        )? {
+                            if reservation_expired.is_none() {
+                                reservation_expired = Some(*reservation_id);
+                            }
+                        }
+                    }
+                    if reservation_expired.is_none() {
+                        for reservation_id in reservation_ids {
+                            match SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
+                                tx,
+                                reservation_id,
+                                now,
+                            )? {
+                                ReservationConfirmOutcome::Confirmed => {}
+                                ReservationConfirmOutcome::Expired => {
+                                    if reservation_expired.is_none() {
+                                        reservation_expired = Some(reservation_id);
+                                    }
+                                    break;
                                 }
                             }
                         }
@@ -716,6 +734,14 @@ impl OrderRepository for SqliteOrderRepository {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
         }
+        if let Some(payment_status) = &filter.payment_status {
+            sql.push_str(" AND payment_status = ?");
+            params.push(Box::new(payment_status.to_string()));
+        }
+        if let Some(fulfillment_status) = &filter.fulfillment_status {
+            sql.push_str(" AND fulfillment_status = ?");
+            params.push(Box::new(fulfillment_status.to_string()));
+        }
         if let Some(from) = &filter.from_date {
             sql.push_str(" AND order_date >= ?");
             params.push(Box::new(from.to_rfc3339()));
@@ -844,6 +870,22 @@ impl OrderRepository for SqliteOrderRepository {
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        }
+        if let Some(payment_status) = &filter.payment_status {
+            sql.push_str(" AND payment_status = ?");
+            params.push(Box::new(payment_status.to_string()));
+        }
+        if let Some(fulfillment_status) = &filter.fulfillment_status {
+            sql.push_str(" AND fulfillment_status = ?");
+            params.push(Box::new(fulfillment_status.to_string()));
+        }
+        if let Some(from) = &filter.from_date {
+            sql.push_str(" AND order_date >= ?");
+            params.push(Box::new(from.to_rfc3339()));
+        }
+        if let Some(to) = &filter.to_date {
+            sql.push_str(" AND order_date <= ?");
+            params.push(Box::new(to.to_rfc3339()));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

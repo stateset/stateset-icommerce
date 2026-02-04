@@ -434,8 +434,16 @@ impl PgInventoryRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         reservation_id: Uuid,
     ) -> Result<ReservationConfirmOutcome> {
-        let now = Utc::now();
+        self.confirm_reservation_in_tx_with_now(tx, reservation_id, Utc::now())
+            .await
+    }
 
+    pub(crate) async fn confirm_reservation_in_tx_with_now(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reservation_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<ReservationConfirmOutcome> {
         let res = sqlx::query_as::<_, ReservationRow>(
             "SELECT * FROM inventory_reservations WHERE id = $1",
         )
@@ -481,6 +489,54 @@ impl PgInventoryRepository {
             .map_err(map_db_error)?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
+    }
+
+    pub(crate) async fn expire_reservation_if_needed_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reservation_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let res = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE id = $1",
+        )
+        .bind(reservation_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::ReservationNotFound(reservation_id))?;
+
+        let status: ReservationStatus = res.status.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid inventory_reservation.status '{}': {}",
+                res.status, e
+            ))
+        })?;
+
+        if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
+            return Ok(false);
+        }
+
+        if status == ReservationStatus::Expired {
+            return Ok(true);
+        }
+
+        if let Some(expires_at) = res.expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(
+                    tx,
+                    reservation_id,
+                    res.item_id,
+                    res.location_id,
+                    res.quantity,
+                    now,
+                )
+                .await?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn row_to_transaction(row: TransactionRow) -> Result<InventoryTransaction> {

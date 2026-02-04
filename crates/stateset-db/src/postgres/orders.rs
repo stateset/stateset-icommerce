@@ -8,7 +8,7 @@ use super::{
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
@@ -636,6 +636,7 @@ impl PgOrderRepository {
         let new_status = input.status.unwrap_or(current_status);
         let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
         let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
+        let now = Utc::now();
 
         if !current_status.can_transition_to(new_status) {
             if new_status == OrderStatus::Cancelled {
@@ -668,9 +669,25 @@ impl PgOrderRepository {
                 .await?;
 
             let mut expired_reservation: Option<Uuid> = None;
+            for reservation_id in &reservation_ids {
+                if inventory_repo
+                    .expire_reservation_if_needed_in_tx(&mut tx, *reservation_id, now)
+                    .await?
+                {
+                    if expired_reservation.is_none() {
+                        expired_reservation = Some(*reservation_id);
+                    }
+                }
+            }
+
+            if let Some(expired_id) = expired_reservation {
+                tx.commit().await.map_err(map_db_error)?;
+                return Err(CommerceError::ReservationExpired(expired_id));
+            }
+
             for reservation_id in reservation_ids {
                 match inventory_repo
-                    .confirm_reservation_in_tx(&mut tx, reservation_id)
+                    .confirm_reservation_in_tx_with_now(&mut tx, reservation_id, now)
                     .await?
                 {
                     ReservationConfirmOutcome::Confirmed => {}
@@ -678,6 +695,7 @@ impl PgOrderRepository {
                         if expired_reservation.is_none() {
                             expired_reservation = Some(reservation_id);
                         }
+                        break;
                     }
                 }
             }
@@ -692,7 +710,6 @@ impl PgOrderRepository {
         let new_notes = input.notes.or(notes);
         let new_shipping = shipping_address_json.or(shipping_address);
         let new_billing = billing_address_json.or(billing_address);
-        let now = Utc::now();
 
         let result = sqlx::query(
             r#"
@@ -746,17 +763,56 @@ impl PgOrderRepository {
 
     /// List orders (async)
     pub async fn list_async(&self, filter: OrderFilter) -> Result<Vec<Order>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let OrderFilter {
+            customer_id,
+            status,
+            payment_status,
+            fulfillment_status,
+            from_date,
+            to_date,
+            limit,
+            offset,
+        } = filter;
 
-        let rows = sqlx::query_as::<_, OrderRow>(
-            "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::new("SELECT * FROM orders WHERE 1=1");
+
+        if let Some(customer_id) = customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(payment_status) = payment_status {
+            builder
+                .push(" AND payment_status = ")
+                .push_bind(payment_status.to_string());
+        }
+        if let Some(fulfillment_status) = fulfillment_status {
+            builder
+                .push(" AND fulfillment_status = ")
+                .push_bind(fulfillment_status.to_string());
+        }
+        if let Some(from) = from_date {
+            builder.push(" AND order_date >= ").push_bind(from);
+        }
+        if let Some(to) = to_date {
+            builder.push(" AND order_date <= ").push_bind(to);
+        }
+
+        builder.push(" ORDER BY order_date DESC");
+
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ").push_bind(limit as i64);
+        }
+        if let Some(offset) = offset {
+            builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build_query_as::<OrderRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut orders = Vec::new();
         for row in rows {
@@ -848,8 +904,45 @@ impl PgOrderRepository {
     }
 
     /// Count orders (async)
-    pub async fn count_async(&self, _filter: OrderFilter) -> Result<u64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
+    pub async fn count_async(&self, filter: OrderFilter) -> Result<u64> {
+        let OrderFilter {
+            customer_id,
+            status,
+            payment_status,
+            fulfillment_status,
+            from_date,
+            to_date,
+            limit: _,
+            offset: _,
+        } = filter;
+
+        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM orders WHERE 1=1");
+
+        if let Some(customer_id) = customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(payment_status) = payment_status {
+            builder
+                .push(" AND payment_status = ")
+                .push_bind(payment_status.to_string());
+        }
+        if let Some(fulfillment_status) = fulfillment_status {
+            builder
+                .push(" AND fulfillment_status = ")
+                .push_bind(fulfillment_status.to_string());
+        }
+        if let Some(from) = from_date {
+            builder.push(" AND order_date >= ").push_bind(from);
+        }
+        if let Some(to) = to_date {
+            builder.push(" AND order_date <= ").push_bind(to);
+        }
+
+        let count: (i64,) = builder
+            .build_query_as()
             .fetch_one(&self.pool)
             .await
             .map_err(map_db_error)?;

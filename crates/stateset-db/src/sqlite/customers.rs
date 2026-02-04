@@ -338,6 +338,12 @@ impl CustomerRepository for SqliteCustomerRepository {
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        } else {
+            sql.push_str(" AND status != 'deleted'");
+        }
+        if let Some(tag) = &filter.tag {
+            sql.push_str(" AND tags LIKE ?");
+            params.push(Box::new(format!("%\"{}\"%", tag)));
         }
         if let Some(accepts_marketing) = &filter.accepts_marketing {
             sql.push_str(" AND accepts_marketing = ?");
@@ -677,9 +683,23 @@ impl CustomerRepository for SqliteCustomerRepository {
         let mut sql = "SELECT COUNT(*) FROM customers WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
+        if let Some(email) = &filter.email {
+            sql.push_str(" AND email LIKE ?");
+            params.push(Box::new(format!("%{}%", email)));
+        }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        } else {
+            sql.push_str(" AND status != 'deleted'");
+        }
+        if let Some(tag) = &filter.tag {
+            sql.push_str(" AND tags LIKE ?");
+            params.push(Box::new(format!("%\"{}\"%", tag)));
+        }
+        if let Some(accepts_marketing) = &filter.accepts_marketing {
+            sql.push_str(" AND accepts_marketing = ?");
+            params.push(Box::new(*accepts_marketing as i32));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

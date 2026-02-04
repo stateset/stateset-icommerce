@@ -374,8 +374,14 @@ impl SqliteInventoryRepository {
         tx: &rusqlite::Transaction<'_>,
         reservation_id: Uuid,
     ) -> std::result::Result<ReservationConfirmOutcome, rusqlite::Error> {
-        let now = Utc::now();
+        Self::confirm_reservation_in_tx_with_now(tx, reservation_id, Utc::now())
+    }
 
+    pub(crate) fn confirm_reservation_in_tx_with_now(
+        tx: &rusqlite::Transaction<'_>,
+        reservation_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<ReservationConfirmOutcome, rusqlite::Error> {
         let res = tx.query_row(
             "SELECT item_id, location_id, quantity, status, expires_at FROM inventory_reservations WHERE id = ?",
             [reservation_id.to_string()],
@@ -430,6 +436,62 @@ impl SqliteInventoryRepository {
         )?;
 
         Ok(ReservationConfirmOutcome::Confirmed)
+    }
+
+    pub(crate) fn expire_reservation_if_needed_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        reservation_id: Uuid,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<bool, rusqlite::Error> {
+        let res = tx.query_row(
+            "SELECT item_id, location_id, quantity, status, expires_at FROM inventory_reservations WHERE id = ?",
+            [reservation_id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>("item_id")?,
+                    row.get::<_, i32>("location_id")?,
+                    parse_decimal_row(&row.get::<_, String>("quantity")?, "inventory_reservation", "quantity")?,
+                    row.get::<_, String>("status")?,
+                    parse_datetime_opt_row(row.get::<_, Option<String>>("expires_at")?, "inventory_reservation", "expires_at")?,
+                ))
+            },
+        );
+
+        let (item_id, location_id, quantity, status, expires_at) = match res {
+            Ok(r) => r,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::ReservationNotFound(reservation_id),
+                )));
+            }
+            Err(e) => return Err(e),
+        };
+
+        let parsed_status: ReservationStatus = status.parse().map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                format!("Invalid inventory_reservation.status '{}': {}", status, e),
+            )))
+        })?;
+
+        if parsed_status == ReservationStatus::Released
+            || parsed_status == ReservationStatus::Cancelled
+        {
+            return Ok(false);
+        }
+
+        if parsed_status == ReservationStatus::Expired {
+            return Ok(true);
+        }
+
+        if let Some(expires_at) = expires_at {
+            if expires_at < now {
+                Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 }
 

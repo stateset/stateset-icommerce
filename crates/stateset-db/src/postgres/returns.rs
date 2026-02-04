@@ -4,7 +4,7 @@ use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, BatchResult, CommerceError, CreateReturn, CreateReturnItem, ItemCondition,
     Result, Return, ReturnFilter, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus,
@@ -328,17 +328,52 @@ impl PgReturnRepository {
 
     /// List returns (async)
     pub async fn list_async(&self, filter: ReturnFilter) -> Result<Vec<Return>> {
-        let limit = filter.limit.unwrap_or(100) as i64;
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let ReturnFilter {
+            order_id,
+            customer_id,
+            status,
+            reason,
+            from_date,
+            to_date,
+            limit,
+            offset,
+        } = filter;
 
-        let rows = sqlx::query_as::<_, ReturnRow>(
-            "SELECT * FROM returns ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::new("SELECT * FROM returns WHERE 1=1");
+
+        if let Some(order_id) = order_id {
+            builder.push(" AND order_id = ").push_bind(order_id);
+        }
+        if let Some(customer_id) = customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(reason) = reason {
+            builder.push(" AND reason = ").push_bind(reason.to_string());
+        }
+        if let Some(from) = from_date {
+            builder.push(" AND created_at >= ").push_bind(from);
+        }
+        if let Some(to) = to_date {
+            builder.push(" AND created_at <= ").push_bind(to);
+        }
+
+        builder.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = limit {
+            builder.push(" LIMIT ").push_bind(limit as i64);
+        }
+        if let Some(offset) = offset {
+            builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build_query_as::<ReturnRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut returns = Vec::new();
         for row in rows {
@@ -407,8 +442,41 @@ impl PgReturnRepository {
     }
 
     /// Count returns (async)
-    pub async fn count_async(&self, _filter: ReturnFilter) -> Result<u64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM returns")
+    pub async fn count_async(&self, filter: ReturnFilter) -> Result<u64> {
+        let ReturnFilter {
+            order_id,
+            customer_id,
+            status,
+            reason,
+            from_date,
+            to_date,
+            limit: _,
+            offset: _,
+        } = filter;
+
+        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM returns WHERE 1=1");
+
+        if let Some(order_id) = order_id {
+            builder.push(" AND order_id = ").push_bind(order_id);
+        }
+        if let Some(customer_id) = customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id);
+        }
+        if let Some(status) = status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(reason) = reason {
+            builder.push(" AND reason = ").push_bind(reason.to_string());
+        }
+        if let Some(from) = from_date {
+            builder.push(" AND created_at >= ").push_bind(from);
+        }
+        if let Some(to) = to_date {
+            builder.push(" AND created_at <= ").push_bind(to);
+        }
+
+        let count: (i64,) = builder
+            .build_query_as()
             .fetch_one(&self.pool)
             .await
             .map_err(map_db_error)?;

@@ -305,6 +305,8 @@ impl ProductRepository for SqliteProductRepository {
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        } else {
+            sql.push_str(" AND status != 'archived'");
         }
         if let Some(product_type) = &filter.product_type {
             sql.push_str(" AND product_type = ?");
@@ -314,6 +316,43 @@ impl ProductRepository for SqliteProductRepository {
             sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
             params.push(Box::new(format!("%{}%", search)));
             params.push(Box::new(format!("%{}%", search)));
+        }
+        if let Some(category) = &filter.category {
+            sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
+            params.push(Box::new(format!(
+                "%\"name\":\"category\",\"value\":\"{}\"%",
+                category
+            )));
+            params.push(Box::new(format!(
+                "%\"group\":\"category\",\"value\":\"{}\"%",
+                category
+            )));
+        }
+        if filter.min_price.is_some() || filter.max_price.is_some() {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = products.id AND pv.is_active = 1",
+            );
+            if let Some(min_price) = &filter.min_price {
+                sql.push_str(" AND CAST(pv.price AS REAL) >= ?");
+                params.push(Box::new(min_price.to_string()));
+            }
+            if let Some(max_price) = &filter.max_price {
+                sql.push_str(" AND CAST(pv.price AS REAL) <= ?");
+                params.push(Box::new(max_price.to_string()));
+            }
+            sql.push(')');
+        }
+        if let Some(in_stock) = filter.in_stock {
+            let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
+            sql.push_str(&format!(
+                " AND {} (SELECT 1 FROM product_variants pv_stock \
+                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                 JOIN inventory_balances ib ON ib.item_id = ii.id \
+                 WHERE pv_stock.product_id = products.id \
+                   AND pv_stock.is_active = 1 \
+                   AND CAST(ib.quantity_available AS REAL) > 0)",
+                stock_clause
+            ));
         }
 
         sql.push_str(" ORDER BY name");
@@ -536,6 +575,54 @@ impl ProductRepository for SqliteProductRepository {
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
             params.push(Box::new(status.to_string()));
+        } else {
+            sql.push_str(" AND status != 'archived'");
+        }
+        if let Some(product_type) = &filter.product_type {
+            sql.push_str(" AND product_type = ?");
+            params.push(Box::new(product_type.to_string()));
+        }
+        if let Some(search) = &filter.search {
+            sql.push_str(" AND (name LIKE ? OR description LIKE ?)");
+            params.push(Box::new(format!("%{}%", search)));
+            params.push(Box::new(format!("%{}%", search)));
+        }
+        if let Some(category) = &filter.category {
+            sql.push_str(" AND (attributes LIKE ? OR attributes LIKE ?)");
+            params.push(Box::new(format!(
+                "%\"name\":\"category\",\"value\":\"{}\"%",
+                category
+            )));
+            params.push(Box::new(format!(
+                "%\"group\":\"category\",\"value\":\"{}\"%",
+                category
+            )));
+        }
+        if filter.min_price.is_some() || filter.max_price.is_some() {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = products.id AND pv.is_active = 1",
+            );
+            if let Some(min_price) = &filter.min_price {
+                sql.push_str(" AND CAST(pv.price AS REAL) >= ?");
+                params.push(Box::new(min_price.to_string()));
+            }
+            if let Some(max_price) = &filter.max_price {
+                sql.push_str(" AND CAST(pv.price AS REAL) <= ?");
+                params.push(Box::new(max_price.to_string()));
+            }
+            sql.push(')');
+        }
+        if let Some(in_stock) = filter.in_stock {
+            let stock_clause = if in_stock { "EXISTS" } else { "NOT EXISTS" };
+            sql.push_str(&format!(
+                " AND {} (SELECT 1 FROM product_variants pv_stock \
+                 JOIN inventory_items ii ON ii.sku = pv_stock.sku \
+                 JOIN inventory_balances ib ON ib.item_id = ii.id \
+                 WHERE pv_stock.product_id = products.id \
+                   AND pv_stock.is_active = 1 \
+                   AND CAST(ib.quantity_available AS REAL) > 0)",
+                stock_clause
+            ));
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();

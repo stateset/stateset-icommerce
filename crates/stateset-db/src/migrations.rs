@@ -14,7 +14,7 @@ pub enum MigrationError {
 }
 
 /// Run all migrations on the database
-pub fn run_migrations(conn: &Connection) -> Result<(), MigrationError> {
+pub fn run_migrations(conn: &mut Connection) -> Result<(), MigrationError> {
     // Create migrations table if not exists
     conn.execute(
         "CREATE TABLE IF NOT EXISTS _migrations (
@@ -42,14 +42,14 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MigrationError> {
         )?;
 
         if count == 0 {
-            // Run migration
-            conn.execute_batch(sql)?;
-
-            // Record migration
-            conn.execute(
+            // Run migration atomically.
+            let tx = conn.transaction()?;
+            tx.execute_batch(sql)?;
+            tx.execute(
                 "INSERT INTO _migrations (name) VALUES (?)",
                 [name],
             )?;
+            tx.commit()?;
         }
     }
 

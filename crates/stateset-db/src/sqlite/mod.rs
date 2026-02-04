@@ -144,12 +144,12 @@ impl SqliteDatabase {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Get connection for setup
-        let conn = pool
+        let mut conn = pool
             .get()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Run migrations
-        migrations::run_migrations(&conn)
+        migrations::run_migrations(&mut conn)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         Ok(Self { pool })
