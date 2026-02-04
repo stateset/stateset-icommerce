@@ -1,6 +1,8 @@
 //! SQLite order repository implementation
 
 use super::{
+    backorder::{cancel_backorders_for_order_in_tx, create_backorder_in_tx},
+    inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
     build_in_clause, map_db_error, params_refs, uuid_params,
     parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
     parse_json_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
@@ -12,8 +14,8 @@ use rust_decimal::Decimal;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
+    OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -163,7 +165,7 @@ impl SqliteOrderRepository {
     }
 
     fn load_order_items_with_conn(
-        conn: &r2d2::PooledConnection<SqliteConnectionManager>,
+        conn: &rusqlite::Connection,
         order_id: Uuid,
     ) -> Result<Vec<OrderItem>> {
         let mut stmt = conn
@@ -224,11 +226,27 @@ impl OrderRepository for SqliteOrderRepository {
         let shipping_address_json = input
             .shipping_address
             .as_ref()
-            .map(|a| serde_json::to_string(a).unwrap_or_default());
+            .map(|a| {
+                serde_json::to_string(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.shipping_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
         let billing_address_json = input
             .billing_address
             .as_ref()
-            .map(|a| serde_json::to_string(a).unwrap_or_default());
+            .map(|a| {
+                serde_json::to_string(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.billing_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
 
         let input = input.clone();
 
@@ -304,6 +322,91 @@ impl OrderRepository for SqliteOrderRepository {
                 });
             }
 
+            let reference_id = id.to_string();
+            for item in &items {
+                if item.quantity <= 0 {
+                    continue;
+                }
+
+                let item_row = tx.query_row(
+                    "SELECT id FROM inventory_items WHERE sku = ?",
+                    [&item.sku],
+                    |row| row.get::<_, i64>(0),
+                );
+
+                let item_id = match item_row {
+                    Ok(item_id) => item_id,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        // Non-inventory item; skip reservations/backorders.
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+
+                let available = sum_decimal_query(
+                    tx,
+                    "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
+                    &[&item_id],
+                    "inventory_balance",
+                    "quantity_available",
+                )
+                .map_err(|e| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                })?;
+
+                let requested = Decimal::from(item.quantity);
+                let reserve_qty = if available > Decimal::ZERO {
+                    requested.min(available)
+                } else {
+                    Decimal::ZERO
+                };
+
+                let mut reserved = Decimal::ZERO;
+                if reserve_qty > Decimal::ZERO {
+                    let reserve_input = ReserveInventory {
+                        sku: item.sku.clone(),
+                        location_id: None,
+                        quantity: reserve_qty,
+                        reference_type: "order".to_string(),
+                        reference_id: reference_id.clone(),
+                        expires_in_seconds: None,
+                    };
+
+                    match SqliteInventoryRepository::reserve_in_tx(tx, &reserve_input) {
+                        Ok(_reservation) => {
+                            reserved = reserve_qty;
+                        }
+                        Err(err) => {
+                            let commerce_err = map_db_error(err);
+                            if matches!(commerce_err, CommerceError::InsufficientStock { .. }) {
+                                reserved = Decimal::ZERO;
+                            } else {
+                                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                    commerce_err,
+                                )));
+                            }
+                        }
+                    }
+                }
+
+                let remaining = requested - reserved;
+                if remaining > Decimal::ZERO {
+                    let backorder_input = CreateBackorder {
+                        order_id: id,
+                        order_line_id: Some(item.id),
+                        customer_id: input.customer_id,
+                        sku: item.sku.clone(),
+                        quantity: remaining,
+                        priority: None,
+                        expected_date: None,
+                        promised_date: None,
+                        source_location_id: None,
+                        notes: Some("Auto backorder: insufficient stock".to_string()),
+                    };
+                    create_backorder_in_tx(tx, &backorder_input)?;
+                }
+            }
+
             Ok(Order {
                 id,
                 order_number: order_number.clone(),
@@ -365,121 +468,239 @@ impl OrderRepository for SqliteOrderRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        let conn = self.conn()?;
-        let now = Utc::now();
-        let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = conn
-            .query_row(
-                "SELECT version, status, payment_status FROM orders WHERE id = ?",
-                [id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::OrderNotFound(id),
-                e => map_db_error(e),
-            })?;
-        let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")?;
-        let current_payment_status: PaymentStatus =
-            parse_enum(&current_payment_status_raw, "order", "payment_status")?;
+        if let Some(address) = &input.shipping_address {
+            Self::validate_address_input(address, "order.shipping_address")?;
+        }
+        if let Some(address) = &input.billing_address {
+            Self::validate_address_input(address, "order.billing_address")?;
+        }
 
-        // Build dynamic update
-        let mut updates = vec!["updated_at = ?"];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+        let shipping_address_json = input
+            .shipping_address
+            .as_ref()
+            .map(|a| {
+                serde_json::to_string(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.shipping_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
+        let billing_address_json = input
+            .billing_address
+            .as_ref()
+            .map(|a| {
+                serde_json::to_string(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.billing_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
 
-        if let Some(status) = &input.status {
-            let next_status = *status;
-            if !current_status.can_transition_to(next_status) {
-                if next_status == OrderStatus::Cancelled {
-                    return Err(CommerceError::OrderCannotBeCancelled(
-                        current_status.to_string(),
-                    ));
+        struct UpdateOutcome {
+            order: Order,
+            post_commit_error: Option<CommerceError>,
+        }
+
+        let outcome = with_immediate_transaction(&self.pool, |tx| {
+            let now = Utc::now();
+            let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = tx
+                .query_row(
+                    "SELECT version, status, payment_status FROM orders WHERE id = ?",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::OrderNotFound(id)))
+                    }
+                    e => e,
+                })?;
+
+            let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let current_payment_status: PaymentStatus = parse_enum(&current_payment_status_raw, "order", "payment_status")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            let mut reservation_expired: Option<Uuid> = None;
+
+            if let Some(status) = input.status {
+                if !current_status.can_transition_to(status) {
+                    if status == OrderStatus::Cancelled {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::OrderCannotBeCancelled(current_status.to_string()),
+                        )));
+                    }
+
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        CommerceError::InvalidOrderStatusTransition {
+                            from: current_status.to_string(),
+                            to: status.to_string(),
+                        },
+                    )));
                 }
 
-                return Err(CommerceError::InvalidOrderStatusTransition {
-                    from: current_status.to_string(),
-                    to: next_status.to_string(),
+                if status == OrderStatus::Refunded {
+                    let effective_payment_status = input.payment_status.unwrap_or(current_payment_status);
+                    if !matches!(
+                        effective_payment_status,
+                        PaymentStatus::Paid
+                            | PaymentStatus::PartiallyPaid
+                            | PaymentStatus::Refunded
+                            | PaymentStatus::PartiallyRefunded
+                    ) {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::OrderCannotBeRefunded(
+                                effective_payment_status.to_string(),
+                            ),
+                        )));
+                    }
+                }
+
+                if status == OrderStatus::Shipped {
+                    let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+                        tx,
+                        "order",
+                        &id.to_string(),
+                    )?;
+                    for reservation_id in reservation_ids {
+                        match SqliteInventoryRepository::confirm_reservation_in_tx(tx, reservation_id)? {
+                            ReservationConfirmOutcome::Confirmed => {}
+                            ReservationConfirmOutcome::Expired => {
+                                if reservation_expired.is_none() {
+                                    reservation_expired = Some(reservation_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(expired_id) = reservation_expired {
+                let result = tx.query_row(
+                    "SELECT * FROM orders WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_order,
+                );
+
+                let mut order = match result {
+                    Ok(order) => order,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::OrderNotFound(id),
+                        )));
+                    }
+                    Err(e) => return Err(e),
+                };
+
+                order.items = Self::load_order_items_with_conn(tx, id)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+                return Ok(UpdateOutcome {
+                    order,
+                    post_commit_error: Some(CommerceError::ReservationExpired(expired_id)),
                 });
             }
 
-            if next_status == OrderStatus::Refunded {
-                let effective_payment_status =
-                    input.payment_status.unwrap_or(current_payment_status);
-                if !matches!(
-                    effective_payment_status,
-                    PaymentStatus::Paid
-                        | PaymentStatus::PartiallyPaid
-                        | PaymentStatus::Refunded
-                        | PaymentStatus::PartiallyRefunded
-                ) {
-                    return Err(CommerceError::OrderCannotBeRefunded(
-                        effective_payment_status.to_string(),
-                    ));
+            // Build dynamic update
+            let mut updates = vec!["updated_at = ?"];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now.to_rfc3339())];
+
+            if let Some(status) = &input.status {
+                updates.push("status = ?");
+                params.push(Box::new(status.to_string()));
+            }
+            if let Some(payment_status) = &input.payment_status {
+                updates.push("payment_status = ?");
+                params.push(Box::new(payment_status.to_string()));
+            }
+            if let Some(fulfillment_status) = &input.fulfillment_status {
+                updates.push("fulfillment_status = ?");
+                params.push(Box::new(fulfillment_status.to_string()));
+            }
+            if let Some(tracking) = &input.tracking_number {
+                updates.push("tracking_number = ?");
+                params.push(Box::new(tracking.clone()));
+            }
+            if let Some(notes) = &input.notes {
+                updates.push("notes = ?");
+                params.push(Box::new(notes.clone()));
+            }
+            if let Some(addr_json) = &shipping_address_json {
+                updates.push("shipping_address = ?");
+                params.push(Box::new(addr_json.clone()));
+            }
+            if let Some(addr_json) = &billing_address_json {
+                updates.push("billing_address = ?");
+                params.push(Box::new(addr_json.clone()));
+            }
+
+            updates.push("version = version + 1");
+            params.push(Box::new(id.to_string()));
+            params.push(Box::new(current_version));
+
+            let sql = format!(
+                "UPDATE orders SET {} WHERE id = ? AND version = ?",
+                updates.join(", ")
+            );
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx.execute(&sql, params_refs.as_slice())?;
+            if rows_affected == 0 {
+                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                    CommerceError::VersionConflict {
+                        entity: "order".to_string(),
+                        id: id.to_string(),
+                        expected_version: current_version,
+                    },
+                )));
+            }
+
+            if matches!(input.status, Some(OrderStatus::Cancelled)) {
+                let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+                    tx,
+                    "order",
+                    &id.to_string(),
+                )?;
+                for reservation_id in reservation_ids {
+                    SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
                 }
+                cancel_backorders_for_order_in_tx(tx, id)?;
             }
 
-            updates.push("status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(payment_status) = &input.payment_status {
-            updates.push("payment_status = ?");
-            params.push(Box::new(payment_status.to_string()));
-        }
-        if let Some(fulfillment_status) = &input.fulfillment_status {
-            updates.push("fulfillment_status = ?");
-            params.push(Box::new(fulfillment_status.to_string()));
-        }
-        if let Some(tracking) = &input.tracking_number {
-            updates.push("tracking_number = ?");
-            params.push(Box::new(tracking.clone()));
-        }
-        if let Some(notes) = &input.notes {
-            updates.push("notes = ?");
-            params.push(Box::new(notes.clone()));
-        }
-        if let Some(addr) = &input.shipping_address {
-            Self::validate_address_input(addr, "order.shipping_address")?;
-            updates.push("shipping_address = ?");
-            params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
-        }
-        if let Some(addr) = &input.billing_address {
-            Self::validate_address_input(addr, "order.billing_address")?;
-            updates.push("billing_address = ?");
-            params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+            let result = tx.query_row(
+                "SELECT * FROM orders WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_order,
+            );
+
+            let mut order = match result {
+                Ok(order) => order,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        CommerceError::OrderNotFound(id),
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
+
+            order.items = Self::load_order_items_with_conn(tx, id)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+            Ok(UpdateOutcome {
+                order,
+                post_commit_error: None,
+            })
+        })?;
+
+        if let Some(err) = outcome.post_commit_error {
+            return Err(err);
         }
 
-        updates.push("version = version + 1");
-        params.push(Box::new(id.to_string()));
-        params.push(Box::new(current_version));
-
-        let sql = format!(
-            "UPDATE orders SET {} WHERE id = ? AND version = ?",
-            updates.join(", ")
-        );
-
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
-        if rows_affected == 0 {
-            return Err(CommerceError::VersionConflict {
-                entity: "order".to_string(),
-                id: id.to_string(),
-                expected_version: current_version,
-            });
-        }
-
-        // Now fetch the updated order using the same connection
-        let result = conn.query_row(
-            "SELECT * FROM orders WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_order,
-        );
-
-        match result {
-            Ok(mut order) => {
-                order.items = Self::load_order_items_with_conn(&conn, id)?;
-                Ok(order)
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Err(CommerceError::OrderNotFound(id)),
-            Err(e) => Err(map_db_error(e)),
-        }
+        Ok(outcome.order)
     }
 
     fn list(&self, filter: OrderFilter) -> Result<Vec<Order>> {
@@ -681,11 +902,27 @@ impl OrderRepository for SqliteOrderRepository {
             let shipping_address_json = input
                 .shipping_address
                 .as_ref()
-                .map(|a| serde_json::to_string(a).unwrap_or_default());
+                .map(|a| {
+                    serde_json::to_string(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.shipping_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
             let billing_address_json = input
                 .billing_address
                 .as_ref()
-                .map(|a| serde_json::to_string(a).unwrap_or_default());
+                .map(|a| {
+                    serde_json::to_string(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.billing_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
 
             tx.execute(
                 "INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
@@ -883,12 +1120,24 @@ impl OrderRepository for SqliteOrderRepository {
             if let Some(addr) = &input.shipping_address {
                 Self::validate_address_input(addr, "order.shipping_address")?;
                 update_parts.push("shipping_address = ?");
-                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+                let address_json = serde_json::to_string(addr).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.shipping_address: {}",
+                        e
+                    ))
+                })?;
+                params.push(Box::new(address_json));
             }
             if let Some(addr) = &input.billing_address {
                 Self::validate_address_input(addr, "order.billing_address")?;
                 update_parts.push("billing_address = ?");
-                params.push(Box::new(serde_json::to_string(addr).unwrap_or_default()));
+                let address_json = serde_json::to_string(addr).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.billing_address: {}",
+                        e
+                    ))
+                })?;
+                params.push(Box::new(address_json));
             }
 
             update_parts.push("version = version + 1");

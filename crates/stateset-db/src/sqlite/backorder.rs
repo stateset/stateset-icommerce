@@ -18,6 +18,52 @@ use super::{
     parse_datetime_opt, sum_decimal_query,
 };
 
+fn row_to_backorder_row(row: &rusqlite::Row) -> rusqlite::Result<Backorder> {
+    Ok(Backorder {
+        id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?,
+        backorder_number: row.get(1)?,
+        order_id: parse_uuid_row(&row.get::<_, String>(2)?, "backorder", "order_id")?,
+        order_line_id: parse_uuid_opt_row(
+            row.get::<_, Option<String>>(3)?,
+            "backorder",
+            "order_line_id",
+        )?,
+        customer_id: parse_uuid_row(&row.get::<_, String>(4)?, "backorder", "customer_id")?,
+        sku: row.get(5)?,
+        quantity_ordered: parse_decimal_row(
+            &row.get::<_, String>(6)?,
+            "backorder",
+            "quantity_ordered",
+        )?,
+        quantity_fulfilled: parse_decimal_row(
+            &row.get::<_, String>(7)?,
+            "backorder",
+            "quantity_fulfilled",
+        )?,
+        quantity_remaining: parse_decimal_row(
+            &row.get::<_, String>(8)?,
+            "backorder",
+            "quantity_remaining",
+        )?,
+        status: parse_enum_row(&row.get::<_, String>(9)?, "backorder", "status")?,
+        priority: parse_enum_row(&row.get::<_, String>(10)?, "backorder", "priority")?,
+        expected_date: parse_datetime_opt_row(
+            row.get::<_, Option<String>>(11)?,
+            "backorder",
+            "expected_date",
+        )?,
+        promised_date: parse_datetime_opt_row(
+            row.get::<_, Option<String>>(12)?,
+            "backorder",
+            "promised_date",
+        )?,
+        source_location_id: row.get(13)?,
+        notes: row.get(14)?,
+        created_at: parse_datetime_row(&row.get::<_, String>(15)?, "backorder", "created_at")?,
+        updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "backorder", "updated_at")?,
+    })
+}
+
 pub struct SqliteBackorderRepository {
     pool: Pool<SqliteConnectionManager>,
 }
@@ -28,49 +74,7 @@ impl SqliteBackorderRepository {
     }
 
     fn row_to_backorder(&self, row: &rusqlite::Row) -> rusqlite::Result<Backorder> {
-        Ok(Backorder {
-            id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?,
-            backorder_number: row.get(1)?,
-            order_id: parse_uuid_row(&row.get::<_, String>(2)?, "backorder", "order_id")?,
-            order_line_id: parse_uuid_opt_row(
-                row.get::<_, Option<String>>(3)?,
-                "backorder",
-                "order_line_id",
-            )?,
-            customer_id: parse_uuid_row(&row.get::<_, String>(4)?, "backorder", "customer_id")?,
-            sku: row.get(5)?,
-            quantity_ordered: parse_decimal_row(
-                &row.get::<_, String>(6)?,
-                "backorder",
-                "quantity_ordered",
-            )?,
-            quantity_fulfilled: parse_decimal_row(
-                &row.get::<_, String>(7)?,
-                "backorder",
-                "quantity_fulfilled",
-            )?,
-            quantity_remaining: parse_decimal_row(
-                &row.get::<_, String>(8)?,
-                "backorder",
-                "quantity_remaining",
-            )?,
-            status: parse_enum_row(&row.get::<_, String>(9)?, "backorder", "status")?,
-            priority: parse_enum_row(&row.get::<_, String>(10)?, "backorder", "priority")?,
-            expected_date: parse_datetime_opt_row(
-                row.get::<_, Option<String>>(11)?,
-                "backorder",
-                "expected_date",
-            )?,
-            promised_date: parse_datetime_opt_row(
-                row.get::<_, Option<String>>(12)?,
-                "backorder",
-                "promised_date",
-            )?,
-            source_location_id: row.get(13)?,
-            notes: row.get(14)?,
-            created_at: parse_datetime_row(&row.get::<_, String>(15)?, "backorder", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "backorder", "updated_at")?,
-        })
+        row_to_backorder_row(row)
     }
 
     fn row_to_fulfillment(&self, row: &rusqlite::Row) -> rusqlite::Result<BackorderFulfillment> {
@@ -139,6 +143,78 @@ impl SqliteBackorderRepository {
             )?,
         })
     }
+}
+
+pub(crate) fn create_backorder_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    input: &CreateBackorder,
+) -> std::result::Result<Backorder, rusqlite::Error> {
+    let id = Uuid::new_v4();
+    let now = Utc::now();
+    let backorder_number = generate_backorder_number();
+    let priority = input.priority.unwrap_or_default();
+
+    tx.execute(
+        "INSERT INTO backorders (id, backorder_number, order_id, order_line_id, customer_id,
+            sku, quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
+            expected_date, promised_date, source_location_id, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, '0', ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            id.to_string(),
+            &backorder_number,
+            input.order_id.to_string(),
+            input.order_line_id.map(|id| id.to_string()),
+            input.customer_id.to_string(),
+            &input.sku,
+            input.quantity.to_string(),
+            input.quantity.to_string(),
+            priority.to_string(),
+            input.expected_date.map(|d| d.to_rfc3339()),
+            input.promised_date.map(|d| d.to_rfc3339()),
+            input.source_location_id,
+            input.notes,
+            now.to_rfc3339(),
+            now.to_rfc3339(),
+        ],
+    )?;
+
+    let row = tx.query_row(
+        "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
+                quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
+                expected_date, promised_date, source_location_id, notes, created_at, updated_at
+         FROM backorders WHERE id = ?",
+        [id.to_string()],
+        row_to_backorder_row,
+    );
+
+    match row {
+        Ok(bo) => Ok(bo),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            CommerceError::NotFound,
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
+pub(crate) fn cancel_backorders_for_order_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: Uuid,
+) -> std::result::Result<(), rusqlite::Error> {
+    let now = Utc::now();
+
+    tx.execute(
+        "UPDATE backorders SET status = 'cancelled', updated_at = ? WHERE order_id = ?",
+        [now.to_rfc3339(), order_id.to_string()],
+    )?;
+
+    tx.execute(
+        "UPDATE backorder_allocations SET status = 'released'
+         WHERE backorder_id IN (SELECT id FROM backorders WHERE order_id = ?)
+           AND status = 'reserved'",
+        [order_id.to_string()],
+    )?;
+
+    Ok(())
 }
 
 impl BackorderRepository for SqliteBackorderRepository {

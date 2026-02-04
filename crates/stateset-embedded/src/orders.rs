@@ -1,9 +1,8 @@
 //! Order operations
 
-use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, InventoryReservation, Order,
-    OrderFilter, OrderItem, OrderStatus, PaymentStatus, ReserveInventory, Result, UpdateOrder,
+    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus,
+    PaymentStatus, Result, UpdateOrder,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -76,95 +75,6 @@ impl Orders {
         }
     }
 
-    fn reservations_for_order(&self, order_id: Uuid) -> Result<Vec<InventoryReservation>> {
-        self.db
-            .inventory()
-            .list_reservations_by_reference("order", &order_id.to_string())
-    }
-
-    fn confirm_reservations_for_order(&self, order_id: Uuid) -> Result<()> {
-        let reservations = self.reservations_for_order(order_id)?;
-        let mut first_error = None;
-        for reservation in reservations {
-            if let Err(err) = self.db.inventory().confirm_reservation(reservation.id) {
-                if first_error.is_none() {
-                    first_error = Some(err);
-                }
-            }
-        }
-        if let Some(err) = first_error {
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    fn release_reservations_for_order(&self, order_id: Uuid) -> Result<()> {
-        let reservations = self.reservations_for_order(order_id)?;
-        let mut first_error = None;
-        for reservation in reservations {
-            if let Err(err) = self.db.inventory().release_reservation(reservation.id) {
-                if first_error.is_none() {
-                    first_error = Some(err);
-                }
-            }
-        }
-        if let Some(err) = first_error {
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    fn cancel_backorders_for_order(&self, order_id: Uuid) -> Result<()> {
-        let backorders = self.db.backorder().get_backorders_for_order(order_id)?;
-        let mut first_error = None;
-        for backorder in backorders {
-            if let Err(err) = self.db.backorder().cancel_backorder(backorder.id) {
-                if first_error.is_none() {
-                    first_error = Some(err);
-                }
-            }
-        }
-        if let Some(err) = first_error {
-            return Err(err);
-        }
-        Ok(())
-    }
-
-    fn cleanup_order_after_failure(
-        &self,
-        order_id: Uuid,
-        reservation_ids: &[Uuid],
-        backorder_ids: &[Uuid],
-    ) {
-        for reservation_id in reservation_ids {
-            if let Err(err) = self.db.inventory().release_reservation(*reservation_id) {
-                tracing::warn!(
-                    reservation_id = %reservation_id,
-                    error = ?err,
-                    "failed to release inventory reservation during order rollback"
-                );
-            }
-        }
-
-        for backorder_id in backorder_ids {
-            if let Err(err) = self.db.backorder().cancel_backorder(*backorder_id) {
-                tracing::warn!(
-                    backorder_id = %backorder_id,
-                    error = ?err,
-                    "failed to cancel backorder during order rollback"
-                );
-            }
-        }
-
-        if let Err(err) = self.db.orders().delete(order_id) {
-            tracing::warn!(
-                order_id = %order_id,
-                error = ?err,
-                "failed to delete order during rollback"
-            );
-        }
-    }
-
     /// Create a new order.
     ///
     /// # Example
@@ -190,95 +100,7 @@ impl Orders {
     #[tracing::instrument(skip(self, input), fields(customer_id = %input.customer_id, items = input.items.len()))]
     pub fn create(&self, input: CreateOrder) -> Result<Order> {
         tracing::info!("creating order");
-        let inventory = self.db.inventory();
-        let backorders = self.db.backorder();
-
         let order = self.db.orders().create(input)?;
-
-        let mut reservation_ids = Vec::new();
-        let mut backorder_ids = Vec::new();
-        let reference_id = order.id.to_string();
-
-        for item in &order.items {
-            if item.quantity <= 0 {
-                continue;
-            }
-
-            let has_inventory = match inventory.get_item_by_sku(&item.sku) {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(err) => {
-                    self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids);
-                    return Err(err);
-                }
-            };
-
-            if !has_inventory {
-                continue;
-            }
-
-            let available = match inventory.get_stock(&item.sku) {
-                Ok(Some(stock)) => stock.total_available,
-                Ok(None) => Decimal::ZERO,
-                Err(err) => {
-                    self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids);
-                    return Err(err);
-                }
-            };
-
-            let requested = Decimal::from(item.quantity);
-            let reserve_qty = if available > Decimal::ZERO {
-                requested.min(available)
-            } else {
-                Decimal::ZERO
-            };
-
-            let mut reserved = Decimal::ZERO;
-            if reserve_qty > Decimal::ZERO {
-                match inventory.reserve(ReserveInventory {
-                    sku: item.sku.clone(),
-                    location_id: None,
-                    quantity: reserve_qty,
-                    reference_type: "order".to_string(),
-                    reference_id: reference_id.clone(),
-                    expires_in_seconds: None,
-                }) {
-                    Ok(reservation) => {
-                        reservation_ids.push(reservation.id);
-                        reserved = reserve_qty;
-                    }
-                    Err(CommerceError::InsufficientStock { .. }) => {
-                        reserved = Decimal::ZERO;
-                    }
-                    Err(err) => {
-                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids);
-                        return Err(err);
-                    }
-                }
-            }
-
-            let remaining = requested - reserved;
-            if remaining > Decimal::ZERO {
-                match backorders.create_backorder(CreateBackorder {
-                    order_id: order.id,
-                    order_line_id: Some(item.id),
-                    customer_id: order.customer_id,
-                    sku: item.sku.clone(),
-                    quantity: remaining,
-                    priority: None,
-                    expected_date: None,
-                    promised_date: None,
-                    source_location_id: None,
-                    notes: Some("Auto backorder: insufficient stock".to_string()),
-                }) {
-                    Ok(backorder) => backorder_ids.push(backorder.id),
-                    Err(err) => {
-                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids);
-                        return Err(err);
-                    }
-                }
-            }
-        }
 
         #[cfg(feature = "events")]
         {
@@ -305,11 +127,6 @@ impl Orders {
 
     /// Update an order.
     pub fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        let next_status = input.status;
-        if matches!(next_status, Some(OrderStatus::Shipped)) {
-            self.confirm_reservations_for_order(id)?;
-        }
-
         #[cfg(feature = "events")]
         let previous = self.db.orders().get(id)?;
 
@@ -318,11 +135,6 @@ impl Orders {
         #[cfg(feature = "events")]
         if let Some(previous) = previous {
             self.emit_order_change_events(&previous, &updated);
-        }
-
-        if matches!(next_status, Some(OrderStatus::Cancelled)) {
-            self.release_reservations_for_order(id)?;
-            self.cancel_backorders_for_order(id)?;
         }
 
         Ok(updated)

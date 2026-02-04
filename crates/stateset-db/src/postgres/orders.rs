@@ -1,6 +1,10 @@
 //! PostgreSQL order repository implementation
 
-use super::map_db_error;
+use super::{
+    backorder::PgBackorderRepository,
+    inventory::{PgInventoryRepository, ReservationConfirmOutcome},
+    map_db_error,
+};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -8,8 +12,8 @@ use sqlx::FromRow;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, Result, UpdateOrder,
+    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
+    OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result, UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -278,6 +282,9 @@ impl PgOrderRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
+        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let backorder_repo = PgBackorderRepository::new(self.pool.clone());
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Get next order number
@@ -301,11 +308,27 @@ impl PgOrderRepository {
         let shipping_address_json = input
             .shipping_address
             .as_ref()
-            .map(|a| serde_json::to_value(a).unwrap_or_default());
+            .map(|a| {
+                serde_json::to_value(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.shipping_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
         let billing_address_json = input
             .billing_address
             .as_ref()
-            .map(|a| serde_json::to_value(a).unwrap_or_default());
+            .map(|a| {
+                serde_json::to_value(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.billing_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
 
         sqlx::query(
             r#"
@@ -382,6 +405,88 @@ impl PgOrderRepository {
             });
         }
 
+        let reference_id = id.to_string();
+        for item in &items {
+            if item.quantity <= 0 {
+                continue;
+            }
+
+            let item_id: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM inventory_items WHERE sku = $1",
+            )
+            .bind(&item.sku)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            let item_id = match item_id {
+                Some(item_id) => item_id,
+                None => {
+                    // Non-inventory item; skip reservations/backorders.
+                    continue;
+                }
+            };
+
+            let available: Decimal = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(quantity_available), 0) FROM inventory_balances WHERE item_id = $1",
+            )
+            .bind(item_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            let requested = Decimal::from(item.quantity);
+            let reserve_qty = if available > Decimal::ZERO {
+                requested.min(available)
+            } else {
+                Decimal::ZERO
+            };
+
+            let mut reserved = Decimal::ZERO;
+            if reserve_qty > Decimal::ZERO {
+                let reserve_input = ReserveInventory {
+                    sku: item.sku.clone(),
+                    location_id: None,
+                    quantity: reserve_qty,
+                    reference_type: "order".to_string(),
+                    reference_id: reference_id.clone(),
+                    expires_in_seconds: None,
+                };
+
+                match inventory_repo.reserve_in_tx(&mut tx, &reserve_input).await {
+                    Ok(_) => {
+                        reserved = reserve_qty;
+                    }
+                    Err(err) => {
+                        if matches!(err, CommerceError::InsufficientStock { .. }) {
+                            reserved = Decimal::ZERO;
+                        } else {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+
+            let remaining = requested - reserved;
+            if remaining > Decimal::ZERO {
+                let backorder_input = CreateBackorder {
+                    order_id: id,
+                    order_line_id: Some(item.id),
+                    customer_id: input.customer_id,
+                    sku: item.sku.clone(),
+                    quantity: remaining,
+                    priority: None,
+                    expected_date: None,
+                    promised_date: None,
+                    source_location_id: None,
+                    notes: Some("Auto backorder: insufficient stock".to_string()),
+                };
+                backorder_repo
+                    .create_backorder_in_tx(&mut tx, &backorder_input)
+                    .await?;
+            }
+        }
+
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(Order {
@@ -454,32 +559,91 @@ impl PgOrderRepository {
 
     /// Update an order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        let now = Utc::now();
+        if let Some(address) = &input.shipping_address {
+            Self::validate_address_input(address, "order.shipping_address")?;
+        }
+        if let Some(address) = &input.billing_address {
+            Self::validate_address_input(address, "order.billing_address")?;
+        }
 
-        let existing = self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))?;
-        let expected_version = existing.version;
-
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
-        let new_fulfillment_status = input.fulfillment_status.unwrap_or(existing.fulfillment_status);
-        let new_tracking = input.tracking_number.or(existing.tracking_number);
-        let new_notes = input.notes.or(existing.notes);
-        let new_shipping = input
+        let shipping_address_json = input
             .shipping_address
-            .clone()
-            .or(existing.shipping_address);
-        let new_billing = input
+            .as_ref()
+            .map(|a| {
+                serde_json::to_value(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.shipping_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
+        let billing_address_json = input
             .billing_address
-            .clone()
-            .or(existing.billing_address);
+            .as_ref()
+            .map(|a| {
+                serde_json::to_value(a).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Failed to serialize order.billing_address: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
 
-        if !existing.status.can_transition_to(new_status) {
+        let inventory_repo = PgInventoryRepository::new(self.pool.clone());
+        let backorder_repo = PgBackorderRepository::new(self.pool.clone());
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        let existing_row = sqlx::query_as::<_, OrderRow>(
+            "SELECT * FROM orders WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::OrderNotFound(id))?;
+
+        let OrderRow {
+            status: current_status_raw,
+            payment_status: current_payment_status_raw,
+            fulfillment_status: current_fulfillment_status_raw,
+            tracking_number,
+            notes,
+            shipping_address,
+            billing_address,
+            version: expected_version,
+            ..
+        } = existing_row;
+
+        let current_status: OrderStatus = current_status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid order.status '{}': {}", current_status_raw, e))
+        })?;
+        let current_payment_status: PaymentStatus = current_payment_status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.payment_status '{}': {}",
+                current_payment_status_raw, e
+            ))
+        })?;
+        let current_fulfillment_status: FulfillmentStatus = current_fulfillment_status_raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid order.fulfillment_status '{}': {}",
+                current_fulfillment_status_raw, e
+            ))
+        })?;
+
+        let new_status = input.status.unwrap_or(current_status);
+        let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
+        let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
+
+        if !current_status.can_transition_to(new_status) {
             if new_status == OrderStatus::Cancelled {
-                return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
+                return Err(CommerceError::OrderCannotBeCancelled(current_status.to_string()));
             }
 
             return Err(CommerceError::InvalidOrderStatusTransition {
-                from: existing.status.to_string(),
+                from: current_status.to_string(),
                 to: new_status.to_string(),
             });
         }
@@ -498,15 +662,37 @@ impl PgOrderRepository {
             ));
         }
 
-        if let Some(address) = &input.shipping_address {
-            Self::validate_address_input(address, "order.shipping_address")?;
-        }
-        if let Some(address) = &input.billing_address {
-            Self::validate_address_input(address, "order.billing_address")?;
+        if matches!(input.status, Some(OrderStatus::Shipped)) {
+            let reservation_ids = inventory_repo
+                .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
+                .await?;
+
+            let mut expired_reservation: Option<Uuid> = None;
+            for reservation_id in reservation_ids {
+                match inventory_repo
+                    .confirm_reservation_in_tx(&mut tx, reservation_id)
+                    .await?
+                {
+                    ReservationConfirmOutcome::Confirmed => {}
+                    ReservationConfirmOutcome::Expired => {
+                        if expired_reservation.is_none() {
+                            expired_reservation = Some(reservation_id);
+                        }
+                    }
+                }
+            }
+
+            if let Some(expired_id) = expired_reservation {
+                tx.commit().await.map_err(map_db_error)?;
+                return Err(CommerceError::ReservationExpired(expired_id));
+            }
         }
 
-        let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
-        let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+        let new_tracking = input.tracking_number.or(tracking_number);
+        let new_notes = input.notes.or(notes);
+        let new_shipping = shipping_address_json.or(shipping_address);
+        let new_billing = billing_address_json.or(billing_address);
+        let now = Utc::now();
 
         let result = sqlx::query(
             r#"
@@ -522,14 +708,15 @@ impl PgOrderRepository {
         .bind(new_fulfillment_status.to_string())
         .bind(&new_tracking)
         .bind(&new_notes)
-        .bind(&shipping_json)
-        .bind(&billing_json)
+        .bind(&new_shipping)
+        .bind(&new_billing)
         .bind(now)
         .bind(id)
         .bind(expected_version)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
         if result.rows_affected() == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "order".to_string(),
@@ -537,6 +724,22 @@ impl PgOrderRepository {
                 expected_version,
             });
         }
+
+        if matches!(input.status, Some(OrderStatus::Cancelled)) {
+            let reservation_ids = inventory_repo
+                .list_reservation_ids_by_reference_in_tx(&mut tx, "order", &id.to_string())
+                .await?;
+            for reservation_id in reservation_ids {
+                inventory_repo
+                    .release_reservation_in_tx(&mut tx, reservation_id)
+                    .await?;
+            }
+            backorder_repo
+                .cancel_backorders_for_order_in_tx(&mut tx, id)
+                .await?;
+        }
+
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))
     }
@@ -702,11 +905,27 @@ impl PgOrderRepository {
             let shipping_address_json = input
                 .shipping_address
                 .as_ref()
-                .map(|a| serde_json::to_value(a).unwrap_or_default());
+                .map(|a| {
+                    serde_json::to_value(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.shipping_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
             let billing_address_json = input
                 .billing_address
                 .as_ref()
-                .map(|a| serde_json::to_value(a).unwrap_or_default());
+                .map(|a| {
+                    serde_json::to_value(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.billing_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
 
             sqlx::query(
                 r#"
@@ -899,8 +1118,28 @@ impl PgOrderRepository {
                 Self::validate_address_input(address, "order.billing_address")?;
             }
 
-            let shipping_json = new_shipping.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
-            let billing_json = new_billing.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default());
+            let shipping_json = new_shipping
+                .as_ref()
+                .map(|a| {
+                    serde_json::to_value(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.shipping_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
+            let billing_json = new_billing
+                .as_ref()
+                .map(|a| {
+                    serde_json::to_value(a).map_err(|e| {
+                        CommerceError::DatabaseError(format!(
+                            "Failed to serialize order.billing_address: {}",
+                            e
+                        ))
+                    })
+                })
+                .transpose()?;
 
             let result = sqlx::query(
                 r#"

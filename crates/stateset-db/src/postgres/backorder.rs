@@ -121,6 +121,82 @@ impl PgBackorderRepository {
         })
     }
 
+    pub(crate) async fn create_backorder_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        input: &CreateBackorder,
+    ) -> Result<Backorder> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let backorder_number = generate_backorder_number();
+        let priority = input.priority.unwrap_or_default();
+
+        sqlx::query(
+            "INSERT INTO backorders (id, backorder_number, order_id, order_line_id, customer_id, sku,
+                quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
+                expected_date, promised_date, source_location_id, notes, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,'pending',$9,$10,$11,$12,$13,$14,$15)",
+        )
+        .bind(id)
+        .bind(&backorder_number)
+        .bind(input.order_id)
+        .bind(input.order_line_id)
+        .bind(input.customer_id)
+        .bind(&input.sku)
+        .bind(input.quantity)
+        .bind(input.quantity)
+        .bind(priority.to_string())
+        .bind(input.expected_date)
+        .bind(input.promised_date)
+        .bind(input.source_location_id)
+        .bind(&input.notes)
+        .bind(now)
+        .bind(now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        let row = sqlx::query_as::<_, BackorderRow>(
+            "SELECT * FROM backorders WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+
+        Self::row_to_backorder(row)
+    }
+
+    pub(crate) async fn cancel_backorders_for_order_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_id: Uuid,
+    ) -> Result<()> {
+        let now = Utc::now();
+
+        sqlx::query(
+            "UPDATE backorders SET status = 'cancelled', updated_at = $1 WHERE order_id = $2",
+        )
+        .bind(now)
+        .bind(order_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        sqlx::query(
+            "UPDATE backorder_allocations SET status = 'released'
+             WHERE backorder_id IN (SELECT id FROM backorders WHERE order_id = $1)
+               AND status = 'reserved'",
+        )
+        .bind(order_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
+        Ok(())
+    }
+
     fn row_to_fulfillment(row: FulfillmentRow) -> Result<BackorderFulfillment> {
         let FulfillmentRow {
             id,
