@@ -30,11 +30,11 @@ jobs:
       - name: Generate coverage report
         run: |
           cargo llvm-cov --workspace \
-            --exclude stateset-node \
-            --exclude stateset-python \
-            --exclude stateset-wasm \
-            --exclude stateset-ruby \
-            --exclude stateset-php \
+            --exclude stateset-embedded-node \
+            --exclude stateset-embedded-python \
+            --exclude stateset-embedded-wasm \
+            --exclude stateset-embedded-ruby \
+            --exclude stateset-embedded-php \
             --exclude stateset-java \
             --exclude stateset-kotlin \
             --exclude stateset-swift \
@@ -53,11 +53,11 @@ jobs:
         run: |
           # Extract coverage percentage from llvm-cov summary
           COVERAGE=$(cargo llvm-cov --workspace \
-            --exclude stateset-node \
-            --exclude stateset-python \
-            --exclude stateset-wasm \
-            --exclude stateset-ruby \
-            --exclude stateset-php \
+            --exclude stateset-embedded-node \
+            --exclude stateset-embedded-python \
+            --exclude stateset-embedded-wasm \
+            --exclude stateset-embedded-ruby \
+            --exclude stateset-embedded-php \
             --exclude stateset-java \
             --exclude stateset-kotlin \
             --exclude stateset-swift \
@@ -90,3 +90,33 @@ jobs:
 
       - name: Run benchmarks
         run: cargo bench -p stateset-core -p stateset-db -p stateset-embedded -- --noplot
+
+  cli-coverage:
+    name: CLI Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cli
+        run: npm ci
+
+      - name: Run coverage
+        working-directory: cli
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-coverage
+          path: cli/coverage
+          if-no-files-found: warn

@@ -185,7 +185,9 @@ cargo test test_order_lifecycle
 ```
 
 CI note: Swift bindings run on macOS only when a PR has the `ci-swift` label (they run on pushes to main/master).
-CI policy: To keep PRs fast, mutation testing, coverage, and benchmarks only run on pushes to `main`/`master`.
+CI note: Mutation testing runs on pushes to `main`/`master` and on PRs labeled `ci-mutants`.
+CI note: Benchmarks only run on pushes to `main`/`master`.
+CI note: Coverage runs in the `coverage.yml` workflow on PRs and pushes.
 If your change impacts core logic or performance, please run these locally before requesting review:
 
 ```bash

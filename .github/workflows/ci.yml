@@ -53,6 +53,28 @@ jobs:
       - name: cargo-deny
         run: cargo deny check
 
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mdBook
+        uses: peaceiris/actions-mdbook@v1
+        with:
+          mdbook-version: "0.4.40"
+      - name: Build docs
+        run: mdbook build docs
+
   rust:
     name: Rust
     runs-on: ubuntu-latest
@@ -70,7 +92,9 @@ jobs:
         run: cargo test -p stateset-core -p stateset-db -p stateset-embedded
 
       - name: Mutation Testing (Core)
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        if: >
+          (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci-mutants'))
         run: |
           cargo install cargo-mutants
           cargo mutants -p stateset-core --test-threads 1 --in-cargo-test-dir
