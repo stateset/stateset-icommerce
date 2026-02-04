@@ -10,6 +10,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 - Harness lifecycle events (`onEvent`) across loop/stream sessions plus context transforms and hook points (`before_compaction`, `tool_result_persist`, `before_send`).
 - Provider overrides for non-Claude calls (`apiKey`, `getApiKey`, `signal`) and stream session event emission.
 
+## [0.6.0] - 2026-02-04
+
+### Added
+- Treasury engine with SQLite-backed ledger for agent funding, swaps, and fees (stablecoin-first).
+- `stateset-treasury` CLI for wallets, deposits, balances, ledger, token registry, and pricing rules.
+- ERC-8004 identity registry helpers (SQLite) with CLI + MCP tools.
+- MCP treasury tools and ERC-8004 tools with audit metadata (`task_id`, `request_id`, `session_id`, `tool_name`).
+- LLM billing from treasury: Claude uses SDK cost; OpenAI/Gemini use estimated cost with preflight budget enforcement.
+- CLI flags and env support for treasury + ERC-8004 binding.
+
+### Changed
+- Stablecoin payments now record treasury withdrawals when executed.
+- Tool pricing can auto-debit treasury balances when `--apply` is set.
+
 ## [0.5.0] - 2026-02-02
 
 ### Changed
