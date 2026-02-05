@@ -243,6 +243,7 @@ jobs:
   admin:
     name: Admin UI
     runs-on: ubuntu-latest
+    if: ${{ hashFiles('admin/package.json') != '' }}
 
     steps:
       - uses: actions/checkout@v4

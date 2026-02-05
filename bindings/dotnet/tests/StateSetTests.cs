@@ -942,10 +942,35 @@ public class StateSetTests : IDisposable
         var shipment = _commerce.Shipments.Create(
             orderId: order.Id,
             recipientName: "Test Recipient",
-            shippingAddress: "123 Test St"
+            shippingAddress: "123 Test St",
+            carrier: "ups"
         );
 
         Assert.NotEmpty(shipment.Id);
+
+        var shipped = _commerce.Shipments.Ship(shipment.Id, "1Z999AA10123456784");
+        Assert.Equal("shipped", shipped.Status);
+
+        var delivered = _commerce.Shipments.Deliver(shipment.Id);
+        Assert.Equal("delivered", delivered.Status);
+
+        var order2 = _commerce.Orders.Create(
+            customerId: customer.Id,
+            items: new[]
+            {
+                new OrderItem { Sku = "SHIP-SKU-2", Name = "Ship Item 2", Quantity = 1, UnitPrice = 12.00 }
+            }
+        );
+
+        var toCancel = _commerce.Shipments.Create(
+            orderId: order2.Id,
+            recipientName: "Test Recipient",
+            shippingAddress: "456 Market St",
+            carrier: "ups"
+        );
+
+        var cancelled = _commerce.Shipments.Cancel(toCancel.Id);
+        Assert.Equal("cancelled", cancelled.Status);
     }
 
     [Fact]

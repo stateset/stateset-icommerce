@@ -448,7 +448,7 @@ public sealed class ShipmentsApi
     /// <summary>
     /// Create a shipment
     /// </summary>
-    public Shipment Create(string orderId, string recipientName, string shippingAddress, string carrier)
+    public Shipment Create(string orderId, string recipientName, string shippingAddress, string carrier = "")
     {
         var ptr = NativeMethods.stateset_shipment_create(_commerce.Handle, orderId, recipientName, shippingAddress, carrier);
         return StateSetCommerce.ParseJsonRequired<Shipment>(ptr);

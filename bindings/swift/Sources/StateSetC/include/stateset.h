@@ -167,6 +167,42 @@ char *stateset_analytics_top_products(CommerceHandle *handle, int limit);
 char *stateset_analytics_top_customers(CommerceHandle *handle, int limit);
 
 /**
+ * Create a shipment, returns JSON string (caller must free)
+ */
+char *stateset_shipment_create(CommerceHandle *handle,
+                               const char *order_id,
+                               const char *recipient_name,
+                               const char *shipping_address,
+                               const char *carrier);
+
+/**
+ * Get a shipment by ID, returns JSON string (caller must free)
+ */
+char *stateset_shipment_get(CommerceHandle *handle, const char *id);
+
+/**
+ * List all shipments, returns JSON array string (caller must free)
+ */
+char *stateset_shipment_list(CommerceHandle *handle);
+
+/**
+ * Ship a shipment, returns JSON string (caller must free)
+ */
+char *stateset_shipment_ship(CommerceHandle *handle,
+                             const char *id,
+                             const char *tracking_number);
+
+/**
+ * Mark shipment as delivered, returns JSON string (caller must free)
+ */
+char *stateset_shipment_deliver(CommerceHandle *handle, const char *id);
+
+/**
+ * Cancel shipment, returns JSON string (caller must free)
+ */
+char *stateset_shipment_cancel(CommerceHandle *handle, const char *id);
+
+/**
  * Create a quality inspection
  */
 char *stateset_quality_create_inspection(CommerceHandle *handle,

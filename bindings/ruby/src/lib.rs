@@ -1183,11 +1183,50 @@ impl Returns {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(order_id, "order");
 
+        let reason_enum = reason
+            .parse::<stateset_core::ReturnReason>()
+            .unwrap_or(stateset_core::ReturnReason::Other);
+
+        let order = commerce.orders().get(uuid).map_err(|e| {
+            Error::new(
+                exception::runtime_error(),
+                format!("Failed to fetch order: {}", e),
+            )
+        })?;
+
+        let order = match order {
+            Some(order) => order,
+            None => {
+                return Err(Error::new(
+                    exception::runtime_error(),
+                    format!("Order not found: {}", uuid),
+                ))
+            }
+        };
+
+        let items: Vec<stateset_core::CreateReturnItem> = order
+            .items
+            .iter()
+            .map(|item| stateset_core::CreateReturnItem {
+                order_item_id: item.id,
+                quantity: item.quantity,
+                condition: None,
+            })
+            .collect();
+
+        if items.is_empty() {
+            return Err(Error::new(
+                exception::runtime_error(),
+                "Return must have at least one item",
+            ));
+        }
+
         let ret = commerce
             .returns()
             .create(stateset_core::CreateReturn {
                 order_id: uuid,
-                reason,
+                reason: reason_enum,
+                items,
                 ..Default::default()
             })
             .map_err(|e| {
@@ -4252,8 +4291,33 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let payments_class = module.define_class("Payments", ruby.class_object())?;
     payments_class.define_method("record", method!(Payments::record, 3))?;
 
-    // Shipments API (stub)
-    let _shipments_class = module.define_class("Shipments", ruby.class_object())?;
+    // Shipment
+    let shipment_class = module.define_class("Shipment", ruby.class_object())?;
+    shipment_class.define_method("id", method!(Shipment::id, 0))?;
+    shipment_class.define_method("shipment_number", method!(Shipment::shipment_number, 0))?;
+    shipment_class.define_method("order_id", method!(Shipment::order_id, 0))?;
+    shipment_class.define_method("status", method!(Shipment::status, 0))?;
+    shipment_class.define_method("carrier", method!(Shipment::carrier, 0))?;
+    shipment_class.define_method("tracking_number", method!(Shipment::tracking_number, 0))?;
+    shipment_class.define_method("shipping_method", method!(Shipment::shipping_method, 0))?;
+    shipment_class.define_method("weight", method!(Shipment::weight, 0))?;
+    shipment_class.define_method("estimated_delivery", method!(Shipment::estimated_delivery, 0))?;
+    shipment_class.define_method("shipped_at", method!(Shipment::shipped_at, 0))?;
+    shipment_class.define_method("delivered_at", method!(Shipment::delivered_at, 0))?;
+    shipment_class.define_method("inspect", method!(Shipment::inspect, 0))?;
+    shipment_class.define_method("to_s", method!(Shipment::inspect, 0))?;
+
+    // Shipments API
+    let shipments_class = module.define_class("Shipments", ruby.class_object())?;
+    shipments_class.define_method("create", method!(Shipments::create, 3))?;
+    shipments_class.define_method("get", method!(Shipments::get, 1))?;
+    shipments_class.define_method("get_by_tracking", method!(Shipments::get_by_tracking, 1))?;
+    shipments_class.define_method("list", method!(Shipments::list, 0))?;
+    shipments_class.define_method("for_order", method!(Shipments::for_order, 1))?;
+    shipments_class.define_method("ship", method!(Shipments::ship, 2))?;
+    shipments_class.define_method("mark_delivered", method!(Shipments::mark_delivered, 1))?;
+    shipments_class.define_method("cancel", method!(Shipments::cancel, 1))?;
+    shipments_class.define_method("count", method!(Shipments::count, 0))?;
 
     // Warranties API (stub)
     let _warranties_class = module.define_class("Warranties", ruby.class_object())?;

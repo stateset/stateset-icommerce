@@ -209,6 +209,129 @@ final class StateSetTests: XCTestCase {
         XCTAssertEqual(shipped.status, "shipped")
     }
 
+    // MARK: - Returns Tests
+
+    func testReturnLifecycle() throws {
+        let customer = try commerce.customers.create(
+            email: "returns@example.com",
+            firstName: "Return",
+            lastName: "Test"
+        )
+
+        let order = try commerce.orders.create(
+            customerId: customer.id,
+            items: [
+                OrderItem(sku: "RET-001", name: "Return Item", quantity: 1, unitPrice: 19.99)
+            ],
+            currency: "USD"
+        )
+
+        let ret = try commerce.returns.create(orderId: order.id, reason: .defective)
+        XCTAssertFalse(ret.id.isEmpty)
+        XCTAssertEqual(ret.orderId, order.id)
+        XCTAssertEqual(ret.reason, ReturnReason.defective.rawValue)
+
+        let approved = try commerce.returns.approve(id: ret.id)
+        XCTAssertEqual(approved.id, ret.id)
+
+        let fetched = try commerce.returns.get(id: ret.id)
+        XCTAssertNotNil(fetched)
+
+        let list = try commerce.returns.list()
+        XCTAssertGreaterThanOrEqual(list.count, 1)
+    }
+
+    // MARK: - Payments Tests
+
+    func testCreatePayment() throws {
+        let customer = try commerce.customers.create(
+            email: "payments@example.com",
+            firstName: "Payment",
+            lastName: "Test"
+        )
+
+        let order = try commerce.orders.create(
+            customerId: customer.id,
+            items: [
+                OrderItem(sku: "PAY-001", name: "Payment Item", quantity: 1, unitPrice: 49.99)
+            ],
+            currency: "USD"
+        )
+
+        let payment = try commerce.payments.create(
+            orderId: order.id,
+            amount: 49.99,
+            currency: "USD",
+            method: .creditCard
+        )
+        XCTAssertFalse(payment.id.isEmpty)
+        XCTAssertEqual(payment.orderId, order.id)
+
+        let fetched = try commerce.payments.get(id: payment.id)
+        XCTAssertNotNil(fetched)
+
+        let list = try commerce.payments.list()
+        XCTAssertGreaterThanOrEqual(list.count, 1)
+    }
+
+    // MARK: - Shipments Tests
+
+    func testCreateShipment() throws {
+        let customer = try commerce.customers.create(
+            email: "shipments@example.com",
+            firstName: "Ship",
+            lastName: "Test"
+        )
+
+        let order = try commerce.orders.create(
+            customerId: customer.id,
+            items: [
+                OrderItem(sku: "SHIP-001", name: "Ship Item", quantity: 1, unitPrice: 15.00)
+            ],
+            currency: "USD"
+        )
+
+        let shipment = try commerce.shipments.create(
+            orderId: order.id,
+            recipientName: "Ship Test",
+            shippingAddress: "123 Main St, City, ST 12345",
+            carrier: "ups"
+        )
+
+        XCTAssertFalse(shipment.id.isEmpty)
+        XCTAssertEqual(shipment.orderId, order.id)
+
+        let fetched = try commerce.shipments.get(id: shipment.id)
+        XCTAssertNotNil(fetched)
+
+        let shipped = try commerce.shipments.ship(id: shipment.id, trackingNumber: "1Z999AA10123456784")
+        XCTAssertEqual(shipped.status, "shipped")
+
+        let delivered = try commerce.shipments.deliver(id: shipment.id)
+        XCTAssertEqual(delivered.status, "delivered")
+
+        let order2 = try commerce.orders.create(
+            customerId: customer.id,
+            items: [
+                OrderItem(sku: "SHIP-002", name: "Ship Item 2", quantity: 1, unitPrice: 9.00)
+            ],
+            currency: "USD"
+        )
+
+        let toCancel = try commerce.shipments.create(
+            orderId: order2.id,
+            recipientName: "Ship Test",
+            shippingAddress: "456 Market St, City, ST 12345",
+            carrier: "ups"
+        )
+
+        let cancelled = try commerce.shipments.cancel(id: toCancel.id)
+        XCTAssertEqual(cancelled.status, "cancelled")
+
+        let list = try commerce.shipments.list()
+        XCTAssertGreaterThanOrEqual(list.count, 1)
+    }
+
     // MARK: - Cart Tests
 
     func testCreateCart() throws {

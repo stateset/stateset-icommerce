@@ -243,6 +243,52 @@ RSpec.describe StateSet::Commerce do
     it 'returns a Returns API instance' do
       expect(commerce.returns).to be_a(StateSet::Returns)
     end
+
+    it 'creates and approves a return' do
+      customer = commerce.customers.create('returns@example.com', 'Return', 'User', nil, nil)
+      items = [
+        { sku: 'RET-001', name: 'Return Item', quantity: 1, unit_price: 19.99 }
+      ]
+      order = commerce.orders.create(customer.id, items, 'USD', nil)
+
+      ret = commerce.returns.create(order.id, 'defective')
+      expect(ret).to be_a(StateSet::Return)
+      expect(ret.order_id).to eq(order.id)
+      expect(ret.status).to eq('requested')
+
+      approved = commerce.returns.approve(ret.id, nil)
+      expect(approved.status).to eq('approved')
+    end
+  end
+
+  describe '#payments' do
+    it 'records a payment' do
+      customer = commerce.customers.create('pay@example.com', 'Pay', 'User', nil, nil)
+      items = [
+        { sku: 'PAY-001', name: 'Payment Item', quantity: 1, unit_price: 49.99 }
+      ]
+      order = commerce.orders.create(customer.id, items, 'USD', nil)
+
+      recorded = commerce.payments.record(order.id, 49.99, 'credit_card')
+      expect(recorded).to be true
+    end
+  end
+
+  describe '#shipments' do
+    it 'creates and ships a shipment' do
+      customer = commerce.customers.create('ship@example.com', 'Ship', 'User', nil, nil)
+      items = [
+        { sku: 'SHIP-001', name: 'Ship Item', quantity: 1, unit_price: 12.50 }
+      ]
+      order = commerce.orders.create(customer.id, items, 'USD', nil)
+
+      shipment = commerce.shipments.create(order.id, 'ups', nil)
+      expect(shipment).to be_a(StateSet::Shipment)
+      expect(shipment.order_id).to eq(order.id)
+
+      shipped = commerce.shipments.ship(shipment.id, 'TRACK123')
+      expect(shipped.status).to eq('shipped')
+    end
   end
 
   describe 'all API accessors' do

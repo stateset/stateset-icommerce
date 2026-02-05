@@ -11,7 +11,8 @@ use stateset_embedded::{
     Commerce as RustCommerce,
     CreateCustomer, CreateProduct, CreateProductVariant, CreateInventoryItem, CreateOrder,
     CreateCart, AddCartItem, CustomerFilter, OrderFilter, ProductFilter,
-    AnalyticsQuery, TimePeriod, CreateReturn, CreatePayment, PaymentMethodType,
+    AnalyticsQuery, TimePeriod, CreateReturn, CreateReturnItem, CreatePayment, PaymentMethodType,
+    CreateShipment,
     // New modules
     CreateInspection, CreateLot, CreateSerialNumber, CreateWarehouse, CreateLocation,
     CreateBill, CreateBillItem, CreateCreditAccount, CreateBackorder, CreateGlAccount,
@@ -20,6 +21,7 @@ use stateset_embedded::{
 use stateset_core::{
     ReturnReason, OrderStatus,
     InspectionType, WarehouseType, LocationType, BackorderPriority, AccountType,
+    ShippingCarrier,
 };
 
 // =============================================================================
@@ -714,11 +716,24 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeReturnC
         _ => ReturnReason::Other,
     };
 
+    let notes = if notes_str.is_empty() { None } else { Some(notes_str) };
+
     let result = use_handle(ptr, |commerce| {
+        let order = commerce.orders().get(order_uuid).map_err(|e| e.to_string())?;
+        let order = order.ok_or_else(|| format!("Order not found: {}", order_uuid))?;
+        let items: Vec<CreateReturnItem> = order.items.iter().map(|item| CreateReturnItem {
+            order_item_id: item.id,
+            quantity: item.quantity,
+            condition: None,
+        }).collect();
+        if items.is_empty() {
+            return Err("Return must have at least one item".to_string());
+        }
         commerce.returns().create(CreateReturn {
             order_id: order_uuid,
             reason: return_reason,
-            notes: if notes_str.is_empty() { None } else { Some(notes_str) },
+            notes,
+            items,
             ..Default::default()
         }).map_err(|e| e.to_string())
     });
@@ -886,6 +901,208 @@ pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeAnalyti
 
     match result {
         Ok(customers) => to_json_string(&mut env, &customers),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+// =============================================================================
+// Shipments API
+// =============================================================================
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentCreate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    order_id: JString<'local>,
+    recipient_name: JString<'local>,
+    shipping_address: JString<'local>,
+    carrier: JString<'local>,
+) -> JObject<'local> {
+    let order_id_str = get_string(&mut env, &order_id);
+    let recipient_name_str = get_string(&mut env, &recipient_name);
+    let shipping_address_str = get_string(&mut env, &shipping_address);
+    let carrier_str = get_string(&mut env, &carrier);
+
+    let order_uuid = match uuid::Uuid::parse_str(&order_id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid order UUID");
+            return JObject::null();
+        }
+    };
+
+    let carrier_opt = if carrier_str.is_empty() {
+        None
+    } else {
+        Some(match carrier_str.to_lowercase().as_str() {
+            "ups" => ShippingCarrier::Ups,
+            "fedex" => ShippingCarrier::FedEx,
+            "usps" => ShippingCarrier::Usps,
+            "dhl" => ShippingCarrier::Dhl,
+            _ => ShippingCarrier::Other,
+        })
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().create(CreateShipment {
+            order_id: order_uuid,
+            recipient_name: recipient_name_str,
+            shipping_address: shipping_address_str,
+            carrier: carrier_opt,
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_string(&mut env, &shipment),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentGet<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid shipment UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().get(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Some(shipment)) => to_json_string(&mut env, &shipment),
+        Ok(None) => JObject::null(),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentList<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+) -> JObject<'local> {
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().list(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipments) => to_json_string(&mut env, &shipments),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentShip<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+    tracking_number: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+    let tracking_str = get_string(&mut env, &tracking_number);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid shipment UUID");
+            return JObject::null();
+        }
+    };
+
+    let tracking = if tracking_str.is_empty() { None } else { Some(tracking_str) };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().ship(uuid, tracking).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_string(&mut env, &shipment),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentDeliver<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid shipment UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().mark_delivered(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_string(&mut env, &shipment),
+        Err(e) => {
+            throw_exception(&mut env, &e);
+            JObject::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_stateset_embedded_StateSetCommerce_nativeShipmentCancel<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    ptr: jlong,
+    id: JString<'local>,
+) -> JObject<'local> {
+    let id_str = get_string(&mut env, &id);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => {
+            throw_exception(&mut env, "Invalid shipment UUID");
+            return JObject::null();
+        }
+    };
+
+    let result = use_handle(ptr, |commerce| {
+        commerce.shipments().cancel(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_string(&mut env, &shipment),
         Err(e) => {
             throw_exception(&mut env, &e);
             JObject::null()

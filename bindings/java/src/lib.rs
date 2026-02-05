@@ -11,7 +11,7 @@ use stateset_embedded::{
     Commerce as RustCommerce,
     CreateCustomer, CreateProduct, CreateProductVariant, CreateInventoryItem, CreateOrder,
     CreateCart, AddCartItem, CustomerFilter, OrderFilter, ProductFilter,
-    AnalyticsQuery, TimePeriod, CreateReturn, CreatePayment, PaymentMethodType,
+    AnalyticsQuery, TimePeriod, CreateReturn, CreateReturnItem, CreatePayment, PaymentMethodType,
 };
 use stateset_core::{ReturnReason, OrderStatus};
 
@@ -1180,10 +1180,20 @@ pub extern "system" fn Java_com_stateset_embedded_Returns_nativeCreate<'local>(
     };
 
     let result = use_handle(ptr, |commerce| {
+        let order = commerce.orders().get(uuid).map_err(|e| e.to_string())?;
+        let order = order.ok_or_else(|| format!("Order not found: {}", uuid))?;
+        let items: Vec<CreateReturnItem> = order.items.iter().map(|item| CreateReturnItem {
+            order_item_id: item.id,
+            quantity: item.quantity,
+            condition: None,
+        }).collect();
+        if items.is_empty() {
+            return Err("Return must have at least one item".to_string());
+        }
         commerce.returns().create(CreateReturn {
             order_id: uuid,
             reason: reason_enum,
-            items: vec![],
+            items,
             ..Default::default()
         }).map_err(|e| e.to_string())
     });

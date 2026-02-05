@@ -25,3 +25,11 @@ The CLI exposes MCP tools and applies a safety model where writes require `--app
 ## Sync and auditability
 
 The VES sync system provides ordered event replication, conflict handling, and cryptographic proofs for auditability.
+
+## Architecture decisions
+
+For the rationale behind major structural choices, see the ADRs in `docs/src/adr/`.
+
+## Bindings strategy
+
+Language bindings are generated from a single declarative spec to keep the surface area consistent across ecosystems, with small language‑idiomatic wrappers layered on top.

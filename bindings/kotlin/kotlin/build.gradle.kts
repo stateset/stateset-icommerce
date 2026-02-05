@@ -17,6 +17,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
     testImplementation(kotlin("test"))
+    testImplementation(kotlin("test-junit5"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
 
@@ -26,6 +27,7 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("java.library.path", "${project.rootDir}/../target/release")
 }
 
 // Native library loading support

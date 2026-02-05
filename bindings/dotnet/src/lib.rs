@@ -10,15 +10,17 @@ use stateset_embedded::{
     Commerce as RustCommerce,
     CreateCustomer, CreateProduct, CreateProductVariant, CreateInventoryItem, CreateOrder,
     CreateCart, AddCartItem, CustomerFilter, OrderFilter, ProductFilter,
-    AnalyticsQuery, TimePeriod, CreateReturn, CreatePayment, PaymentMethodType,
+    AnalyticsQuery, TimePeriod, CreateReturn, CreateReturnItem, CreatePayment, PaymentMethodType,
     // New modules
     CreateWarehouse, CreateLocation, CreateInspection, CreateLot, CreateSerialNumber,
     CreateBill, CreateBillItem, CreateCreditAccount, CreateBackorder, CreateGlAccount,
     SetItemCost,
+    CreateShipment,
 };
 use stateset_core::{
     ReturnReason, OrderStatus,
     WarehouseType, LocationType, InspectionType, BackorderPriority, AccountType,
+    ShippingCarrier,
 };
 
 // =============================================================================
@@ -662,10 +664,21 @@ pub extern "C" fn stateset_return_create(
     };
 
     let result = use_handle(handle, |commerce| {
+        let order = commerce.orders().get(order_uuid).map_err(|e| e.to_string())?;
+        let order = order.ok_or_else(|| format!("Order not found: {}", order_uuid))?;
+        let items: Vec<CreateReturnItem> = order.items.iter().map(|item| CreateReturnItem {
+            order_item_id: item.id,
+            quantity: item.quantity,
+            condition: None,
+        }).collect();
+        if items.is_empty() {
+            return Err("Return must have at least one item".to_string());
+        }
         commerce.returns().create(CreateReturn {
             order_id: order_uuid,
             reason: return_reason,
             notes: notes_str,
+            items,
             ..Default::default()
         }).map_err(|e| e.to_string())
     });
@@ -818,6 +831,183 @@ pub extern "C" fn stateset_analytics_top_customers(
 
     match result {
         Ok(customers) => to_json_cstr(&customers),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+// =============================================================================
+// Shipments API
+// =============================================================================
+
+/// Create a shipment
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_create(
+    handle: *mut CommerceHandle,
+    order_id: *const c_char,
+    recipient_name: *const c_char,
+    shipping_address: *const c_char,
+    carrier: *const c_char,
+) -> *mut c_char {
+    let order_id_str = match cstr_to_string(order_id) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let recipient_name_str = cstr_to_string(recipient_name).unwrap_or_default();
+    let shipping_address_str = cstr_to_string(shipping_address).unwrap_or_default();
+    let carrier_str = cstr_to_string(carrier);
+
+    let order_uuid = match uuid::Uuid::parse_str(&order_id_str) {
+        Ok(u) => u,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let shipping_carrier = carrier_str.map(|c| {
+        match c.to_lowercase().as_str() {
+            "ups" => ShippingCarrier::Ups,
+            "fedex" => ShippingCarrier::FedEx,
+            "usps" => ShippingCarrier::Usps,
+            "dhl" => ShippingCarrier::Dhl,
+            _ => ShippingCarrier::Other,
+        }
+    });
+
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().create(CreateShipment {
+            order_id: order_uuid,
+            recipient_name: recipient_name_str,
+            shipping_address: shipping_address_str,
+            carrier: shipping_carrier,
+            ..Default::default()
+        }).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_cstr(&shipment),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Get a shipment by ID
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_get(
+    handle: *mut CommerceHandle,
+    id: *const c_char,
+) -> *mut c_char {
+    let id_str = match cstr_to_string(id) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().get(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Some(shipment)) => to_json_cstr(&shipment),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// List all shipments
+/// Returns JSON array string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_list(handle: *mut CommerceHandle) -> *mut c_char {
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().list(Default::default()).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipments) => to_json_cstr(&shipments),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Ship a shipment (hand off to carrier)
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_ship(
+    handle: *mut CommerceHandle,
+    id: *const c_char,
+    tracking_number: *const c_char,
+) -> *mut c_char {
+    let id_str = match cstr_to_string(id) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let tracking = cstr_to_string(tracking_number);
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().ship(uuid, tracking).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_cstr(&shipment),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Mark shipment as delivered
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_deliver(
+    handle: *mut CommerceHandle,
+    id: *const c_char,
+) -> *mut c_char {
+    let id_str = match cstr_to_string(id) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().mark_delivered(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_cstr(&shipment),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Cancel a shipment
+/// Returns JSON string (caller must free)
+#[no_mangle]
+pub extern "C" fn stateset_shipment_cancel(
+    handle: *mut CommerceHandle,
+    id: *const c_char,
+) -> *mut c_char {
+    let id_str = match cstr_to_string(id) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+
+    let uuid = match uuid::Uuid::parse_str(&id_str) {
+        Ok(u) => u,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let result = use_handle(handle, |commerce| {
+        commerce.shipments().cancel(uuid).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(shipment) => to_json_cstr(&shipment),
         Err(_) => ptr::null_mut(),
     }
 }
