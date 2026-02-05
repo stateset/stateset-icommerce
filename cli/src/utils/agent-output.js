@@ -7,12 +7,25 @@ import { formatStructuredOutput } from '../output.js';
  * --format wins when explicitly provided; otherwise --json implies json.
  */
 export function resolveOutputFormat({ format = 'table', json = false, argv = process.argv } = {}) {
-  const normalized = typeof format === 'string' ? format.toLowerCase() : 'table';
-  const hasFormatFlag = Array.isArray(argv)
-    ? argv.some(arg => arg === '--format' || arg.startsWith('--format='))
-    : false;
+  const args = Array.isArray(argv) ? argv : [];
+  let formatFromArgv = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--format' && args[i + 1] && !args[i + 1].startsWith('-')) {
+      formatFromArgv = args[i + 1];
+      break;
+    }
+    if (arg.startsWith('--format=')) {
+      formatFromArgv = arg.split('=').slice(1).join('=');
+      break;
+    }
+  }
 
-  if (hasFormatFlag) {
+  const normalized = typeof (formatFromArgv || format) === 'string'
+    ? (formatFromArgv || format).toLowerCase()
+    : 'table';
+
+  if (formatFromArgv) {
     return normalized;
   }
 

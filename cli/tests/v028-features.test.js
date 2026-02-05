@@ -117,8 +117,8 @@ describe('Config v0.2.8', () => {
     assert.ok(opts.memory, 'should have memory option');
   });
 
-  it('should have CLI_VERSION set to 0.5.2', () => {
-    assert.equal(config.CLI_VERSION, '0.5.2');
+  it('should have CLI_VERSION set to 0.6.0', () => {
+    assert.equal(config.CLI_VERSION, '0.6.0');
   });
 });
 
@@ -301,17 +301,31 @@ describe('Ollama Provider', () => {
 // Memory Store Tests
 // ============================================================================
 
+let memoryAvailable = true;
+const memorySkipReason = 'Skipping: better-sqlite3 native module not available.';
+
 describe('MemoryStore', () => {
   let MemoryStore, store;
   const testDbPath = join(TMP_DIR, 'memory-test.db');
 
   before(async () => {
     mkdirSync(TMP_DIR, { recursive: true });
-    const mod = await import('../src/memory/store.js');
-    MemoryStore = mod.MemoryStore;
+    try {
+      const mod = await import('../src/memory/store.js');
+      MemoryStore = mod.MemoryStore;
+      const probe = new MemoryStore({ dbPath: testDbPath });
+      probe.close();
+    } catch (error) {
+      if (error?.code === 'ERR_DLOPEN_FAILED') {
+        memoryAvailable = false;
+        return;
+      }
+      throw error;
+    }
   });
 
   beforeEach(() => {
+    if (!memoryAvailable) return;
     // Fresh store for each test
     if (store) store.close();
     if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -319,16 +333,19 @@ describe('MemoryStore', () => {
   });
 
   after(() => {
+    if (!memoryAvailable) return;
     if (store) store.close();
     rmSync(TMP_DIR, { recursive: true, force: true });
   });
 
-  it('should create a new store', () => {
+  it('should create a new store', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     assert.ok(store);
     assert.equal(store.count(), 0);
   });
 
-  it('should save and retrieve a memory', () => {
+  it('should save and retrieve a memory', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const { id } = store.save({
       summary: 'User asked about order #123 and we shipped it.',
       facts: ['order #123', 'shipped', 'alice@example.com'],
@@ -344,7 +361,8 @@ describe('MemoryStore', () => {
     assert.equal(recent[0].agent, 'orders');
   });
 
-  it('should save multiple memories and return in reverse chronological order', () => {
+  it('should save multiple memories and return in reverse chronological order', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     store.save({ summary: 'First conversation', facts: ['fact1'] });
     store.save({ summary: 'Second conversation', facts: ['fact2'] });
     store.save({ summary: 'Third conversation', facts: ['fact3'] });
@@ -355,7 +373,8 @@ describe('MemoryStore', () => {
     assert.equal(recent[1].summary, 'Second conversation');
   });
 
-  it('should search memories by text', () => {
+  it('should search memories by text', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     store.save({ summary: 'Discussed inventory levels for WIDGET-001' });
     store.save({ summary: 'Created order for alice@example.com' });
     store.save({ summary: 'Checked inventory for GADGET-002' });
@@ -364,7 +383,8 @@ describe('MemoryStore', () => {
     assert.equal(results.length, 2);
   });
 
-  it('should separate memories by channel and sender', () => {
+  it('should separate memories by channel and sender', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     store.save({ channel: 'telegram', senderId: 'user1', summary: 'Telegram chat' });
     store.save({ channel: 'discord', senderId: 'user2', summary: 'Discord chat' });
     store.save({ channel: 'cli', senderId: 'local', summary: 'CLI chat' });
@@ -375,14 +395,16 @@ describe('MemoryStore', () => {
     assert.equal(store.count(), 3);
   });
 
-  it('should delete a memory by id', () => {
+  it('should delete a memory by id', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const { id } = store.save({ summary: 'To be deleted' });
     assert.equal(store.count(), 1);
     assert.ok(store.delete(id));
     assert.equal(store.count(), 0);
   });
 
-  it('should prune old memories', () => {
+  it('should prune old memories', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     store.save({ summary: 'Recent memory' });
     // Can't easily test old memories without manipulating timestamps
     // But we can verify the method doesn't crash
@@ -390,7 +412,8 @@ describe('MemoryStore', () => {
     assert.ok(typeof pruned === 'number');
   });
 
-  it('should get all recent memories across senders', () => {
+  it('should get all recent memories across senders', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     store.save({ senderId: 'a', summary: 'Memory A' });
     store.save({ senderId: 'b', summary: 'Memory B' });
 
@@ -398,7 +421,8 @@ describe('MemoryStore', () => {
     assert.equal(all.length, 2);
   });
 
-  it('should handle save with minimal fields', () => {
+  it('should handle save with minimal fields', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const { id } = store.save({ summary: 'Minimal memory' });
     assert.ok(id > 0);
     const mem = store.getRecent()[0];
@@ -473,6 +497,7 @@ describe('MemoryInjector', () => {
   const testDbPath = join(TMP_DIR, 'injector-test.db');
 
   before(async () => {
+    if (!memoryAvailable) return;
     mkdirSync(TMP_DIR, { recursive: true });
     const injectorMod = await import('../src/memory/injector.js');
     const storeMod = await import('../src/memory/store.js');
@@ -484,6 +509,7 @@ describe('MemoryInjector', () => {
   });
 
   beforeEach(() => {
+    if (!memoryAvailable) return;
     if (store) store.close();
     if (existsSync(testDbPath)) rmSync(testDbPath);
     store = new MemoryStore({ dbPath: testDbPath });
@@ -491,33 +517,39 @@ describe('MemoryInjector', () => {
   });
 
   after(() => {
+    if (!memoryAvailable) return;
     if (store) store.close();
     if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true, force: true });
   });
 
-  it('should create injector with default options', () => {
+  it('should create injector with default options', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const inj = new MemoryInjector();
     assert.ok(inj);
   });
 
-  it('should pass through when memory is not enabled', async () => {
+  it('should pass through when memory is not enabled', async (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const data = { text: 'hello', memoryEnabled: false };
     const result = await injector.injectMemoryContext(data);
     assert.equal(result.text, 'hello');
   });
 
-  it('should pass through when text is empty', async () => {
+  it('should pass through when text is empty', async (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const data = { text: '', memoryEnabled: true };
     const result = await injector.injectMemoryContext(data);
     assert.equal(result.text, '');
   });
 
-  it('should pass through null data', async () => {
+  it('should pass through null data', async (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const result = await injector.injectMemoryContext(null);
     assert.equal(result, null);
   });
 
-  it('should format memories correctly', () => {
+  it('should format memories correctly', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const memories = [
       {
         summary: 'Discussed order #123',
@@ -542,12 +574,14 @@ describe('MemoryInjector', () => {
     assert.ok(formatted.includes('order #123, alice'));
   });
 
-  it('should return null for empty memories', () => {
+  it('should return null for empty memories', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     assert.equal(injector.formatMemories([]), null);
     assert.equal(injector.formatMemories(null), null);
   });
 
-  it('should respect maxBodyLength', () => {
+  it('should respect maxBodyLength', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     const shortInjector = new MemoryInjector({ maxBodyLength: 100 });
     const memories = [
       { summary: 'A'.repeat(80), facts: [], created_at: Date.now() },
@@ -559,12 +593,14 @@ describe('MemoryInjector', () => {
     assert.ok(formatted.includes('A'.repeat(80)));
   });
 
-  it('should allow setting maxMemories', () => {
+  it('should allow setting maxMemories', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     injector.setMaxMemories(10);
     assert.equal(injector._maxMemories, 10);
   });
 
-  it('should allow setting maxBodyLength', () => {
+  it('should allow setting maxBodyLength', (t) => {
+    if (!memoryAvailable) return t.skip(memorySkipReason);
     injector.setMaxBodyLength(5000);
     assert.equal(injector._maxBodyLength, 5000);
   });

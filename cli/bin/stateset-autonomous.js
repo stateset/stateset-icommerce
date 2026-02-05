@@ -44,9 +44,46 @@ const DEFAULT_DB_PATH = './.stateset/commerce.db';
 const DEFAULT_STORE_PATH = './.stateset/autonomous';
 const JOB_STATUSES = ['pending', 'running', 'completed', 'failed', 'paused', 'cancelled'];
 
+function normalizeOptions(options = {}) {
+  const resolved = (options && typeof options.opts === 'function')
+    ? options.opts()
+    : (options || {});
+
+  const argv = Array.isArray(options?.rawArgs) ? options.rawArgs : process.argv;
+
+  const getFlagValue = (flags) => {
+    for (const flag of flags) {
+      const eqMatch = argv.find(arg => arg.startsWith(`${flag}=`));
+      if (eqMatch) {
+        return eqMatch.slice(flag.length + 1);
+      }
+      const idx = argv.indexOf(flag);
+      if (idx !== -1 && argv[idx + 1] && !argv[idx + 1].startsWith('-')) {
+        return argv[idx + 1];
+      }
+    }
+    return null;
+  };
+
+  const db = getFlagValue(['--db', '-d']);
+  const store = getFlagValue(['--store', '-s']);
+  const output = getFlagValue(['--output']);
+
+  if (db) resolved.db = db;
+  if (store) resolved.store = store;
+  if (output) resolved.output = output;
+  if (argv.includes('--json')) resolved.json = true;
+
+  return resolved;
+}
+
 function createOutputHelpers(options = {}) {
-  const outputPath = options.output || null;
-  const jsonOutput = Boolean(options.json || outputPath);
+  const resolved = normalizeOptions(options);
+  const argv = Array.isArray(options?.rawArgs) ? options.rawArgs : process.argv;
+  const hasJsonFlag = argv.includes('--json');
+  const hasOutputFlag = argv.includes('--output');
+  const outputPath = resolved.output || null;
+  const jsonOutput = Boolean(resolved.json || outputPath || hasJsonFlag || hasOutputFlag);
   const writeJson = async (data) => {
     const payload = JSON.stringify(data, null, 2);
     if (outputPath) {
@@ -56,7 +93,7 @@ function createOutputHelpers(options = {}) {
     console.log(payload);
   };
 
-  return { jsonOutput, writeJson };
+  return { jsonOutput, writeJson, options: resolved };
 }
 
 function serializeJob(job) {
@@ -425,12 +462,12 @@ program
   .option('--json', 'Output status as JSON')
   .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
-    const { jsonOutput, writeJson } = createOutputHelpers(options);
+    const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
     try {
-      const commerce = new Commerce(options.db);
+      const commerce = new Commerce(opts.db);
       
       const engine = new AutonomousEngine({
-        storePath: options.store,
+        storePath: opts.store,
         commerce
       });
 
@@ -441,8 +478,8 @@ program
         await writeJson({
           ok: true,
           timestamp: new Date().toISOString(),
-          storePath: options.store,
-          dbPath: options.db,
+          storePath: opts.store,
+          dbPath: opts.db,
           status
         });
         return;
@@ -457,8 +494,8 @@ program
       const heartbeat = status.heartbeat || {};
 
       console.log('\n📊 Autonomous Engine Status\n');
-      console.log(`Store: ${options.store}`);
-      console.log(`Database: ${options.db}`);
+      console.log(`Store: ${opts.store}`);
+      console.log(`Database: ${opts.db}`);
       console.log(`Running: ${status.isRunning ? '✅ Yes' : '⏸️ No'}`);
       console.log('');
 
@@ -495,30 +532,30 @@ program
   .option('--json', 'Output status as JSON')
   .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
-    const { jsonOutput, writeJson } = createOutputHelpers(options);
+    const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
     try {
       if (!jsonOutput) {
         console.log('\n🔧 Initializing Autonomous Business Engine...\n');
       }
 
-      if (options.force && fs.existsSync(options.store)) {
-        fs.rmSync(options.store, { recursive: true, force: true });
+      if (opts.force && fs.existsSync(opts.store)) {
+        fs.rmSync(opts.store, { recursive: true, force: true });
       }
 
-      const commerce = new Commerce(options.db);
+      const commerce = new Commerce(opts.db);
       
       const engine = new AutonomousEngine({
-        storePath: options.store,
+        storePath: opts.store,
         commerce,
         enableWebhooks: false // Don't start server during init
       });
 
       await engine.load();
 
-      if (!options.force) {
+      if (!opts.force) {
         const existing = collectInitData(engine);
         if (hasExistingData(existing)) {
-          const message = `Autonomous data already exists at ${options.store}. Use --force to overwrite.`;
+          const message = `Autonomous data already exists at ${opts.store}. Use --force to overwrite.`;
           if (jsonOutput) {
             await writeJson({ error: message, existing: existing.counts });
           } else {
@@ -537,8 +574,8 @@ program
         await writeJson({
           success: true,
           timestamp: new Date().toISOString(),
-          storePath: options.store,
-          dbPath: options.db,
+          storePath: opts.store,
+          dbPath: opts.db,
           ...initData
         });
         return;
@@ -611,9 +648,9 @@ const jobsCommand = program
   .option('--json', 'Output status as JSON')
   .option('--output <file>', 'Write JSON output to file (implies --json)')
   .action(async (options) => {
-    const { jsonOutput, writeJson } = createOutputHelpers(options);
+    const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
     try {
-      const actionFlags = ['enable', 'disable', 'run'].filter((flag) => Boolean(options[flag]));
+      const actionFlags = ['enable', 'disable', 'run'].filter((flag) => Boolean(opts[flag]));
       if (actionFlags.length > 1) {
         const message = 'Only one of --enable, --disable, or --run may be specified.';
         if (jsonOutput) {
@@ -624,22 +661,22 @@ const jobsCommand = program
         process.exit(1);
       }
 
-      if (options.enable) {
-        await handleJobsEnable(options.enable, options, jsonOutput, writeJson);
+      if (opts.enable) {
+        await handleJobsEnable(opts.enable, opts, jsonOutput, writeJson);
         return;
       }
 
-      if (options.disable) {
-        await handleJobsDisable(options.disable, options, jsonOutput, writeJson);
+      if (opts.disable) {
+        await handleJobsDisable(opts.disable, opts, jsonOutput, writeJson);
         return;
       }
 
-      if (options.run) {
-        await handleJobsRun(options.run, options, jsonOutput, writeJson);
+      if (opts.run) {
+        await handleJobsRun(opts.run, opts, jsonOutput, writeJson);
         return;
       }
 
-      await handleJobsList(options, jsonOutput, writeJson);
+      await handleJobsList(opts, jsonOutput, writeJson);
 
     } catch (error) {
       if (jsonOutput) {
@@ -667,9 +704,9 @@ applyJobsListOptions(
     .command('list')
     .description('List scheduled jobs')
 ).action(async (options) => {
-  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
-    await handleJobsList(options, jsonOutput, writeJson);
+    await handleJobsList(opts, jsonOutput, writeJson);
   } catch (error) {
     if (jsonOutput) {
       await writeJson({ error: error.message });
@@ -686,9 +723,9 @@ applyJobsOptions(
     .description('Enable a scheduled job')
     .argument('<id>', 'Job ID')
 ).action(async (jobId, options) => {
-  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
-    await handleJobsEnable(jobId, options, jsonOutput, writeJson);
+    await handleJobsEnable(jobId, opts, jsonOutput, writeJson);
   } catch (error) {
     if (jsonOutput) {
       await writeJson({ error: error.message });
@@ -705,9 +742,9 @@ applyJobsOptions(
     .description('Disable a scheduled job')
     .argument('<id>', 'Job ID')
 ).action(async (jobId, options) => {
-  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
-    await handleJobsDisable(jobId, options, jsonOutput, writeJson);
+    await handleJobsDisable(jobId, opts, jsonOutput, writeJson);
   } catch (error) {
     if (jsonOutput) {
       await writeJson({ error: error.message });
@@ -724,9 +761,9 @@ applyJobsOptions(
     .description('Run a job immediately')
     .argument('<id>', 'Job ID')
 ).action(async (jobId, options) => {
-  const { jsonOutput, writeJson } = createOutputHelpers(options);
+  const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
-    await handleJobsRun(jobId, options, jsonOutput, writeJson);
+    await handleJobsRun(jobId, opts, jsonOutput, writeJson);
   } catch (error) {
     if (jsonOutput) {
       await writeJson({ error: error.message });

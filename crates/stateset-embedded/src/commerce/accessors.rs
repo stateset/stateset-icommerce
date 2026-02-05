@@ -1196,7 +1196,6 @@ impl Commerce {
 
         Ok(result)
     }
-}
 
     /// Calculate and apply promotions to a cart.
     ///

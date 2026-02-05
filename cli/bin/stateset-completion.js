@@ -510,7 +510,7 @@ _stateset_config() {
             _describe -t subcommands 'subcommand' subcommands
             ;;
         args)
-            if [[ "${words[2]}" == "jobs" ]]; then
+            if [[ "\${words[2]}" == "jobs" ]]; then
                 local job_subcommands=(
                     'list:List scheduled jobs'
                     'enable:Enable a job'

@@ -22,6 +22,8 @@ import { readFileSync, mkdirSync, rmSync } from 'node:fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TMP_DIR = join(__dirname, '.tmp-v030-test');
+const MEMORY_SKIP_REASON = 'Skipping: better-sqlite3 native module not available.';
+let memoryAvailable = true;
 
 // ============================================================================
 // Helpers
@@ -67,14 +69,14 @@ function request(port, method, path, body = null, headers = {}) {
 // ============================================================================
 
 describe('v0.3.0 — Package version', () => {
-  it('package.json version should be 0.5.2', () => {
+  it('package.json version should be 0.6.0', () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-    assert.equal(pkg.version, '0.5.2');
+    assert.equal(pkg.version, '0.6.0');
   });
 
-  it('config CLI_VERSION should be 0.5.2', async () => {
+  it('config CLI_VERSION should be 0.6.0', async () => {
     const config = await import('../src/config.js');
-    assert.equal(config.CLI_VERSION, '0.5.2');
+    assert.equal(config.CLI_VERSION, '0.6.0');
   });
 
   it('package.json should have botbuilder in optionalDependencies', () => {
@@ -309,30 +311,40 @@ describe('v0.3.0 — Memory API end-to-end', () => {
   const memDbPath = join(TMP_DIR, 'mem-test.db');
 
   before(async () => {
-    mkdirSync(TMP_DIR, { recursive: true });
-    const { createHttpGateway } = await import('../src/channels/http-gateway.js');
-    const { getVectorMemoryStore, resetVectorMemoryStore } = await import('../src/memory/vector-store.js');
-    const { resetMemoryStore } = await import('../src/memory/store.js');
+    try {
+      mkdirSync(TMP_DIR, { recursive: true });
+      const { createHttpGateway } = await import('../src/channels/http-gateway.js');
+      const { getVectorMemoryStore, resetVectorMemoryStore } = await import('../src/memory/vector-store.js');
+      const { resetMemoryStore } = await import('../src/memory/store.js');
 
-    // Reset singletons to get fresh stores with a temp file DB
-    // (in-memory won't work because vector store and memory store need the same DB)
-    resetVectorMemoryStore();
-    resetMemoryStore();
-    memoryStore = getVectorMemoryStore({ dbPath: memDbPath });
+      // Reset singletons to get fresh stores with a temp file DB
+      // (in-memory won't work because vector store and memory store need the same DB)
+      resetVectorMemoryStore();
+      resetMemoryStore();
+      memoryStore = getVectorMemoryStore({ dbPath: memDbPath });
 
-    gw = createHttpGateway({ port: 0 });
-    gw.setSubsystems({ memory: memoryStore });
-    const addr = await gw.start();
-    port = addr.port;
+      gw = createHttpGateway({ port: 0 });
+      gw.setSubsystems({ memory: memoryStore });
+      const addr = await gw.start();
+      port = addr.port;
+    } catch (error) {
+      if (error?.code === 'ERR_DLOPEN_FAILED') {
+        memoryAvailable = false;
+        return;
+      }
+      throw error;
+    }
   });
 
   after(async () => {
+    if (!memoryAvailable) return;
     await gw.stop();
     memoryStore.close();
     try { rmSync(TMP_DIR, { recursive: true, force: true }); } catch {}
   });
 
-  it('GET /memory/stats returns stats', async () => {
+  it('GET /memory/stats returns stats', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'GET', '/memory/stats');
     assert.equal(res.status, 200);
     assert.ok('totalMemories' in res.body);
@@ -340,7 +352,8 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok('dim' in res.body);
   });
 
-  it('POST /memory/save stores a memory', async () => {
+  it('POST /memory/save stores a memory', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/save', {
       summary: 'Customer asked about return policy for electronics',
       facts: 'return_window:30_days',
@@ -351,12 +364,14 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.id);
   });
 
-  it('POST /memory/save requires summary', async () => {
+  it('POST /memory/save requires summary', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/save', { channel: 'http' });
     assert.equal(res.status, 400);
   });
 
-  it('POST /memory/search finds saved memory', async () => {
+  it('POST /memory/search finds saved memory', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/search', {
       query: 'return policy',
       channel: 'http',
@@ -368,7 +383,8 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results[0].summary.includes('return policy'));
   });
 
-  it('POST /memory/vector-search finds saved memory', async () => {
+  it('POST /memory/vector-search finds saved memory', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/vector-search', {
       query: 'electronics return policy',
     });
@@ -377,7 +393,8 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results.length > 0);
   });
 
-  it('POST /memory/hybrid-search finds saved memory', async () => {
+  it('POST /memory/hybrid-search finds saved memory', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/hybrid-search', {
       query: 'return policy',
       channel: 'http',
@@ -388,19 +405,22 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     assert.ok(res.body.results.length > 0);
   });
 
-  it('POST /memory/vector-search requires query', async () => {
+  it('POST /memory/vector-search requires query', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/vector-search', {});
     assert.equal(res.status, 400);
   });
 
-  it('POST /memory/backfill succeeds', async () => {
+  it('POST /memory/backfill succeeds', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/backfill', {});
     assert.equal(res.status, 200);
     assert.ok('processed' in res.body);
     assert.ok('errors' in res.body);
   });
 
-  it('DELETE /memory/:id deletes a memory', async () => {
+  it('DELETE /memory/:id deletes a memory', async (t) => {
+    if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     // Save one first
     const saveRes = await request(port, 'POST', '/memory/save', {
       summary: 'Temporary memory to delete',

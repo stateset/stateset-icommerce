@@ -517,13 +517,14 @@ async function main() {
       const profileName = values.profile || config.defaultProfile || 'default';
       const profile = loadProfile(profileName);
       const value = profile[key];
-      if (values.json) {
-        await writeJson({ [key]: value });
-      } else if (value !== undefined) {
-        console.log(value);
-      } else {
+      if (value === undefined) {
         await emitError(`Key '${key}' not found in profile '${profileName}'`);
         process.exit(1);
+      }
+      if (values.json) {
+        await writeJson({ [key]: value });
+      } else {
+        console.log(value);
       }
       break;
     }
