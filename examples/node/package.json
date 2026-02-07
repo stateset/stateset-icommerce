@@ -1,6 +1,6 @@
 {
   "name": "stateset-node-examples",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "StateSet iCommerce Node.js Examples - Comprehensive examples demonstrating all features",
   "main": "01_getting_started.js",
   "scripts": {
