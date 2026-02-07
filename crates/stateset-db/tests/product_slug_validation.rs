@@ -1,7 +1,5 @@
+use stateset_core::{CommerceError, CreateProduct, ProductRepository, UpdateProduct};
 use stateset_db::SqliteDatabase;
-use stateset_core::{
-    CommerceError, CreateProduct, ProductRepository, UpdateProduct,
-};
 
 fn setup_db() -> SqliteDatabase {
     SqliteDatabase::in_memory().expect("failed to create in-memory db")
@@ -61,7 +59,7 @@ fn product_update_batch_atomic_rejects_duplicate_slug() {
         })
         .expect("failed to create product");
 
-    let result = db.products().update_batch_atomic(vec![ (
+    let result = db.products().update_batch_atomic(vec![(
         second.id,
         UpdateProduct {
             slug: Some(first.slug.clone()),

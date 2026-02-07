@@ -34,6 +34,5 @@ impl Metrics {
 
 /// Initialize metrics and return a handle.
 pub fn init_metrics(_config: MetricsConfig) -> Metrics {
-    Metrics::default()
+    Metrics
 }
-

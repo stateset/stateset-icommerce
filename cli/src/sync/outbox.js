@@ -20,8 +20,7 @@ import {
   signEventHash,
   encryptPayload,
   bufferToHex,
-  hexToBuffer,
-  ZERO_HASH
+  ZERO_HASH,
 } from './crypto.js';
 import { getKeyManager } from './keys.js';
 
@@ -215,10 +214,9 @@ export class Outbox {
     if (this._initialized) return;
 
     // Execute schema statements one by one
-    const statements = OUTBOX_SCHEMA
-      .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+    const statements = OUTBOX_SCHEMA.split(';')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
     for (const stmt of statements) {
       this.db.exec(stmt);
@@ -283,7 +281,9 @@ export class Outbox {
     // Get signing key for agent
     const signingKey = await this.keyManager.getCurrentSigningKey(event.sourceAgent);
     if (!signingKey) {
-      throw new Error(`No signing key found for agent ${event.sourceAgent}. Generate keys first with 'stateset-sync keys:generate'`);
+      throw new Error(
+        `No signing key found for agent ${event.sourceAgent}. Generate keys first with 'stateset-sync keys:generate'`,
+      );
     }
 
     // Compute plaintext hash
@@ -314,14 +314,12 @@ export class Outbox {
           entityType: event.entityType,
           entityId: event.entityId,
           eventType: event.eventType,
-        }
+        },
       );
 
       payloadKind = 1;
       payloadEncrypted = encrypted;
-      payloadCipherHash = computePayloadCipherHash(
-        Buffer.from(encrypted.ciphertext, 'base64')
-      );
+      payloadCipherHash = computePayloadCipherHash(Buffer.from(encrypted.ciphertext, 'base64'));
     }
 
     // Compute event signing hash per VES v1.0
@@ -392,7 +390,7 @@ export class Outbox {
       bufferToHex(agentSignature),
       event.baseVersion || null,
       event.sourceAgent,
-      createdAt
+      createdAt,
     );
 
     return result.lastInsertRowid;
@@ -414,7 +412,7 @@ export class Outbox {
     const createdAt = new Date().toISOString();
 
     // Pre-fetch signing keys for all unique agents
-    const agentIds = [...new Set(events.map(e => e.sourceAgent))];
+    const agentIds = [...new Set(events.map((e) => e.sourceAgent))];
     const signingKeys = new Map();
     const encryptionKeys = new Map();
 
@@ -474,14 +472,12 @@ export class Outbox {
               entityType: event.entityType,
               entityId: event.entityId,
               eventType: event.eventType,
-            }
+            },
           );
 
           payloadKind = 1;
           payloadEncrypted = encrypted;
-          payloadCipherHash = computePayloadCipherHash(
-            Buffer.from(encrypted.ciphertext, 'base64')
-          );
+          payloadCipherHash = computePayloadCipherHash(Buffer.from(encrypted.ciphertext, 'base64'));
         }
 
         // Compute event signing hash
@@ -522,7 +518,7 @@ export class Outbox {
           bufferToHex(agentSignature),
           event.baseVersion || null,
           event.sourceAgent,
-          createdAt
+          createdAt,
         );
 
         results.push(result.lastInsertRowid);
@@ -672,7 +668,9 @@ export class Outbox {
   getStats() {
     this.initialize();
 
-    const counts = this.db.prepare(`
+    const counts = this.db
+      .prepare(
+        `
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN sync_status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -680,21 +678,31 @@ export class Outbox {
         SUM(CASE WHEN sync_status = 'failed' THEN 1 ELSE 0 END) as failed,
         SUM(CASE WHEN sync_status = 'rejected' THEN 1 ELSE 0 END) as rejected
       FROM _ves_outbox
-    `).get();
+    `,
+      )
+      .get();
 
-    const oldestPending = this.db.prepare(`
+    const oldestPending = this.db
+      .prepare(
+        `
       SELECT created_at FROM _ves_outbox
       WHERE sync_status = 'pending'
       ORDER BY local_seq ASC
       LIMIT 1
-    `).get();
+    `,
+      )
+      .get();
 
-    const lastSynced = this.db.prepare(`
+    const lastSynced = this.db
+      .prepare(
+        `
       SELECT synced_at FROM _ves_outbox
       WHERE sync_status = 'synced'
       ORDER BY synced_at DESC
       LIMIT 1
-    `).get();
+    `,
+      )
+      .get();
 
     return {
       total: counts.total,
@@ -714,9 +722,13 @@ export class Outbox {
   getPendingCount() {
     this.initialize();
 
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(
+        `
       SELECT COUNT(*) as count FROM _ves_outbox WHERE sync_status = 'pending'
-    `).get();
+    `,
+      )
+      .get();
 
     return result.count;
   }
@@ -747,9 +759,7 @@ export class Outbox {
     this.initialize();
 
     const getState = (key) => {
-      const row = this.db.prepare(
-        'SELECT value FROM _ves_sync_state WHERE key = ?'
-      ).get(key);
+      const row = this.db.prepare('SELECT value FROM _ves_sync_state WHERE key = ?').get(key);
       return row ? row.value : null;
     };
 
@@ -843,7 +853,7 @@ export class Outbox {
       event.baseVersion || null,
       event.createdAt,
       event.sequencedAt,
-      event.sourceAgent
+      event.sourceAgent,
     );
   }
 
@@ -888,7 +898,7 @@ export class Outbox {
           event.baseVersion || null,
           event.createdAt,
           event.sequencedAt,
-          event.sourceAgent
+          event.sourceAgent,
         );
       }
     });
@@ -907,10 +917,14 @@ export class Outbox {
   getEntityVersion(tenantId, storeId, entityType, entityId) {
     this.initialize();
 
-    const row = this.db.prepare(`
+    const row = this.db
+      .prepare(
+        `
       SELECT version FROM _ves_entity_versions
       WHERE tenant_id = ? AND store_id = ? AND entity_type = ? AND entity_id = ?
-    `).get(tenantId, storeId, entityType, entityId);
+    `,
+      )
+      .get(tenantId, storeId, entityType, entityId);
 
     return row ? row.version : null;
   }

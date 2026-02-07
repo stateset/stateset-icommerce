@@ -31,13 +31,15 @@ import { AutonomousEngine } from '../src/autonomous/engine.js';
 import { runAgentLoop } from '../src/claude-harness.js';
 import { getNotifier } from '../src/channels/notifier.js';
 import { EventBridge } from '../src/channels/event-bridge.js';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-autonomous');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Package info
 const packageJson = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8')
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'),
 );
 
 const DEFAULT_DB_PATH = './.stateset/commerce.db';
@@ -45,15 +47,13 @@ const DEFAULT_STORE_PATH = './.stateset/autonomous';
 const JOB_STATUSES = ['pending', 'running', 'completed', 'failed', 'paused', 'cancelled'];
 
 function normalizeOptions(options = {}) {
-  const resolved = (options && typeof options.opts === 'function')
-    ? options.opts()
-    : (options || {});
+  const resolved = options && typeof options.opts === 'function' ? options.opts() : options || {};
 
   const argv = Array.isArray(options?.rawArgs) ? options.rawArgs : process.argv;
 
   const getFlagValue = (flags) => {
     for (const flag of flags) {
-      const eqMatch = argv.find(arg => arg.startsWith(`${flag}=`));
+      const eqMatch = argv.find((arg) => arg.startsWith(`${flag}=`));
       if (eqMatch) {
         return eqMatch.slice(flag.length + 1);
       }
@@ -118,7 +118,7 @@ function collectInitData(engine) {
       workflows: workflows.length,
       policies: policies.length,
       approvalChains: approvals?.chainCount ?? 0,
-    }
+    },
   };
 }
 
@@ -137,7 +137,7 @@ async function withEngine(options, handler) {
 
   const engine = new AutonomousEngine({
     storePath: options.store,
-    commerce
+    commerce,
   });
 
   await engine.load();
@@ -169,10 +169,11 @@ async function handleJobsList(options, jsonOutput, writeJson) {
 
     const enabled = options.enabled ? true : options.disabled ? false : null;
 
-    const jobs = engine.scheduler?.listJobs({
-      status: status || null,
-      enabled
-    }) || [];
+    const jobs =
+      engine.scheduler?.listJobs({
+        status: status || null,
+        enabled,
+      }) || [];
 
     if (jsonOutput) {
       await writeJson({
@@ -182,10 +183,10 @@ async function handleJobsList(options, jsonOutput, writeJson) {
         dbPath: options.db,
         filters: {
           status: status || null,
-          enabled
+          enabled,
         },
         jobs: jobs.map(serializeJob),
-        total: jobs.length
+        total: jobs.length,
       });
       return;
     }
@@ -304,7 +305,7 @@ program
       console.log(`   Database: ${options.db}`);
 
       // Create agent executor
-      const agentExecutor = async (agent, request, context) => {
+      const agentExecutor = async (agent, request, _context) => {
         if (options.verbose) {
           console.log(`\n🤖 Agent Request: [${agent}] ${request}`);
         }
@@ -315,7 +316,7 @@ program
           agent,
           allowApply: true, // Autonomous mode has write access
           model: 'claude-sonnet-4-20250514',
-          maxTurns: 10
+          maxTurns: 10,
         });
 
         if (options.verbose) {
@@ -336,7 +337,7 @@ program
         enableScheduler: options.scheduler,
         enableWorkflows: options.workflows,
         enablePolicies: options.policies,
-        enableApprovals: options.approvals
+        enableApprovals: options.approvals,
       });
 
       // Wire up channel notifier
@@ -382,7 +383,7 @@ program
         });
 
         engine.on('workflows:instance:transitioned', ({ instanceId, from, to }) => {
-          console.log(`   State: ${from} → ${to}`);
+          console.log(`   [${instanceId}] State: ${from} → ${to}`);
         });
 
         engine.on('workflows:instance:completed', ({ instance }) => {
@@ -418,11 +419,21 @@ program
       // Print status
       const status = engine.getStatus();
       console.log(`\n📊 Engine Status:`);
-      console.log(`   Scheduler: ${status.features.scheduler ? `✅ Running (${status.scheduler?.totalJobs || 0} jobs)` : '❌ Disabled'}`);
-      console.log(`   Workflows: ${status.features.workflows ? `✅ Ready (${status.workflows?.totalWorkflows || 0} definitions)` : '❌ Disabled'}`);
-      console.log(`   Policies:  ${status.features.policies ? `✅ Loaded (${status.policies?.totalPolicySets || 0} policy sets)` : '❌ Disabled'}`);
-      console.log(`   Webhooks:  ${status.features.webhooks ? `✅ Listening on port ${options.port}` : '❌ Disabled'}`);
-      console.log(`   Approvals: ${status.features.approvals ? `✅ Ready (${status.approvals?.pendingCount || 0} pending)` : '❌ Disabled'}`);
+      console.log(
+        `   Scheduler: ${status.features.scheduler ? `✅ Running (${status.scheduler?.totalJobs || 0} jobs)` : '❌ Disabled'}`,
+      );
+      console.log(
+        `   Workflows: ${status.features.workflows ? `✅ Ready (${status.workflows?.totalWorkflows || 0} definitions)` : '❌ Disabled'}`,
+      );
+      console.log(
+        `   Policies:  ${status.features.policies ? `✅ Loaded (${status.policies?.totalPolicySets || 0} policy sets)` : '❌ Disabled'}`,
+      );
+      console.log(
+        `   Webhooks:  ${status.features.webhooks ? `✅ Listening on port ${options.port}` : '❌ Disabled'}`,
+      );
+      console.log(
+        `   Approvals: ${status.features.approvals ? `✅ Ready (${status.approvals?.pendingCount || 0} pending)` : '❌ Disabled'}`,
+      );
 
       console.log(`\n✨ Autonomous engine is running!`);
       console.log(`   Press Ctrl+C to stop\n`);
@@ -440,7 +451,6 @@ program
 
       // Keep process alive
       await new Promise(() => {});
-
     } catch (error) {
       console.error(`\n❌ Error: ${error.message}`);
       if (options.verbose) {
@@ -465,10 +475,10 @@ program
     const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
     try {
       const commerce = new Commerce(opts.db);
-      
+
       const engine = new AutonomousEngine({
         storePath: opts.store,
-        commerce
+        commerce,
       });
 
       await engine.load();
@@ -480,7 +490,7 @@ program
           timestamp: new Date().toISOString(),
           storePath: opts.store,
           dbPath: opts.db,
-          status
+          status,
         });
         return;
       }
@@ -499,16 +509,27 @@ program
       console.log(`Running: ${status.isRunning ? '✅ Yes' : '⏸️ No'}`);
       console.log('');
 
-      console.log(`Scheduler: ${features.scheduler ? `✅ ${scheduler.enabledJobs || 0}/${scheduler.totalJobs || 0} jobs enabled` : '❌ Disabled'}`);
-      console.log(`Workflows: ${features.workflows ? `✅ ${workflows.totalWorkflows || 0} workflows (${workflows.totalInstances || 0} instances)` : '❌ Disabled'}`);
-      console.log(`Policies:  ${features.policies ? `✅ ${policies.totalPolicySets || 0} policy sets (${policies.totalRules || 0} rules)` : '❌ Disabled'}`);
-      console.log(`Webhooks:  ${features.webhooks ? `✅ ${webhooks.isRunning ? 'Listening' : 'Configured'} on ${webhooks.host || '0.0.0.0'}:${webhooks.port || 'N/A'}` : '❌ Disabled'}`);
-      console.log(`Approvals: ${features.approvals ? `✅ ${approvals.chainCount || 0} chains (${approvals.pendingCount || 0} pending)` : '❌ Disabled'}`);
+      console.log(
+        `Scheduler: ${features.scheduler ? `✅ ${scheduler.enabledJobs || 0}/${scheduler.totalJobs || 0} jobs enabled` : '❌ Disabled'}`,
+      );
+      console.log(
+        `Workflows: ${features.workflows ? `✅ ${workflows.totalWorkflows || 0} workflows (${workflows.totalInstances || 0} instances)` : '❌ Disabled'}`,
+      );
+      console.log(
+        `Policies:  ${features.policies ? `✅ ${policies.totalPolicySets || 0} policy sets (${policies.totalRules || 0} rules)` : '❌ Disabled'}`,
+      );
+      console.log(
+        `Webhooks:  ${features.webhooks ? `✅ ${webhooks.isRunning ? 'Listening' : 'Configured'} on ${webhooks.host || '0.0.0.0'}:${webhooks.port || 'N/A'}` : '❌ Disabled'}`,
+      );
+      console.log(
+        `Approvals: ${features.approvals ? `✅ ${approvals.chainCount || 0} chains (${approvals.pendingCount || 0} pending)` : '❌ Disabled'}`,
+      );
 
       if (features.heartbeat) {
-        console.log(`Heartbeat: ✅ ${heartbeat.running ? 'Running' : 'Configured'} (${heartbeat.checkCount || 0} checks)`);
+        console.log(
+          `Heartbeat: ✅ ${heartbeat.running ? 'Running' : 'Configured'} (${heartbeat.checkCount || 0} checks)`,
+        );
       }
-
     } catch (error) {
       if (jsonOutput) {
         await writeJson({ error: error.message });
@@ -543,11 +564,11 @@ program
       }
 
       const commerce = new Commerce(opts.db);
-      
+
       const engine = new AutonomousEngine({
         storePath: opts.store,
         commerce,
-        enableWebhooks: false // Don't start server during init
+        enableWebhooks: false, // Don't start server during init
       });
 
       await engine.load();
@@ -576,7 +597,7 @@ program
           timestamp: new Date().toISOString(),
           storePath: opts.store,
           dbPath: opts.db,
-          ...initData
+          ...initData,
         });
         return;
       }
@@ -619,7 +640,6 @@ program
 
       console.log('\n✨ Initialization complete!');
       console.log(`\nRun 'stateset-autonomous start' to begin autonomous operations.\n`);
-
     } catch (error) {
       if (jsonOutput) {
         await writeJson({ error: error.message });
@@ -677,7 +697,6 @@ const jobsCommand = program
       }
 
       await handleJobsList(opts, jsonOutput, writeJson);
-
     } catch (error) {
       if (jsonOutput) {
         await writeJson({ error: error.message });
@@ -688,40 +707,37 @@ const jobsCommand = program
     }
   });
 
-const applyJobsOptions = (command) => command
-  .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
-  .option('-s, --store <path>', 'Path to autonomous engine data', DEFAULT_STORE_PATH)
-  .option('--json', 'Output status as JSON')
-  .option('--output <file>', 'Write JSON output to file (implies --json)');
+const applyJobsOptions = (command) =>
+  command
+    .option('-d, --db <path>', 'Path to SQLite database', DEFAULT_DB_PATH)
+    .option('-s, --store <path>', 'Path to autonomous engine data', DEFAULT_STORE_PATH)
+    .option('--json', 'Output status as JSON')
+    .option('--output <file>', 'Write JSON output to file (implies --json)');
 
-const applyJobsListOptions = (command) => applyJobsOptions(command)
-  .option('--status <status>', 'Filter jobs by status')
-  .option('--enabled', 'Only enabled jobs')
-  .option('--disabled', 'Only disabled jobs');
+const applyJobsListOptions = (command) =>
+  applyJobsOptions(command)
+    .option('--status <status>', 'Filter jobs by status')
+    .option('--enabled', 'Only enabled jobs')
+    .option('--disabled', 'Only disabled jobs');
 
-applyJobsListOptions(
-  jobsCommand
-    .command('list')
-    .description('List scheduled jobs')
-).action(async (options) => {
-  const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
-  try {
-    await handleJobsList(opts, jsonOutput, writeJson);
-  } catch (error) {
-    if (jsonOutput) {
-      await writeJson({ error: error.message });
-    } else {
-      console.error(`Error: ${error.message}`);
+applyJobsListOptions(jobsCommand.command('list').description('List scheduled jobs')).action(
+  async (options) => {
+    const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
+    try {
+      await handleJobsList(opts, jsonOutput, writeJson);
+    } catch (error) {
+      if (jsonOutput) {
+        await writeJson({ error: error.message });
+      } else {
+        console.error(`Error: ${error.message}`);
+      }
+      process.exit(1);
     }
-    process.exit(1);
-  }
-});
+  },
+);
 
 applyJobsOptions(
-  jobsCommand
-    .command('enable')
-    .description('Enable a scheduled job')
-    .argument('<id>', 'Job ID')
+  jobsCommand.command('enable').description('Enable a scheduled job').argument('<id>', 'Job ID'),
 ).action(async (jobId, options) => {
   const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
@@ -737,10 +753,7 @@ applyJobsOptions(
 });
 
 applyJobsOptions(
-  jobsCommand
-    .command('disable')
-    .description('Disable a scheduled job')
-    .argument('<id>', 'Job ID')
+  jobsCommand.command('disable').description('Disable a scheduled job').argument('<id>', 'Job ID'),
 ).action(async (jobId, options) => {
   const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {
@@ -756,10 +769,7 @@ applyJobsOptions(
 });
 
 applyJobsOptions(
-  jobsCommand
-    .command('run')
-    .description('Run a job immediately')
-    .argument('<id>', 'Job ID')
+  jobsCommand.command('run').description('Run a job immediately').argument('<id>', 'Job ID'),
 ).action(async (jobId, options) => {
   const { jsonOutput, writeJson, options: opts } = createOutputHelpers(options);
   try {

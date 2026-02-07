@@ -39,7 +39,7 @@ export class OllamaProvider extends ModelProvider {
       const res = await fetch(`${this._baseUrl}/api/tags`);
       if (!res.ok) return [];
       const data = await res.json();
-      return (data.models || []).map(m => m.name);
+      return (data.models || []).map((m) => m.name);
     } catch {
       return [];
     }
@@ -64,7 +64,7 @@ export class OllamaProvider extends ModelProvider {
     const stream = options.stream || false;
 
     // Convert system messages to Ollama format
-    const ollamaMessages = messages.map(m => ({
+    const ollamaMessages = messages.map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -155,8 +155,8 @@ export class OllamaProvider extends ModelProvider {
                 },
               };
             }
-          } catch {
-            // Skip malformed lines
+          } catch (err) {
+            console.debug('[ollama] Malformed streaming line:', err.message);
           }
         }
       }

@@ -3,14 +3,17 @@
 //! Uses pure Rust cosine similarity computation for vector search.
 //! Embeddings are stored as BLOBs in regular SQLite tables.
 
-use super::{map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_row};
+use super::{
+    map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row, parse_json_opt_row,
+    parse_json_row, parse_uuid_row,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    CommerceError, Customer, EmbeddingMetadata, EmbeddingStats, EntityType, InventoryItem,
-    Order, Product, Result, VectorRepository, VectorSearchResult,
+    CommerceError, Customer, EmbeddingMetadata, EmbeddingStats, EntityType, InventoryItem, Order,
+    Product, Result, VectorRepository, VectorSearchResult,
 };
 use std::collections::HashMap;
 
@@ -32,10 +35,7 @@ impl SqliteVectorRepository {
 
     /// Convert f32 slice to blob for storage
     fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
-        embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect()
+        embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
     /// Convert blob back to f32 vec
@@ -133,7 +133,11 @@ impl SqliteVectorRepository {
         let mut merged: Vec<VectorSearchResult<T>> = entries
             .into_values()
             .map(|entry| {
-                let score = if max_rrf > 0.0 { entry.rrf / max_rrf } else { 0.0 };
+                let score = if max_rrf > 0.0 {
+                    entry.rrf / max_rrf
+                } else {
+                    0.0
+                };
                 let distance = 2.0 * (1.0 - score);
                 VectorSearchResult {
                     entity: entry.entity,
@@ -167,11 +171,23 @@ impl SqliteVectorRepository {
             slug: row.get("slug")?,
             description: row.get("description")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "product", "status")?,
-            product_type: parse_enum_row(&row.get::<_, String>("product_type")?, "product", "product_type")?,
+            product_type: parse_enum_row(
+                &row.get::<_, String>("product_type")?,
+                "product",
+                "product_type",
+            )?,
             attributes: parse_json_row(&attributes_json, "product", "attributes")?,
             seo: parse_json_opt_row(seo_json, "product", "seo")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "product", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "product", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "product",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "product",
+                "updated_at",
+            )?,
         })
     }
 
@@ -190,12 +206,22 @@ impl SqliteVectorRepository {
             email_verified: row.get::<_, i32>("email_verified")? != 0,
             tags: parse_json_row(&tags_json, "customer", "tags")?,
             metadata: parse_json_opt_row(metadata_json, "customer", "metadata")?,
-            default_shipping_address_id: row.get::<_, Option<String>>("default_shipping_address_id")?
+            default_shipping_address_id: row
+                .get::<_, Option<String>>("default_shipping_address_id")?
                 .and_then(|s| s.parse().ok()),
-            default_billing_address_id: row.get::<_, Option<String>>("default_billing_address_id")?
+            default_billing_address_id: row
+                .get::<_, Option<String>>("default_billing_address_id")?
                 .and_then(|s| s.parse().ok()),
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "customer", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "customer", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "customer",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "customer",
+                "updated_at",
+            )?,
         })
     }
 
@@ -206,23 +232,55 @@ impl SqliteVectorRepository {
         Ok(Order {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
             order_number: row.get("order_number")?,
-            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "order", "customer_id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>("customer_id")?,
+                "order",
+                "customer_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
-            order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "order", "order_date")?,
-            total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "order", "total_amount")?,
+            order_date: parse_datetime_row(
+                &row.get::<_, String>("order_date")?,
+                "order",
+                "order_date",
+            )?,
+            total_amount: parse_decimal_row(
+                &row.get::<_, String>("total_amount")?,
+                "order",
+                "total_amount",
+            )?,
             currency: row.get("currency")?,
-            payment_status: parse_enum_row(&row.get::<_, String>("payment_status")?, "order", "payment_status")?,
-            fulfillment_status: parse_enum_row(&row.get::<_, String>("fulfillment_status")?, "order", "fulfillment_status")?,
+            payment_status: parse_enum_row(
+                &row.get::<_, String>("payment_status")?,
+                "order",
+                "payment_status",
+            )?,
+            fulfillment_status: parse_enum_row(
+                &row.get::<_, String>("fulfillment_status")?,
+                "order",
+                "fulfillment_status",
+            )?,
             payment_method: row.get("payment_method")?,
             shipping_method: row.get("shipping_method")?,
             tracking_number: row.get("tracking_number")?,
             notes: row.get("notes")?,
-            shipping_address: parse_json_opt_row(shipping_address_json, "order", "shipping_address")?,
+            shipping_address: parse_json_opt_row(
+                shipping_address_json,
+                "order",
+                "shipping_address",
+            )?,
             billing_address: parse_json_opt_row(billing_address_json, "order", "billing_address")?,
             items: Vec::new(), // Items not loaded in vector search results
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(0),
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "order", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "order", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "order",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "order",
+                "updated_at",
+            )?,
         })
     }
 
@@ -234,8 +292,16 @@ impl SqliteVectorRepository {
             description: row.get("description")?,
             unit_of_measure: row.get("unit_of_measure")?,
             is_active: row.get::<_, i32>("is_active")? != 0,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inventory_item", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inventory_item", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "inventory_item",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "inventory_item",
+                "updated_at",
+            )?,
         })
     }
 
@@ -418,11 +484,7 @@ impl SqliteVectorRepository {
         Ok(results)
     }
 
-    fn search_products_bm25(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(Product, f32)>> {
+    fn search_products_bm25(&self, query: &str, limit: usize) -> Result<Vec<(Product, f32)>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
@@ -448,11 +510,7 @@ impl SqliteVectorRepository {
         Ok(results)
     }
 
-    fn search_customers_bm25(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(Customer, f32)>> {
+    fn search_customers_bm25(&self, query: &str, limit: usize) -> Result<Vec<(Customer, f32)>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
@@ -478,11 +536,7 @@ impl SqliteVectorRepository {
         Ok(results)
     }
 
-    fn search_orders_bm25(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(Order, f32)>> {
+    fn search_orders_bm25(&self, query: &str, limit: usize) -> Result<Vec<(Order, f32)>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
@@ -895,17 +949,11 @@ mod tests {
             VectorSearchResult::new("alpha".to_string(), 0.2),
             VectorSearchResult::new("bravo".to_string(), 0.3),
         ];
-        let bm25_results = vec![
-            ("bravo".to_string(), -1.0),
-            ("charlie".to_string(), -2.0),
-        ];
+        let bm25_results = vec![("bravo".to_string(), -1.0), ("charlie".to_string(), -2.0)];
 
-        let merged = SqliteVectorRepository::merge_rrf(
-            vector_results,
-            bm25_results,
-            3,
-            |value| value.clone(),
-        );
+        let merged = SqliteVectorRepository::merge_rrf(vector_results, bm25_results, 3, |value| {
+            value.clone()
+        });
 
         assert_eq!(merged.first().unwrap().entity, "bravo");
     }

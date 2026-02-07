@@ -1042,9 +1042,8 @@ pub fn get_eu_vat_info(country_code: &str) -> Option<EuVatInfo> {
 
 /// List of EU member state country codes
 pub const EU_MEMBER_STATES: &[&str] = &[
-    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
-    "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
-    "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV",
+    "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
 ];
 
 /// Check if a country is in the EU

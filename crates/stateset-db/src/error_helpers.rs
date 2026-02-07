@@ -15,7 +15,11 @@ pub mod sqlite {
     use rusqlite::Error as SqliteError;
 
     /// Convert a rusqlite error to CommerceError with context
-    pub fn map_error(table: &'static str, operation: &'static str, err: SqliteError) -> CommerceError {
+    pub fn map_error(
+        table: &'static str,
+        operation: &'static str,
+        err: SqliteError,
+    ) -> CommerceError {
         match &err {
             SqliteError::SqliteFailure(ffi_err, msg) => {
                 // Check for constraint violations
@@ -59,13 +63,11 @@ pub mod sqlite {
                     ),
                 })
             }
-            SqliteError::InvalidColumnName(name) => {
-                CommerceError::Database(DbError::QueryFailed {
-                    table,
-                    operation,
-                    message: format!("Invalid column name: {}", name),
-                })
-            }
+            SqliteError::InvalidColumnName(name) => CommerceError::Database(DbError::QueryFailed {
+                table,
+                operation,
+                message: format!("Invalid column name: {}", name),
+            }),
             SqliteError::FromSqlConversionFailure(col, _, err) => {
                 CommerceError::Database(DbError::SerializationError {
                     field: format!("column_{}", col),
@@ -81,7 +83,7 @@ pub mod sqlite {
     }
 
     /// Convert an r2d2 pool error to CommerceError
-    pub fn map_pool_error(err: r2d2::Error) -> CommerceError {
+    pub fn map_pool_error(_err: r2d2::Error) -> CommerceError {
         CommerceError::Database(DbError::PoolExhausted {
             timeout_ms: 30000, // Default timeout
         })
@@ -169,24 +171,18 @@ pub mod postgres {
                     timeout_ms: 30000, // Default timeout
                 })
             }
-            PgError::PoolClosed => {
-                CommerceError::Database(DbError::ConnectionFailed {
-                    url: "postgres-pool".to_string(),
-                    message: "Connection pool is closed".to_string(),
-                })
-            }
-            PgError::Io(io_err) => {
-                CommerceError::Database(DbError::ConnectionFailed {
-                    url: "postgres".to_string(),
-                    message: io_err.to_string(),
-                })
-            }
-            PgError::Decode(decode_err) => {
-                CommerceError::Database(DbError::SerializationError {
-                    field: "unknown".to_string(),
-                    message: decode_err.to_string(),
-                })
-            }
+            PgError::PoolClosed => CommerceError::Database(DbError::ConnectionFailed {
+                url: "postgres-pool".to_string(),
+                message: "Connection pool is closed".to_string(),
+            }),
+            PgError::Io(io_err) => CommerceError::Database(DbError::ConnectionFailed {
+                url: "postgres".to_string(),
+                message: io_err.to_string(),
+            }),
+            PgError::Decode(decode_err) => CommerceError::Database(DbError::SerializationError {
+                field: "unknown".to_string(),
+                message: decode_err.to_string(),
+            }),
             _ => CommerceError::Database(DbError::QueryFailed {
                 table,
                 operation,

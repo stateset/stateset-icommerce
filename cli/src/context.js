@@ -109,7 +109,7 @@ export class RequestContext {
       timestamp: Date.now(),
       elapsed: this.elapsed,
       name,
-      data
+      data,
     });
     return this;
   }
@@ -121,12 +121,15 @@ export class RequestContext {
     this.errors.push({
       timestamp: Date.now(),
       elapsed: this.elapsed,
-      error: error instanceof Error ? {
-        name: error.name,
-        message: error.message,
-        stack: error.stack
-      } : error,
-      data
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            }
+          : error,
+      data,
     });
     return this;
   }
@@ -139,7 +142,7 @@ export class RequestContext {
       context: this,
       name,
       parentSpanId: this.spanId,
-      ...options
+      ...options,
     });
   }
 
@@ -159,7 +162,7 @@ export class RequestContext {
       tags: Array.from(this.tags),
       metadata: this.metadata,
       eventCount: this.events.length,
-      errorCount: this.errors.length
+      errorCount: this.errors.length,
     };
   }
 
@@ -171,7 +174,7 @@ export class RequestContext {
       'x-request-id': this.requestId,
       'x-trace-id': this.traceId,
       'x-span-id': this.spanId,
-      'x-parent-span-id': this.parentSpanId
+      'x-parent-span-id': this.parentSpanId,
     };
   }
 
@@ -187,7 +190,7 @@ export class RequestContext {
       dbPath: this.dbPath,
       applyMode: this.applyMode,
       tags: Array.from(this.tags),
-      ...options
+      ...options,
     });
   }
 
@@ -210,7 +213,7 @@ export class RequestContext {
       metadata: this.metadata,
       tags: Array.from(this.tags),
       events: this.events,
-      errors: this.errors
+      errors: this.errors,
     });
   }
 
@@ -262,7 +265,7 @@ export class Span {
     this.events.push({
       timestamp: Date.now(),
       name,
-      attributes
+      attributes,
     });
     return this;
   }
@@ -309,7 +312,7 @@ export class Span {
       status: this.status,
       duration: this.duration,
       attributes: this.attributes,
-      events: this.events
+      events: this.events,
     };
   }
 }
@@ -362,9 +365,7 @@ export async function withContext(options, fn) {
  */
 export async function withChildContext(options, fn) {
   const parent = getContext();
-  const child = parent
-    ? parent.createChild(options)
-    : new RequestContext(options);
+  const child = parent ? parent.createChild(options) : new RequestContext(options);
 
   return runWithContext(child, async () => {
     try {
@@ -412,20 +413,28 @@ export class ContextLogger {
 
   _log(level, message, meta = {}) {
     const context = getContext();
-    const enrichedMeta = context
-      ? { ...meta, ...context.toLogObject() }
-      : meta;
+    const enrichedMeta = context ? { ...meta, ...context.toLogObject() } : meta;
 
     if (this.baseLogger[level]) {
       this.baseLogger[level](message, enrichedMeta);
     }
   }
 
-  error(message, meta) { this._log('error', message, meta); }
-  warn(message, meta) { this._log('warn', message, meta); }
-  info(message, meta) { this._log('info', message, meta); }
-  debug(message, meta) { this._log('debug', message, meta); }
-  trace(message, meta) { this._log('trace', message, meta); }
+  error(message, meta) {
+    this._log('error', message, meta);
+  }
+  warn(message, meta) {
+    this._log('warn', message, meta);
+  }
+  info(message, meta) {
+    this._log('info', message, meta);
+  }
+  debug(message, meta) {
+    this._log('debug', message, meta);
+  }
+  trace(message, meta) {
+    this._log('trace', message, meta);
+  }
 }
 
 /**
@@ -450,7 +459,7 @@ export function createContextMiddleware(options = {}) {
       sessionId: request.sessionId,
       applyMode: request.applyMode,
       dbPath: request.dbPath,
-      ...options
+      ...options,
     });
 
     return runWithContext(context, async () => {
@@ -483,5 +492,5 @@ export default {
   createContextMiddleware,
   generateRequestId,
   generateTraceId,
-  generateSpanId
+  generateSpanId,
 };

@@ -40,10 +40,10 @@
 
 use chrono::{DateTime, Utc};
 use stateset_core::{
-    BillingCycle, BillingCycleFilter, BillingCycleStatus, CancelSubscription,
-    CreateBillingCycle, CreateSubscription, CreateSubscriptionPlan, PauseSubscription, Result,
-    SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionFilter,
-    SubscriptionPlan, SubscriptionPlanFilter, UpdateSubscription, UpdateSubscriptionPlan,
+    BillingCycle, BillingCycleFilter, BillingCycleStatus, CancelSubscription, CreateBillingCycle,
+    CreateSubscription, CreateSubscriptionPlan, PauseSubscription, Result, SkipBillingCycle,
+    Subscription, SubscriptionEvent, SubscriptionFilter, SubscriptionPlan, SubscriptionPlanFilter,
+    UpdateSubscription, UpdateSubscriptionPlan,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -300,12 +300,14 @@ impl Subscriptions {
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
     ) -> Result<BillingCycle> {
-        self.db.subscriptions().create_billing_cycle(CreateBillingCycle {
-            subscription_id,
-            cycle_number,
-            period_start,
-            period_end,
-        })
+        self.db
+            .subscriptions()
+            .create_billing_cycle(CreateBillingCycle {
+                subscription_id,
+                cycle_number,
+                period_start,
+                period_end,
+            })
     }
 
     /// Get a billing cycle by ID.
@@ -324,17 +326,23 @@ impl Subscriptions {
         id: Uuid,
         status: BillingCycleStatus,
     ) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, status)
+        self.db
+            .subscriptions()
+            .update_billing_cycle_status(id, status)
     }
 
     /// Mark a billing cycle as paid.
     pub fn mark_cycle_paid(&self, id: Uuid) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Paid)
+        self.db
+            .subscriptions()
+            .update_billing_cycle_status(id, BillingCycleStatus::Paid)
     }
 
     /// Mark a billing cycle as failed.
     pub fn mark_cycle_failed(&self, id: Uuid) -> Result<BillingCycle> {
-        self.db.subscriptions().update_billing_cycle_status(id, BillingCycleStatus::Failed)
+        self.db
+            .subscriptions()
+            .update_billing_cycle_status(id, BillingCycleStatus::Failed)
     }
 
     // ========================================================================
@@ -358,7 +366,9 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {
-        self.db.subscriptions().get_subscription_events(subscription_id)
+        self.db
+            .subscriptions()
+            .get_subscription_events(subscription_id)
     }
 
     // ========================================================================
@@ -382,7 +392,10 @@ impl Subscriptions {
     }
 
     /// Get active subscriptions for a customer.
-    pub fn get_active_customer_subscriptions(&self, customer_id: Uuid) -> Result<Vec<Subscription>> {
+    pub fn get_active_customer_subscriptions(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Vec<Subscription>> {
         self.list(SubscriptionFilter {
             customer_id: Some(customer_id),
             status: Some(stateset_core::SubscriptionStatus::Active),
@@ -418,7 +431,8 @@ impl Subscriptions {
             ..Default::default()
         })?;
 
-        Ok(subs.into_iter()
+        Ok(subs
+            .into_iter()
             .filter(|s| {
                 if let Some(next_billing) = s.next_billing_date {
                     next_billing <= before
@@ -441,7 +455,8 @@ impl Subscriptions {
             ..Default::default()
         })?;
 
-        Ok(subs.into_iter()
+        Ok(subs
+            .into_iter()
             .filter(|s| {
                 if let Some(trial_ends) = s.trial_ends_at {
                     trial_ends <= cutoff

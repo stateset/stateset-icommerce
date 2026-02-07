@@ -11,7 +11,11 @@
  * @param {Object} options - Command options
  * @returns {Promise<any>} Command result
  */
-export async function execute(action, args, { commerce, output, jsonOutput, resolveId, resolveSku }) {
+export async function execute(
+  action,
+  args,
+  { commerce, output, jsonOutput, resolveId, resolveSku },
+) {
   switch (action) {
     case 'list': {
       const products = await commerce.products.list();
@@ -28,7 +32,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const product = await commerce.products.get(id);
 
       if (!product) {
-        throw new Error(`Product not found: ${idArg}\n\nTry 'stateset-direct products list' to see all products.`);
+        throw new Error(
+          `Product not found: ${idArg}\n\nTry 'stateset-direct products list' to see all products.`,
+        );
       }
 
       return formatProductDetail(product, { output, jsonOutput });
@@ -44,7 +50,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const variant = await commerce.products.getVariantBySku(sku);
 
       if (!variant) {
-        throw new Error(`Variant not found: ${skuArg}\n\nTry 'stateset-direct products list' to see all products and their variants.`);
+        throw new Error(
+          `Variant not found: ${skuArg}\n\nTry 'stateset-direct products list' to see all products and their variants.`,
+        );
       }
 
       return formatVariantDetail(variant, { output, jsonOutput });
@@ -62,9 +70,10 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       }
 
       const products = await commerce.products.list();
-      const matches = products.filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        (p.slug && p.slug.toLowerCase().includes(query.toLowerCase()))
+      const matches = products.filter(
+        (p) =>
+          p.name.toLowerCase().includes(query.toLowerCase()) ||
+          (p.slug && p.slug.toLowerCase().includes(query.toLowerCase())),
       );
 
       return formatProductList(matches, { output, jsonOutput });
@@ -89,13 +98,13 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     default:
       throw new Error(
         `Unknown action: products ${action}\n\n` +
-        'Available actions:\n' +
-        '  list              List all products\n' +
-        '  get <id>          Get product details\n' +
-        '  variant <sku>     Get variant by SKU\n' +
-        '  variants <id>     List variants for product\n' +
-        '  count             Count products\n' +
-        '  search <query>    Search products'
+          'Available actions:\n' +
+          '  list              List all products\n' +
+          '  get <id>          Get product details\n' +
+          '  variant <sku>     Get variant by SKU\n' +
+          '  variants <id>     List variants for product\n' +
+          '  count             Count products\n' +
+          '  search <query>    Search products',
       );
   }
 }
@@ -113,20 +122,20 @@ function formatProductList(products, { output, jsonOutput }) {
   }
 
   const formatted = output.table(
-    products.map(p => ({
+    products.map((p) => ({
       id: p.id.slice(0, 8) + '...',
       name: p.name.length > 30 ? p.name.slice(0, 27) + '...' : p.name,
       slug: p.slug || 'N/A',
       status: p.status,
-      variants: p.variants?.length || 0
+      variants: p.variants?.length || 0,
     })),
     [
       { key: 'id', header: 'ID' },
       { key: 'name', header: 'Name' },
       { key: 'slug', header: 'Slug' },
       { key: 'status', header: 'Status' },
-      { key: 'variants', header: 'Variants', align: 'right' }
-    ]
+      { key: 'variants', header: 'Variants', align: 'right' },
+    ],
   );
 
   return { products, formatted };
@@ -135,14 +144,14 @@ function formatProductList(products, { output, jsonOutput }) {
 /**
  * Format single product detail
  */
-function formatProductDetail(product, { output, jsonOutput }) {
+function formatProductDetail(product, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return product;
   }
 
-  const variantLines = product.variants?.map(v =>
-    `  - ${v.sku}: ${v.name} @ ${v.price}`
-  ).join('\n') || '  (no variants)';
+  const variantLines =
+    product.variants?.map((v) => `  - ${v.sku}: ${v.name} @ ${v.price}`).join('\n') ||
+    '  (no variants)';
 
   const formatted = `
 Product: ${product.name}
@@ -163,7 +172,7 @@ ${variantLines}
 /**
  * Format variant detail
  */
-function formatVariantDetail(variant, { output, jsonOutput }) {
+function formatVariantDetail(variant, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return variant;
   }
@@ -195,18 +204,18 @@ function formatVariantList(product, { output, jsonOutput }) {
   }
 
   const formatted = output.table(
-    variants.map(v => ({
+    variants.map((v) => ({
       sku: v.sku,
       name: v.name,
       price: v.price,
-      default: v.isDefault ? 'Yes' : 'No'
+      default: v.isDefault ? 'Yes' : 'No',
     })),
     [
       { key: 'sku', header: 'SKU' },
       { key: 'name', header: 'Name' },
       { key: 'price', header: 'Price', align: 'right' },
-      { key: 'default', header: 'Default' }
-    ]
+      { key: 'default', header: 'Default' },
+    ],
   );
 
   return { variants, formatted: `Variants for ${product.name}:\n\n${formatted}` };
@@ -225,8 +234,8 @@ export const metadata = {
     variant: { description: 'Get variant by SKU', args: ['<sku>'] },
     variants: { description: 'List variants for product', args: ['<id>'] },
     count: { description: 'Count products', args: [] },
-    search: { description: 'Search products', args: ['<query>'] }
-  }
+    search: { description: 'Search products', args: ['<query>'] },
+  },
 };
 
 export default { execute, metadata };

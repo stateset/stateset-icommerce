@@ -6,10 +6,10 @@
  */
 
 import { EventEmitter } from 'events';
-import { Outbox, createOutbox } from './outbox.js';
-import { UnifiedSequencerClient, createUnifiedClient } from './unified-client.js';
+import { createOutbox } from './outbox.js';
+import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
-import { ConflictResolver, createConflictResolver } from './conflict.js';
+import { createConflictResolver } from './conflict.js';
 
 /**
  * @typedef {Object} PushResult
@@ -167,31 +167,37 @@ export class SyncEngine extends EventEmitter {
     try {
       // Convert payloadHash buffer to hex string if needed
       const payloadHashHex = event.payloadHash
-        ? (Buffer.isBuffer(event.payloadHash) ? event.payloadHash.toString('hex') : event.payloadHash)
+        ? Buffer.isBuffer(event.payloadHash)
+          ? event.payloadHash.toString('hex')
+          : event.payloadHash
         : '0'.repeat(64);
 
-      this.outbox.storePulledEvents([{
-        sequenceNumber: event.sequenceNumber,
-        eventId: event.eventId,
-        commandId: event.commandId,
-        tenantId: event.tenantId,
-        storeId: event.storeId,
-        entityType: event.entityType,
-        entityId: event.entityId,
-        eventType: event.eventType,
-        payload: event.payload,
-        vesVersion: event.vesVersion || 1,
-        payloadKind: event.payloadKind || 0,
-        payloadEncrypted: event.payloadEncrypted || null,
-        payloadPlainHash: payloadHashHex,
-        payloadCipherHash: '0'.repeat(64),  // Zero hash for plaintext
-        agentKeyId: event.agentKeyId || 0,
-        agentSignature: event.agentSignature || '',
-        baseVersion: event.baseVersion,
-        createdAt: event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
-        sequencedAt: event.sequencedAt instanceof Date ? event.sequencedAt.toISOString() : event.sequencedAt,
-        sourceAgent: event.sourceAgent,
-      }]);
+      this.outbox.storePulledEvents([
+        {
+          sequenceNumber: event.sequenceNumber,
+          eventId: event.eventId,
+          commandId: event.commandId,
+          tenantId: event.tenantId,
+          storeId: event.storeId,
+          entityType: event.entityType,
+          entityId: event.entityId,
+          eventType: event.eventType,
+          payload: event.payload,
+          vesVersion: event.vesVersion || 1,
+          payloadKind: event.payloadKind || 0,
+          payloadEncrypted: event.payloadEncrypted || null,
+          payloadPlainHash: payloadHashHex,
+          payloadCipherHash: '0'.repeat(64), // Zero hash for plaintext
+          agentKeyId: event.agentKeyId || 0,
+          agentSignature: event.agentSignature || '',
+          baseVersion: event.baseVersion,
+          createdAt:
+            event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+          sequencedAt:
+            event.sequencedAt instanceof Date ? event.sequencedAt.toISOString() : event.sequencedAt,
+          sourceAgent: event.sourceAgent,
+        },
+      ]);
 
       // Update sync state
       this.outbox.updateSyncState({
@@ -244,7 +250,7 @@ export class SyncEngine extends EventEmitter {
       }
 
       // Convert to event envelopes for push (VES v1.0)
-      const events = pending.map(e => ({
+      const events = pending.map((e) => ({
         eventId: e.eventId,
         commandId: e.commandId,
         tenantId: e.tenantId,
@@ -281,7 +287,7 @@ export class SyncEngine extends EventEmitter {
 
         for (const event of pending) {
           // Check if this event was rejected
-          const rejected = receipt.rejections?.find(r => r.eventId === event.eventId);
+          const rejected = receipt.rejections?.find((r) => r.eventId === event.eventId);
 
           if (rejected) {
             this.outbox.markRejected(event.localSeq, rejected.reason);
@@ -362,7 +368,7 @@ export class SyncEngine extends EventEmitter {
       }
 
       // Store pulled events (VES v1.0 format)
-      const eventsToStore = result.events.map(e => ({
+      const eventsToStore = result.events.map((e) => ({
         sequenceNumber: e.sequenceNumber,
         eventId: e.envelope.eventId,
         commandId: e.envelope.commandId,
@@ -450,7 +456,7 @@ export class SyncEngine extends EventEmitter {
         remoteHead = remoteState.headSequence;
         connected = true;
       }
-    } catch (error) {
+    } catch {
       // Ignore connection errors for status
     }
 
@@ -743,7 +749,7 @@ export class SyncEngine extends EventEmitter {
     }
 
     // Convert to stream format
-    const streamEvents = events.map(e => ({
+    const streamEvents = events.map((e) => ({
       eventId: e.eventId,
       commandId: e.commandId,
       entityType: e.entityType,

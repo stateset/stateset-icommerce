@@ -3,22 +3,21 @@
 //! Provides full warehouse, zone, location, and inventory movement functionality.
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict,
-    parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_decimal_strict, parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::params;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
     AdjustLocationInventory, BatchResult, CommerceError, CreateLocation, CreateWarehouse,
     CreateZone, Location, LocationFilter, LocationInventory, LocationInventoryFilter,
-    LocationMovement, MoveInventory, MovementFilter, MovementType, Result,
-    UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter,
-    WarehouseRepository, Zone,
+    LocationMovement, MoveInventory, MovementFilter, MovementType, Result, UpdateLocation,
+    UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
 
 /// SQLite warehouse repository
@@ -48,11 +47,23 @@ impl SqliteWarehouseRepository {
                 "warehouse",
                 "warehouse_type",
             )?,
-            address: parse_json_row(&row.get::<_, String>("address_json")?, "warehouse", "address_json")?,
+            address: parse_json_row(
+                &row.get::<_, String>("address_json")?,
+                "warehouse",
+                "address_json",
+            )?,
             timezone: row.get("timezone")?,
             is_active: row.get::<_, i32>("is_active")? == 1,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "warehouse", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "warehouse", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "warehouse",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "warehouse",
+                "updated_at",
+            )?,
         })
     }
 
@@ -95,8 +106,16 @@ impl SqliteWarehouseRepository {
             is_pickable: row.get::<_, i32>("is_pickable")? == 1,
             is_receivable: row.get::<_, i32>("is_receivable")? == 1,
             is_active: row.get::<_, i32>("is_active")? == 1,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "location", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "location", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "location",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "location",
+                "updated_at",
+            )?,
         })
     }
 
@@ -218,8 +237,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let address = input.address.clone();
-        let address_json =
-            serde_json::to_string(&address).unwrap_or_else(|_| "{}".to_string());
+        let address_json = serde_json::to_string(&address).unwrap_or_else(|_| "{}".to_string());
 
         conn.execute(
             "INSERT INTO warehouses (code, name, warehouse_type, address_json, timezone, is_active, created_at, updated_at)
@@ -360,7 +378,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -411,7 +430,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(active as i32));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn
             .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
@@ -479,8 +499,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn update_zone(&self, id: i32, input: UpdateZone) -> Result<Zone> {
-        let existing = self.get_zone(id)?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_zone(id)?.ok_or(CommerceError::NotFound)?;
 
         let name = input.name.unwrap_or(existing.name);
         let description = input.description.or(existing.description);
@@ -513,7 +532,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     fn create_location(&self, input: CreateLocation) -> Result<Location> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
-        let code = input.code.clone().unwrap_or_else(|| Self::generate_location_code(&input));
+        let code = input
+            .code
+            .clone()
+            .unwrap_or_else(|| Self::generate_location_code(&input));
 
         conn.execute(
             "INSERT INTO locations (warehouse_id, code, location_type, zone, aisle, rack, level, bin,
@@ -539,8 +561,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
         let id = conn.last_insert_rowid() as i32;
         drop(conn);
-        self.get_location(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve created location".into()))
+        self.get_location(id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve created location".into())
+        })
     }
 
     fn get_location(&self, id: i32) -> Result<Option<Location>> {
@@ -564,7 +587,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             .prepare("SELECT * FROM locations WHERE warehouse_id = ?1 AND code = ?2")
             .map_err(map_db_error)?;
 
-        let mut rows = stmt.query(params![warehouse_id, code]).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![warehouse_id, code])
+            .map_err(map_db_error)?;
 
         if let Some(row) = rows.next().map_err(map_db_error)? {
             Ok(Some(Self::row_to_location(row).map_err(map_db_error)?))
@@ -575,8 +600,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
 
     fn update_location(&self, id: i32, input: UpdateLocation) -> Result<Location> {
         let conn = self.conn()?;
-        let existing = self.get_location(id)?
-            .ok_or(CommerceError::NotFound)?;
+        let existing = self.get_location(id)?.ok_or(CommerceError::NotFound)?;
 
         let location_type = input.location_type.unwrap_or(existing.location_type);
         let zone = input.zone.or(existing.zone);
@@ -611,8 +635,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_location(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve updated location".into()))
+        self.get_location(id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated location".into())
+        })
     }
 
     fn list_locations(&self, filter: LocationFilter) -> Result<Vec<Location>> {
@@ -666,7 +691,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -722,7 +748,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(active as i32));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn
             .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
@@ -751,7 +778,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(map_db_error)?;
 
-        let mut rows = stmt.query(params![warehouse_id, sku]).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![warehouse_id, sku])
+            .map_err(map_db_error)?;
 
         let mut locations = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -792,7 +821,11 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         Ok(inventory)
     }
 
-    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
+    fn get_inventory_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<LocationInventory>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
@@ -803,7 +836,9 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(map_db_error)?;
 
-        let mut rows = stmt.query(params![warehouse_id, sku]).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![warehouse_id, sku])
+            .map_err(map_db_error)?;
 
         let mut inventory = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
@@ -831,8 +866,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             .ok();
 
         let (new_on_hand, reserved) = if let Some((oh_str, res_str)) = existing {
-            let on_hand =
-                parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")?;
+            let on_hand = parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")?;
             let reserved =
                 parse_decimal_strict(&res_str, "location_inventory", "quantity_reserved")?;
             let new_qty = on_hand + input.quantity;
@@ -846,7 +880,13 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             conn.execute(
                 "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
                  WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                params![new_qty.to_string(), now_str, input.location_id, input.sku, lot_key],
+                params![
+                    new_qty.to_string(),
+                    now_str,
+                    input.location_id,
+                    input.sku,
+                    lot_key
+                ],
             )
             .map_err(map_db_error)?;
 
@@ -924,8 +964,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             )
             .map_err(|_| CommerceError::NotFound)?;
 
-        let on_hand = parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")?;
-        let reserved = parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")?;
+        let on_hand =
+            parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")?;
+        let reserved =
+            parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")?;
         let available = on_hand - reserved;
 
         if input.quantity > available {
@@ -1023,7 +1065,10 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         })
     }
 
-    fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
+    fn list_location_inventory(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>> {
         let conn = self.conn()?;
         let mut sql = "SELECT li.* FROM location_inventory li".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1067,7 +1112,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1145,7 +1191,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -1182,7 +1229,8 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             params_vec.push(Box::new(movement_type.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn
             .query_row(&sql, params_refs.as_slice(), |row| row.get(0))

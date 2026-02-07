@@ -13,9 +13,10 @@ import { z } from 'zod';
 export const orderTools = [
   {
     name: 'list_orders',
-    description: 'List all orders. Shows order number, status, customer, total amount, and item count.',
+    description:
+      'List all orders. Shows order number, status, customer, total amount, and item count.',
     inputSchema: {
-      limit: z.number().optional().default(50).describe('Maximum number of orders to return')
+      limit: z.number().optional().default(50).describe('Maximum number of orders to return'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -28,7 +29,7 @@ export const orderTools = [
         success: true,
         totalCount: count,
         returned: limitedOrders.length,
-        orders: limitedOrders.map(o => ({
+        orders: limitedOrders.map((o) => ({
           id: o.id,
           orderNumber: o.orderNumber,
           customerId: o.customerId,
@@ -38,17 +39,18 @@ export const orderTools = [
           paymentStatus: o.paymentStatus,
           fulfillmentStatus: o.fulfillmentStatus,
           itemCount: o.items?.length || 0,
-          createdAt: o.createdAt
-        }))
+          createdAt: o.createdAt,
+        })),
       };
-    }
+    },
   },
 
   {
     name: 'get_order',
-    description: 'Get a specific order by ID or order number. Returns full order details including line items.',
+    description:
+      'Get a specific order by ID or order number. Returns full order details including line items.',
     inputSchema: {
-      identifier: z.string().describe('Order ID (UUID) or order number')
+      identifier: z.string().describe('Order ID (UUID) or order number'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -71,19 +73,19 @@ export const orderTools = [
           paymentStatus: order.paymentStatus,
           fulfillmentStatus: order.fulfillmentStatus,
           trackingNumber: order.trackingNumber,
-          items: order.items?.map(i => ({
+          items: order.items?.map((i) => ({
             id: i.id,
             sku: i.sku,
             name: i.name,
             quantity: i.quantity,
             unitPrice: i.unitPrice,
-            total: i.total
+            total: i.total,
           })),
           createdAt: order.createdAt,
-          updatedAt: order.updatedAt
-        }
+          updatedAt: order.updatedAt,
+        },
       };
-    }
+    },
   },
 
   {
@@ -91,14 +93,18 @@ export const orderTools = [
     description: 'Create a new order for a customer with line items.',
     inputSchema: {
       customerId: z.string().describe('Customer ID (UUID)'),
-      items: z.array(z.object({
-        sku: z.string().describe('Product SKU'),
-        name: z.string().describe('Product name'),
-        quantity: z.number().describe('Quantity'),
-        unitPrice: z.number().describe('Unit price')
-      })).describe('Order line items'),
+      items: z
+        .array(
+          z.object({
+            sku: z.string().describe('Product SKU'),
+            name: z.string().describe('Product name'),
+            quantity: z.number().describe('Quantity'),
+            unitPrice: z.number().describe('Unit price'),
+          }),
+        )
+        .describe('Order line items'),
       currency: z.string().optional().default('USD').describe('Currency code'),
-      notes: z.string().optional().describe('Order notes')
+      notes: z.string().optional().describe('Order notes'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -109,8 +115,8 @@ export const orderTools = [
           wouldCreate: {
             customerId: params.customerId,
             itemCount: params.items.length,
-            estimatedTotal: params.items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
-          }
+            estimatedTotal: params.items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0),
+          },
         };
       }
 
@@ -123,18 +129,29 @@ export const orderTools = [
           id: order.id,
           orderNumber: order.orderNumber,
           status: order.status,
-          totalAmount: order.totalAmount
-        }
+          totalAmount: order.totalAmount,
+        },
       };
-    }
+    },
   },
 
   {
     name: 'update_order_status',
-    description: 'Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.',
+    description:
+      'Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.',
     inputSchema: {
       orderId: z.string().describe('Order ID (UUID)'),
-      status: z.enum(['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']).describe('New order status')
+      status: z
+        .enum([
+          'pending',
+          'confirmed',
+          'processing',
+          'shipped',
+          'delivered',
+          'cancelled',
+          'refunded',
+        ])
+        .describe('New order status'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -144,7 +161,7 @@ export const orderTools = [
         return {
           error: 'Update operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
-          wouldUpdate: { orderId, newStatus: status }
+          wouldUpdate: { orderId, newStatus: status },
         };
       }
 
@@ -156,10 +173,10 @@ export const orderTools = [
         order: {
           id: order.id,
           orderNumber: order.orderNumber,
-          status: order.status
-        }
+          status: order.status,
+        },
       };
-    }
+    },
   },
 
   {
@@ -167,7 +184,7 @@ export const orderTools = [
     description: 'Mark an order as shipped with optional tracking number.',
     inputSchema: {
       orderId: z.string().describe('Order ID (UUID)'),
-      trackingNumber: z.string().optional().describe('Shipping tracking number')
+      trackingNumber: z.string().optional().describe('Shipping tracking number'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -177,7 +194,7 @@ export const orderTools = [
         return {
           error: 'Ship operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
-          wouldShip: { orderId, trackingNumber }
+          wouldShip: { orderId, trackingNumber },
         };
       }
 
@@ -190,17 +207,17 @@ export const orderTools = [
           id: order.id,
           orderNumber: order.orderNumber,
           status: order.status,
-          trackingNumber: order.trackingNumber
-        }
+          trackingNumber: order.trackingNumber,
+        },
       };
-    }
+    },
   },
 
   {
     name: 'cancel_order',
     description: 'Cancel an order. Only pending or confirmed orders can be cancelled.',
     inputSchema: {
-      orderId: z.string().describe('Order ID (UUID)')
+      orderId: z.string().describe('Order ID (UUID)'),
     },
     permission: 'delete',
     handler: async ({ commerce, params, allowApply }) => {
@@ -210,7 +227,7 @@ export const orderTools = [
         return {
           error: 'Cancel operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
-          wouldCancel: { orderId }
+          wouldCancel: { orderId },
         };
       }
 
@@ -222,11 +239,11 @@ export const orderTools = [
         order: {
           id: order.id,
           orderNumber: order.orderNumber,
-          status: order.status
-        }
+          status: order.status,
+        },
       };
-    }
-  }
+    },
+  },
 ];
 
 /**
@@ -240,7 +257,7 @@ export function getOrderTools() {
  * Get order tool by name
  */
 export function getOrderTool(name) {
-  return orderTools.find(t => t.name === name);
+  return orderTools.find((t) => t.name === name);
 }
 
 export default orderTools;

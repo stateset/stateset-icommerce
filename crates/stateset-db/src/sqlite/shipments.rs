@@ -1,9 +1,8 @@
 //! SQLite Shipment repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_datetime_row,
-    parse_enum, parse_uuid, parse_datetime, parse_datetime_opt, parse_decimal_opt,
+    build_in_clause, map_db_error, params_refs, parse_datetime, parse_datetime_opt,
+    parse_datetime_row, parse_decimal_opt, parse_enum, parse_uuid, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -42,7 +41,11 @@ impl SqliteShipmentRepository {
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentItem {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_item", "id")?,
-                    shipment_id: parse_uuid_row(&row.get::<_, String>(1)?, "shipment_item", "shipment_id")?,
+                    shipment_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "shipment_item",
+                        "shipment_id",
+                    )?,
                     order_item_id: row
                         .get::<_, Option<String>>(2)?
                         .map(|s| parse_uuid_row(&s, "shipment_item", "order_item_id"))
@@ -54,8 +57,16 @@ impl SqliteShipmentRepository {
                     sku: row.get(4)?,
                     name: row.get(5)?,
                     quantity: row.get(6)?,
-                    created_at: parse_datetime_row(&row.get::<_, String>(7)?, "shipment_item", "created_at")?,
-                    updated_at: parse_datetime_row(&row.get::<_, String>(8)?, "shipment_item", "updated_at")?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(7)?,
+                        "shipment_item",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(8)?,
+                        "shipment_item",
+                        "updated_at",
+                    )?,
                 })
             })
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -85,12 +96,24 @@ impl SqliteShipmentRepository {
             .query_map([shipment_id.to_string()], |row| {
                 Ok(ShipmentEvent {
                     id: parse_uuid_row(&row.get::<_, String>(0)?, "shipment_event", "id")?,
-                    shipment_id: parse_uuid_row(&row.get::<_, String>(1)?, "shipment_event", "shipment_id")?,
+                    shipment_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "shipment_event",
+                        "shipment_id",
+                    )?,
                     event_type: row.get(2)?,
                     location: row.get(3)?,
                     description: row.get(4)?,
-                    event_time: parse_datetime_row(&row.get::<_, String>(5)?, "shipment_event", "event_time")?,
-                    created_at: parse_datetime_row(&row.get::<_, String>(6)?, "shipment_event", "created_at")?,
+                    event_time: parse_datetime_row(
+                        &row.get::<_, String>(5)?,
+                        "shipment_event",
+                        "event_time",
+                    )?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(6)?,
+                        "shipment_event",
+                        "created_at",
+                    )?,
                 })
             })
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -342,10 +365,18 @@ impl ShipmentRepository for SqliteShipmentRepository {
                     weight_kg: parse_decimal_opt(weight_kg, "shipment", "weight_kg")?,
                     dimensions,
                     shipping_cost: parse_decimal_opt(shipping_cost, "shipment", "shipping_cost")?,
-                    insurance_amount: parse_decimal_opt(insurance_amount, "shipment", "insurance_amount")?,
+                    insurance_amount: parse_decimal_opt(
+                        insurance_amount,
+                        "shipment",
+                        "insurance_amount",
+                    )?,
                     signature_required: signature_required != 0,
                     shipped_at: parse_datetime_opt(shipped_at, "shipment", "shipped_at")?,
-                    estimated_delivery: parse_datetime_opt(estimated_delivery, "shipment", "estimated_delivery")?,
+                    estimated_delivery: parse_datetime_opt(
+                        estimated_delivery,
+                        "shipment",
+                        "estimated_delivery",
+                    )?,
                     delivered_at: parse_datetime_opt(delivered_at, "shipment", "delivered_at")?,
                     notes,
                     items,
@@ -934,7 +965,19 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let now = Utc::now();
 
             // Get existing shipment data
-            let existing_data: (String, String, Option<String>, String, Option<String>, Option<String>, String, Option<String>, Option<String>) = tx
+            type ShipmentExistingRow = (
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+            );
+
+            let existing_data: ShipmentExistingRow = tx
                 .query_row(
                     "SELECT carrier, shipping_method, tracking_number, recipient_name, recipient_email, recipient_phone, shipping_address, weight_kg, dimensions FROM shipments WHERE id = ?",
                     [id.to_string()],
@@ -1020,8 +1063,10 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 update_parts.join(", ")
             );
 
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-            tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            tx.execute(&sql, params_refs.as_slice())
+                .map_err(map_db_error)?;
 
             updated_ids.push(id);
         }
@@ -1203,10 +1248,18 @@ impl ShipmentRepository for SqliteShipmentRepository {
                 weight_kg: parse_decimal_opt(weight_kg, "shipment", "weight_kg")?,
                 dimensions,
                 shipping_cost: parse_decimal_opt(shipping_cost, "shipment", "shipping_cost")?,
-                insurance_amount: parse_decimal_opt(insurance_amount, "shipment", "insurance_amount")?,
+                insurance_amount: parse_decimal_opt(
+                    insurance_amount,
+                    "shipment",
+                    "insurance_amount",
+                )?,
                 signature_required: signature_required != 0,
                 shipped_at: parse_datetime_opt(shipped_at, "shipment", "shipped_at")?,
-                estimated_delivery: parse_datetime_opt(estimated_delivery, "shipment", "estimated_delivery")?,
+                estimated_delivery: parse_datetime_opt(
+                    estimated_delivery,
+                    "shipment",
+                    "estimated_delivery",
+                )?,
                 delivered_at: parse_datetime_opt(delivered_at, "shipment", "delivered_at")?,
                 notes,
                 items,

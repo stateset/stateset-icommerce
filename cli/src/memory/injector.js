@@ -133,9 +133,13 @@ export function registerMemoryHooks(hookRunner, opts) {
   _injector = new MemoryInjector(opts);
 
   if (hookRunner) {
-    hookRunner.on('before_agent_start', async (data) => {
-      return _injector.injectMemoryContext(data);
-    }, { priority: 20, pluginId: '__memory_injector__' });
+    hookRunner.on(
+      'before_agent_start',
+      async (data) => {
+        return _injector.injectMemoryContext(data);
+      },
+      { priority: 20, pluginId: '__memory_injector__' },
+    );
   }
 
   return _injector;
@@ -151,9 +155,15 @@ export async function registerMemoryHooksAsync(opts) {
 
   try {
     const { getPluginRegistry } = await import('../channels/plugin-api.js');
-    getPluginRegistry().getHookRunner().on('before_agent_start', async (data) => {
-      return _injector.injectMemoryContext(data);
-    }, { priority: 20, pluginId: '__memory_injector__' });
+    getPluginRegistry()
+      .getHookRunner()
+      .on(
+        'before_agent_start',
+        async (data) => {
+          return _injector.injectMemoryContext(data);
+        },
+        { priority: 20, pluginId: '__memory_injector__' },
+      );
   } catch {
     // Plugin system not available
   }

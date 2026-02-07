@@ -124,7 +124,9 @@ impl PgWarrantyRepository {
 
     fn ensure_claim_can_approve(claim: &WarrantyClaim) -> Result<()> {
         match claim.status {
-            ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => Ok(()),
+            ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
+                Ok(())
+            }
             ClaimStatus::Approved => Err(CommerceError::ValidationError(
                 "Claim is already approved".to_string(),
             )),
@@ -145,7 +147,9 @@ impl PgWarrantyRepository {
 
     fn ensure_claim_can_deny(claim: &WarrantyClaim) -> Result<()> {
         match claim.status {
-            ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => Ok(()),
+            ClaimStatus::Submitted | ClaimStatus::UnderReview | ClaimStatus::InfoRequested => {
+                Ok(())
+            }
             ClaimStatus::Approved => Err(CommerceError::ValidationError(
                 "Cannot deny an approved claim".to_string(),
             )),
@@ -252,7 +256,9 @@ impl PgWarrantyRepository {
                 next,
                 ClaimStatus::InProgress | ClaimStatus::Completed | ClaimStatus::Cancelled
             ),
-            ClaimStatus::InProgress => matches!(next, ClaimStatus::Completed | ClaimStatus::Cancelled),
+            ClaimStatus::InProgress => {
+                matches!(next, ClaimStatus::Completed | ClaimStatus::Cancelled)
+            }
             ClaimStatus::Denied | ClaimStatus::Completed | ClaimStatus::Cancelled => false,
         };
 
@@ -408,9 +414,9 @@ impl PgWarrantyRepository {
         let start_date = input.start_date.unwrap_or(purchase_date);
 
         let end_date = input.end_date.or_else(|| {
-            input.duration_months.map(|months| {
-                start_date + chrono::Duration::days(months as i64 * 30)
-            })
+            input
+                .duration_months
+                .map(|months| start_date + chrono::Duration::days(months as i64 * 30))
         });
 
         sqlx::query(
@@ -457,7 +463,7 @@ impl PgWarrantyRepository {
             "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
              serial_number, status, warranty_type, provider, coverage_description, purchase_date,
              start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
-             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1"
+             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -506,7 +512,7 @@ impl PgWarrantyRepository {
 
         sqlx::query(
             "UPDATE warranties SET status = $1, serial_number = $2, end_date = $3,
-             coverage_description = $4, terms = $5, notes = $6, updated_at = $7 WHERE id = $8"
+             coverage_description = $4, terms = $5, notes = $6, updated_at = $7 WHERE id = $8",
         )
         .bind(input.status.unwrap_or(warranty.status).to_string())
         .bind(input.serial_number.or(warranty.serial_number))
@@ -532,7 +538,7 @@ impl PgWarrantyRepository {
             "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
              serial_number, status, warranty_type, provider, coverage_description, purchase_date,
              start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
-             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE 1=1"
+             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE 1=1",
         );
         let mut param_idx = 1;
 
@@ -548,7 +554,11 @@ impl PgWarrantyRepository {
             query.push_str(" AND status = 'active' AND (end_date IS NULL OR end_date > NOW())");
         }
 
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, WarrantyRow>(&query);
 
@@ -571,26 +581,48 @@ impl PgWarrantyRepository {
 
     /// Get warranties for customer (async)
     pub async fn for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        self.list_async(WarrantyFilter { customer_id: Some(customer_id), ..Default::default() }).await
+        self.list_async(WarrantyFilter {
+            customer_id: Some(customer_id),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Get warranties for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        self.list_async(WarrantyFilter { order_id: Some(order_id), ..Default::default() }).await
+        self.list_async(WarrantyFilter {
+            order_id: Some(order_id),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Void warranty (async)
     pub async fn void_async(&self, id: Uuid) -> Result<Warranty> {
         let warranty = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_void(&warranty)?;
-        self.update_async(id, UpdateWarranty { status: Some(WarrantyStatus::Voided), ..Default::default() }).await
+        self.update_async(
+            id,
+            UpdateWarranty {
+                status: Some(WarrantyStatus::Voided),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Expire warranty (async)
     pub async fn expire_async(&self, id: Uuid) -> Result<Warranty> {
         let warranty = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         Self::ensure_can_expire(&warranty)?;
-        self.update_async(id, UpdateWarranty { status: Some(WarrantyStatus::Expired), ..Default::default() }).await
+        self.update_async(
+            id,
+            UpdateWarranty {
+                status: Some(WarrantyStatus::Expired),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Transfer warranty to new customer (async)
@@ -599,24 +631,31 @@ impl PgWarrantyRepository {
         Self::ensure_can_transfer(&warranty, new_customer_id)?;
         let now = Utc::now();
 
-        sqlx::query("UPDATE warranties SET customer_id = $1, status = $2, updated_at = $3 WHERE id = $4")
-            .bind(new_customer_id)
-            .bind(WarrantyStatus::Transferred.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE warranties SET customer_id = $1, status = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(new_customer_id)
+        .bind(WarrantyStatus::Transferred.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Create warranty claim (async)
     pub async fn create_claim_async(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim> {
-        let warranty = self.get_async(input.warranty_id).await?.ok_or(CommerceError::NotFound)?;
+        let warranty = self
+            .get_async(input.warranty_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         if !warranty.is_valid() {
-            return Err(CommerceError::ValidationError("Warranty is not valid for claims".to_string()));
+            return Err(CommerceError::ValidationError(
+                "Warranty is not valid for claims".to_string(),
+            ));
         }
 
         let id = Uuid::new_v4();
@@ -650,14 +689,18 @@ impl PgWarrantyRepository {
         .map_err(map_db_error)?;
 
         // Increment claims_used
-        sqlx::query("UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1 WHERE id = $2")
-            .bind(now)
-            .bind(input.warranty_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE warranties SET claims_used = claims_used + 1, updated_at = $1 WHERE id = $2",
+        )
+        .bind(now)
+        .bind(input.warranty_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Get warranty claim by ID (async)
@@ -678,7 +721,10 @@ impl PgWarrantyRepository {
     }
 
     /// Get warranty claim by number (async)
-    pub async fn get_claim_by_number_async(&self, claim_number: &str) -> Result<Option<WarrantyClaim>> {
+    pub async fn get_claim_by_number_async(
+        &self,
+        claim_number: &str,
+    ) -> Result<Option<WarrantyClaim>> {
         let row = sqlx::query_as::<_, ClaimRow>(
             "SELECT id, claim_number, warranty_id, customer_id, status, resolution, issue_description,
              issue_category, issue_date, contact_phone, contact_email, shipping_address, repair_cost,
@@ -695,8 +741,15 @@ impl PgWarrantyRepository {
     }
 
     /// Update warranty claim (async)
-    pub async fn update_claim_async(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
+    pub async fn update_claim_async(
+        &self,
+        id: Uuid,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim> {
+        let claim = self
+            .get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         let status = input.status.unwrap_or(claim.status);
@@ -782,11 +835,16 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// List warranty claims (async)
-    pub async fn list_claims_async(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>> {
+    pub async fn list_claims_async(
+        &self,
+        filter: WarrantyClaimFilter,
+    ) -> Result<Vec<WarrantyClaim>> {
         let limit = filter.limit.unwrap_or(100) as i64;
         let offset = filter.offset.unwrap_or(0) as i64;
 
@@ -812,7 +870,11 @@ impl PgWarrantyRepository {
             param_idx += 1;
         }
 
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, ClaimRow>(&query);
 
@@ -838,12 +900,19 @@ impl PgWarrantyRepository {
 
     /// Get claims for warranty (async)
     pub async fn get_claims_async(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        self.list_claims_async(WarrantyClaimFilter { warranty_id: Some(warranty_id), ..Default::default() }).await
+        self.list_claims_async(WarrantyClaimFilter {
+            warranty_id: Some(warranty_id),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Approve claim (async)
     pub async fn approve_claim_async(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let claim = self
+            .get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_approve(&claim)?;
         let now = Utc::now();
 
@@ -856,12 +925,17 @@ impl PgWarrantyRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Deny claim (async)
     pub async fn deny_claim_async(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let claim = self
+            .get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_deny(&claim)?;
         if reason.trim().is_empty() {
             return Err(CommerceError::ValidationError(
@@ -883,12 +957,21 @@ impl PgWarrantyRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Complete claim (async)
-    pub async fn complete_claim_async(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
+    pub async fn complete_claim_async(
+        &self,
+        id: Uuid,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim> {
+        let claim = self
+            .get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_complete(&claim, resolution)?;
         let now = Utc::now();
 
@@ -902,12 +985,17 @@ impl PgWarrantyRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Cancel claim (async)
     pub async fn cancel_claim_async(&self, id: Uuid) -> Result<WarrantyClaim> {
-        let claim = self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let claim = self
+            .get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         Self::ensure_claim_can_cancel(&claim)?;
         let now = Utc::now();
 
@@ -920,7 +1008,9 @@ impl PgWarrantyRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_claim_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_claim_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Count warranties (async)
@@ -980,7 +1070,10 @@ impl PgWarrantyRepository {
     // =========================================================================
 
     /// Create multiple warranties in a batch (async, partial success)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateWarranty>) -> Result<BatchResult<Warranty>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateWarranty>,
+    ) -> Result<BatchResult<Warranty>> {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
@@ -995,7 +1088,10 @@ impl PgWarrantyRepository {
     }
 
     /// Create multiple warranties atomically (async, all-or-nothing)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateWarranty>) -> Result<Vec<Warranty>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateWarranty>,
+    ) -> Result<Vec<Warranty>> {
         validate_batch_size(&inputs)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut warranties = Vec::with_capacity(inputs.len());
@@ -1008,9 +1104,9 @@ impl PgWarrantyRepository {
             let start_date = input.start_date.unwrap_or(purchase_date);
 
             let end_date = input.end_date.or_else(|| {
-                input.duration_months.map(|months| {
-                    start_date + chrono::Duration::days(months as i64 * 30)
-                })
+                input
+                    .duration_months
+                    .map(|months| start_date + chrono::Duration::days(months as i64 * 30))
             });
 
             let status = WarrantyStatus::Active;
@@ -1084,7 +1180,10 @@ impl PgWarrantyRepository {
     }
 
     /// Update multiple warranties in a batch (async, partial success)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<BatchResult<Warranty>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateWarranty)>,
+    ) -> Result<BatchResult<Warranty>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1099,7 +1198,10 @@ impl PgWarrantyRepository {
     }
 
     /// Update multiple warranties atomically (async, all-or-nothing)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateWarranty)>) -> Result<Vec<Warranty>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateWarranty)>,
+    ) -> Result<Vec<Warranty>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut warranties = Vec::with_capacity(updates.len());
@@ -1123,12 +1225,16 @@ impl PgWarrantyRepository {
 
             sqlx::query(
                 "UPDATE warranties SET status = $1, serial_number = $2, end_date = $3,
-                 coverage_description = $4, terms = $5, notes = $6, updated_at = $7 WHERE id = $8"
+                 coverage_description = $4, terms = $5, notes = $6, updated_at = $7 WHERE id = $8",
             )
             .bind(input.status.unwrap_or(warranty.status).to_string())
             .bind(input.serial_number.or(warranty.serial_number.clone()))
             .bind(input.end_date.or(warranty.end_date))
-            .bind(input.coverage_description.or(warranty.coverage_description.clone()))
+            .bind(
+                input
+                    .coverage_description
+                    .or(warranty.coverage_description.clone()),
+            )
             .bind(input.terms.or(warranty.terms.clone()))
             .bind(input.notes.or(warranty.notes.clone()))
             .bind(now)
@@ -1172,7 +1278,11 @@ impl PgWarrantyRepository {
                     if res.rows_affected() > 0 {
                         result.record_success(id);
                     } else {
-                        result.record_failure(index, Some(id.to_string()), &CommerceError::NotFound);
+                        result.record_failure(
+                            index,
+                            Some(id.to_string()),
+                            &CommerceError::NotFound,
+                        );
                     }
                 }
                 Err(e) => result.record_failure(index, Some(id.to_string()), &e),
@@ -1213,7 +1323,7 @@ impl PgWarrantyRepository {
             "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
              serial_number, status, warranty_type, provider, coverage_description, purchase_date,
              start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
-             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = ANY($1)"
+             claims_used, terms, notes, created_at, updated_at FROM warranties WHERE id = ANY($1)",
         )
         .bind(&ids)
         .fetch_all(&self.pool)

@@ -13,10 +13,9 @@ import fs from 'node:fs';
 import { getKeyManager } from '../src/sync/keys.js';
 import { getWalletAddress } from '../src/chains/index.js';
 import { CLI_VERSION } from '../src/config.js';
-import {
-  resolveX402ConfigPath,
-  saveX402Config,
-} from '../src/x402/config.js';
+import { resolveX402ConfigPath, saveX402Config } from '../src/x402/config.js';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-x402');
 
 const program = new Command();
 
@@ -57,7 +56,10 @@ program
       console.log(payload);
     };
 
-    const spinner = ora({ text: 'Initializing x402 configuration...', isEnabled: !jsonOutput }).start();
+    const spinner = ora({
+      text: 'Initializing x402 configuration...',
+      isEnabled: !jsonOutput,
+    }).start();
 
     try {
       const configDir = options.configDir;
@@ -117,7 +119,7 @@ program
           sequencerUrl: options.sequencerUrl,
           tenantId: options.tenantId,
           storeId: options.storeId,
-          agentId: options.agentId
+          agentId: options.agentId,
         });
         return;
       }

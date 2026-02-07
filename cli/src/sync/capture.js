@@ -113,7 +113,9 @@ export class EventCapture {
 
     const eventType = EVENT_MAPPINGS[resourceMethod];
     if (!eventType) {
-      // Unmapped operation, skip capture
+      console.warn(
+        `[EventCapture] Unmapped operation '${resourceMethod}' — events will not be captured. Add it to EVENT_MAPPINGS.`,
+      );
       return;
     }
 
@@ -203,9 +205,16 @@ function extractEntityId(resourceName, methodName, args, result) {
   // For create operations, ID is in result
   if (methodName === 'create') {
     if (result && typeof result === 'object') {
-      return result.id || result.order_id || result.customer_id ||
-             result.product_id || result.cart_id || result.return_id ||
-             result.payment_id || 'unknown';
+      return (
+        result.id ||
+        result.order_id ||
+        result.customer_id ||
+        result.product_id ||
+        result.cart_id ||
+        result.return_id ||
+        result.payment_id ||
+        'unknown'
+      );
     }
     return 'unknown';
   }
@@ -239,14 +248,20 @@ function buildPayload(resourceName, methodName, args, result) {
 
   // Include arguments (sanitized)
   if (args.length > 0) {
-    payload.args = args.map(arg => {
+    payload.args = args.map((arg) => {
       if (typeof arg === 'object' && arg !== null) {
         // Clone and remove sensitive fields
         const sanitized = { ...arg };
         delete sanitized.password;
         delete sanitized.apiKey;
+        delete sanitized.api_key;
         delete sanitized.token;
         delete sanitized.creditCard;
+        delete sanitized.cardNumber;
+        delete sanitized.secret;
+        delete sanitized.authorization;
+        delete sanitized.credential;
+        delete sanitized.ssn;
         return sanitized;
       }
       return arg;
@@ -286,9 +301,13 @@ export function wrapCommerceWithEvents(commerce, config) {
 
     // Wrap each resource
     orders: commerce.orders ? wrapResource(commerce.orders, 'orders', capture) : undefined,
-    customers: commerce.customers ? wrapResource(commerce.customers, 'customers', capture) : undefined,
+    customers: commerce.customers
+      ? wrapResource(commerce.customers, 'customers', capture)
+      : undefined,
     products: commerce.products ? wrapResource(commerce.products, 'products', capture) : undefined,
-    inventory: commerce.inventory ? wrapResource(commerce.inventory, 'inventory', capture) : undefined,
+    inventory: commerce.inventory
+      ? wrapResource(commerce.inventory, 'inventory', capture)
+      : undefined,
     returns: commerce.returns ? wrapResource(commerce.returns, 'returns', capture) : undefined,
     payments: commerce.payments ? wrapResource(commerce.payments, 'payments', capture) : undefined,
     carts: commerce.carts ? wrapResource(commerce.carts, 'carts', capture) : undefined,

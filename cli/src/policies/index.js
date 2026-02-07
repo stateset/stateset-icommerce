@@ -11,5 +11,5 @@ export {
   ConditionGroup,
   PolicyResult,
   Operators,
-  PolicyTemplates
+  PolicyTemplates,
 } from './engine.js';

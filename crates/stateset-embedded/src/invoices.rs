@@ -40,8 +40,8 @@
 
 use crate::Database;
 use stateset_core::{
-    CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem,
-    RecordInvoicePayment, Result, UpdateInvoice,
+    CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, RecordInvoicePayment,
+    Result, UpdateInvoice,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -160,11 +160,7 @@ impl Invoices {
     }
 
     /// Update a line item
-    pub fn update_item(
-        &self,
-        item_id: Uuid,
-        input: CreateInvoiceItem,
-    ) -> Result<InvoiceItem> {
+    pub fn update_item(&self, item_id: Uuid, input: CreateInvoiceItem) -> Result<InvoiceItem> {
         self.db.invoices().update_item(item_id, input)
     }
 
@@ -237,10 +233,7 @@ impl Invoices {
     /// Get the total outstanding balance for a customer
     pub fn customer_balance(&self, customer_id: Uuid) -> Result<rust_decimal::Decimal> {
         let invoices = self.for_customer(customer_id)?;
-        let balance = invoices
-            .iter()
-            .map(|inv| inv.total - inv.amount_paid)
-            .sum();
+        let balance = invoices.iter().map(|inv| inv.total - inv.amount_paid).sum();
         Ok(balance)
     }
 }

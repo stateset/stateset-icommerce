@@ -29,19 +29,17 @@ export class CredentialStore {
     `);
 
     this._get = this.db.prepare(
-      `SELECT api_key, updated_at FROM provider_credentials WHERE provider = ?`
+      `SELECT api_key, updated_at FROM provider_credentials WHERE provider = ?`,
     );
     this._upsert = this.db.prepare(
       `INSERT INTO provider_credentials (provider, api_key, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(provider)
-       DO UPDATE SET api_key = excluded.api_key, updated_at = excluded.updated_at`
+       DO UPDATE SET api_key = excluded.api_key, updated_at = excluded.updated_at`,
     );
-    this._delete = this.db.prepare(
-      `DELETE FROM provider_credentials WHERE provider = ?`
-    );
+    this._delete = this.db.prepare(`DELETE FROM provider_credentials WHERE provider = ?`);
     this._list = this.db.prepare(
-      `SELECT provider, updated_at FROM provider_credentials ORDER BY updated_at DESC`
+      `SELECT provider, updated_at FROM provider_credentials ORDER BY updated_at DESC`,
     );
   }
 
@@ -61,9 +59,9 @@ export class CredentialStore {
   }
 
   listProviders() {
-    return this._list.all().map(row => ({
+    return this._list.all().map((row) => ({
       provider: row.provider,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
     }));
   }
 
@@ -91,8 +89,8 @@ export function resolveProviderApiKey(provider) {
   try {
     const storeKey = getCredentialStore().getApiKey(provider);
     if (storeKey) return storeKey;
-  } catch {
-    // Ignore store errors, fall back to env
+  } catch (err) {
+    console.warn(`[credentials] Store lookup failed for ${provider}:`, err.message);
   }
 
   const envKey = PROVIDERS[provider]?.envKey;
@@ -102,7 +100,11 @@ export function resolveProviderApiKey(provider) {
 
 export function resetCredentialStore() {
   if (_store) {
-    try { _store.close(); } catch { /* ignore */ }
+    try {
+      _store.close();
+    } catch (err) {
+      console.warn('[credentials] Store close error:', err.message);
+    }
   }
   _store = null;
 }

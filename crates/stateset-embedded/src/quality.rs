@@ -27,11 +27,10 @@
 //! ```
 
 use stateset_core::{
-    CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
-    DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionStatus,
-    NonConformance, NonConformanceFilter, NcrStatus, QualityHold, QualityHoldFilter,
-    QualityRepository, RecordInspectionResult, ReleaseQualityHold, Result,
-    UpdateInspection, UpdateNonConformance,
+    CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold, DefectCode,
+    Inspection, InspectionFilter, InspectionItem, InspectionStatus, NcrStatus, NonConformance,
+    NonConformanceFilter, QualityHold, QualityHoldFilter, RecordInspectionResult,
+    ReleaseQualityHold, Result, UpdateInspection, UpdateNonConformance,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -99,7 +98,10 @@ impl Quality {
     }
 
     /// Record inspection results for an item.
-    pub fn record_inspection_result(&self, input: RecordInspectionResult) -> Result<InspectionItem> {
+    pub fn record_inspection_result(
+        &self,
+        input: RecordInspectionResult,
+    ) -> Result<InspectionItem> {
         self.db.quality().record_inspection_result(input)
     }
 

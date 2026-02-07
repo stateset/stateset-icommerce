@@ -14,17 +14,14 @@
  */
 
 import { parseArgs } from 'node:util';
-import {
-  TUTORIALS,
-  TutorialRunner,
-  createTutorialRunner,
-  showWelcome
-} from '../src/tutorial.js';
+import { TUTORIALS, createTutorialRunner, showWelcome } from '../src/tutorial.js';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-tutorial');
 
 const options = {
   list: { type: 'boolean', short: 'l', default: false },
   'non-interactive': { type: 'boolean', default: false },
-  help: { type: 'boolean', short: 'h', default: false }
+  help: { type: 'boolean', short: 'h', default: false },
 };
 
 const { values, positionals } = parseArgs({ options, allowPositionals: true });
@@ -58,7 +55,7 @@ Examples:
 }
 
 const runner = createTutorialRunner({
-  interactive: !values['non-interactive']
+  interactive: !values['non-interactive'],
 });
 
 if (values.list || positionals.length === 0) {

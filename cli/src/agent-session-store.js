@@ -39,9 +39,7 @@ export class AgentSessionStore {
         ON agent_sessions(updated_at DESC);
     `);
 
-    this._get = this.db.prepare(
-      `SELECT * FROM agent_sessions WHERE session_id = ?`
-    );
+    this._get = this.db.prepare(`SELECT * FROM agent_sessions WHERE session_id = ?`);
     this._upsert = this.db.prepare(
       `INSERT INTO agent_sessions
         (session_id, provider, model, think_level, agent, summaries, last_request, last_response, created_at, updated_at)
@@ -54,11 +52,9 @@ export class AgentSessionStore {
         summaries = excluded.summaries,
         last_request = excluded.last_request,
         last_response = excluded.last_response,
-        updated_at = excluded.updated_at`
+        updated_at = excluded.updated_at`,
     );
-    this._delete = this.db.prepare(
-      `DELETE FROM agent_sessions WHERE session_id = ?`
-    );
+    this._delete = this.db.prepare(`DELETE FROM agent_sessions WHERE session_id = ?`);
   }
 
   get(sessionId) {
@@ -75,7 +71,7 @@ export class AgentSessionStore {
       lastRequest: row.last_request,
       lastResponse: row.last_response,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
     };
   }
 
@@ -95,7 +91,7 @@ export class AgentSessionStore {
       data.lastRequest ?? existing?.lastRequest ?? null,
       data.lastResponse ?? existing?.lastResponse ?? null,
       createdAt,
-      Date.now()
+      Date.now(),
     );
 
     return this.get(sessionId);
@@ -140,7 +136,11 @@ export function getAgentSessionStore(options = {}) {
 
 export function resetAgentSessionStore() {
   if (_store) {
-    try { _store.close(); } catch { /* ignore */ }
+    try {
+      _store.close();
+    } catch (err) {
+      console.warn('[agent-session-store] Store close error:', err.message);
+    }
   }
   _store = null;
 }

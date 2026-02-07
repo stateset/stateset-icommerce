@@ -32,7 +32,6 @@ import {
   getChain,
   getToken,
   getDefaultStablecoin,
-  getExplorerTxUrl,
   getExplorerAddressUrl,
   formatAmount,
 } from '../src/chains/index.js';
@@ -197,10 +196,10 @@ async function main() {
   const onConfirmRequired = createConfirmHandler({
     output: {
       yellow: chalk.yellow,
-      bold: chalk.bold
+      bold: chalk.bold,
     },
     assumeYes: values.yes,
-    nonInteractive
+    nonInteractive,
   });
 
   await executePaymentCommand(values, onConfirmRequired, writeJson);
@@ -217,7 +216,7 @@ async function showChains(values, writeJson) {
   const chains = listChains();
 
   if (values.json) {
-    const chainData = chains.map(id => {
+    const chainData = chains.map((id) => {
       const chain = getChain(id);
       const stablecoin = getDefaultStablecoin(id);
       return {
@@ -238,7 +237,9 @@ async function showChains(values, writeJson) {
     const chain = getChain(chainId);
     const stablecoin = getDefaultStablecoin(chainId);
 
-    console.log(`  ${chalk.green(chainId.padEnd(18))} ${chain.name.padEnd(20)} ${chalk.cyan(stablecoin?.symbol || '-')}`);
+    console.log(
+      `  ${chalk.green(chainId.padEnd(18))} ${chain.name.padEnd(20)} ${chalk.cyan(stablecoin?.symbol || '-')}`,
+    );
   }
 
   console.log();
@@ -289,7 +290,6 @@ async function showWallet(values, writeJson) {
     console.log(`  Agent: ${chalk.cyan(agent)}\n`);
 
     for (const [chainId, address] of Object.entries(addresses)) {
-      const chainConfig = getChain(chainId);
       console.log(`  ${chalk.green(chainId.padEnd(18))} ${chalk.yellow(address)}`);
     }
 
@@ -332,7 +332,6 @@ async function showBalance(values, writeJson) {
     console.log(`  Address: ${chalk.yellow(address)}`);
     console.log(`  Balance: ${chalk.bold.green(balanceInfo.balance)} ${balanceInfo.symbol}`);
     console.log();
-
   } catch (error) {
     if (spinner) {
       spinner.fail(`Failed to check balance: ${error.message}`);
@@ -347,18 +346,7 @@ async function showBalance(values, writeJson) {
  * Execute a stablecoin payment
  */
 async function executePaymentCommand(values, onConfirmRequired, writeJson) {
-  const {
-    to,
-    amount,
-    chain,
-    token,
-    agent,
-    order,
-    customer,
-    memo,
-    apply,
-    json,
-  } = values;
+  const { to, amount, chain, token, agent, order, customer, memo, apply, json } = values;
 
   const configDir = '.stateset';
   const simulate = !apply;
@@ -397,7 +385,7 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
     const confirmed = await onConfirmRequired({
       operation: 'execute_payment',
       details: `${formatAmount(numericAmount)} ${tokenConfig.symbol} to ${to} on ${chain}`,
-      amount: Number.isFinite(numericAmount) ? numericAmount : null
+      amount: Number.isFinite(numericAmount) ? numericAmount : null,
     });
     if (!confirmed) {
       if (json) {
@@ -438,7 +426,7 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
           error: 'Insufficient balance',
           balance: balanceCheck.balance,
           required: balanceCheck.required,
-          symbol: balanceCheck.symbol
+          symbol: balanceCheck.symbol,
         });
       } else {
         console.log(`  Balance:  ${balanceCheck.balance} ${balanceCheck.symbol}`);
@@ -450,7 +438,6 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
     if (spinner) {
       spinner.succeed(`Balance: ${balanceCheck.balance} ${balanceCheck.symbol}`);
     }
-
   } catch (error) {
     if (spinner) {
       spinner.warn(`Could not verify balance: ${error.message}`);
@@ -458,24 +445,29 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
   }
 
   // Execute payment
-  const paymentSpinner = useSpinner ? ora(simulate ? 'Simulating payment...' : 'Executing payment...').start() : null;
+  const paymentSpinner = useSpinner
+    ? ora(simulate ? 'Simulating payment...' : 'Executing payment...').start()
+    : null;
 
-  const result = await executePayment({
-    agentId: agent,
-    chainId: chain,
-    toAddress: to,
-    amount: parseFloat(amount),
-    tokenSymbol: token,
-    metadata,
-  }, {
-    configDir,
-    simulate,
-    onProgress: (progress) => {
-      if (paymentSpinner) {
-        paymentSpinner.text = progress.message;
-      }
+  const result = await executePayment(
+    {
+      agentId: agent,
+      chainId: chain,
+      toAddress: to,
+      amount: parseFloat(amount),
+      tokenSymbol: token,
+      metadata,
     },
-  });
+    {
+      configDir,
+      simulate,
+      onProgress: (progress) => {
+        if (paymentSpinner) {
+          paymentSpinner.text = progress.message;
+        }
+      },
+    },
+  );
 
   if (result.success) {
     if (simulate) {
@@ -503,7 +495,6 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
     if (json) {
       await writeJson(result);
     }
-
   } else {
     if (paymentSpinner) {
       paymentSpinner.fail(chalk.red(`Payment failed: ${result.error}`));
@@ -521,7 +512,5 @@ async function executePaymentCommand(values, onConfirmRequired, writeJson) {
 // RUN
 // =============================================================================
 
-main().catch(error => {
-  console.error(chalk.red(`Error: ${error.message}`));
-  process.exit(1);
-});
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-pay', main);

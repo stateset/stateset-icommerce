@@ -2,13 +2,7 @@
  * Treasury pricing helpers.
  */
 
-export const STABLECOIN_SYMBOLS = new Set([
-  'USDC',
-  'USDT',
-  'DAI',
-  'SSUSD',
-  'WSSUSD'
-]);
+export const STABLECOIN_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'SSUSD', 'WSSUSD']);
 
 export function normalizeSymbol(symbol) {
   if (!symbol) return '';
@@ -21,7 +15,7 @@ export function isStablecoinSymbol(symbol) {
 
 export function resolveTokenPriceUsd(token, overrides = {}) {
   if (!token) return null;
-  if (overrides && overrides.priceUsd != null) {
+  if (overrides && overrides.priceUsd !== null && overrides.priceUsd !== undefined) {
     const override = Number(overrides.priceUsd);
     return Number.isFinite(override) ? override : null;
   }
@@ -31,7 +25,7 @@ export function resolveTokenPriceUsd(token, overrides = {}) {
   }
 
   const price = token.priceUsd ?? token.price_usd ?? null;
-  if (price == null) return null;
+  if (price === null || price === undefined) return null;
   const numeric = Number(price);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -40,5 +34,5 @@ export default {
   STABLECOIN_SYMBOLS,
   normalizeSymbol,
   isStablecoinSymbol,
-  resolveTokenPriceUsd
+  resolveTokenPriceUsd,
 };

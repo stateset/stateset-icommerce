@@ -12,8 +12,6 @@
  *   stateset-direct inventory stock <sku>
  */
 
-import { Commerce } from '@stateset/embedded';
-import { parseArgs } from 'node:util';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { createConfirmHandler } from '../src/utils/confirm.js';
@@ -24,31 +22,31 @@ import { createConfirmHandler } from '../src/utils/confirm.js';
 
 const RESOURCE_ALIASES = {
   // Single letter shortcuts
-  'c': 'customers',
-  'o': 'orders',
-  'p': 'products',
-  'i': 'inventory',
-  'r': 'returns',
-  'v': 'vector',
+  c: 'customers',
+  o: 'orders',
+  p: 'products',
+  i: 'inventory',
+  r: 'returns',
+  v: 'vector',
   // Common abbreviations
-  'cust': 'customers',
-  'ord': 'orders',
-  'prod': 'products',
-  'inv': 'inventory',
-  'ret': 'returns',
-  'vec': 'vector',
-  'stock': 'inventory'  // natural alias
+  cust: 'customers',
+  ord: 'orders',
+  prod: 'products',
+  inv: 'inventory',
+  ret: 'returns',
+  vec: 'vector',
+  stock: 'inventory', // natural alias
 };
 
 const ACTION_ALIASES = {
-  'l': 'list',
-  'ls': 'list',
-  'g': 'get',
-  's': 'ship',
-  'x': 'cancel',
-  'a': 'adjust',
-  'n': 'count',
-  '#': 'count'
+  l: 'list',
+  ls: 'list',
+  g: 'get',
+  s: 'ship',
+  x: 'cancel',
+  a: 'adjust',
+  n: 'count',
+  '#': 'count',
 };
 
 /**
@@ -202,7 +200,7 @@ async function main() {
   const resource = expandResource(rawResource);
   const action = expandAction(rawAction);
 
-  const outputFormat = formatProvided ? format : (jsonOutput ? 'json' : format);
+  const outputFormat = formatProvided ? format : jsonOutput ? 'json' : format;
   if (!['table', 'json'].includes(outputFormat)) {
     throw new Error(`Unsupported format: ${outputFormat}. Use table or json.`);
   }
@@ -218,7 +216,22 @@ async function main() {
   }
 
   // Initialize commerce
-  const commerce = new Commerce(dbPath);
+  let commerce;
+  try {
+    const mod = await import('@stateset/embedded');
+    const Commerce = mod.Commerce || mod.default?.Commerce || mod.default;
+    if (!Commerce) {
+      throw new Error('Failed to resolve Commerce export from @stateset/embedded.');
+    }
+    commerce = new Commerce(dbPath);
+  } catch (error) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(`Error: ${error.message}`);
+    }
+    process.exit(1);
+  }
 
   const outputLines = [];
   const output = (data) => {
@@ -235,7 +248,7 @@ async function main() {
       orders: new Set(['ship', 'cancel']),
       inventory: new Set(['adjust', 'create']),
       returns: new Set(['approve', 'reject']),
-      vector: new Set(['index', 'index-all', 'clear', 'clear-all'])
+      vector: new Set(['index', 'index-all', 'clear', 'clear-all']),
     };
     return Boolean(writeActions[res]?.has(act));
   };
@@ -243,17 +256,19 @@ async function main() {
   const ensureWriteAllowed = async (res, act, details) => {
     if (!isWriteAction(res, act)) return;
     if (!apply) {
-      throw new Error(`Preview mode: would execute '${res} ${act}'. Re-run with --apply to proceed.`);
+      throw new Error(
+        `Preview mode: would execute '${res} ${act}'. Re-run with --apply to proceed.`,
+      );
     }
     const nonInteractive = !process.stdin.isTTY || jsonOutput;
     const confirm = createConfirmHandler({
       output: null,
       assumeYes: skipConfirm,
-      nonInteractive
+      nonInteractive,
     });
     const confirmed = await confirm({
       operation: `${res}.${act}`,
-      details
+      details,
     });
     if (!confirmed) {
       throw new Error('Confirmation declined');
@@ -289,16 +304,19 @@ async function main() {
 
     // Find items whose ID starts with the prefix (case-insensitive)
     const lowerPrefix = prefix.toLowerCase();
-    const matches = items.filter(item =>
-      item.id.toLowerCase().startsWith(lowerPrefix)
-    );
+    const matches = items.filter((item) => item.id.toLowerCase().startsWith(lowerPrefix));
 
     if (matches.length === 0) {
       throw new Error(`No ${resource.slice(0, -1)} found matching '${prefix}'`);
     }
     if (matches.length > 1) {
-      const matchList = matches.slice(0, 5).map(m => m.id.slice(0, 12) + '...').join(', ');
-      throw new Error(`Ambiguous ID '${prefix}' - matches ${matches.length} ${resource}: ${matchList}`);
+      const matchList = matches
+        .slice(0, 5)
+        .map((m) => m.id.slice(0, 12) + '...')
+        .join(', ');
+      throw new Error(
+        `Ambiguous ID '${prefix}' - matches ${matches.length} ${resource}: ${matchList}`,
+      );
     }
 
     return matches[0].id;
@@ -328,14 +346,15 @@ async function main() {
     // Also check inventory items directly if available
     // Try to get stock for common patterns
     const upperPartial = partial.toUpperCase();
-    const lowerPartial = partial.toLowerCase();
 
     // Find SKUs that contain the partial (case-insensitive)
-    const matches = allSkus.filter(sku => {
+    const matches = allSkus.filter((sku) => {
       const upperSku = sku.toUpperCase();
-      return upperSku === upperPartial ||
-             upperSku.startsWith(upperPartial) ||
-             upperSku.includes(upperPartial);
+      return (
+        upperSku === upperPartial ||
+        upperSku.startsWith(upperPartial) ||
+        upperSku.includes(upperPartial)
+      );
     });
 
     if (matches.length === 0) {
@@ -347,9 +366,7 @@ async function main() {
     }
 
     // Multiple matches - prefer exact start match
-    const startMatches = matches.filter(sku =>
-      sku.toUpperCase().startsWith(upperPartial)
-    );
+    const startMatches = matches.filter((sku) => sku.toUpperCase().startsWith(upperPartial));
     if (startMatches.length === 1) {
       return startMatches[0];
     }
@@ -374,12 +391,12 @@ async function main() {
     }
 
     // Header
-    const header = columns.map(c => c.padEnd(widths[c])).join(' | ');
-    const separator = columns.map(c => '-'.repeat(widths[c])).join('-+-');
+    const header = columns.map((c) => c.padEnd(widths[c])).join(' | ');
+    const separator = columns.map((c) => '-'.repeat(widths[c])).join('-+-');
 
     // Rows
-    const rows = items.map(item =>
-      columns.map(c => String(item[c] ?? '').padEnd(widths[c])).join(' | ')
+    const rows = items.map((item) =>
+      columns.map((c) => String(item[c] ?? '').padEnd(widths[c])).join(' | '),
     );
 
     return [header, separator, ...rows].join('\n');
@@ -428,12 +445,17 @@ async function main() {
         switch (action) {
           case 'list': {
             const customers = await commerce.customers.list();
-            output(formatTable(customers.map(c => ({
-              id: c.id.slice(0, 8) + '...',
-              email: c.email,
-              name: `${c.firstName} ${c.lastName}`,
-              status: c.status
-            })), ['id', 'email', 'name', 'status']));
+            output(
+              formatTable(
+                customers.map((c) => ({
+                  id: c.id.slice(0, 8) + '...',
+                  email: c.email,
+                  name: `${c.firstName} ${c.lastName}`,
+                  status: c.status,
+                })),
+                ['id', 'email', 'name', 'status'],
+              ),
+            );
             break;
           }
           case 'get': {
@@ -443,7 +465,10 @@ async function main() {
               ? await commerce.customers.getByEmail(idArg)
               : await commerce.customers.get(await resolveId(idArg, 'customers'));
             if (!customer) throw new Error('Customer not found');
-            output(jsonOutput ? customer : `
+            output(
+              jsonOutput
+                ? customer
+                : `
 Customer: ${customer.firstName} ${customer.lastName}
 ID: ${customer.id}
 Email: ${customer.email}
@@ -451,7 +476,8 @@ Phone: ${customer.phone || 'N/A'}
 Status: ${customer.status}
 Marketing: ${customer.acceptsMarketing ? 'Yes' : 'No'}
 Created: ${customer.createdAt}
-`);
+`,
+            );
             break;
           }
           case 'create': {
@@ -481,13 +507,18 @@ Created: ${customer.createdAt}
         switch (action) {
           case 'list': {
             const orders = await commerce.orders.list();
-            output(formatTable(orders.map(o => ({
-              id: o.id.slice(0, 8) + '...',
-              number: o.orderNumber,
-              status: o.status,
-              total: `${o.currency} ${o.totalAmount.toFixed(2)}`,
-              items: o.items?.length || 0
-            })), ['id', 'number', 'status', 'total', 'items']));
+            output(
+              formatTable(
+                orders.map((o) => ({
+                  id: o.id.slice(0, 8) + '...',
+                  number: o.orderNumber,
+                  status: o.status,
+                  total: `${o.currency} ${o.totalAmount.toFixed(2)}`,
+                  items: o.items?.length || 0,
+                })),
+                ['id', 'number', 'status', 'total', 'items'],
+              ),
+            );
             break;
           }
           case 'get': {
@@ -496,7 +527,10 @@ Created: ${customer.createdAt}
             const id = await resolveId(idArg, 'orders');
             const order = await commerce.orders.get(id);
             if (!order) throw new Error('Order not found');
-            output(jsonOutput ? order : `
+            output(
+              jsonOutput
+                ? order
+                : `
 Order: ${order.orderNumber}
 ID: ${order.id}
 Status: ${order.status}
@@ -505,18 +539,27 @@ Payment: ${order.paymentStatus}
 Fulfillment: ${order.fulfillmentStatus}
 Tracking: ${order.trackingNumber || 'N/A'}
 Items:
-${order.items?.map(i => `  - ${i.name} (${i.sku}) x${i.quantity} @ ${i.unitPrice}`).join('\n') || '  (no items)'}
+${order.items?.map((i) => `  - ${i.name} (${i.sku}) x${i.quantity} @ ${i.unitPrice}`).join('\n') || '  (no items)'}
 Created: ${order.createdAt}
-`);
+`,
+            );
             break;
           }
           case 'ship': {
             const [orderIdArg, trackingNumber] = actionArgs;
             if (!orderIdArg) throw new Error('Usage: orders ship <id> [tracking]');
-            await ensureWriteAllowed('orders', 'ship', `order ${orderIdArg}${trackingNumber ? ` tracking ${trackingNumber}` : ''}`);
+            await ensureWriteAllowed(
+              'orders',
+              'ship',
+              `order ${orderIdArg}${trackingNumber ? ` tracking ${trackingNumber}` : ''}`,
+            );
             const orderId = await resolveId(orderIdArg, 'orders');
             const order = await commerce.orders.ship(orderId, trackingNumber);
-            output(jsonOutput ? order : `Order ${order.orderNumber} shipped${trackingNumber ? ` (${trackingNumber})` : ''}`);
+            output(
+              jsonOutput
+                ? order
+                : `Order ${order.orderNumber} shipped${trackingNumber ? ` (${trackingNumber})` : ''}`,
+            );
             break;
           }
           case 'cancel': {
@@ -545,12 +588,17 @@ Created: ${order.createdAt}
         switch (action) {
           case 'list': {
             const products = await commerce.products.list();
-            output(formatTable(products.map(p => ({
-              id: p.id.slice(0, 8) + '...',
-              name: p.name,
-              slug: p.slug,
-              status: p.status
-            })), ['id', 'name', 'slug', 'status']));
+            output(
+              formatTable(
+                products.map((p) => ({
+                  id: p.id.slice(0, 8) + '...',
+                  name: p.name,
+                  slug: p.slug,
+                  status: p.status,
+                })),
+                ['id', 'name', 'slug', 'status'],
+              ),
+            );
             break;
           }
           case 'get': {
@@ -559,14 +607,18 @@ Created: ${order.createdAt}
             const id = await resolveId(idArg, 'products');
             const product = await commerce.products.get(id);
             if (!product) throw new Error('Product not found');
-            output(jsonOutput ? product : `
+            output(
+              jsonOutput
+                ? product
+                : `
 Product: ${product.name}
 ID: ${product.id}
 Slug: ${product.slug}
 Status: ${product.status}
 Description: ${product.description || 'N/A'}
 Created: ${product.createdAt}
-`);
+`,
+            );
             break;
           }
           case 'variant': {
@@ -575,13 +627,17 @@ Created: ${product.createdAt}
             const sku = await resolveSku(skuArg);
             const variant = await commerce.products.getVariantBySku(sku);
             if (!variant) throw new Error(`Variant ${skuArg} not found`);
-            output(jsonOutput ? variant : `
+            output(
+              jsonOutput
+                ? variant
+                : `
 Variant: ${variant.name}
 SKU: ${variant.sku}
 Price: ${variant.price}
 Compare At: ${variant.compareAtPrice || 'N/A'}
 Default: ${variant.isDefault ? 'Yes' : 'No'}
-`);
+`,
+            );
             break;
           }
           case 'count': {
@@ -611,7 +667,7 @@ Default: ${variant.isDefault ? 'Yes' : 'No'}
                       sku: variant.sku,
                       name: variant.name || product.name,
                       onHand: stock?.totalOnHand ?? 0,
-                      available: stock?.totalAvailable ?? 0
+                      available: stock?.totalAvailable ?? 0,
                     });
                   }
                 }
@@ -626,12 +682,16 @@ Default: ${variant.isDefault ? 'Yes' : 'No'}
             const sku = await resolveSku(skuArg);
             const stock = await commerce.inventory.getStock(sku);
             if (!stock) throw new Error(`No inventory for SKU ${skuArg}`);
-            output(jsonOutput ? stock : `
+            output(
+              jsonOutput
+                ? stock
+                : `
 Stock for ${stock.sku} (${stock.name}):
   On Hand:   ${stock.totalOnHand}
   Allocated: ${stock.totalAllocated}
   Available: ${stock.totalAvailable}
-`);
+`,
+            );
             break;
           }
           case 'adjust': {
@@ -641,11 +701,19 @@ Stock for ${stock.sku} (${stock.name}):
             if (!skuArg || isNaN(qty) || !reason) {
               throw new Error('Usage: inventory adjust <sku> <quantity> <reason>');
             }
-            await ensureWriteAllowed('inventory', 'adjust', `${skuArg} ${qty > 0 ? '+' : ''}${qty} (${reason})`);
+            await ensureWriteAllowed(
+              'inventory',
+              'adjust',
+              `${skuArg} ${qty > 0 ? '+' : ''}${qty} (${reason})`,
+            );
             const sku = await resolveSku(skuArg);
             await commerce.inventory.adjust(sku, qty, reason);
             const stock = await commerce.inventory.getStock(sku);
-            output(jsonOutput ? stock : `Adjusted ${sku} by ${qty > 0 ? '+' : ''}${qty}. New on-hand: ${stock.totalOnHand}`);
+            output(
+              jsonOutput
+                ? stock
+                : `Adjusted ${sku} by ${qty > 0 ? '+' : ''}${qty}. New on-hand: ${stock.totalOnHand}`,
+            );
             break;
           }
           case 'create': {
@@ -671,13 +739,18 @@ Stock for ${stock.sku} (${stock.name}):
         switch (action) {
           case 'list': {
             const returns = await commerce.returns.list();
-            output(formatTable(returns.map(r => ({
-              id: r.id.slice(0, 8) + '...',
-              order: r.orderId.slice(0, 8) + '...',
-              status: r.status,
-              reason: r.reason,
-              created: r.createdAt.slice(0, 10)
-            })), ['id', 'order', 'status', 'reason', 'created']));
+            output(
+              formatTable(
+                returns.map((r) => ({
+                  id: r.id.slice(0, 8) + '...',
+                  order: r.orderId.slice(0, 8) + '...',
+                  status: r.status,
+                  reason: r.reason,
+                  created: r.createdAt.slice(0, 10),
+                })),
+                ['id', 'order', 'status', 'reason', 'created'],
+              ),
+            );
             break;
           }
           case 'get': {
@@ -686,13 +759,17 @@ Stock for ${stock.sku} (${stock.name}):
             const id = await resolveId(idArg, 'returns');
             const ret = await commerce.returns.get(id);
             if (!ret) throw new Error('Return not found');
-            output(jsonOutput ? ret : `
+            output(
+              jsonOutput
+                ? ret
+                : `
 Return: ${ret.id}
 Order: ${ret.orderId}
 Status: ${ret.status}
 Reason: ${ret.reason}
 Created: ${ret.createdAt}
-`);
+`,
+            );
             break;
           }
           case 'approve': {
@@ -741,12 +818,16 @@ Created: ${ret.createdAt}
           case 'search': {
             const scope = normalizeVectorScope(actionArgs[0]);
             if (!scope) {
-              throw new Error('Usage: vector search <products|customers|orders|inventory> <query> [limit]');
+              throw new Error(
+                'Usage: vector search <products|customers|orders|inventory> <query> [limit]',
+              );
             }
 
             const { query, limit } = parseSearchArgs(actionArgs.slice(1));
             if (!query) {
-              throw new Error('Usage: vector search <products|customers|orders|inventory> <query> [limit]');
+              throw new Error(
+                'Usage: vector search <products|customers|orders|inventory> <query> [limit]',
+              );
             }
 
             let results = [];
@@ -756,12 +837,17 @@ Created: ${ret.createdAt}
                 if (jsonOutput) {
                   output({ scope, query, count: results.length, results });
                 } else {
-                  output(formatTable(results.map(r => ({
-                    id: r.product.id.slice(0, 8) + '...',
-                    name: r.product.name,
-                    score: r.score.toFixed(3),
-                    distance: r.distance.toFixed(4)
-                  })), ['id', 'name', 'score', 'distance']));
+                  output(
+                    formatTable(
+                      results.map((r) => ({
+                        id: r.product.id.slice(0, 8) + '...',
+                        name: r.product.name,
+                        score: r.score.toFixed(3),
+                        distance: r.distance.toFixed(4),
+                      })),
+                      ['id', 'name', 'score', 'distance'],
+                    ),
+                  );
                 }
                 break;
               case 'customers':
@@ -769,12 +855,17 @@ Created: ${ret.createdAt}
                 if (jsonOutput) {
                   output({ scope, query, count: results.length, results });
                 } else {
-                  output(formatTable(results.map(r => ({
-                    id: r.customer.id.slice(0, 8) + '...',
-                    name: `${r.customer.firstName} ${r.customer.lastName}`,
-                    email: r.customer.email,
-                    score: r.score.toFixed(3)
-                  })), ['id', 'name', 'email', 'score']));
+                  output(
+                    formatTable(
+                      results.map((r) => ({
+                        id: r.customer.id.slice(0, 8) + '...',
+                        name: `${r.customer.firstName} ${r.customer.lastName}`,
+                        email: r.customer.email,
+                        score: r.score.toFixed(3),
+                      })),
+                      ['id', 'name', 'email', 'score'],
+                    ),
+                  );
                 }
                 break;
               case 'orders':
@@ -782,13 +873,18 @@ Created: ${ret.createdAt}
                 if (jsonOutput) {
                   output({ scope, query, count: results.length, results });
                 } else {
-                  output(formatTable(results.map(r => ({
-                    id: r.order.id.slice(0, 8) + '...',
-                    number: r.order.orderNumber,
-                    status: r.order.status,
-                    total: `${r.order.currency} ${r.order.totalAmount.toFixed(2)}`,
-                    score: r.score.toFixed(3)
-                  })), ['id', 'number', 'status', 'total', 'score']));
+                  output(
+                    formatTable(
+                      results.map((r) => ({
+                        id: r.order.id.slice(0, 8) + '...',
+                        number: r.order.orderNumber,
+                        status: r.order.status,
+                        total: `${r.order.currency} ${r.order.totalAmount.toFixed(2)}`,
+                        score: r.score.toFixed(3),
+                      })),
+                      ['id', 'number', 'status', 'total', 'score'],
+                    ),
+                  );
                 }
                 break;
               case 'inventory':
@@ -796,12 +892,17 @@ Created: ${ret.createdAt}
                 if (jsonOutput) {
                   output({ scope, query, count: results.length, results });
                 } else {
-                  output(formatTable(results.map(r => ({
-                    id: String(r.item.id),
-                    sku: r.item.sku,
-                    name: r.item.name,
-                    score: r.score.toFixed(3)
-                  })), ['id', 'sku', 'name', 'score']));
+                  output(
+                    formatTable(
+                      results.map((r) => ({
+                        id: String(r.item.id),
+                        sku: r.item.sku,
+                        name: r.item.name,
+                        score: r.score.toFixed(3),
+                      })),
+                      ['id', 'sku', 'name', 'score'],
+                    ),
+                  );
                 }
                 break;
             }
@@ -833,7 +934,11 @@ Created: ${ret.createdAt}
                 break;
             }
 
-            output(jsonOutput ? { scope, id: resolvedId, indexed: true } : `Indexed ${scope} ${resolvedId}`);
+            output(
+              jsonOutput
+                ? { scope, id: resolvedId, indexed: true }
+                : `Indexed ${scope} ${resolvedId}`,
+            );
             break;
           }
 
@@ -869,14 +974,16 @@ Created: ${ret.createdAt}
             if (jsonOutput) {
               output(stats);
             } else {
-              output([
-                `Model: ${stats.model}`,
-                `Dimensions: ${stats.dimensions}`,
-                `Products: ${stats.productCount}`,
-                `Customers: ${stats.customerCount}`,
-                `Orders: ${stats.orderCount}`,
-                `Inventory: ${stats.inventoryCount}`
-              ].join('\n'));
+              output(
+                [
+                  `Model: ${stats.model}`,
+                  `Dimensions: ${stats.dimensions}`,
+                  `Products: ${stats.productCount}`,
+                  `Customers: ${stats.customerCount}`,
+                  `Orders: ${stats.orderCount}`,
+                  `Inventory: ${stats.inventoryCount}`,
+                ].join('\n'),
+              );
             }
             break;
           }
@@ -902,13 +1009,13 @@ Created: ${ret.createdAt}
           default:
             throw new Error(
               `Unknown action: vector ${action}\n\n` +
-              'Available actions:\n' +
-              '  search <scope> <query> [limit]\n' +
-              '  index <scope> <id>\n' +
-              '  index-all <scope>\n' +
-              '  stats\n' +
-              '  clear <scope>\n' +
-              '  clear-all'
+                'Available actions:\n' +
+                '  search <scope> <query> [limit]\n' +
+                '  index <scope> <id>\n' +
+                '  index-all <scope>\n' +
+                '  stats\n' +
+                '  clear <scope>\n' +
+                '  clear-all',
             );
         }
         break;
@@ -936,4 +1043,5 @@ Created: ${ret.createdAt}
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-direct', main);

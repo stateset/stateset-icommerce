@@ -31,6 +31,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import chalk from 'chalk';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-daemon');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -181,7 +183,7 @@ function run(cmd, opts = {}) {
       stdio: opts.silent ? 'pipe' : 'inherit',
       ...opts,
     });
-    if (result == null) return '';
+    if (result === null || result === undefined) return '';
     return typeof result === 'string' ? result.trim() : String(result).trim();
   } catch (err) {
     if (opts.ignoreError) return '';
@@ -208,11 +210,6 @@ function serviceExists(paths) {
   return existsSync(paths.serviceFile);
 }
 
-function isRunning(paths) {
-  const status = runQuiet(`${paths.systemctl} is-active ${SERVICE_NAME}`);
-  return status === 'active';
-}
-
 // ============================================================================
 // Config Validation
 // ============================================================================
@@ -225,7 +222,7 @@ function validateConfigDetailed(configPath) {
     warnings: [],
     channels: { enabled: [], count: 0 },
     httpGateway: null,
-    env: { path: join(dirname(configPath), 'env'), exists: false, anthropicKeySet: null }
+    env: { path: join(dirname(configPath), 'env'), exists: false, anthropicKeySet: null },
   };
 
   if (!existsSync(configPath)) {
@@ -296,7 +293,11 @@ function validateConfig(configPath) {
   }
 
   if (result.channels.count > 0) {
-    console.log(chalk.green(`  ${result.channels.count} channel(s) enabled: ${result.channels.enabled.join(', ')}`));
+    console.log(
+      chalk.green(
+        `  ${result.channels.count} channel(s) enabled: ${result.channels.enabled.join(', ')}`,
+      ),
+    );
   }
 
   if (result.httpGateway) {
@@ -322,9 +323,9 @@ function collectStatus(paths, port = 8080) {
       activeState: active || 'unknown',
       enabled: enabled === 'enabled',
       enabledState: enabled || 'unknown',
-      mode: paths.isUser ? 'user' : 'system'
+      mode: paths.isUser ? 'user' : 'system',
     },
-    port
+    port,
   };
 
   if (active === 'active') {
@@ -345,7 +346,7 @@ function collectStatus(paths, port = 8080) {
         status: health.status,
         uptimeMs: health.uptime,
         uptimeSec: typeof health.uptime === 'number' ? Math.floor(health.uptime / 1000) : undefined,
-        timestamp: health.timestamp
+        timestamp: health.timestamp,
       };
     } catch {
       data.health = { available: false };
@@ -368,7 +369,9 @@ function collectStatus(paths, port = 8080) {
         try {
           const serve = JSON.parse(serveStatus);
           serveActive = Object.keys(serve).length > 0;
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
 
       const funnelStatus = runQuiet('tailscale funnel status --json 2>/dev/null');
@@ -377,7 +380,9 @@ function collectStatus(paths, port = 8080) {
         try {
           const funnel = JSON.parse(funnelStatus);
           funnelActive = Object.keys(funnel).length > 0;
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
 
       data.tailscale = {
@@ -386,7 +391,7 @@ function collectStatus(paths, port = 8080) {
         tailnet,
         url,
         serveActive,
-        funnelActive
+        funnelActive,
       };
     } catch {
       data.tailscale = { connected: false };
@@ -395,16 +400,18 @@ function collectStatus(paths, port = 8080) {
     data.tailscale = { connected: false };
   }
 
-  const tunnelServices = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const tunnelServices = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`,
+  );
   const serviceList = tunnelServices ? tunnelServices.split('\n').filter(Boolean) : [];
-  const persistentRunning = serviceList.filter(line => line.includes('running')).length;
+  const persistentRunning = serviceList.filter((line) => line.includes('running')).length;
   const tunnelProcs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
   const adhocCount = parseInt(tunnelProcs || '0', 10);
 
   data.sshTunnels = {
     persistentTotal: serviceList.length,
     persistentRunning,
-    adhocCount
+    adhocCount,
   };
 
   if (active === 'active') {
@@ -413,7 +420,7 @@ function collectStatus(paths, port = 8080) {
     if (!Number.isNaN(bytes)) {
       data.memory = {
         bytes,
-        mb: Math.round(bytes / 1024 / 1024)
+        mb: Math.round(bytes / 1024 / 1024),
       };
     }
   }
@@ -427,7 +434,7 @@ function collectHealth(port = 8080) {
     ok: false,
     port,
     url,
-    httpStatus: null
+    httpStatus: null,
   };
 
   const status = runQuiet(`curl -s -o /dev/null -w "%{http_code}" ${url}`);
@@ -453,7 +460,9 @@ function collectHealth(port = 8080) {
     if (metricsBody) {
       try {
         result.metrics = JSON.parse(metricsBody);
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     }
   } else if (status) {
     result.error = `Health check failed (HTTP ${status})`;
@@ -466,7 +475,9 @@ function collectHealth(port = 8080) {
 
 function collectLogs(lines, paths) {
   const flag = paths.systemctlFlag ? ' ' + paths.systemctlFlag : '';
-  const output = runQuiet(`journalctl -u ${SERVICE_NAME}${flag} --no-pager -n ${lines} --output cat`);
+  const output = runQuiet(
+    `journalctl -u ${SERVICE_NAME}${flag} --no-pager -n ${lines} --output cat`,
+  );
   const entries = output ? output.split('\n').filter(Boolean) : [];
   return { lines: entries, count: entries.length };
 }
@@ -502,7 +513,9 @@ function collectTailscaleStatus() {
       try {
         const serve = JSON.parse(serveStatus);
         serveActive = Object.keys(serve).length > 0;
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     }
 
     let funnelActive = false;
@@ -511,7 +524,9 @@ function collectTailscaleStatus() {
       try {
         const funnel = JSON.parse(funnelStatus);
         funnelActive = Object.keys(funnel).length > 0;
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     }
 
     const proxyService = runQuiet(`systemctl is-active ${TAILSCALE_SERVICE}`);
@@ -524,7 +539,7 @@ function collectTailscaleStatus() {
       serveActive,
       funnelActive,
       proxyService: proxyService || null,
-      status: ts
+      status: ts,
     };
   } catch {
     return { connected: false, error: 'Unable to parse Tailscale status', raw: tsStatus };
@@ -532,7 +547,9 @@ function collectTailscaleStatus() {
 }
 
 function collectSshTunnelList(paths) {
-  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend 2>/dev/null`);
+  const services = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend 2>/dev/null`,
+  );
   const persistent = [];
   if (services && services.trim()) {
     for (const line of services.split('\n').filter(Boolean)) {
@@ -556,9 +573,11 @@ function collectSshTunnelList(paths) {
 }
 
 function collectSshTunnelStatus(paths) {
-  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const services = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`,
+  );
   const serviceList = services ? services.split('\n').filter(Boolean) : [];
-  const running = serviceList.filter(line => line.includes('running')).length;
+  const running = serviceList.filter((line) => line.includes('running')).length;
 
   const procs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
   const adhocCount = parseInt(procs || '0', 10);
@@ -570,7 +589,7 @@ function collectSshTunnelStatus(paths) {
     persistent: { configured: serviceList.length, running },
     adhoc: { count: adhocCount },
     sshKey: { path: keyPath, present: existsSync(keyPath) },
-    autossh: { available: Boolean(autossh), path: autossh || null }
+    autossh: { available: Boolean(autossh), path: autossh || null },
   };
 }
 
@@ -638,17 +657,20 @@ function cmdInstall(opts) {
   // 5. Create env file
   const envFile = join(paths.configDir, 'env');
   if (!existsSync(envFile)) {
-    writeFileSync(envFile, [
-      '# StateSet Gateway Environment',
-      '# Add your API keys here',
-      'ANTHROPIC_API_KEY=',
-      '# OPENAI_API_KEY=',
-      '# GEMINI_API_KEY=',
-      '# TELEGRAM_BOT_TOKEN=',
-      '# DISCORD_BOT_TOKEN=',
-      '# SLACK_BOT_TOKEN=',
-      '# SLACK_APP_TOKEN=',
-    ].join('\n') + '\n');
+    writeFileSync(
+      envFile,
+      [
+        '# StateSet Gateway Environment',
+        '# Add your API keys here',
+        'ANTHROPIC_API_KEY=',
+        '# OPENAI_API_KEY=',
+        '# GEMINI_API_KEY=',
+        '# TELEGRAM_BOT_TOKEN=',
+        '# DISCORD_BOT_TOKEN=',
+        '# SLACK_BOT_TOKEN=',
+        '# SLACK_APP_TOKEN=',
+      ].join('\n') + '\n',
+    );
     if (!paths.isUser) {
       run(`chmod 600 ${envFile}`);
     }
@@ -704,7 +726,12 @@ Next steps:
 
 function cmdStart(paths) {
   if (!serviceExists(paths)) {
-    console.error('Service not installed. Run: ' + (paths.isUser ? '' : 'sudo ') + 'stateset-daemon install' + (paths.isUser ? ' --user' : ''));
+    console.error(
+      'Service not installed. Run: ' +
+        (paths.isUser ? '' : 'sudo ') +
+        'stateset-daemon install' +
+        (paths.isUser ? ' --user' : ''),
+    );
     process.exit(1);
   }
 
@@ -767,12 +794,15 @@ function cmdStatus(paths, port = 8080) {
   const active = runQuiet(`${paths.systemctl} is-active ${SERVICE_NAME}`);
   const enabled = runQuiet(`${paths.systemctl} is-enabled ${SERVICE_NAME}`);
 
-  const statusIcon = active === 'active'
-    ? chalk.green('●') + ' ' + chalk.green('active (running)')
-    : chalk.red('○') + ' ' + chalk.red(active || 'not installed');
+  const statusIcon =
+    active === 'active'
+      ? chalk.green('●') + ' ' + chalk.green('active (running)')
+      : chalk.red('○') + ' ' + chalk.red(active || 'not installed');
 
   console.log(`  ${chalk.dim('Service:')}    ${statusIcon}`);
-  console.log(`  ${chalk.dim('Enabled:')}    ${enabled === 'enabled' ? chalk.green('yes') : chalk.yellow(enabled || 'unknown')}`);
+  console.log(
+    `  ${chalk.dim('Enabled:')}    ${enabled === 'enabled' ? chalk.green('yes') : chalk.yellow(enabled || 'unknown')}`,
+  );
   console.log(`  ${chalk.dim('Mode:')}       ${paths.isUser ? 'user' : 'system'}`);
 
   // PID and uptime
@@ -810,7 +840,9 @@ function cmdStatus(paths, port = 8080) {
       console.log(`\n  ${chalk.bold('Tailscale')}`);
       console.log(`  ${chalk.dim('Status:')}     ${chalk.green('connected')}`);
       console.log(`  ${chalk.dim('Hostname:')}   ${chalk.cyan(`${hostname}.${tailnetName}`)}`);
-      console.log(`  ${chalk.dim('URL:')}        ${chalk.cyan(`https://${hostname}.${tailnetName}`)}`);
+      console.log(
+        `  ${chalk.dim('URL:')}        ${chalk.cyan(`https://${hostname}.${tailnetName}`)}`,
+      );
 
       // Check serve/funnel
       const serveStatus = runQuiet('tailscale serve status --json 2>/dev/null');
@@ -820,7 +852,9 @@ function cmdStatus(paths, port = 8080) {
           if (Object.keys(serve).length > 0) {
             console.log(`  ${chalk.dim('Serve:')}      ${chalk.green('active')}`);
           }
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
 
       const funnelStatus = runQuiet('tailscale funnel status --json 2>/dev/null');
@@ -828,9 +862,13 @@ function cmdStatus(paths, port = 8080) {
         try {
           const funnel = JSON.parse(funnelStatus);
           if (Object.keys(funnel).length > 0) {
-            console.log(`  ${chalk.dim('Funnel:')}     ${chalk.green('active')} ${chalk.dim('(public internet)')}`);
+            console.log(
+              `  ${chalk.dim('Funnel:')}     ${chalk.green('active')} ${chalk.dim('(public internet)')}`,
+            );
           }
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }
     } catch {
       console.log(`\n  ${chalk.dim('Tailscale:')}  ${chalk.yellow('not connected')}`);
@@ -838,15 +876,21 @@ function cmdStatus(paths, port = 8080) {
   }
 
   // SSH tunnel status
-  const tunnelServices = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const tunnelServices = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`,
+  );
   const tunnelProcs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
-  const persistentCount = tunnelServices ? tunnelServices.split('\n').filter(l => l.includes('running')).length : 0;
+  const persistentCount = tunnelServices
+    ? tunnelServices.split('\n').filter((l) => l.includes('running')).length
+    : 0;
   const adhocCount = parseInt(tunnelProcs || '0', 10);
 
   if (persistentCount > 0 || adhocCount > 0) {
     console.log(`\n  ${chalk.bold('SSH Tunnels')}`);
-    if (persistentCount > 0) console.log(`  ${chalk.dim('Persistent:')} ${chalk.green(persistentCount + ' running')}`);
-    if (adhocCount > 0) console.log(`  ${chalk.dim('Ad-hoc:')}     ${chalk.green(adhocCount + ' process(es)')}`);
+    if (persistentCount > 0)
+      console.log(`  ${chalk.dim('Persistent:')} ${chalk.green(persistentCount + ' running')}`);
+    if (adhocCount > 0)
+      console.log(`  ${chalk.dim('Ad-hoc:')}     ${chalk.green(adhocCount + ' process(es)')}`);
   }
 
   // Memory
@@ -865,11 +909,9 @@ function cmdLogs(lines, follow, paths) {
   const flagParts = paths.systemctlFlag ? [paths.systemctlFlag] : [];
 
   if (follow) {
-    const child = spawn('journalctl', [
-      '-u', SERVICE_NAME,
-      ...flagParts,
-      '-f', '--output', 'cat',
-    ], { stdio: 'inherit' });
+    const child = spawn('journalctl', ['-u', SERVICE_NAME, ...flagParts, '-f', '--output', 'cat'], {
+      stdio: 'inherit',
+    });
 
     process.on('SIGINT', () => {
       child.kill('SIGTERM');
@@ -953,13 +995,17 @@ function cmdUpdate(paths) {
     run(`${paths.systemctl} start ${SERVICE_NAME}`);
   }
 
-  const newVersion = runQuiet(`node -e "console.log(JSON.parse(require('fs').readFileSync('${paths.appDir}/package.json','utf-8')).version)"`);
+  const newVersion = runQuiet(
+    `node -e "console.log(JSON.parse(require('fs').readFileSync('${paths.appDir}/package.json','utf-8')).version)"`,
+  );
   console.log(chalk.green(`\nUpdate complete. Version: ${newVersion || 'unknown'}`));
 }
 
 function cmdHealth(port = 8080) {
   try {
-    const result = runQuiet(`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${port}/health`);
+    const result = runQuiet(
+      `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${port}/health`,
+    );
     if (result === '200') {
       const body = runQuiet(`curl -s http://127.0.0.1:${port}/health`);
       const data = JSON.parse(body);
@@ -978,7 +1024,9 @@ function cmdHealth(port = 8080) {
       process.exit(1);
     }
   } catch {
-    console.error(`${chalk.red('○')} Health check failed: Gateway not reachable at http://127.0.0.1:${port}`);
+    console.error(
+      `${chalk.red('○')} Health check failed: Gateway not reachable at http://127.0.0.1:${port}`,
+    );
     process.exit(1);
   }
 }
@@ -991,18 +1039,38 @@ function cmdUninstall(paths) {
   console.log(chalk.bold('Uninstalling StateSet Gateway...'));
 
   // Stop services
-  run(`${paths.systemctl} stop ${SERVICE_NAME} 2>/dev/null || true`, { silent: true, ignoreError: true });
-  run(`${paths.systemctl} stop ${TAILSCALE_SERVICE} 2>/dev/null || true`, { silent: true, ignoreError: true });
-  run(`${paths.systemctl} disable ${SERVICE_NAME} 2>/dev/null || true`, { silent: true, ignoreError: true });
-  run(`${paths.systemctl} disable ${TAILSCALE_SERVICE} 2>/dev/null || true`, { silent: true, ignoreError: true });
+  run(`${paths.systemctl} stop ${SERVICE_NAME} 2>/dev/null || true`, {
+    silent: true,
+    ignoreError: true,
+  });
+  run(`${paths.systemctl} stop ${TAILSCALE_SERVICE} 2>/dev/null || true`, {
+    silent: true,
+    ignoreError: true,
+  });
+  run(`${paths.systemctl} disable ${SERVICE_NAME} 2>/dev/null || true`, {
+    silent: true,
+    ignoreError: true,
+  });
+  run(`${paths.systemctl} disable ${TAILSCALE_SERVICE} 2>/dev/null || true`, {
+    silent: true,
+    ignoreError: true,
+  });
 
   // Stop SSH tunnel services
-  const tunnelServices = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const tunnelServices = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`,
+  );
   if (tunnelServices) {
     for (const line of tunnelServices.split('\n').filter(Boolean)) {
       const svc = line.trim().split(/\s+/)[0];
-      run(`${paths.systemctl} stop ${svc} 2>/dev/null || true`, { silent: true, ignoreError: true });
-      run(`${paths.systemctl} disable ${svc} 2>/dev/null || true`, { silent: true, ignoreError: true });
+      run(`${paths.systemctl} stop ${svc} 2>/dev/null || true`, {
+        silent: true,
+        ignoreError: true,
+      });
+      run(`${paths.systemctl} disable ${svc} 2>/dev/null || true`, {
+        silent: true,
+        ignoreError: true,
+      });
     }
   }
 
@@ -1036,12 +1104,18 @@ To remove everything:
 
 function cmdTailscale(action, arg, port = 8080) {
   switch (action) {
-    case 'setup':   return tailscaleSetup(port);
-    case 'serve':   return tailscaleServe(arg, port);
-    case 'funnel':  return tailscaleFunnel(arg, port);
-    case 'status':  return tailscaleStatus();
-    case 'dns':     return tailscaleDns(arg);
-    default:        return tailscaleStatus();
+    case 'setup':
+      return tailscaleSetup(port);
+    case 'serve':
+      return tailscaleServe(arg, port);
+    case 'funnel':
+      return tailscaleFunnel(arg, port);
+    case 'status':
+      return tailscaleStatus();
+    case 'dns':
+      return tailscaleDns(arg);
+    default:
+      return tailscaleStatus();
   }
 }
 
@@ -1063,7 +1137,9 @@ function tailscaleSetup(port) {
     try {
       const ts = JSON.parse(tsStatus);
       authenticated = ts.BackendState === 'Running';
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!authenticated) {
@@ -1094,7 +1170,9 @@ function tailscaleSetup(port) {
       const s = JSON.parse(statusJson);
       hostname = s.Self?.HostName || hostname;
       tailnet = s.MagicDNSSuffix || tailnet;
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
   console.log(`
@@ -1107,10 +1185,10 @@ Next steps:
      ${chalk.yellow(`sudo systemctl start ${TAILSCALE_SERVICE}`)}
 
   2. Or use Tailscale Serve directly:
-     ${chalk.yellow('stateset-daemon tailscale serve')}
+     ${chalk.yellow(`stateset-daemon --port ${port} tailscale serve`)}
 
   3. For public internet access (Funnel):
-     ${chalk.yellow('stateset-daemon tailscale funnel')}
+     ${chalk.yellow(`stateset-daemon --port ${port} tailscale funnel`)}
 `);
 }
 
@@ -1177,12 +1255,16 @@ function tailscaleStatus() {
     const tailnet = ts.MagicDNSSuffix || '';
 
     console.log(chalk.bold('\nTailscale Status\n'));
-    console.log(`  ${chalk.dim('State:')}       ${ts.BackendState === 'Running' ? chalk.green(ts.BackendState) : chalk.yellow(ts.BackendState || 'unknown')}`);
+    console.log(
+      `  ${chalk.dim('State:')}       ${ts.BackendState === 'Running' ? chalk.green(ts.BackendState) : chalk.yellow(ts.BackendState || 'unknown')}`,
+    );
     console.log(`  ${chalk.dim('Hostname:')}    ${self.HostName || 'unknown'}`);
     console.log(`  ${chalk.dim('Tailnet:')}     ${tailnet}`);
     console.log(`  ${chalk.dim('IP:')}          ${(self.TailscaleIPs || []).join(', ')}`);
     console.log(`  ${chalk.dim('DNS Name:')}    ${chalk.cyan(`${self.HostName}.${tailnet}`)}`);
-    console.log(`  ${chalk.dim('HTTPS URL:')}   ${chalk.cyan(`https://${self.HostName}.${tailnet}`)}`);
+    console.log(
+      `  ${chalk.dim('HTTPS URL:')}   ${chalk.cyan(`https://${self.HostName}.${tailnet}`)}`,
+    );
 
     // Check serve status
     const serveStatus = runQuiet('tailscale serve status --json 2>/dev/null');
@@ -1190,8 +1272,12 @@ function tailscaleStatus() {
       try {
         const serve = JSON.parse(serveStatus);
         const hasServe = Object.keys(serve).length > 0;
-        console.log(`  ${chalk.dim('Serve:')}       ${hasServe ? chalk.green('active') : chalk.dim('inactive')}`);
-      } catch {}
+        console.log(
+          `  ${chalk.dim('Serve:')}       ${hasServe ? chalk.green('active') : chalk.dim('inactive')}`,
+        );
+      } catch {
+        /* ignore */
+      }
     }
 
     // Check funnel status
@@ -1200,8 +1286,12 @@ function tailscaleStatus() {
       try {
         const funnel = JSON.parse(funnelStatus);
         const hasFunnel = Object.keys(funnel).length > 0;
-        console.log(`  ${chalk.dim('Funnel:')}      ${hasFunnel ? chalk.green('active') + ' ' + chalk.dim('(public internet)') : chalk.dim('inactive')}`);
-      } catch {}
+        console.log(
+          `  ${chalk.dim('Funnel:')}      ${hasFunnel ? chalk.green('active') + ' ' + chalk.dim('(public internet)') : chalk.dim('inactive')}`,
+        );
+      } catch {
+        /* ignore */
+      }
     }
 
     // List peers
@@ -1219,7 +1309,9 @@ function tailscaleStatus() {
 
     // Proxy service status
     const tsActive = runQuiet(`systemctl is-active ${TAILSCALE_SERVICE}`);
-    console.log(`\n  ${chalk.dim('Proxy Service:')} ${tsActive === 'active' ? chalk.green(tsActive) : chalk.yellow(tsActive || 'not installed')}`);
+    console.log(
+      `\n  ${chalk.dim('Proxy Service:')} ${tsActive === 'active' ? chalk.green(tsActive) : chalk.yellow(tsActive || 'not installed')}`,
+    );
   } catch {
     console.log('Tailscale status (raw):');
     run('tailscale status', { ignoreError: true });
@@ -1236,8 +1328,12 @@ function tailscaleDns(hostname) {
       try {
         const ts = JSON.parse(tsStatus);
         const self = ts.Self || {};
-        console.log(`Current hostname: ${chalk.cyan(`${self.HostName}.${ts.MagicDNSSuffix || ''}`)}`);
-      } catch {}
+        console.log(
+          `Current hostname: ${chalk.cyan(`${self.HostName}.${ts.MagicDNSSuffix || ''}`)}`,
+        );
+      } catch {
+        /* ignore */
+      }
     }
     console.log(`\nTo change hostname:`);
     console.log(`  stateset-daemon tailscale dns <new-hostname>`);
@@ -1257,7 +1353,9 @@ function getTailscaleUrl() {
       const hostname = s.Self?.HostName;
       const tailnet = s.MagicDNSSuffix;
       if (hostname && tailnet) return `https://${hostname}.${tailnet}`;
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
   return 'https://<hostname>.<tailnet>.ts.net';
 }
@@ -1268,8 +1366,8 @@ function getTailscaleUrl() {
 
 function cmdSshTunnel(host, port, opts, paths) {
   // Subcommand dispatch
-  if (host === 'list')   return sshTunnelList(paths);
-  if (host === 'stop')   return sshTunnelStop(opts.name || positionals[2], paths);
+  if (host === 'list') return sshTunnelList(paths);
+  if (host === 'stop') return sshTunnelStop(opts.name || positionals[2], paths);
   if (host === 'keygen') return sshKeyGen();
   if (host === 'status') return sshTunnelStatus(paths);
 
@@ -1283,7 +1381,7 @@ function cmdSshTunnel(host, port, opts, paths) {
   }
 
   if (opts.persistent) return sshTunnelPersistent(host, port, opts.reverse, opts.name, paths);
-  if (opts.reverse)    return sshTunnelReverse(host, port);
+  if (opts.reverse) return sshTunnelReverse(host, port);
 
   // Default: forward tunnel
   return sshTunnelForward(host, port);
@@ -1295,12 +1393,22 @@ function sshTunnelForward(host, port = 8080) {
   console.log(`  ${chalk.dim('Remote:')} ${host}:${port}`);
   console.log(`  ${chalk.dim('Mode:')}   Forward (access remote from local)\n`);
 
-  const child = spawn('ssh', [
-    '-N', '-L', `${port}:127.0.0.1:${port}`, host,
-    '-o', 'ServerAliveInterval=60',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', 'ExitOnForwardFailure=yes',
-  ], { stdio: 'inherit' });
+  const child = spawn(
+    'ssh',
+    [
+      '-N',
+      '-L',
+      `${port}:127.0.0.1:${port}`,
+      host,
+      '-o',
+      'ServerAliveInterval=60',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-o',
+      'ExitOnForwardFailure=yes',
+    ],
+    { stdio: 'inherit' },
+  );
 
   child.on('error', (err) => {
     console.error(`SSH error: ${err.message}`);
@@ -1323,13 +1431,24 @@ function sshTunnelReverse(host, port = 8080) {
   console.log(`  ${chalk.dim('Remote:')} ${host}:${port}`);
   console.log(`  ${chalk.dim('Mode:')}   Reverse (expose local gateway on remote server)\n`);
 
-  const child = spawn('ssh', [
-    '-N', '-R', `${port}:127.0.0.1:${port}`, host,
-    '-o', 'ServerAliveInterval=60',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'GatewayPorts=yes',
-  ], { stdio: 'inherit' });
+  const child = spawn(
+    'ssh',
+    [
+      '-N',
+      '-R',
+      `${port}:127.0.0.1:${port}`,
+      host,
+      '-o',
+      'ServerAliveInterval=60',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-o',
+      'ExitOnForwardFailure=yes',
+      '-o',
+      'GatewayPorts=yes',
+    ],
+    { stdio: 'inherit' },
+  );
 
   child.on('error', (err) => {
     console.error(`SSH error: ${err.message}`);
@@ -1370,18 +1489,19 @@ function sshTunnelPersistent(host, port = 8080, reverse = false, name, paths) {
 
   const envFile = join(paths.tunnelEnvDir, `${tunnelName}.env`);
   const mode = reverse ? 'reverse' : 'forward';
-  const sshFlag = reverse
-    ? `-R ${port}:127.0.0.1:${port}`
-    : `-L ${port}:127.0.0.1:${port}`;
+  const sshFlag = reverse ? `-R ${port}:127.0.0.1:${port}` : `-L ${port}:127.0.0.1:${port}`;
 
-  writeFileSync(envFile, [
-    `# SSH Tunnel: ${tunnelName}`,
-    `# Created: ${new Date().toISOString()}`,
-    `SSH_HOST=${host}`,
-    `SSH_PORT_FLAG=${sshFlag}`,
-    `LOCAL_PORT=${port}`,
-    `TUNNEL_MODE=${mode}`,
-  ].join('\n') + '\n');
+  writeFileSync(
+    envFile,
+    [
+      `# SSH Tunnel: ${tunnelName}`,
+      `# Created: ${new Date().toISOString()}`,
+      `SSH_HOST=${host}`,
+      `SSH_PORT_FLAG=${sshFlag}`,
+      `LOCAL_PORT=${port}`,
+      `TUNNEL_MODE=${mode}`,
+    ].join('\n') + '\n',
+  );
 
   run(`${paths.systemctl} daemon-reload`);
   run(`${paths.systemctl} enable ${instanceName}`);
@@ -1403,7 +1523,9 @@ function sshTunnelList(paths) {
   console.log(chalk.bold('\nSSH Tunnels\n'));
 
   // Check systemd tunnel services
-  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend 2>/dev/null`);
+  const services = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend 2>/dev/null`,
+  );
   if (services && services.trim()) {
     console.log(chalk.dim('Persistent (systemd):'));
     for (const line of services.split('\n').filter(Boolean)) {
@@ -1475,7 +1597,7 @@ function sshKeyGen() {
     const pubKey = runQuiet(`cat ${keyPath}.pub`);
     if (pubKey) {
       console.log(`\n${pubKey}`);
-      console.log(chalk.dim('\nAdd this key to the remote server\'s ~/.ssh/authorized_keys'));
+      console.log(chalk.dim("\nAdd this key to the remote server's ~/.ssh/authorized_keys"));
     }
     return;
   }
@@ -1502,11 +1624,15 @@ function sshTunnelStatus(paths) {
   console.log(chalk.bold('\nSSH Tunnel Status\n'));
 
   // Count persistent tunnels
-  const services = runQuiet(`${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`);
+  const services = runQuiet(
+    `${paths.systemctl} list-units --type=service --all "${SSH_TUNNEL_TEMPLATE}*" --no-legend --plain 2>/dev/null`,
+  );
   const serviceList = services ? services.split('\n').filter(Boolean) : [];
-  const running = serviceList.filter(l => l.includes('running')).length;
+  const running = serviceList.filter((l) => l.includes('running')).length;
 
-  console.log(`  ${chalk.dim('Persistent tunnels:')} ${serviceList.length} configured, ${running} running`);
+  console.log(
+    `  ${chalk.dim('Persistent tunnels:')} ${serviceList.length} configured, ${running} running`,
+  );
 
   // Count ad-hoc
   const procs = runQuiet('pgrep -c -f "ssh.*-[LR].*127.0.0.1" 2>/dev/null');
@@ -1514,11 +1640,15 @@ function sshTunnelStatus(paths) {
 
   // Check SSH key
   const keyPath = join(homedir(), '.ssh', 'stateset_gateway');
-  console.log(`  ${chalk.dim('SSH key:')}            ${existsSync(keyPath) ? chalk.green('present') : chalk.yellow('not generated')}`);
+  console.log(
+    `  ${chalk.dim('SSH key:')}            ${existsSync(keyPath) ? chalk.green('present') : chalk.yellow('not generated')}`,
+  );
 
   // Check autossh availability
   const autossh = runQuiet('which autossh 2>/dev/null');
-  console.log(`  ${chalk.dim('autossh:')}            ${autossh ? chalk.green('available') : chalk.yellow('not installed (optional)')}`);
+  console.log(
+    `  ${chalk.dim('autossh:')}            ${autossh ? chalk.green('available') : chalk.yellow('not installed (optional)')}`,
+  );
 
   console.log();
 }
@@ -1528,7 +1658,9 @@ function sshTunnelStatus(paths) {
 // ============================================================================
 
 function generateServiceFile(paths) {
-  const userLines = paths.isUser ? '' : `User=${paths.serviceUser}
+  const userLines = paths.isUser
+    ? ''
+    : `User=${paths.serviceUser}
 Group=${paths.serviceUser}
 `;
 
@@ -1537,7 +1669,9 @@ Group=${paths.serviceUser}
     : `EnvironmentFile=-/etc/stateset/env
 EnvironmentFile=-/opt/stateset/.env`;
 
-  const securityLines = paths.isUser ? '' : `
+  const securityLines = paths.isUser
+    ? ''
+    : `
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -1595,13 +1729,17 @@ WantedBy=multi-user.target
 }
 
 function generateSshTunnelTemplate(paths) {
-  const userLines = paths && !paths.isUser ? `User=${paths.serviceUser}
+  const userLines =
+    paths && !paths.isUser
+      ? `User=${paths.serviceUser}
 Group=${paths.serviceUser}
-` : '';
+`
+      : '';
 
-  const keyPath = paths && !paths.isUser
-    ? '/home/stateset/.ssh/stateset_gateway'
-    : join(homedir(), '.ssh', 'stateset_gateway');
+  const keyPath =
+    paths && !paths.isUser
+      ? '/home/stateset/.ssh/stateset_gateway'
+      : join(homedir(), '.ssh', 'stateset_gateway');
 
   return `[Unit]
 Description=StateSet SSH Tunnel (%i)
@@ -1683,10 +1821,21 @@ if (Number.isNaN(port)) {
 
 if (isJsonOutput) {
   const subcommand = positionals[1];
-  const supportedCommands = new Set(['status', 'health', 'config', 'validate', 'logs', 'tailscale', 'ssh-tunnel', 'ssh']);
+  const supportedCommands = new Set([
+    'status',
+    'health',
+    'config',
+    'validate',
+    'logs',
+    'tailscale',
+    'ssh-tunnel',
+    'ssh',
+  ]);
 
   if (!supportedCommands.has(command)) {
-    emitError('JSON output is supported for: status, health, config, validate, logs (non-follow), tailscale status, ssh-tunnel list/status.');
+    emitError(
+      'JSON output is supported for: status, health, config, validate, logs (non-follow), tailscale status, ssh-tunnel list/status.',
+    );
   }
 
   if (command === 'logs' && values.follow) {
@@ -1697,7 +1846,11 @@ if (isJsonOutput) {
     emitError('JSON output is only supported for "tailscale status".');
   }
 
-  if ((command === 'ssh-tunnel' || command === 'ssh') && subcommand !== 'list' && subcommand !== 'status') {
+  if (
+    (command === 'ssh-tunnel' || command === 'ssh') &&
+    subcommand !== 'list' &&
+    subcommand !== 'status'
+  ) {
     emitError('JSON output is only supported for "ssh-tunnel list" and "ssh-tunnel status".');
   }
 }

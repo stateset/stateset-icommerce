@@ -11,11 +11,7 @@
  * - GOOGLE_APPLICATION_CREDENTIALS env var pointing to service account JSON
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
 
@@ -52,36 +48,34 @@ export async function startGoogleChatGateway({
   try {
     ({ google } = await import('googleapis'));
   } catch {
-    throw new Error(
-      'googleapis is not installed. Install it with: npm install googleapis'
-    );
+    throw new Error('googleapis is not installed. Install it with: npm install googleapis');
   }
   try {
     ({ PubSub } = await import('@google-cloud/pubsub'));
   } catch {
     throw new Error(
-      '@google-cloud/pubsub is not installed. Install it with: npm install @google-cloud/pubsub'
+      '@google-cloud/pubsub is not installed. Install it with: npm install @google-cloud/pubsub',
     );
   }
 
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     throw new Error(
       'GOOGLE_APPLICATION_CREDENTIALS environment variable is required.\n' +
-      'Set it to the path of your service account JSON key file.\n\n' +
-      'Setup steps:\n' +
-      '1. Create a GCP project at https://console.cloud.google.com\n' +
-      '2. Enable the Google Chat API and Cloud Pub/Sub API\n' +
-      '3. Create a service account with Chat API permissions\n' +
-      '4. Download the JSON key and set GOOGLE_APPLICATION_CREDENTIALS\n' +
-      '5. Configure a Chat app in Google Chat API settings\n' +
-      '6. Create a Pub/Sub topic and subscription for the Chat app'
+        'Set it to the path of your service account JSON key file.\n\n' +
+        'Setup steps:\n' +
+        '1. Create a GCP project at https://console.cloud.google.com\n' +
+        '2. Enable the Google Chat API and Cloud Pub/Sub API\n' +
+        '3. Create a service account with Chat API permissions\n' +
+        '4. Download the JSON key and set GOOGLE_APPLICATION_CREDENTIALS\n' +
+        '5. Configure a Chat app in Google Chat API settings\n' +
+        '6. Create a Pub/Sub topic and subscription for the Chat app',
     );
   }
 
   if (!subscription) {
     throw new Error(
       '--subscription is required. Provide the Pub/Sub subscription name\n' +
-      '(e.g. projects/my-project/subscriptions/chat-sub).'
+        '(e.g. projects/my-project/subscriptions/chat-sub).',
     );
   }
 
@@ -104,9 +98,7 @@ export async function startGoogleChatGateway({
    * Format text for Google Chat (subset of markdown).
    */
   function formatForGChat(text) {
-    return text
-      .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
-      .replace(/\*\*(.+?)\*\*/g, '*$1*');
+    return text.replace(/^#{1,6}\s+(.+)$/gm, '*$1*').replace(/\*\*(.+?)\*\*/g, '*$1*');
   }
 
   /** @type {import('../channels/base.js').ChannelAdapter} */

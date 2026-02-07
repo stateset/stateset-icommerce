@@ -12,7 +12,6 @@
 
 import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
-import { CLI_VERSION } from '../src/config.js';
 import { Commerce } from '@stateset/embedded';
 import fs from 'node:fs/promises';
 
@@ -86,16 +85,49 @@ const EVENT_ICONS = {
   ReturnRejected: '❌',
   ReturnCompleted: '📦',
   RefundIssued: '💰',
-  default: '📣'
+  default: '📣',
 };
 
 // Event type to filter category mapping
 const FILTER_MAP = {
-  orders: ['OrderCreated', 'OrderStatusChanged', 'OrderPaymentStatusChanged', 'OrderFulfillmentStatusChanged', 'OrderCancelled', 'OrderItemAdded', 'OrderItemRemoved'],
-  inventory: ['InventoryItemCreated', 'InventoryAdjusted', 'InventoryReserved', 'InventoryReservationReleased', 'InventoryReservationConfirmed', 'LowStockAlert'],
-  customers: ['CustomerCreated', 'CustomerUpdated', 'CustomerStatusChanged', 'CustomerAddressAdded'],
-  products: ['ProductCreated', 'ProductUpdated', 'ProductStatusChanged', 'ProductVariantAdded', 'ProductVariantUpdated'],
-  returns: ['ReturnRequested', 'ReturnStatusChanged', 'ReturnApproved', 'ReturnRejected', 'ReturnCompleted', 'RefundIssued']
+  orders: [
+    'OrderCreated',
+    'OrderStatusChanged',
+    'OrderPaymentStatusChanged',
+    'OrderFulfillmentStatusChanged',
+    'OrderCancelled',
+    'OrderItemAdded',
+    'OrderItemRemoved',
+  ],
+  inventory: [
+    'InventoryItemCreated',
+    'InventoryAdjusted',
+    'InventoryReserved',
+    'InventoryReservationReleased',
+    'InventoryReservationConfirmed',
+    'LowStockAlert',
+  ],
+  customers: [
+    'CustomerCreated',
+    'CustomerUpdated',
+    'CustomerStatusChanged',
+    'CustomerAddressAdded',
+  ],
+  products: [
+    'ProductCreated',
+    'ProductUpdated',
+    'ProductStatusChanged',
+    'ProductVariantAdded',
+    'ProductVariantUpdated',
+  ],
+  returns: [
+    'ReturnRequested',
+    'ReturnStatusChanged',
+    'ReturnApproved',
+    'ReturnRejected',
+    'ReturnCompleted',
+    'RefundIssued',
+  ],
 };
 
 function getEventIcon(eventType) {
@@ -184,7 +216,9 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
             console.log(`  ${status} ${output.bold(wh.name)}`);
             console.log(`     ${output.dim('ID:')} ${wh.id}`);
             console.log(`     ${output.dim('URL:')} ${wh.url}`);
-            console.log(`     ${output.dim('Events:')} ${wh.event_types.length > 0 ? wh.event_types.join(', ') : 'all'}`);
+            console.log(
+              `     ${output.dim('Events:')} ${wh.event_types.length > 0 ? wh.event_types.join(', ') : 'all'}`,
+            );
           }
         }
         console.log();
@@ -212,12 +246,14 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
       const eventTypes = eventsIndex >= 0 ? args[eventsIndex + 1].split(',') : [];
 
       if (isJson) {
-        await emit(JSON.stringify({
-          warning: 'Webhook management requires the events feature',
-          url,
-          secret: Boolean(secret),
-          events: eventTypes
-        }));
+        await emit(
+          JSON.stringify({
+            warning: 'Webhook management requires the events feature',
+            url,
+            secret: Boolean(secret),
+            events: eventTypes,
+          }),
+        );
         break;
       }
 
@@ -239,7 +275,9 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
         process.exit(1);
       }
       if (isJson) {
-        await emit(JSON.stringify({ warning: 'Webhook management requires the events feature', id }));
+        await emit(
+          JSON.stringify({ warning: 'Webhook management requires the events feature', id }),
+        );
         break;
       }
       console.log(output.yellow('⚠️  Webhook management requires the events feature'));
@@ -286,9 +324,9 @@ async function main() {
       quiet: { type: 'boolean', short: 'q', default: false },
       secret: { type: 'string' },
       events: { type: 'string' },
-      help: { type: 'boolean', short: 'h', default: false }
+      help: { type: 'boolean', short: 'h', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -360,7 +398,5 @@ async function main() {
   await streamEvents(commerce, values.filter, output, values.json, values.quiet, emit);
 }
 
-main().catch(error => {
-  console.error('Event streaming error:', error.message);
-  process.exit(1);
-});
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-events', main);

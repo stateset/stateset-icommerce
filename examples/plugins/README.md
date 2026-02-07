@@ -300,23 +300,20 @@ Add custom endpoints to the HTTP gateway:
 api.registerHttpRoute({
   method: 'GET',
   path: '/api/plugins/metrics',
-  handler: async (req, res) => {
+  level: 'read',
+  handler: async () => {
     const metrics = getPluginMetrics();
-    
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(metrics));
+    return { status: 200, body: metrics };
   }
 });
 
 api.registerHttpRoute({
   method: 'POST',
   path: '/api/plugins/webhook',
-  handler: async (req, res) => {
-    const body = await parseRequestBody(req);
+  level: 'none', // public webhook endpoint; validate signatures/tokens inside the handler
+  handler: async ({ body }) => {
     await processWebhook(body);
-    
-    res.writeHead(200);
-    res.end('{"status":"ok"}');
+    return { status: 200, body: { status: 'ok' } };
   }
 });
 ```
@@ -502,14 +499,14 @@ export default function init(api, { config }) {
   api.registerHttpRoute({
     method: 'GET',
     path: '/api/crypto/:symbol',
-    handler: async (req, res) => {
-      const symbol = req.params.symbol.toUpperCase();
+    level: 'read',
+    handler: async ({ params }) => {
+      const symbol = params.symbol.toUpperCase();
       
       const res_api = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${symbol.toLowerCase()}&vs_currencies=usd`);
       const data = await res_api.json();
       
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(data));
+      return { status: 200, body: data };
     }
   });
 }

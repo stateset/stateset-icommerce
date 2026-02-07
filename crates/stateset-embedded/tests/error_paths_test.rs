@@ -4,8 +4,8 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateBom, CreateCustomer, CreateInventoryItem, CreateOrder,
-    CreateOrderItem, CreateProduct, CreateReturn, OrderStatus,
+    Commerce, CreateBom, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    CreateProduct, CreateReturn, OrderStatus,
 };
 use uuid::Uuid;
 
@@ -28,7 +28,9 @@ fn test_order_update_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let fake_id = Uuid::new_v4();
 
-    let result = commerce.orders().update_status(fake_id, OrderStatus::Confirmed);
+    let result = commerce
+        .orders()
+        .update_status(fake_id, OrderStatus::Confirmed);
     assert!(result.is_err());
 }
 
@@ -175,7 +177,10 @@ fn test_customer_invalid_email() {
     // Email validation should reject invalid emails
     assert!(result.is_err(), "Expected invalid email to be rejected");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("@") || err.contains("email"), "Error should mention email format");
+    assert!(
+        err.contains("@") || err.contains("email"),
+        "Error should mention email format"
+    );
 }
 
 #[test]
@@ -192,8 +197,11 @@ fn test_customer_empty_email() {
     // Email validation should reject empty emails
     assert!(result.is_err(), "Expected empty email to be rejected");
     let err = result.unwrap_err().to_string();
-    assert!(err.to_lowercase().contains("empty") || err.to_lowercase().contains("email"),
-        "Error should mention empty email: {}", err);
+    assert!(
+        err.to_lowercase().contains("empty") || err.to_lowercase().contains("email"),
+        "Error should mention empty email: {}",
+        err
+    );
 }
 
 // ============================================================================
@@ -439,8 +447,15 @@ fn test_return_approve_already_approved() {
         .expect("Failed to create order");
 
     // Get order to access items
-    let order_with_items = commerce.orders().get(order.id).expect("Failed to get order").expect("Order not found");
-    let order_item = order_with_items.items.first().expect("Order should have items");
+    let order_with_items = commerce
+        .orders()
+        .get(order.id)
+        .expect("Failed to get order")
+        .expect("Order not found");
+    let order_item = order_with_items
+        .items
+        .first()
+        .expect("Order should have items");
 
     // Create return with items
     let ret = commerce
@@ -588,12 +603,15 @@ fn test_concurrent_order_creation() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
     // Create a customer first
-    let customer = commerce.customers().create(CreateCustomer {
-        email: "concurrent-test@example.com".into(),
-        first_name: "Concurrent".into(),
-        last_name: "Test".into(),
-        ..Default::default()
-    }).expect("Failed to create customer");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "concurrent-test@example.com".into(),
+            first_name: "Concurrent".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
 
     let customer_id = customer.id;
 
@@ -635,7 +653,10 @@ fn test_concurrent_order_creation() {
     );
     // With in-memory SQLite, some concurrent operations may timeout or fail
     // Expect at least some to succeed
-    assert!(success_count > 0, "At least one concurrent order should succeed");
+    assert!(
+        success_count > 0,
+        "At least one concurrent order should succeed"
+    );
 }
 
 // ============================================================================
@@ -650,8 +671,8 @@ fn test_unicode_in_names() {
         .customers()
         .create(CreateCustomer {
             email: "unicode@example.com".into(),
-            first_name: "日本語".into(),       // Japanese
-            last_name: "Müller".into(),        // German umlaut
+            first_name: "日本語".into(), // Japanese
+            last_name: "Müller".into(),  // German umlaut
             ..Default::default()
         })
         .expect("Failed to create customer with unicode");
@@ -696,12 +717,15 @@ fn test_decimal_precision() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a customer first
-    let customer = commerce.customers().create(CreateCustomer {
-        email: "decimal-test@example.com".into(),
-        first_name: "Decimal".into(),
-        last_name: "Test".into(),
-        ..Default::default()
-    }).expect("Failed to create customer");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "decimal-test@example.com".into(),
+            first_name: "Decimal".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
 
     // Test high precision decimal
     let order = commerce

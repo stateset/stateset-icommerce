@@ -28,7 +28,7 @@
  */
 
 import { promises as fs } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
 
@@ -100,8 +100,8 @@ function parseMemoryFile(content) {
     if (factsMatch) {
       entry.facts = factsMatch[1]
         .split('\n')
-        .filter(l => l.startsWith('- '))
-        .map(l => l.slice(2).trim());
+        .filter((l) => l.startsWith('- '))
+        .map((l) => l.slice(2).trim());
     }
 
     // Extract agent
@@ -205,7 +205,7 @@ export class MarkdownMemoryStore {
   async save(entry) {
     const formatted = formatEntry({
       ...entry,
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     // Read existing content
@@ -265,7 +265,7 @@ export class MarkdownMemoryStore {
     const entries = await this.getRecent(this.maxMainEntries);
     const lowerQuery = query.toLowerCase();
 
-    const matches = entries.filter(entry => {
+    const matches = entries.filter((entry) => {
       const text = entry.raw?.toLowerCase() || '';
       return text.includes(lowerQuery);
     });
@@ -295,7 +295,7 @@ export class MarkdownMemoryStore {
     const sessionPath = this.getSessionPath(sessionId);
     const formatted = formatEntry({
       ...entry,
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     // Read existing
@@ -359,7 +359,7 @@ export class MarkdownMemoryStore {
     const entityPath = this.getEntityPath(entityType, entityId);
     const formatted = formatEntry({
       ...entry,
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     // Read existing
@@ -375,7 +375,7 @@ export class MarkdownMemoryStore {
 
     // Write back
     const header = `# ${entityType.charAt(0).toUpperCase() + entityType.slice(1)}: ${entityId}\n\n`;
-    const body = entries.map(e => e.raw).join('\n\n---\n\n');
+    const body = entries.map((e) => e.raw).join('\n\n---\n\n');
     await fs.writeFile(entityPath, header + body, 'utf-8');
   }
 
@@ -419,7 +419,7 @@ export class MarkdownMemoryStore {
     const topicPath = this.getTopicPath(topic);
     const formatted = formatEntry({
       ...entry,
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     // Read existing
@@ -435,7 +435,7 @@ export class MarkdownMemoryStore {
 
     // Write back
     const header = `# Topic: ${topic}\n\n`;
-    const body = entries.map(e => e.raw).join('\n\n---\n\n');
+    const body = entries.map((e) => e.raw).join('\n\n---\n\n');
     await fs.writeFile(topicPath, header + body, 'utf-8');
   }
 
@@ -465,7 +465,7 @@ export class MarkdownMemoryStore {
    */
   _buildMemoryFile(entries) {
     const header = `# StateSet Memory\n\n_Auto-generated memory file. Last updated: ${formatDate()}_\n\n`;
-    const body = entries.map(e => e.raw).join('\n\n---\n\n');
+    const body = entries.map((e) => e.raw).join('\n\n---\n\n');
     return header + body;
   }
 
@@ -475,7 +475,7 @@ export class MarkdownMemoryStore {
    */
   _buildSessionFile(sessionId, entries) {
     const header = `# Session: ${sessionId}\n\n_Started: ${formatDate()}_\n\n`;
-    const body = entries.map(e => e.raw).join('\n\n---\n\n');
+    const body = entries.map((e) => e.raw).join('\n\n---\n\n');
     return header + body;
   }
 
@@ -486,9 +486,7 @@ export class MarkdownMemoryStore {
   async listSessions() {
     try {
       const files = await fs.readdir(join(this.memoryDir, 'sessions'));
-      return files
-        .filter(f => f.endsWith('.md'))
-        .map(f => f.slice(0, -3));
+      return files.filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
     } catch (e) {
       if (e.code === 'ENOENT') return [];
       throw e;
@@ -503,13 +501,13 @@ export class MarkdownMemoryStore {
     try {
       const files = await fs.readdir(join(this.memoryDir, 'entities'));
       return files
-        .filter(f => f.endsWith('.md'))
-        .map(f => {
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => {
           const name = f.slice(0, -3);
           const underscoreIdx = name.indexOf('_');
           return {
             type: name.slice(0, underscoreIdx),
-            id: name.slice(underscoreIdx + 1)
+            id: name.slice(underscoreIdx + 1),
           };
         });
     } catch (e) {
@@ -525,9 +523,7 @@ export class MarkdownMemoryStore {
   async listTopics() {
     try {
       const files = await fs.readdir(join(this.memoryDir, 'topics'));
-      return files
-        .filter(f => f.endsWith('.md'))
-        .map(f => f.slice(0, -3));
+      return files.filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
     } catch (e) {
       if (e.code === 'ENOENT') return [];
       throw e;
@@ -549,7 +545,7 @@ export class MarkdownMemoryStore {
       sessions: sessions.length,
       entities: entities.length,
       topics: topics.length,
-      memoryDir: this.memoryDir
+      memoryDir: this.memoryDir,
     };
   }
 
@@ -560,9 +556,9 @@ export class MarkdownMemoryStore {
   async clear() {
     const files = [
       this.mainMemoryPath,
-      ...(await this.listSessions()).map(s => this.getSessionPath(s)),
-      ...(await this.listEntities()).map(e => this.getEntityPath(e.type, e.id)),
-      ...(await this.listTopics()).map(t => this.getTopicPath(t))
+      ...(await this.listSessions()).map((s) => this.getSessionPath(s)),
+      ...(await this.listEntities()).map((e) => this.getEntityPath(e.type, e.id)),
+      ...(await this.listTopics()).map((t) => this.getTopicPath(t)),
     ];
 
     for (const file of files) {
@@ -605,5 +601,5 @@ export default {
   getMarkdownMemoryStore,
   resetMarkdownMemoryStore,
   parseMemoryFile,
-  formatEntry
+  formatEntry,
 };

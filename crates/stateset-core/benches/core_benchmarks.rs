@@ -2,18 +2,18 @@
 //!
 //! Run with: cargo bench --package stateset-core
 
+use chrono::Utc;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::thread;
-use chrono::Utc;
 use uuid::Uuid;
 
-use stateset_core::{BatchResult, CommerceError};
 use stateset_core::models::{
-    Address, Cart, CartItem, CartPaymentStatus, CartStatus, FulfillmentStatus, InventoryReservation,
-    Order, OrderItem, OrderStatus, PaymentStatus, ReservationStatus,
+    Address, Cart, CartItem, CartPaymentStatus, CartStatus, FulfillmentStatus,
+    InventoryReservation, Order, OrderItem, OrderStatus, PaymentStatus, ReservationStatus,
 };
+use stateset_core::{BatchResult, CommerceError};
 
 fn create_test_order_item(idx: usize) -> OrderItem {
     OrderItem {
@@ -93,7 +93,10 @@ fn create_test_cart_item(idx: usize) -> CartItem {
 fn create_test_cart(item_count: usize) -> Cart {
     let now = Utc::now();
     let items: Vec<CartItem> = (0..item_count).map(create_test_cart_item).collect();
-    let subtotal: Decimal = items.iter().map(|i| i.unit_price * Decimal::from(i.quantity)).sum();
+    let subtotal: Decimal = items
+        .iter()
+        .map(|i| i.unit_price * Decimal::from(i.quantity))
+        .sum();
     let tax: Decimal = items.iter().map(|i| i.tax_amount).sum();
     let discount: Decimal = items.iter().map(|i| i.discount_amount).sum();
 
@@ -130,6 +133,7 @@ fn create_test_cart(item_count: usize) -> Cart {
         metadata: None,
         inventory_reserved: false,
         reservation_expires_at: None,
+        x402_payment: None,
         expires_at: None,
         completed_at: None,
         created_at: now,
@@ -318,10 +322,9 @@ fn benchmark_decimal_operations(c: &mut Criterion) {
             .collect();
 
         b.iter(|| {
-            let total: Decimal = items.iter()
-                .map(|(price, qty, discount, tax)| {
-                    (price * Decimal::from(*qty)) - discount + tax
-                })
+            let total: Decimal = items
+                .iter()
+                .map(|(price, qty, discount, tax)| (price * Decimal::from(*qty)) - discount + tax)
                 .sum();
             black_box(total)
         });

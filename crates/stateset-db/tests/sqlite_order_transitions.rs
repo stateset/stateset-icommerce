@@ -1,10 +1,11 @@
 #![cfg(feature = "sqlite")]
 
-use rust_decimal_macros::dec;
 use rusqlite::params;
+use rust_decimal_macros::dec;
 use stateset_core::{
-    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CustomerRepository,
-    InventoryRepository, OrderRepository, OrderStatus, PaymentStatus, ReservationStatus, UpdateOrder,
+    CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    CustomerRepository, InventoryRepository, OrderRepository, OrderStatus, PaymentStatus,
+    ReservationStatus, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -87,7 +88,10 @@ fn sqlite_rejects_cancel_after_shipped() {
         },
     );
 
-    assert!(matches!(result, Err(CommerceError::OrderCannotBeCancelled(_))));
+    assert!(matches!(
+        result,
+        Err(CommerceError::OrderCannotBeCancelled(_))
+    ));
 }
 
 #[test]
@@ -109,7 +113,10 @@ fn sqlite_requires_payment_for_refund() {
         },
     );
 
-    assert!(matches!(result, Err(CommerceError::OrderCannotBeRefunded(_))));
+    assert!(matches!(
+        result,
+        Err(CommerceError::OrderCannotBeRefunded(_))
+    ));
 }
 
 #[test]
@@ -152,18 +159,21 @@ fn sqlite_ship_fails_when_reservation_expired() {
         })
         .expect("create inventory item");
 
-    let order = db.orders().create(CreateOrder {
-        customer_id: customer.id,
-        items: vec![CreateOrderItem {
-            product_id: Uuid::new_v4(),
-            sku: "EXP-SKU-001".to_string(),
-            name: "Expirable Item".to_string(),
-            quantity: 1,
-            unit_price: dec!(10.00),
+    let order = db
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
+                sku: "EXP-SKU-001".to_string(),
+                name: "Expirable Item".to_string(),
+                quantity: 1,
+                unit_price: dec!(10.00),
+                ..Default::default()
+            }],
             ..Default::default()
-        }],
-        ..Default::default()
-    }).expect("create order");
+        })
+        .expect("create order");
 
     set_status(&db, order.id, OrderStatus::Confirmed);
     set_status(&db, order.id, OrderStatus::Processing);

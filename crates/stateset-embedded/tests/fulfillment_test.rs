@@ -10,9 +10,8 @@ use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddCarton, AddCartonItem, Commerce, CreateCustomer, CreateLocation, CreateOrder,
     CreateOrderItem, CreatePackTask, CreatePickTask, CreateProduct, CreateShipTask,
-    CreateWarehouse, CreateWave, LocationType, PackStatus, PackTaskFilter, PackageType,
-    PickStatus, PickTaskFilter, ShipStatus, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
-    WarehouseType,
+    CreateWarehouse, CreateWave, LocationType, PackStatus, PackTaskFilter, PackageType, PickStatus,
+    PickTaskFilter, ShipStatus, ShipTaskFilter, WarehouseType, Wave, WaveFilter, WaveStatus,
 };
 use uuid::Uuid;
 

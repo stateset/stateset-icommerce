@@ -39,9 +39,9 @@ function getPaymentRequiredHeader(response) {
 function pickRequirement(candidates, preferredNetworks = []) {
   if (!Array.isArray(candidates) || candidates.length === 0) return null;
   if (preferredNetworks.length > 0) {
-    const preferred = candidates.find(candidate => {
+    const preferred = candidates.find((candidate) => {
       const networks = candidate?.networks || (candidate?.network ? [candidate.network] : []);
-      return networks.some(n => preferredNetworks.map(String).includes(String(n)));
+      return networks.some((n) => preferredNetworks.map(String).includes(String(n)));
     });
     if (preferred) return preferred;
   }
@@ -86,7 +86,7 @@ async function parsePaymentRequired(response, preferredNetworks = []) {
       version: null,
       raw: body,
     };
-  } catch (_) {
+  } catch {
     return { requirements: null, version: null, raw: null };
   }
 }
@@ -104,14 +104,15 @@ function selectNetwork(requirements, preferred = []) {
     throw new Error('No networks provided in payment requirements');
   }
   if (preferred.length > 0) {
-    const match = networks.find(n => preferred.map(String).includes(String(n)));
+    const match = networks.find((n) => preferred.map(String).includes(String(n)));
     if (match) return match;
   }
   return networks[0];
 }
 
 function resolveAmount(requirements) {
-  const amount = requirements?.amount ??
+  const amount =
+    requirements?.amount ??
     requirements?.amount_required ??
     requirements?.max_amount_required ??
     requirements?.amountRequired ??
@@ -145,9 +146,11 @@ export async function x402Fetch(url, options, config) {
   } = config;
 
   if (!sequencerClient) throw new Error('sequencerClient is required');
-  if (!tenantId || !storeId || !agentId) throw new Error('tenantId, storeId, and agentId are required');
+  if (!tenantId || !storeId || !agentId)
+    throw new Error('tenantId, storeId, and agentId are required');
   if (!payerAddress) throw new Error('payerAddress is required');
-  if (!signingKey?.privateKey || !signingKey?.publicKey) throw new Error('signingKey with privateKey/publicKey is required');
+  if (!signingKey?.privateKey || !signingKey?.publicKey)
+    throw new Error('signingKey with privateKey/publicKey is required');
 
   const baseHeaders = options?.headers ? { ...options.headers } : {};
 
@@ -165,9 +168,8 @@ export async function x402Fetch(url, options, config) {
   if (!requirements) {
     throw new Error('Failed to parse x402 payment requirements');
   }
-  const useV2Headers = parsed?.version === 'v2'
-    || requirements?.x402Version === 2
-    || requirements?.version === 2;
+  const useV2Headers =
+    parsed?.version === 'v2' || requirements?.x402Version === 2 || requirements?.version === 2;
 
   const network = normalizeNetwork(selectNetwork(requirements, preferredNetworks));
   const asset = normalizeAsset(requirements.asset || requirements.token || 'usdc');
@@ -177,14 +179,16 @@ export async function x402Fetch(url, options, config) {
     budgetStateFile ||
     maxAmountPerCall !== undefined ||
     dailyBudget !== undefined ||
-    startingBalance !== undefined
+    startingBalance !== undefined,
   );
-  const resolvedBudgetState = budgetState || (shouldTrackBudget
-    ? createBudgetState({
-      filePath: budgetStateFile || getDefaultBudgetStateFile(),
-      startingBalance,
-    })
-    : null);
+  const resolvedBudgetState =
+    budgetState ||
+    (shouldTrackBudget
+      ? createBudgetState({
+          filePath: budgetStateFile || getDefaultBudgetStateFile(),
+          startingBalance,
+        })
+      : null);
   if (maxAmount !== undefined && amount > maxAmount) {
     throw new Error(`Required amount ${amount} exceeds maxAmount ${maxAmount}`);
   }
@@ -195,7 +199,7 @@ export async function x402Fetch(url, options, config) {
     const spentToday = resolvedBudgetState.getSpentToday();
     if (spentToday + amount > dailyBudget) {
       throw new BudgetExceededError(
-        `Would exceed daily budget. Spent: ${spentToday}, limit: ${dailyBudget}`
+        `Would exceed daily budget. Spent: ${spentToday}, limit: ${dailyBudget}`,
       );
     }
   }
@@ -203,21 +207,24 @@ export async function x402Fetch(url, options, config) {
     const balance = resolvedBudgetState.getBalance();
     if (balance !== null && amount > balance) {
       throw new BudgetExceededError(
-        `Insufficient x402 balance. Required: ${amount}, available: ${balance}`
+        `Insufficient x402 balance. Required: ${amount}, available: ${balance}`,
       );
     }
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const validitySeconds = Number(requirements.validity_seconds ?? requirements.validitySeconds ?? 3600);
+  const validitySeconds = Number(
+    requirements.validity_seconds ?? requirements.validitySeconds ?? 3600,
+  );
   const validUntil = now + validitySeconds;
   const nonce = randomNonce();
   const chainId = networkChainId(network);
-  const payeeAddress = requirements.payee_address
-    || requirements.payment_address
-    || requirements.recipient
-    || requirements.payeeAddress
-    || requirements.paymentAddress;
+  const payeeAddress =
+    requirements.payee_address ||
+    requirements.payment_address ||
+    requirements.recipient ||
+    requirements.payeeAddress ||
+    requirements.paymentAddress;
   if (!payeeAddress) {
     throw new Error('Payment requirements missing payee address');
   }
@@ -250,10 +257,12 @@ export async function x402Fetch(url, options, config) {
     signing_hash: hashToHex(signingHash),
     payer_signature: hashToHex(signature),
     payer_public_key: hashToHex(signingKey.publicKey),
-    resource_uri: requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
+    resource_uri:
+      requirements.resource_uri || requirements.resourceUri || requirements.resource || url,
     description: requirements.description,
     merchant_id: requirements.merchant_id,
-    idempotency_key: requirements.idempotency_key || requirements.idempotencyKey || `x402-${crypto.randomUUID()}`,
+    idempotency_key:
+      requirements.idempotency_key || requirements.idempotencyKey || `x402-${crypto.randomUUID()}`,
     metadata: requirements.metadata || null,
   };
 
@@ -266,7 +275,7 @@ export async function x402Fetch(url, options, config) {
         store_id: storeId,
         network,
       });
-    } catch (_) {
+    } catch {
       // batching is best-effort; receipts may still arrive via worker
     }
   }
@@ -305,20 +314,23 @@ export function createX402Agent(config) {
     config?.budgetStateFile ||
     config?.maxAmountPerCall !== undefined ||
     config?.dailyBudget !== undefined ||
-    config?.startingBalance !== undefined
+    config?.startingBalance !== undefined,
   );
-  const resolvedBudgetState = config?.budgetState || (shouldTrackBudget
-    ? createBudgetState({
-      filePath: config?.budgetStateFile || getDefaultBudgetStateFile(),
-      startingBalance: config?.startingBalance,
-    })
-    : null);
+  const resolvedBudgetState =
+    config?.budgetState ||
+    (shouldTrackBudget
+      ? createBudgetState({
+          filePath: config?.budgetStateFile || getDefaultBudgetStateFile(),
+          startingBalance: config?.startingBalance,
+        })
+      : null);
 
   return {
-    fetch: (url, options = {}) => x402Fetch(url, options, {
-      ...config,
-      budgetState: resolvedBudgetState,
-    }),
+    fetch: (url, options = {}) =>
+      x402Fetch(url, options, {
+        ...config,
+        budgetState: resolvedBudgetState,
+      }),
     budget: resolvedBudgetState,
   };
 }
@@ -354,7 +366,7 @@ export function verifyPaymentHeader(payload) {
   });
 
   const providedHash = hexToBytes(payload.signing_hash);
-  if (Buffer.compare(providedHash, signingHash) != 0) {
+  if (Buffer.compare(providedHash, signingHash) !== 0) {
     return { ok: false, reason: 'Signing hash mismatch' };
   }
 

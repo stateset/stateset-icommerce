@@ -281,28 +281,49 @@ mod tests {
 
     #[test]
     fn bill_status_from_str() {
-        assert_eq!(BillStatus::from_str("partiallypaid").unwrap(), BillStatus::PartiallyPaid);
-        assert_eq!(BillStatus::from_str("canceled").unwrap(), BillStatus::Cancelled);
+        assert_eq!(
+            BillStatus::from_str("partiallypaid").unwrap(),
+            BillStatus::PartiallyPaid
+        );
+        assert_eq!(
+            BillStatus::from_str("canceled").unwrap(),
+            BillStatus::Cancelled
+        );
         assert!(BillStatus::from_str("unknown").is_err());
     }
 
     #[test]
     fn payment_method_from_str() {
-        assert_eq!(PaymentMethodAP::from_str("creditcard").unwrap(), PaymentMethodAP::CreditCard);
-        assert_eq!(PaymentMethodAP::from_str("other").unwrap(), PaymentMethodAP::Other);
+        assert_eq!(
+            PaymentMethodAP::from_str("creditcard").unwrap(),
+            PaymentMethodAP::CreditCard
+        );
+        assert_eq!(
+            PaymentMethodAP::from_str("other").unwrap(),
+            PaymentMethodAP::Other
+        );
         assert!(PaymentMethodAP::from_str("wire_transfer").is_err());
     }
 
     #[test]
     fn payment_status_from_str() {
-        assert_eq!(PaymentStatusAP::from_str("processed").unwrap(), PaymentStatusAP::Processed);
+        assert_eq!(
+            PaymentStatusAP::from_str("processed").unwrap(),
+            PaymentStatusAP::Processed
+        );
         assert!(PaymentStatusAP::from_str("unknown").is_err());
     }
 
     #[test]
     fn payment_run_status_from_str() {
-        assert_eq!(PaymentRunStatus::from_str("in_progress").unwrap(), PaymentRunStatus::Processing);
-        assert_eq!(PaymentRunStatus::from_str("cancelled").unwrap(), PaymentRunStatus::Cancelled);
+        assert_eq!(
+            PaymentRunStatus::from_str("in_progress").unwrap(),
+            PaymentRunStatus::Processing
+        );
+        assert_eq!(
+            PaymentRunStatus::from_str("cancelled").unwrap(),
+            PaymentRunStatus::Cancelled
+        );
         assert!(PaymentRunStatus::from_str("unknown").is_err());
     }
 }

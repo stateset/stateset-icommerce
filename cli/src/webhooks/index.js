@@ -8,5 +8,5 @@ export {
   WebhookHandler,
   WebhookEvent,
   WebhookSourceTemplates,
-  WebhookHandlerTemplates
+  WebhookHandlerTemplates,
 } from './server.js';

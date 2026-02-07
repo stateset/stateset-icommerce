@@ -168,13 +168,11 @@ impl PgBomRepository {
 
     /// Get BOM by ID (async)
     pub async fn get_async(&self, id: Uuid) -> Result<Option<BillOfMaterials>> {
-        let result = sqlx::query_as::<_, BomRow>(
-            "SELECT * FROM manufacturing_boms WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let result = sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         match result {
             Some(row) => {
@@ -187,13 +185,12 @@ impl PgBomRepository {
 
     /// Get BOM by number (async)
     pub async fn get_by_number_async(&self, bom_number: &str) -> Result<Option<BillOfMaterials>> {
-        let result = sqlx::query_as::<_, BomRow>(
-            "SELECT * FROM manufacturing_boms WHERE bom_number = $1",
-        )
-        .bind(bom_number)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let result =
+            sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE bom_number = $1")
+                .bind(bom_number)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         match result {
             Some(row) => {
@@ -279,21 +276,29 @@ impl PgBomRepository {
 
     /// Delete BOM (async) - marks as obsolete
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = $2",
+        )
+        .bind(Utc::now())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         Ok(())
     }
 
     /// Add component (async)
-    pub async fn add_component_async(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    pub async fn add_component_async(
+        &self,
+        bom_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
+        let uom = component
+            .unit_of_measure
+            .unwrap_or_else(|| "each".to_string());
 
         sqlx::query(
             r#"
@@ -332,9 +337,15 @@ impl PgBomRepository {
     }
 
     /// Update component (async)
-    pub async fn update_component_async(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    pub async fn update_component_async(
+        &self,
+        component_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         let now = Utc::now();
-        let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
+        let uom = component
+            .unit_of_measure
+            .unwrap_or_else(|| "each".to_string());
 
         sqlx::query(
             "UPDATE manufacturing_bom_components SET component_product_id = $1, component_sku = $2, name = $3, quantity = $4, unit_of_measure = $5, position = $6, notes = $7, updated_at = $8 WHERE id = $9",
@@ -377,10 +388,14 @@ impl PgBomRepository {
 
     /// Activate BOM (async)
     pub async fn activate_async(&self, id: Uuid) -> Result<BillOfMaterials> {
-        self.update_async(id, UpdateBom {
-            status: Some(BomStatus::Active),
-            ..Default::default()
-        }).await
+        self.update_async(
+            id,
+            UpdateBom {
+                status: Some(BomStatus::Active),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Count BOMs (async)
@@ -412,7 +427,10 @@ impl PgBomRepository {
     // =========================================================================
 
     /// Create multiple BOMs - partial success allowed (async)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateBom>) -> Result<BatchResult<BillOfMaterials>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateBom>,
+    ) -> Result<BatchResult<BillOfMaterials>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::with_capacity(inputs.len());
@@ -428,7 +446,10 @@ impl PgBomRepository {
     }
 
     /// Create multiple BOMs - atomic (all-or-nothing) (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateBom>) -> Result<Vec<BillOfMaterials>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateBom>,
+    ) -> Result<Vec<BillOfMaterials>> {
         validate_batch_size(&inputs)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -464,7 +485,10 @@ impl PgBomRepository {
             if let Some(comp_inputs) = input.components {
                 for comp_input in comp_inputs {
                     let comp_id = Uuid::new_v4();
-                    let uom = comp_input.unit_of_measure.clone().unwrap_or_else(|| "each".to_string());
+                    let uom = comp_input
+                        .unit_of_measure
+                        .clone()
+                        .unwrap_or_else(|| "each".to_string());
 
                     sqlx::query(
                         r#"
@@ -524,7 +548,10 @@ impl PgBomRepository {
     }
 
     /// Update multiple BOMs - partial success allowed (async)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<BatchResult<BillOfMaterials>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateBom)>,
+    ) -> Result<BatchResult<BillOfMaterials>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
@@ -540,7 +567,10 @@ impl PgBomRepository {
     }
 
     /// Update multiple BOMs - atomic (all-or-nothing) (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<Vec<BillOfMaterials>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateBom)>,
+    ) -> Result<Vec<BillOfMaterials>> {
         validate_batch_size(&updates)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -550,14 +580,13 @@ impl PgBomRepository {
             let now = Utc::now();
 
             // Fetch existing BOM
-            let existing_row = sqlx::query_as::<_, BomRow>(
-                "SELECT * FROM manufacturing_boms WHERE id = $1"
-            )
-            .bind(id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
+            let existing_row =
+                sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::NotFound)?;
 
             let existing_components = sqlx::query_as::<_, BomComponentRow>(
                 "SELECT * FROM manufacturing_bom_components WHERE bom_id = $1 ORDER BY position, created_at"
@@ -569,7 +598,10 @@ impl PgBomRepository {
 
             let existing = Self::row_to_bom(
                 existing_row,
-                existing_components.into_iter().map(Self::row_to_component).collect(),
+                existing_components
+                    .into_iter()
+                    .map(Self::row_to_component)
+                    .collect(),
             )?;
 
             let new_name = input.name.unwrap_or(existing.name);
@@ -592,13 +624,12 @@ impl PgBomRepository {
             .map_err(map_db_error)?;
 
             // Fetch updated BOM
-            let updated_row = sqlx::query_as::<_, BomRow>(
-                "SELECT * FROM manufacturing_boms WHERE id = $1"
-            )
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+            let updated_row =
+                sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
             let updated_components = sqlx::query_as::<_, BomComponentRow>(
                 "SELECT * FROM manufacturing_bom_components WHERE bom_id = $1 ORDER BY position, created_at"
@@ -610,7 +641,10 @@ impl PgBomRepository {
 
             boms.push(Self::row_to_bom(
                 updated_row,
-                updated_components.into_iter().map(Self::row_to_component).collect(),
+                updated_components
+                    .into_iter()
+                    .map(Self::row_to_component)
+                    .collect(),
             )?);
         }
 
@@ -645,7 +679,7 @@ impl PgBomRepository {
         let now = Utc::now();
 
         sqlx::query(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = ANY($2)"
+            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = ANY($2)",
         )
         .bind(now)
         .bind(&ids)
@@ -664,13 +698,12 @@ impl PgBomRepository {
             return Ok(Vec::new());
         }
 
-        let rows = sqlx::query_as::<_, BomRow>(
-            "SELECT * FROM manufacturing_boms WHERE id = ANY($1)"
-        )
-        .bind(&ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         let mut boms = Vec::with_capacity(rows.len());
         for row in rows {
@@ -711,7 +744,11 @@ impl BomRepository for PgBomRepository {
         super::block_on(self.add_component_async(bom_id, component))
     }
 
-    fn update_component(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    fn update_component(
+        &self,
+        component_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         super::block_on(self.update_component_async(component_id, component))
     }
 
@@ -743,7 +780,10 @@ impl BomRepository for PgBomRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<BatchResult<BillOfMaterials>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdateBom)>,
+    ) -> Result<BatchResult<BillOfMaterials>> {
         super::block_on(self.update_batch_async(updates))
     }
 

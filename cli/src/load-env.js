@@ -24,8 +24,10 @@ if (fs.existsSync(envFile)) {
           const key = trimmed.slice(0, eqIndex).trim();
           let value = trimmed.slice(eqIndex + 1);
           // Remove surrounding quotes
-          if ((value.startsWith('"') && value.endsWith('"')) ||
-              (value.startsWith("'") && value.endsWith("'"))) {
+          if (
+            (value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))
+          ) {
             value = value.slice(1, -1);
           }
           // Only set if not already in environment (env vars take precedence)
@@ -36,7 +38,7 @@ if (fs.existsSync(envFile)) {
         }
       }
     }
-  } catch {
-    // Silently ignore errors reading env file
+  } catch (err) {
+    console.warn(`[stateset] Failed to load ${envFile}:`, err.message);
   }
 }

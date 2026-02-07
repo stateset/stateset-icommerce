@@ -119,7 +119,11 @@ impl ValidationBuilder {
             && !value.contains(char::is_whitespace)
             && value.contains('@')
             && value.split('@').count() == 2
-            && value.split('@').last().map(|d| d.contains('.')).unwrap_or(false);
+            && value
+                .split('@')
+                .next_back()
+                .map(|d| d.contains('.'))
+                .unwrap_or(false);
         self.check(field, is_valid, "must be a valid email address")
     }
 
@@ -212,14 +216,24 @@ impl ValidationBuilder {
     pub fn sku(self, field: &str, value: &str) -> Self {
         let is_valid = !value.is_empty()
             && value.len() <= 100
-            && value.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_');
-        self.check(field, is_valid, "must be a valid SKU (alphanumeric, hyphens, underscores)")
+            && value
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+        self.check(
+            field,
+            is_valid,
+            "must be a valid SKU (alphanumeric, hyphens, underscores)",
+        )
     }
 
     /// Validate a currency code (3 uppercase letters)
     pub fn currency_code(self, field: &str, value: &str) -> Self {
         let is_valid = value.len() == 3 && value.chars().all(|c| c.is_ascii_uppercase());
-        self.check(field, is_valid, "must be a 3-letter uppercase currency code")
+        self.check(
+            field,
+            is_valid,
+            "must be a 3-letter uppercase currency code",
+        )
     }
 
     /// Validate a phone number (basic validation)
@@ -236,7 +250,9 @@ impl ValidationBuilder {
     pub fn postal_code(self, field: &str, value: &str) -> Self {
         let is_valid = value.len() >= 3
             && value.len() <= 10
-            && value.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-');
+            && value
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == ' ' || c == '-');
         self.check(field, is_valid, "must be a valid postal code")
     }
 
@@ -298,9 +314,7 @@ mod tests {
 
     #[test]
     fn test_validation_builder_required_fails() {
-        let result = ValidationBuilder::new()
-            .required("name", "")
-            .build();
+        let result = ValidationBuilder::new().required("name", "").build();
 
         assert!(result.is_err());
         if let Err(CommerceError::InvalidInput { field, .. }) = result {
@@ -345,12 +359,21 @@ mod tests {
     #[test]
     fn test_validation_builder_sku() {
         // Valid SKUs
-        assert!(ValidationBuilder::new().sku("sku", "SKU-001").build().is_ok());
-        assert!(ValidationBuilder::new().sku("sku", "WIDGET_BLUE_XL").build().is_ok());
+        assert!(ValidationBuilder::new()
+            .sku("sku", "SKU-001")
+            .build()
+            .is_ok());
+        assert!(ValidationBuilder::new()
+            .sku("sku", "WIDGET_BLUE_XL")
+            .build()
+            .is_ok());
 
         // Invalid SKUs
         assert!(ValidationBuilder::new().sku("sku", "").build().is_err());
-        assert!(ValidationBuilder::new().sku("sku", "SKU 001").build().is_err());
+        assert!(ValidationBuilder::new()
+            .sku("sku", "SKU 001")
+            .build()
+            .is_err());
     }
 
     #[test]

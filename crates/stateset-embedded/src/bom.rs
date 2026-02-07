@@ -1,8 +1,7 @@
 //! Bill of Materials (BOM) operations
 
 use stateset_core::{
-    BillOfMaterials, BomComponent, BomFilter, CreateBom,
-    CreateBomComponent, Result, UpdateBom,
+    BillOfMaterials, BomComponent, BomFilter, CreateBom, CreateBomComponent, Result, UpdateBom,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -122,12 +121,20 @@ impl Bom {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    pub fn add_component(
+        &self,
+        bom_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         self.db.bom().add_component(bom_id, component)
     }
 
     /// Update a component in a BOM.
-    pub fn update_component(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    pub fn update_component(
+        &self,
+        component_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         self.db.bom().update_component(component_id, component)
     }
 

@@ -8,11 +8,11 @@
 // Exit codes for consistent CLI behavior
 export const EXIT_CODES = {
   SUCCESS: 0,
-  USER_ERROR: 1,      // Bad arguments, permission denied, validation failed
-  OPERATIONAL: 2,     // Database, API, file system errors
-  INTERNAL: 3,        // Unexpected exceptions, bugs
-  TIMEOUT: 4,         // Operation timed out
-  CANCELLED: 5        // User cancelled operation
+  USER_ERROR: 1, // Bad arguments, permission denied, validation failed
+  OPERATIONAL: 2, // Database, API, file system errors
+  INTERNAL: 3, // Unexpected exceptions, bugs
+  TIMEOUT: 4, // Operation timed out
+  CANCELLED: 5, // User cancelled operation
 };
 
 /**
@@ -64,7 +64,7 @@ export class StateSetError extends Error {
     const suggestions = this.getSuggestions();
     if (suggestions.length > 0) {
       output += `\n\n${yellow}Suggestions:${reset}`;
-      suggestions.forEach(s => {
+      suggestions.forEach((s) => {
         output += `\n  ${gray}•${reset} ${s}`;
       });
     }
@@ -93,7 +93,7 @@ export class StateSetError extends Error {
       context: this.context,
       suggestions: this.getSuggestions(),
       timestamp: this.timestamp,
-      stack: this.stack
+      stack: this.stack,
     };
   }
 }
@@ -107,7 +107,7 @@ export class ValidationError extends StateSetError {
       ...options,
       code: options.code || 'VALIDATION_ERROR',
       exitCode: EXIT_CODES.USER_ERROR,
-      retryable: false
+      retryable: false,
     });
     this.name = 'ValidationError';
     this.field = options.field || null;
@@ -128,7 +128,7 @@ export class ValidationError extends StateSetError {
       suggestions.push(`Received: ${JSON.stringify(this.received)}`);
     }
 
-    suggestions.push("Run with --help to see usage examples");
+    suggestions.push('Run with --help to see usage examples');
     return suggestions;
   }
 }
@@ -142,7 +142,7 @@ export class PermissionError extends StateSetError {
       ...options,
       code: options.code || 'PERMISSION_DENIED',
       exitCode: EXIT_CODES.USER_ERROR,
-      retryable: false
+      retryable: false,
     });
     this.name = 'PermissionError';
     this.requiredLevel = options.requiredLevel || 'write';
@@ -159,9 +159,9 @@ export class PermissionError extends StateSetError {
 
   getSuggestions() {
     return [
-      "Add --apply flag to enable write operations",
-      "Example: stateset --apply \"your command here\"",
-      "Run without --apply first to preview what would happen"
+      'Add --apply flag to enable write operations',
+      'Example: stateset --apply "your command here"',
+      'Run without --apply first to preview what would happen',
     ];
   }
 }
@@ -175,7 +175,7 @@ export class ApiError extends StateSetError {
       ...options,
       code: options.code || 'API_ERROR',
       exitCode: EXIT_CODES.OPERATIONAL,
-      retryable: options.retryable ?? true
+      retryable: options.retryable ?? true,
     });
     this.name = 'ApiError';
     this.statusCode = options.statusCode || null;
@@ -186,22 +186,22 @@ export class ApiError extends StateSetError {
     const suggestions = [];
 
     if (this.statusCode === 401) {
-      suggestions.push("Check your ANTHROPIC_API_KEY environment variable");
-      suggestions.push("Run: stateset-doctor --checks api");
+      suggestions.push('Check your ANTHROPIC_API_KEY environment variable');
+      suggestions.push('Run: stateset-doctor --checks api');
     } else if (this.statusCode === 429) {
-      suggestions.push("Rate limit exceeded - wait a moment and try again");
-      suggestions.push("Consider using a less frequent polling interval");
+      suggestions.push('Rate limit exceeded - wait a moment and try again');
+      suggestions.push('Consider using a less frequent polling interval');
     } else if (this.statusCode >= 500) {
-      suggestions.push("Claude API is experiencing issues");
-      suggestions.push("Try again in a few minutes");
-      suggestions.push("Use stateset-direct for non-AI operations");
+      suggestions.push('Claude API is experiencing issues');
+      suggestions.push('Try again in a few minutes');
+      suggestions.push('Use stateset-direct for non-AI operations');
     } else if (!this.statusCode) {
-      suggestions.push("Check your internet connection");
-      suggestions.push("Try: stateset-doctor --checks api");
+      suggestions.push('Check your internet connection');
+      suggestions.push('Try: stateset-doctor --checks api');
     }
 
     if (this.retryable) {
-      suggestions.push("This error may be temporary - retry the operation");
+      suggestions.push('This error may be temporary - retry the operation');
     }
 
     return suggestions;
@@ -217,7 +217,7 @@ export class DatabaseError extends StateSetError {
       ...options,
       code: options.code || 'DATABASE_ERROR',
       exitCode: EXIT_CODES.OPERATIONAL,
-      retryable: options.retryable ?? false
+      retryable: options.retryable ?? false,
     });
     this.name = 'DatabaseError';
     this.dbPath = options.dbPath || null;
@@ -228,19 +228,19 @@ export class DatabaseError extends StateSetError {
     const suggestions = [];
 
     if (this.message.includes('SQLITE_BUSY') || this.message.includes('locked')) {
-      suggestions.push("Database is locked by another process");
-      suggestions.push("Close other applications using this database");
-      suggestions.push("Try again in a moment");
+      suggestions.push('Database is locked by another process');
+      suggestions.push('Close other applications using this database');
+      suggestions.push('Try again in a moment');
       this.retryable = true;
     } else if (this.message.includes('no such table')) {
-      suggestions.push("Database schema may be outdated");
-      suggestions.push("Run: stateset-doctor --checks db");
+      suggestions.push('Database schema may be outdated');
+      suggestions.push('Run: stateset-doctor --checks db');
     } else if (this.message.includes('ENOENT') || this.message.includes('not found')) {
       suggestions.push(`Database file not found: ${this.dbPath || 'unknown'}`);
-      suggestions.push("Check the --db path argument");
-      suggestions.push("The database will be created on first write operation");
+      suggestions.push('Check the --db path argument');
+      suggestions.push('The database will be created on first write operation');
     } else {
-      suggestions.push("Run: stateset-doctor --checks db,permissions");
+      suggestions.push('Run: stateset-doctor --checks db,permissions');
     }
 
     return suggestions;
@@ -256,7 +256,7 @@ export class ToolError extends StateSetError {
       ...options,
       code: options.code || 'TOOL_ERROR',
       exitCode: EXIT_CODES.OPERATIONAL,
-      retryable: options.retryable ?? true
+      retryable: options.retryable ?? true,
     });
     this.name = 'ToolError';
     this.toolName = options.toolName || null;
@@ -278,12 +278,12 @@ export class ToolError extends StateSetError {
     }
 
     if (this.message.includes('not found')) {
-      suggestions.push("The requested resource may not exist");
-      suggestions.push("Try listing available items first");
+      suggestions.push('The requested resource may not exist');
+      suggestions.push('Try listing available items first');
     }
 
     if (this.retryable) {
-      suggestions.push("This error may be temporary - retry the operation");
+      suggestions.push('This error may be temporary - retry the operation');
     }
 
     return suggestions;
@@ -299,7 +299,7 @@ export class ConfigError extends StateSetError {
       ...options,
       code: options.code || 'CONFIG_ERROR',
       exitCode: EXIT_CODES.USER_ERROR,
-      retryable: false
+      retryable: false,
     });
     this.name = 'ConfigError';
     this.configKey = options.configKey || null;
@@ -318,7 +318,7 @@ export class ConfigError extends StateSetError {
       suggestions.push(`Check configuration file: ${this.configPath}`);
     }
 
-    suggestions.push("Run: stateset-doctor --checks config");
+    suggestions.push('Run: stateset-doctor --checks config');
     return suggestions;
   }
 }
@@ -332,7 +332,7 @@ export class TimeoutError extends StateSetError {
       ...options,
       code: options.code || 'TIMEOUT',
       exitCode: EXIT_CODES.TIMEOUT,
-      retryable: true
+      retryable: true,
     });
     this.name = 'TimeoutError';
     this.timeout = options.timeout || null;
@@ -341,10 +341,10 @@ export class TimeoutError extends StateSetError {
 
   getSuggestions() {
     return [
-      "The operation took too long to complete",
-      "Try a simpler query or break into smaller operations",
-      "Check your network connection",
-      "Retry the operation"
+      'The operation took too long to complete',
+      'Try a simpler query or break into smaller operations',
+      'Check your network connection',
+      'Retry the operation',
     ];
   }
 }
@@ -358,7 +358,7 @@ export class NotFoundError extends StateSetError {
       ...options,
       code: options.code || 'NOT_FOUND',
       exitCode: EXIT_CODES.USER_ERROR,
-      retryable: false
+      retryable: false,
     });
     this.name = 'NotFoundError';
     this.resourceType = options.resourceType || null;
@@ -377,10 +377,12 @@ export class NotFoundError extends StateSetError {
 
     if (this.resourceType) {
       suggestions.push(`Check that the ${this.resourceType} ID is correct`);
-      suggestions.push(`List available ${this.resourceType}s: stateset-direct ${this.resourceType}s list`);
+      suggestions.push(
+        `List available ${this.resourceType}s: stateset-direct ${this.resourceType}s list`,
+      );
     }
 
-    suggestions.push("Use a partial ID (like git) - only a few characters needed if unique");
+    suggestions.push('Use a partial ID (like git) - only a few characters needed if unique');
     return suggestions;
   }
 }
@@ -416,54 +418,117 @@ export class ErrorHandler {
     if (this.json) {
       this.logger.error(JSON.stringify(statesetError.toJSON(), null, 2));
     } else {
-      this.logger.error(statesetError.format({
-        color: process.stdout.isTTY,
-        verbose: this.verbose
-      }));
+      this.logger.error(
+        statesetError.format({
+          color: process.stdout.isTTY,
+          verbose: this.verbose,
+        }),
+      );
     }
 
     return statesetError.exitCode;
   }
 
   /**
-   * Normalize any error to a StateSetError
+   * Normalize any error to a StateSetError.
+   *
+   * Detection priority:
+   * 1. Already a StateSetError — return as-is
+   * 2. Structured properties (error.code, error.statusCode) — most reliable
+   * 3. Case-insensitive message patterns — fallback heuristic
    */
   normalize(error) {
     if (error instanceof StateSetError) {
       return error;
     }
 
-    // Detect error type from message/properties
     const message = error.message || String(error);
+    const lowerMsg = message.toLowerCase();
+    const code = error.code || '';
+    const statusCode = error.statusCode || error.status || 0;
 
-    if (message.includes('ANTHROPIC_API') || message.includes('API key')) {
-      return new ApiError(message, { cause: error, statusCode: 401 });
+    // --- Property-based detection (most reliable) ---
+
+    if (statusCode === 401 || statusCode === 403 || code === 'ANTHROPIC_AUTH_ERROR') {
+      return new ApiError(message, { cause: error, statusCode: statusCode || 401 });
     }
 
-    if (message.includes('SQLITE') || message.includes('database')) {
-      return new DatabaseError(message, { cause: error });
-    }
-
-    if (message.includes('permission') || message.includes('--apply')) {
-      return new PermissionError(message, { cause: error });
-    }
-
-    if (message.includes('not found') || message.includes('No .* found')) {
+    if (statusCode === 404) {
       return new NotFoundError(message, { cause: error });
     }
 
-    if (message.includes('timeout') || message.includes('ETIMEDOUT')) {
+    if (statusCode === 422 || code === 'VALIDATION_ERROR') {
+      return new ValidationError(message, { cause: error });
+    }
+
+    if (statusCode === 429 || code === 'RATE_LIMITED') {
+      return new ApiError(message, { cause: error, statusCode: 429, retryable: true });
+    }
+
+    if (statusCode >= 500) {
+      return new ApiError(message, { cause: error, statusCode, retryable: true });
+    }
+
+    // Node.js system error codes
+    if (
+      code === 'ECONNREFUSED' ||
+      code === 'ENOTFOUND' ||
+      code === 'ENETUNREACH' ||
+      code === 'ECONNRESET'
+    ) {
+      return new ApiError(`Network error: ${message}`, { cause: error, retryable: true });
+    }
+
+    if (code === 'EACCES' || code === 'EPERM') {
+      return new PermissionError(message, { cause: error });
+    }
+
+    if (code === 'ENOENT') {
+      return new NotFoundError(message, { cause: error });
+    }
+
+    if (code === 'SQLITE_ERROR' || code === 'SQLITE_BUSY' || code === 'SQLITE_CONSTRAINT') {
+      return new DatabaseError(message, { cause: error });
+    }
+
+    if (code === 'ETIMEDOUT' || code === 'ESOCKETTIMEDOUT' || code === 'ABORT_ERR') {
       return new TimeoutError(message, { cause: error });
     }
 
-    if (message.includes('validation') || message.includes('invalid') || message.includes('required')) {
+    // --- Message-based detection (case-insensitive fallback) ---
+
+    if (lowerMsg.includes('anthropic_api') || lowerMsg.includes('api key')) {
+      return new ApiError(message, { cause: error, statusCode: 401 });
+    }
+
+    if (lowerMsg.includes('sqlite') || lowerMsg.includes('database')) {
+      return new DatabaseError(message, { cause: error });
+    }
+
+    if (lowerMsg.includes('permission') || lowerMsg.includes('--apply')) {
+      return new PermissionError(message, { cause: error });
+    }
+
+    if (lowerMsg.includes('not found') || /no\s+\S+\s+found/i.test(message)) {
+      return new NotFoundError(message, { cause: error });
+    }
+
+    if (lowerMsg.includes('timeout') || lowerMsg.includes('timed out')) {
+      return new TimeoutError(message, { cause: error });
+    }
+
+    if (
+      lowerMsg.includes('validation') ||
+      lowerMsg.includes('invalid') ||
+      lowerMsg.includes('required field')
+    ) {
       return new ValidationError(message, { cause: error });
     }
 
     // Generic error
     return new StateSetError(message, {
       cause: error,
-      exitCode: EXIT_CODES.INTERNAL
+      exitCode: EXIT_CODES.INTERNAL,
     });
   }
 
@@ -506,9 +571,8 @@ export async function withRetry(fn, options = {}) {
     } catch (error) {
       lastError = error;
 
-      const statesetError = error instanceof StateSetError
-        ? error
-        : new StateSetError(error.message, { cause: error });
+      const statesetError =
+        error instanceof StateSetError ? error : new StateSetError(error.message, { cause: error });
 
       if (!shouldRetry(statesetError) || attempt === maxRetries) {
         throw statesetError;
@@ -516,7 +580,7 @@ export async function withRetry(fn, options = {}) {
 
       // Exponential backoff
       const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
@@ -536,5 +600,5 @@ export default {
   NotFoundError,
   ErrorHandler,
   createErrorHandler,
-  withRetry
+  withRetry,
 };

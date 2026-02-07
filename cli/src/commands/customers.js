@@ -21,7 +21,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     case 'get': {
       const idArg = args[0];
       if (!idArg) {
-        throw new Error('Usage: customers get <id|email>\n\nProvide a customer ID or email address.');
+        throw new Error(
+          'Usage: customers get <id|email>\n\nProvide a customer ID or email address.',
+        );
       }
 
       const customer = idArg.includes('@')
@@ -29,7 +31,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
         : await commerce.customers.get(await resolveId(idArg, 'customers'));
 
       if (!customer) {
-        throw new Error(`Customer not found: ${idArg}\n\nTry 'stateset-direct customers list' to see all customers.`);
+        throw new Error(
+          `Customer not found: ${idArg}\n\nTry 'stateset-direct customers list' to see all customers.`,
+        );
       }
 
       return formatCustomerDetail(customer, { output, jsonOutput });
@@ -40,7 +44,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!email || !firstName || !lastName) {
         throw new Error(
           'Usage: customers create <email> <firstName> <lastName>\n\n' +
-          'Example: stateset-direct customers create alice@example.com Alice Smith'
+            'Example: stateset-direct customers create alice@example.com Alice Smith',
         );
       }
 
@@ -60,9 +64,10 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       }
 
       const customers = await commerce.customers.list();
-      const matches = customers.filter(c =>
-        c.email.toLowerCase().includes(query.toLowerCase()) ||
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(query.toLowerCase())
+      const matches = customers.filter(
+        (c) =>
+          c.email.toLowerCase().includes(query.toLowerCase()) ||
+          `${c.firstName} ${c.lastName}`.toLowerCase().includes(query.toLowerCase()),
       );
 
       return formatCustomerList(matches, { output, jsonOutput });
@@ -71,12 +76,12 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     default:
       throw new Error(
         `Unknown action: customers ${action}\n\n` +
-        'Available actions:\n' +
-        '  list              List all customers\n' +
-        '  get <id|email>    Get customer details\n' +
-        '  create <email> <first> <last>  Create customer\n' +
-        '  count             Count customers\n' +
-        '  search <query>    Search customers'
+          'Available actions:\n' +
+          '  list              List all customers\n' +
+          '  get <id|email>    Get customer details\n' +
+          '  create <email> <first> <last>  Create customer\n' +
+          '  count             Count customers\n' +
+          '  search <query>    Search customers',
       );
   }
 }
@@ -94,18 +99,18 @@ function formatCustomerList(customers, { output, jsonOutput }) {
   }
 
   const formatted = output.table(
-    customers.map(c => ({
+    customers.map((c) => ({
       id: c.id.slice(0, 8) + '...',
       email: c.email,
       name: `${c.firstName} ${c.lastName}`,
-      status: c.status
+      status: c.status,
     })),
     [
       { key: 'id', header: 'ID' },
       { key: 'email', header: 'Email' },
       { key: 'name', header: 'Name' },
-      { key: 'status', header: 'Status' }
-    ]
+      { key: 'status', header: 'Status' },
+    ],
   );
 
   return { customers, formatted };
@@ -114,7 +119,7 @@ function formatCustomerList(customers, { output, jsonOutput }) {
 /**
  * Format single customer detail
  */
-function formatCustomerDetail(customer, { output, jsonOutput }) {
+function formatCustomerDetail(customer, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return customer;
   }
@@ -136,14 +141,14 @@ Created:   ${customer.createdAt}
 /**
  * Format customer created response
  */
-function formatCustomerCreated(customer, { output, jsonOutput }) {
+function formatCustomerCreated(customer, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, customer };
   }
 
   return {
     customer,
-    formatted: `Created customer: ${customer.id}\n  Email: ${customer.email}\n  Name: ${customer.firstName} ${customer.lastName}`
+    formatted: `Created customer: ${customer.id}\n  Email: ${customer.email}\n  Name: ${customer.firstName} ${customer.lastName}`,
   };
 }
 
@@ -159,8 +164,8 @@ export const metadata = {
     get: { description: 'Get customer by ID or email', args: ['<id|email>'] },
     create: { description: 'Create a customer', args: ['<email>', '<firstName>', '<lastName>'] },
     count: { description: 'Count customers', args: [] },
-    search: { description: 'Search customers', args: ['<query>'] }
-  }
+    search: { description: 'Search customers', args: ['<query>'] },
+  },
 };
 
 export default { execute, metadata };

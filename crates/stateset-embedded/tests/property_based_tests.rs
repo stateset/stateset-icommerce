@@ -262,10 +262,13 @@ fn test_inventory_reserve_release_under_concurrent_modifications() {
             if i % 2 == 0 {
                 // Reserve
                 let order_id = Uuid::new_v4();
-                if let Ok(reservation) = commerce
-                    .inventory()
-                    .reserve("SKU-001", dec!(2), "order", &order_id.to_string(), None)
-                {
+                if let Ok(reservation) = commerce.inventory().reserve(
+                    "SKU-001",
+                    dec!(2),
+                    "order",
+                    &order_id.to_string(),
+                    None,
+                ) {
                     reservations.lock().unwrap().push(reservation.id);
                 }
             } else {

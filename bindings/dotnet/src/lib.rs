@@ -2,26 +2,46 @@
 //!
 //! This crate provides C-compatible bindings for .NET P/Invoke integration.
 
+use rust_decimal::Decimal;
+use stateset_core::{
+    AccountType, BackorderPriority, InspectionType, LocationType, OrderStatus, ReturnReason,
+    ShippingCarrier, WarehouseType,
+};
+use stateset_embedded::{
+    AddCartItem,
+    AnalyticsQuery,
+    Commerce as RustCommerce,
+    CreateBackorder,
+    CreateBill,
+    CreateBillItem,
+    CreateCart,
+    CreateCreditAccount,
+    CreateCustomer,
+    CreateGlAccount,
+    CreateInspection,
+    CreateInventoryItem,
+    CreateLocation,
+    CreateLot,
+    CreateOrder,
+    CreatePayment,
+    CreateProduct,
+    CreateProductVariant,
+    CreateReturn,
+    CreateReturnItem,
+    CreateSerialNumber,
+    CreateShipment,
+    // New modules
+    CreateWarehouse,
+    CustomerFilter,
+    OrderFilter,
+    PaymentMethodType,
+    ProductFilter,
+    SetItemCost,
+    TimePeriod,
+};
 use std::ffi::{c_char, c_double, c_int, CStr, CString};
 use std::ptr;
 use std::sync::{Arc, Mutex};
-use rust_decimal::Decimal;
-use stateset_embedded::{
-    Commerce as RustCommerce,
-    CreateCustomer, CreateProduct, CreateProductVariant, CreateInventoryItem, CreateOrder,
-    CreateCart, AddCartItem, CustomerFilter, OrderFilter, ProductFilter,
-    AnalyticsQuery, TimePeriod, CreateReturn, CreateReturnItem, CreatePayment, PaymentMethodType,
-    // New modules
-    CreateWarehouse, CreateLocation, CreateInspection, CreateLot, CreateSerialNumber,
-    CreateBill, CreateBillItem, CreateCreditAccount, CreateBackorder, CreateGlAccount,
-    SetItemCost,
-    CreateShipment,
-};
-use stateset_core::{
-    ReturnReason, OrderStatus,
-    WarehouseType, LocationType, InspectionType, BackorderPriority, AccountType,
-    ShippingCarrier,
-};
 
 // =============================================================================
 // Handle Management
@@ -146,13 +166,16 @@ pub extern "C" fn stateset_customer_create(
     let phone_str = cstr_to_string(phone);
 
     let result = use_handle(handle, |commerce| {
-        commerce.customers().create(CreateCustomer {
-            email: email_str,
-            first_name: first_name_str,
-            last_name: last_name_str,
-            phone: phone_str,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .customers()
+            .create(CreateCustomer {
+                email: email_str,
+                first_name: first_name_str,
+                last_name: last_name_str,
+                phone: phone_str,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -193,7 +216,10 @@ pub extern "C" fn stateset_customer_get(
 #[no_mangle]
 pub extern "C" fn stateset_customer_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.customers().list(CustomerFilter::default()).map_err(|e| e.to_string())
+        commerce
+            .customers()
+            .list(CustomerFilter::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -234,7 +260,10 @@ pub extern "C" fn stateset_customer_delete(
 #[no_mangle]
 pub extern "C" fn stateset_customer_count(handle: *mut CommerceHandle) -> c_int {
     let result = use_handle(handle, |commerce| {
-        commerce.customers().list(CustomerFilter::default()).map_err(|e| e.to_string())
+        commerce
+            .customers()
+            .list(CustomerFilter::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -263,17 +292,20 @@ pub extern "C" fn stateset_product_create(
     let price_decimal = Decimal::try_from(price).unwrap_or_default();
 
     let result = use_handle(handle, |commerce| {
-        commerce.products().create(CreateProduct {
-            name: name_str,
-            description: desc_str,
-            variants: Some(vec![CreateProductVariant {
-                sku: sku_str,
-                price: price_decimal,
-                is_default: Some(true),
+        commerce
+            .products()
+            .create(CreateProduct {
+                name: name_str,
+                description: desc_str,
+                variants: Some(vec![CreateProductVariant {
+                    sku: sku_str,
+                    price: price_decimal,
+                    is_default: Some(true),
+                    ..Default::default()
+                }]),
                 ..Default::default()
-            }]),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -314,7 +346,10 @@ pub extern "C" fn stateset_product_get(
 #[no_mangle]
 pub extern "C" fn stateset_product_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.products().list(ProductFilter::default()).map_err(|e| e.to_string())
+        commerce
+            .products()
+            .list(ProductFilter::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -355,12 +390,15 @@ pub extern "C" fn stateset_order_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.orders().create(CreateOrder {
-            customer_id: customer_uuid,
-            items,
-            currency: Some(currency_str),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .orders()
+            .create(CreateOrder {
+                customer_id: customer_uuid,
+                items,
+                currency: Some(currency_str),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -401,7 +439,10 @@ pub extern "C" fn stateset_order_get(
 #[no_mangle]
 pub extern "C" fn stateset_order_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.orders().list(OrderFilter::default()).map_err(|e| e.to_string())
+        commerce
+            .orders()
+            .list(OrderFilter::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -442,7 +483,10 @@ pub extern "C" fn stateset_order_update_status(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.orders().update_status(uuid, order_status).map_err(|e| e.to_string())
+        commerce
+            .orders()
+            .update_status(uuid, order_status)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -469,12 +513,15 @@ pub extern "C" fn stateset_inventory_create_item(
     let qty = Decimal::try_from(initial_quantity).ok();
 
     let result = use_handle(handle, |commerce| {
-        commerce.inventory().create_item(CreateInventoryItem {
-            sku: sku_str,
-            name: name_str,
-            initial_quantity: qty,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .inventory()
+            .create_item(CreateInventoryItem {
+                sku: sku_str,
+                name: name_str,
+                initial_quantity: qty,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -497,7 +544,10 @@ pub extern "C" fn stateset_inventory_adjust(
     let delta = Decimal::try_from(quantity_delta).unwrap_or_default();
 
     let result = use_handle(handle, |commerce| {
-        commerce.inventory().adjust(&sku_str, delta, &reason_str).map_err(|e| e.to_string())
+        commerce
+            .inventory()
+            .adjust(&sku_str, delta, &reason_str)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -516,7 +566,10 @@ pub extern "C" fn stateset_inventory_get_level(
     let sku_str = cstr_to_string(sku).unwrap_or_default();
 
     let result = use_handle(handle, |commerce| {
-        commerce.inventory().get_stock(&sku_str).map_err(|e| e.to_string())
+        commerce
+            .inventory()
+            .get_stock(&sku_str)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -542,15 +595,22 @@ pub extern "C" fn stateset_cart_create(
     let currency_str = cstr_to_string(currency);
 
     let customer_uuid = customer_id_str.and_then(|s| {
-        if s.is_empty() { None } else { uuid::Uuid::parse_str(&s).ok() }
+        if s.is_empty() {
+            None
+        } else {
+            uuid::Uuid::parse_str(&s).ok()
+        }
     });
 
     let result = use_handle(handle, |commerce| {
-        commerce.carts().create(CreateCart {
-            customer_id: customer_uuid,
-            currency: currency_str,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .carts()
+            .create(CreateCart {
+                customer_id: customer_uuid,
+                currency: currency_str,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -588,11 +648,17 @@ pub extern "C" fn stateset_cart_add_item(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.carts().add_item(cart_uuid, AddCartItem {
-            variant_id: Some(variant_uuid),
-            quantity,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .carts()
+            .add_item(
+                cart_uuid,
+                AddCartItem {
+                    variant_id: Some(variant_uuid),
+                    quantity,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -664,23 +730,33 @@ pub extern "C" fn stateset_return_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        let order = commerce.orders().get(order_uuid).map_err(|e| e.to_string())?;
+        let order = commerce
+            .orders()
+            .get(order_uuid)
+            .map_err(|e| e.to_string())?;
         let order = order.ok_or_else(|| format!("Order not found: {}", order_uuid))?;
-        let items: Vec<CreateReturnItem> = order.items.iter().map(|item| CreateReturnItem {
-            order_item_id: item.id,
-            quantity: item.quantity,
-            condition: None,
-        }).collect();
+        let items: Vec<CreateReturnItem> = order
+            .items
+            .iter()
+            .map(|item| CreateReturnItem {
+                order_item_id: item.id,
+                quantity: item.quantity,
+                condition: None,
+            })
+            .collect();
         if items.is_empty() {
             return Err("Return must have at least one item".to_string());
         }
-        commerce.returns().create(CreateReturn {
-            order_id: order_uuid,
-            reason: return_reason,
-            notes: notes_str,
-            items,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .returns()
+            .create(CreateReturn {
+                order_id: order_uuid,
+                reason: return_reason,
+                notes: notes_str,
+                items,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -694,7 +770,10 @@ pub extern "C" fn stateset_return_create(
 #[no_mangle]
 pub extern "C" fn stateset_return_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.returns().list(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .returns()
+            .list(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -743,13 +822,16 @@ pub extern "C" fn stateset_payment_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.payments().create(CreatePayment {
-            order_id: Some(order_uuid),
-            amount: amount_decimal,
-            currency: Some(currency_str),
-            payment_method,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .payments()
+            .create(CreatePayment {
+                order_id: Some(order_uuid),
+                amount: amount_decimal,
+                currency: Some(currency_str),
+                payment_method,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -783,10 +865,13 @@ pub extern "C" fn stateset_analytics_sales_summary(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.analytics().sales_summary(AnalyticsQuery {
-            period: Some(time_period),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .analytics()
+            .sales_summary(AnalyticsQuery {
+                period: Some(time_period),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -803,10 +888,13 @@ pub extern "C" fn stateset_analytics_top_products(
     limit: c_int,
 ) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.analytics().top_products(AnalyticsQuery {
-            limit: Some(limit as u32),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .analytics()
+            .top_products(AnalyticsQuery {
+                limit: Some(limit as u32),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -823,10 +911,13 @@ pub extern "C" fn stateset_analytics_top_customers(
     limit: c_int,
 ) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.analytics().top_customers(AnalyticsQuery {
-            limit: Some(limit as u32),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .analytics()
+            .top_customers(AnalyticsQuery {
+                limit: Some(limit as u32),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -862,24 +953,25 @@ pub extern "C" fn stateset_shipment_create(
         Err(_) => return ptr::null_mut(),
     };
 
-    let shipping_carrier = carrier_str.map(|c| {
-        match c.to_lowercase().as_str() {
-            "ups" => ShippingCarrier::Ups,
-            "fedex" => ShippingCarrier::FedEx,
-            "usps" => ShippingCarrier::Usps,
-            "dhl" => ShippingCarrier::Dhl,
-            _ => ShippingCarrier::Other,
-        }
+    let shipping_carrier = carrier_str.map(|c| match c.to_lowercase().as_str() {
+        "ups" => ShippingCarrier::Ups,
+        "fedex" => ShippingCarrier::FedEx,
+        "usps" => ShippingCarrier::Usps,
+        "dhl" => ShippingCarrier::Dhl,
+        _ => ShippingCarrier::Other,
     });
 
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().create(CreateShipment {
-            order_id: order_uuid,
-            recipient_name: recipient_name_str,
-            shipping_address: shipping_address_str,
-            carrier: shipping_carrier,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .shipments()
+            .create(CreateShipment {
+                order_id: order_uuid,
+                recipient_name: recipient_name_str,
+                shipping_address: shipping_address_str,
+                carrier: shipping_carrier,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -920,7 +1012,10 @@ pub extern "C" fn stateset_shipment_get(
 #[no_mangle]
 pub extern "C" fn stateset_shipment_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().list(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .shipments()
+            .list(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -949,7 +1044,10 @@ pub extern "C" fn stateset_shipment_ship(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().ship(uuid, tracking).map_err(|e| e.to_string())
+        commerce
+            .shipments()
+            .ship(uuid, tracking)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -976,7 +1074,10 @@ pub extern "C" fn stateset_shipment_deliver(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.shipments().mark_delivered(uuid).map_err(|e| e.to_string())
+        commerce
+            .shipments()
+            .mark_delivered(uuid)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1034,12 +1135,15 @@ pub extern "C" fn stateset_warehouse_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.warehouse().create_warehouse(CreateWarehouse {
-            code: code_str,
-            name: name_str,
-            warehouse_type: WarehouseType::Distribution,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .warehouse()
+            .create_warehouse(CreateWarehouse {
+                code: code_str,
+                name: name_str,
+                warehouse_type: WarehouseType::Distribution,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1053,7 +1157,10 @@ pub extern "C" fn stateset_warehouse_create(
 #[no_mangle]
 pub extern "C" fn stateset_warehouse_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.warehouse().list_warehouses(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .warehouse()
+            .list_warehouses(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1079,15 +1186,18 @@ pub extern "C" fn stateset_warehouse_create_location(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.warehouse().create_location(CreateLocation {
-            warehouse_id: wh_id,
-            location_type: LocationType::Pick,
-            zone: cstr_to_string(zone),
-            aisle: cstr_to_string(aisle),
-            rack: cstr_to_string(rack),
-            bin: cstr_to_string(bin),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .warehouse()
+            .create_location(CreateLocation {
+                warehouse_id: wh_id,
+                location_type: LocationType::Pick,
+                zone: cstr_to_string(zone),
+                aisle: cstr_to_string(aisle),
+                rack: cstr_to_string(rack),
+                bin: cstr_to_string(bin),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1120,20 +1230,23 @@ pub extern "C" fn stateset_quality_create_inspection(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.quality().create_inspection(CreateInspection {
-            inspection_type: InspectionType::Incoming,
-            reference_type: ref_type,
-            reference_id: ref_id,
-            inspector_id: None,
-            scheduled_at: None,
-            notes: None,
-            items: vec![stateset_embedded::CreateInspectionItem {
-                sku: sku_str,
-                lot_number: None,
-                serial_number: None,
-                quantity_to_inspect: rust_decimal::Decimal::ONE,
-            }],
-        }).map_err(|e| e.to_string())
+        commerce
+            .quality()
+            .create_inspection(CreateInspection {
+                inspection_type: InspectionType::Incoming,
+                reference_type: ref_type,
+                reference_id: ref_id,
+                inspector_id: None,
+                scheduled_at: None,
+                notes: None,
+                items: vec![stateset_embedded::CreateInspectionItem {
+                    sku: sku_str,
+                    lot_number: None,
+                    serial_number: None,
+                    quantity_to_inspect: rust_decimal::Decimal::ONE,
+                }],
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1161,12 +1274,15 @@ pub extern "C" fn stateset_lots_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.lots().create(CreateLot {
-            lot_number: cstr_to_string(lot_number),
-            sku: sku_str,
-            quantity: Decimal::try_from(quantity).unwrap_or_default(),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .lots()
+            .create(CreateLot {
+                lot_number: cstr_to_string(lot_number),
+                sku: sku_str,
+                quantity: Decimal::try_from(quantity).unwrap_or_default(),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1180,7 +1296,10 @@ pub extern "C" fn stateset_lots_create(
 #[no_mangle]
 pub extern "C" fn stateset_lots_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.lots().list(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .lots()
+            .list(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1207,11 +1326,14 @@ pub extern "C" fn stateset_serials_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.serials().create(CreateSerialNumber {
-            serial: cstr_to_string(serial),
-            sku: sku_str,
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .serials()
+            .create(CreateSerialNumber {
+                serial: cstr_to_string(serial),
+                sku: sku_str,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1225,7 +1347,10 @@ pub extern "C" fn stateset_serials_create(
 #[no_mangle]
 pub extern "C" fn stateset_serials_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.serials().list(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .serials()
+            .list(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1253,16 +1378,19 @@ pub extern "C" fn stateset_ap_create_bill(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_payable().create_bill(CreateBill {
-            supplier_id: sup_id,
-            items: vec![CreateBillItem {
-                description: cstr_to_string(description).unwrap_or_default(),
-                quantity: Decimal::ONE,
-                unit_price: Decimal::try_from(amount).unwrap_or_default(),
+        commerce
+            .accounts_payable()
+            .create_bill(CreateBill {
+                supplier_id: sup_id,
+                items: vec![CreateBillItem {
+                    description: cstr_to_string(description).unwrap_or_default(),
+                    quantity: Decimal::ONE,
+                    unit_price: Decimal::try_from(amount).unwrap_or_default(),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1276,7 +1404,10 @@ pub extern "C" fn stateset_ap_create_bill(
 #[no_mangle]
 pub extern "C" fn stateset_ap_list_bills(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_payable().list_bills(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .accounts_payable()
+            .list_bills(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1294,7 +1425,10 @@ pub extern "C" fn stateset_ap_list_bills(handle: *mut CommerceHandle) -> *mut c_
 #[no_mangle]
 pub extern "C" fn stateset_ar_aging_summary(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_receivable().get_aging_summary().map_err(|e| e.to_string())
+        commerce
+            .accounts_receivable()
+            .get_aging_summary()
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1316,7 +1450,10 @@ pub extern "C" fn stateset_ar_customer_aging(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_receivable().get_customer_aging(cust_id).map_err(|e| e.to_string())
+        commerce
+            .accounts_receivable()
+            .get_customer_aging(cust_id)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1343,11 +1480,14 @@ pub extern "C" fn stateset_cost_set_item_cost(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.cost_accounting().set_item_cost(SetItemCost {
-            sku: sku_str,
-            standard_cost: Some(Decimal::try_from(standard_cost).unwrap_or_default()),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .cost_accounting()
+            .set_item_cost(SetItemCost {
+                sku: sku_str,
+                standard_cost: Some(Decimal::try_from(standard_cost).unwrap_or_default()),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1369,7 +1509,10 @@ pub extern "C" fn stateset_cost_get_item_cost(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.cost_accounting().get_item_cost(&sku_str).map_err(|e| e.to_string())
+        commerce
+            .cost_accounting()
+            .get_item_cost(&sku_str)
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1396,11 +1539,14 @@ pub extern "C" fn stateset_credit_create_account(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.credit().create_credit_account(CreateCreditAccount {
-            customer_id: cust_id,
-            credit_limit: Decimal::try_from(credit_limit).unwrap_or_default(),
-            ..Default::default()
-        }).map_err(|e| e.to_string())
+        commerce
+            .credit()
+            .create_credit_account(CreateCreditAccount {
+                customer_id: cust_id,
+                credit_limit: Decimal::try_from(credit_limit).unwrap_or_default(),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1437,18 +1583,21 @@ pub extern "C" fn stateset_backorder_create(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.backorder().create_backorder(CreateBackorder {
-            order_id: ord_id,
-            customer_id: cust_id,
-            sku: sku_str,
-            quantity: Decimal::try_from(quantity).unwrap_or_default(),
-            priority: Some(BackorderPriority::Normal),
-            order_line_id: None,
-            expected_date: None,
-            promised_date: None,
-            source_location_id: None,
-            notes: None,
-        }).map_err(|e| e.to_string())
+        commerce
+            .backorder()
+            .create_backorder(CreateBackorder {
+                order_id: ord_id,
+                customer_id: cust_id,
+                sku: sku_str,
+                quantity: Decimal::try_from(quantity).unwrap_or_default(),
+                priority: Some(BackorderPriority::Normal),
+                order_line_id: None,
+                expected_date: None,
+                promised_date: None,
+                source_location_id: None,
+                notes: None,
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1462,7 +1611,10 @@ pub extern "C" fn stateset_backorder_create(
 #[no_mangle]
 pub extern "C" fn stateset_backorder_list(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.backorder().list_backorders(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .backorder()
+            .list_backorders(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1502,17 +1654,20 @@ pub extern "C" fn stateset_gl_create_account(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.general_ledger().create_account(CreateGlAccount {
-            account_number: num,
-            name: name_str,
-            account_type: acct_type,
-            description: None,
-            account_sub_type: None,
-            parent_account_id: None,
-            is_header: None,
-            is_posting: Some(true),
-            currency: None,
-        }).map_err(|e| e.to_string())
+        commerce
+            .general_ledger()
+            .create_account(CreateGlAccount {
+                account_number: num,
+                name: name_str,
+                account_type: acct_type,
+                description: None,
+                account_sub_type: None,
+                parent_account_id: None,
+                is_header: None,
+                is_posting: Some(true),
+                currency: None,
+            })
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -1526,7 +1681,10 @@ pub extern "C" fn stateset_gl_create_account(
 #[no_mangle]
 pub extern "C" fn stateset_gl_list_accounts(handle: *mut CommerceHandle) -> *mut c_char {
     let result = use_handle(handle, |commerce| {
-        commerce.general_ledger().list_accounts(Default::default()).map_err(|e| e.to_string())
+        commerce
+            .general_ledger()
+            .list_accounts(Default::default())
+            .map_err(|e| e.to_string())
     });
 
     match result {

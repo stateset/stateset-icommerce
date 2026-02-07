@@ -3,8 +3,9 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AdjustInventory, CreateInventoryItem, CreateInvoice, CreateInvoiceItem, CreatePurchaseOrder,
-    CreatePurchaseOrderItem, CreateShipment, CreateShipmentItem, CreateSupplier, InventoryRepository,
-    InvoiceRepository, PurchaseOrderRepository, ReserveInventory, ShipmentRepository,
+    CreatePurchaseOrderItem, CreateShipment, CreateShipmentItem, CreateSupplier,
+    InventoryRepository, InvoiceRepository, PurchaseOrderRepository, ReserveInventory,
+    ShipmentRepository,
 };
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
@@ -73,7 +74,10 @@ fn sqlite_purchase_order_create_rolls_back_when_item_insert_fails() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM purchase_orders", [], |row| row.get(0))
         .expect("count purchase_orders");
-    assert_eq!(count, 0, "purchase order insert should have been rolled back");
+    assert_eq!(
+        count, 0,
+        "purchase order insert should have been rolled back"
+    );
 }
 
 #[test]

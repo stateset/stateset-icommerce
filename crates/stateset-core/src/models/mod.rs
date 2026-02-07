@@ -1,14 +1,17 @@
 //! Domain models for commerce operations
 
+pub mod a2a_skill;
 pub mod accounts_payable;
 pub mod accounts_receivable;
+pub mod agent_card;
 pub mod analytics;
 pub mod backorder;
+pub mod cart;
 pub mod cost_accounting;
 pub mod credit;
-pub mod cart;
 pub mod currency;
 pub mod customer;
+pub mod erc8004;
 pub mod forecasting;
 pub mod fulfillment;
 pub mod general_ledger;
@@ -29,23 +32,23 @@ pub mod serial;
 pub mod shipment;
 pub mod subscription;
 pub mod tax;
+pub mod vector;
 pub mod warehouse;
 pub mod warranty;
 pub mod x402;
-pub mod vector;
-pub mod agent_card;
-pub mod a2a_skill;
-pub mod erc8004;
 
+pub use a2a_skill::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
+pub use agent_card::*;
 pub use analytics::*;
 pub use backorder::*;
+pub use cart::*;
 pub use cost_accounting::*;
 pub use credit::*;
-pub use cart::*;
 pub use currency::*;
 pub use customer::*;
+pub use erc8004::*;
 pub use forecasting::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
@@ -66,13 +69,10 @@ pub use serial::*;
 pub use shipment::*;
 pub use subscription::*;
 pub use tax::*;
+pub use vector::*;
 pub use warehouse::*;
 pub use warranty::*;
 pub use x402::*;
-pub use vector::*;
-pub use agent_card::*;
-pub use a2a_skill::*;
-pub use erc8004::*;
 
 /// Common ID type alias
 pub type Id = uuid::Uuid;

@@ -11,11 +11,17 @@
  *   stateset-manufacturing --apply "start work order WO-123"
  */
 
-import { runAgentLoop, AGENTS } from '../src/claude-harness.js';
+import { runAgentLoop } from '../src/claude-harness.js';
 import { createConfirmHandler } from '../src/utils/confirm.js';
-import { buildAgentOutputData, resolveOutputFormat, writeAgentOutputFile } from '../src/utils/agent-output.js';
+import {
+  buildAgentOutputData,
+  resolveOutputFormat,
+  writeAgentOutputFile,
+} from '../src/utils/agent-output.js';
 import { resolveAgentRuntimeOptions, createStreamingHandler } from '../src/utils/agent-runtime.js';
 import { parseArgs } from 'node:util';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-manufacturing');
 
 const options = {
   apply: { type: 'boolean', default: false },
@@ -33,7 +39,7 @@ const options = {
   model: { type: 'string' },
   resume: { type: 'string' },
   yes: { type: 'boolean', short: 'y', default: false },
-  help: { type: 'boolean', short: 'h', default: false }
+  help: { type: 'boolean', short: 'h', default: false },
 };
 
 const { values, positionals } = parseArgs({ options, allowPositionals: true });
@@ -99,12 +105,14 @@ if (!request) {
 const outputFormat = resolveOutputFormat({
   format: values.format,
   json: values.json,
-  argv: process.argv
+  argv: process.argv,
 });
 const isJsonOutput = outputFormat === 'json';
 
 if (values.stream && isJsonOutput) {
-  console.error('Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.');
+  console.error(
+    'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
+  );
   process.exit(1);
 }
 
@@ -120,14 +128,15 @@ try {
   process.exit(1);
 }
 
-const { thinkLevel, providerName, streaming, maxBudgetUsd, memoryOverride, enableX402 } = runtimeOptions;
+const { thinkLevel, providerName, streaming, maxBudgetUsd, memoryOverride, enableX402 } =
+  runtimeOptions;
 
 try {
   const nonInteractive = !process.stdin.isTTY || isJsonOutput;
   const onConfirmRequired = createConfirmHandler({
     output: null,
     assumeYes: values.yes,
-    nonInteractive
+    nonInteractive,
   });
 
   if (!isJsonOutput) {
@@ -160,14 +169,14 @@ try {
         const toolName = toolCall.name.replace('mcp__stateset-commerce__', '');
         console.log(`Tool: ${toolName}(${JSON.stringify(toolCall.input)})`);
       }
-    }
+    },
   });
 
   const outputData = buildAgentOutputData({
     agent: 'manufacturing',
     request,
     allowApply: values.apply,
-    result
+    result,
   });
 
   if (values.output) {

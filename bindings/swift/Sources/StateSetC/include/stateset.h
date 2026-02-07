@@ -188,9 +188,7 @@ char *stateset_shipment_list(CommerceHandle *handle);
 /**
  * Ship a shipment, returns JSON string (caller must free)
  */
-char *stateset_shipment_ship(CommerceHandle *handle,
-                             const char *id,
-                             const char *tracking_number);
+char *stateset_shipment_ship(CommerceHandle *handle, const char *id, const char *tracking_number);
 
 /**
  * Mark shipment as delivered, returns JSON string (caller must free)

@@ -27,8 +27,8 @@ describe('logger', () => {
         level: 'debug',
         json: true,
         output: {
-          log: (msg) => output.push(msg)
-        }
+          log: (msg) => output.push(msg),
+        },
       });
     });
 
@@ -71,7 +71,7 @@ describe('logger', () => {
         const infoLogger = new Logger({
           level: 'info',
           json: true,
-          output: { log: (msg) => output.push(msg) }
+          output: { log: (msg) => output.push(msg) },
         });
 
         infoLogger.debug('should not appear');
@@ -85,7 +85,7 @@ describe('logger', () => {
         const errorOnlyLogger = new Logger({
           level: 'error',
           json: true,
-          output: { log: (msg) => output.push(msg) }
+          output: { log: (msg) => output.push(msg) },
         });
 
         errorOnlyLogger.error('error message');
@@ -101,7 +101,7 @@ describe('logger', () => {
           level: 'info',
           json: true,
           context: { service: 'test', version: '1.0' },
-          output: { log: (msg) => output.push(msg) }
+          output: { log: (msg) => output.push(msg) },
         });
 
         contextLogger.info('test message');
@@ -116,7 +116,7 @@ describe('logger', () => {
           level: 'info',
           json: true,
           context: { service: 'test' },
-          output: { log: (msg) => output.push(msg) }
+          output: { log: (msg) => output.push(msg) },
         });
 
         const child = parent.child({ requestId: '123' });
@@ -131,7 +131,7 @@ describe('logger', () => {
     describe('timing', () => {
       it('should track timers', async () => {
         logger.time('operation');
-        await new Promise(r => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 10));
         const duration = logger.timeEnd('operation');
 
         assert.ok(duration >= 10, 'Duration should be at least 10ms');
@@ -183,7 +183,7 @@ describe('logger', () => {
       const logger = createLogger({
         level: 'info',
         json: true,
-        output: { log: (msg) => output.push(msg) }
+        output: { log: (msg) => output.push(msg) },
       });
 
       logger.info('test');
@@ -200,7 +200,7 @@ describe('logger', () => {
       const baseLogger = new Logger({
         level: 'info',
         json: true,
-        output: { log: (msg) => output.push(msg) }
+        output: { log: (msg) => output.push(msg) },
       });
       toolLogger = new ToolCallLogger(baseLogger);
     });
@@ -223,11 +223,15 @@ describe('logger', () => {
     });
 
     it('should sanitize sensitive input', () => {
-      toolLogger.logCall('create_customer', {
-        email: 'test@example.com',
-        password: 'secret123',
-        apiKey: 'key-xxx'
-      }, 'req-123');
+      toolLogger.logCall(
+        'create_customer',
+        {
+          email: 'test@example.com',
+          password: 'secret123',
+          apiKey: 'key-xxx',
+        },
+        'req-123',
+      );
 
       const entry = JSON.parse(output[0]);
       assert.strictEqual(entry.input.email, 'test@example.com');

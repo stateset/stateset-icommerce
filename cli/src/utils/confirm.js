@@ -2,7 +2,7 @@ import * as readline from 'node:readline';
 
 const defaultOutput = {
   yellow: (text) => text,
-  bold: (text) => text
+  bold: (text) => text,
 };
 
 export function normalizeConfirmContext(ctx = {}) {
@@ -13,32 +13,35 @@ export function normalizeConfirmContext(ctx = {}) {
   return {
     operation,
     details,
-    amount: Number.isFinite(amount) ? amount : null
+    amount: Number.isFinite(amount) ? amount : null,
   };
 }
 
 export function createConfirmPrompt({ input = process.stdin, output = process.stdout } = {}) {
-  return (message) => new Promise((resolve) => {
-    const rl = readline.createInterface({ input, output });
-    rl.question(`${message} [y/N] `, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+  return (message) =>
+    new Promise((resolve) => {
+      const rl = readline.createInterface({ input, output });
+      rl.question(`${message} [y/N] `, (answer) => {
+        rl.close();
+        resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+      });
     });
-  });
 }
 
 export function createConfirmHandler({
   output = null,
   assumeYes = false,
   nonInteractive = false,
-  confirmPrompt = null
+  confirmPrompt = null,
 } = {}) {
   if (assumeYes) return async () => true;
 
-  const style = output ? {
-    yellow: output.yellow?.bind(output) || defaultOutput.yellow,
-    bold: output.bold?.bind(output) || defaultOutput.bold
-  } : defaultOutput;
+  const style = output
+    ? {
+        yellow: output.yellow?.bind(output) || defaultOutput.yellow,
+        bold: output.bold?.bind(output) || defaultOutput.bold,
+      }
+    : defaultOutput;
 
   if (nonInteractive) {
     let warned = false;
@@ -47,7 +50,7 @@ export function createConfirmHandler({
         const { operation, details, amount } = normalizeConfirmContext(ctx);
         let message = `Error: Confirmation required for ${operation}. Re-run with --yes to proceed.`;
         if (details) message += ` ${details}`;
-        if (amount != null) message += ` Amount: $${amount.toFixed(2)}.`;
+        if (amount !== null) message += ` Amount: $${amount.toFixed(2)}.`;
         console.error(message);
         warned = true;
       }
@@ -61,7 +64,7 @@ export function createConfirmHandler({
     let message = `\n${style.yellow('WARNING: Confirmation required')}\n`;
     message += `   Operation: ${operation}\n`;
     if (details) message += `   Details: ${details}\n`;
-    if (amount != null) message += `   Amount: ${style.bold('$' + amount.toFixed(2))}\n`;
+    if (amount !== null) message += `   Amount: ${style.bold('$' + amount.toFixed(2))}\n`;
     message += `\n   Proceed?`;
 
     console.log(message);

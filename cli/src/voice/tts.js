@@ -9,31 +9,31 @@
  * Optional: ELEVENLABS_VOICE_ID for default voice selection
  */
 
-import { createLogger } from "../logger.js";
+import { createLogger } from '../logger.js';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
+const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 
 /** Default voice ID used when ELEVENLABS_VOICE_ID is not set (Rachel). */
-const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
 
 /** Default model for synthesis. */
-const DEFAULT_MODEL_ID = "eleven_monolingual_v1";
+const DEFAULT_MODEL_ID = 'eleven_monolingual_v1';
 
 /** Supported output formats and their content types. */
 const OUTPUT_FORMATS = {
-  mp3_44100_128: "audio/mpeg",
-  mp3_44100_64: "audio/mpeg",
-  mp3_44100_96: "audio/mpeg",
-  mp3_44100_192: "audio/mpeg",
-  pcm_16000: "audio/pcm",
-  pcm_22050: "audio/pcm",
-  pcm_24000: "audio/pcm",
-  pcm_44100: "audio/pcm",
-  ulaw_8000: "audio/basic",
+  mp3_44100_128: 'audio/mpeg',
+  mp3_44100_64: 'audio/mpeg',
+  mp3_44100_96: 'audio/mpeg',
+  mp3_44100_192: 'audio/mpeg',
+  pcm_16000: 'audio/pcm',
+  pcm_22050: 'audio/pcm',
+  pcm_24000: 'audio/pcm',
+  pcm_44100: 'audio/pcm',
+  ulaw_8000: 'audio/basic',
 };
 
 /** Default voice settings. */
@@ -71,8 +71,8 @@ export class TTSProvider {
     this.voiceId = options.voiceId || process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID;
     this.modelId = options.modelId || DEFAULT_MODEL_ID;
     this.voiceSettings = { ...DEFAULT_VOICE_SETTINGS, ...options.voiceSettings };
-    this.outputFormat = options.outputFormat || "mp3_44100_128";
-    this.log = createLogger({ level: process.env.LOG_LEVEL || "info" }).child({ module: "tts" });
+    this.outputFormat = options.outputFormat || 'mp3_44100_128';
+    this.log = createLogger({ level: process.env.LOG_LEVEL || 'info' }).child({ module: 'tts' });
   }
 
   // --------------------------------------------------------------------------
@@ -100,12 +100,12 @@ export class TTSProvider {
    */
   async synthesize(text, opts = {}) {
     if (!this.apiKey) {
-      this.log.debug("TTS unavailable: no ELEVENLABS_API_KEY configured");
+      this.log.debug('TTS unavailable: no ELEVENLABS_API_KEY configured');
       return null;
     }
 
-    if (!text || typeof text !== "string" || text.trim().length === 0) {
-      this.log.warn("TTS synthesize called with empty text");
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      this.log.warn('TTS synthesize called with empty text');
       return null;
     }
 
@@ -122,7 +122,7 @@ export class TTSProvider {
       voice_settings: voiceSettings,
     };
 
-    this.log.debug("Synthesizing speech", {
+    this.log.debug('Synthesizing speech', {
       voiceId,
       modelId,
       textLength: text.length,
@@ -131,18 +131,18 @@ export class TTSProvider {
 
     try {
       const res = await fetch(url, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "xi-api-key": this.apiKey,
-          Accept: OUTPUT_FORMATS[outputFormat] || "audio/mpeg",
+          'Content-Type': 'application/json',
+          'xi-api-key': this.apiKey,
+          Accept: OUTPUT_FORMATS[outputFormat] || 'audio/mpeg',
         },
         body: JSON.stringify(body),
       });
 
       if (!res.ok) {
-        const errBody = await res.text().catch(() => "Unknown error");
-        this.log.error("ElevenLabs API error", {
+        const errBody = await res.text().catch(() => 'Unknown error');
+        this.log.error('ElevenLabs API error', {
           status: res.status,
           statusText: res.statusText,
           body: errBody.slice(0, 500),
@@ -153,7 +153,7 @@ export class TTSProvider {
       const arrayBuffer = await res.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
-      this.log.info("Speech synthesized", {
+      this.log.info('Speech synthesized', {
         voiceId,
         textLength: text.length,
         audioBytes: buffer.length,
@@ -162,10 +162,10 @@ export class TTSProvider {
 
       return buffer;
     } catch (err) {
-      if (err.message.startsWith("ElevenLabs API error")) {
+      if (err.message.startsWith('ElevenLabs API error')) {
         throw err;
       }
-      this.log.error("TTS synthesis failed", { error: err.message });
+      this.log.error('TTS synthesis failed', { error: err.message });
       throw new Error(`TTS synthesis failed: ${err.message}`);
     }
   }
@@ -178,26 +178,26 @@ export class TTSProvider {
    */
   async listVoices() {
     if (!this.apiKey) {
-      this.log.debug("TTS unavailable: no ELEVENLABS_API_KEY configured");
+      this.log.debug('TTS unavailable: no ELEVENLABS_API_KEY configured');
       return null;
     }
 
     const url = `${ELEVENLABS_BASE_URL}/voices`;
 
-    this.log.debug("Fetching available voices");
+    this.log.debug('Fetching available voices');
 
     try {
       const res = await fetch(url, {
-        method: "GET",
+        method: 'GET',
         headers: {
-          "xi-api-key": this.apiKey,
-          Accept: "application/json",
+          'xi-api-key': this.apiKey,
+          Accept: 'application/json',
         },
       });
 
       if (!res.ok) {
-        const errBody = await res.text().catch(() => "Unknown error");
-        this.log.error("ElevenLabs voices API error", {
+        const errBody = await res.text().catch(() => 'Unknown error');
+        this.log.error('ElevenLabs voices API error', {
           status: res.status,
           body: errBody.slice(0, 500),
         });
@@ -208,18 +208,18 @@ export class TTSProvider {
       const voices = (data.voices || []).map((v) => ({
         voice_id: v.voice_id,
         name: v.name,
-        category: v.category || "unknown",
+        category: v.category || 'unknown',
         labels: v.labels || {},
         preview_url: v.preview_url || null,
       }));
 
-      this.log.info("Voices fetched", { count: voices.length });
+      this.log.info('Voices fetched', { count: voices.length });
       return voices;
     } catch (err) {
-      if (err.message.startsWith("ElevenLabs voices API error")) {
+      if (err.message.startsWith('ElevenLabs voices API error')) {
         throw err;
       }
-      this.log.error("Failed to fetch voices", { error: err.message });
+      this.log.error('Failed to fetch voices', { error: err.message });
       throw new Error(`Failed to fetch voices: ${err.message}`);
     }
   }

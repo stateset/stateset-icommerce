@@ -92,12 +92,17 @@ async function main() {
 
   if (!values.subscription) {
     console.error('Error: --subscription is required. Provide the Pub/Sub subscription name.');
-    console.error('Example: stateset-google-chat --apply --subscription projects/my-project/subscriptions/chat-sub');
+    console.error(
+      'Example: stateset-google-chat --apply --subscription projects/my-project/subscriptions/chat-sub',
+    );
     process.exit(1);
   }
 
   const allowlist = values.allow
-    ? values.allow.split(',').map((s) => s.trim()).filter(Boolean)
+    ? values.allow
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
     : null;
 
   const maxTurns = parseInt(values['max-turns'], 10) || 10;
@@ -105,7 +110,9 @@ async function main() {
   console.log(`\n  StateSet Google Chat Gateway v${CLI_VERSION}`);
   console.log(`  ─────────────────────────────────────────`);
   console.log(`  Database:       ${values.db}`);
-  console.log(`  Mode:           ${values.apply ? 'Write enabled' : 'Preview only (use --apply for writes)'}`);
+  console.log(
+    `  Mode:           ${values.apply ? 'Write enabled' : 'Preview only (use --apply for writes)'}`,
+  );
   console.log(`  Model:          ${values.model}`);
   console.log(`  Max turns:      ${maxTurns}`);
   console.log(`  Agent:          ${values.agent || 'auto-route'}`);
@@ -140,4 +147,5 @@ async function main() {
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-google-chat', main);

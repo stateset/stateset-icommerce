@@ -35,31 +35,32 @@ export const LEVELS = {
  */
 export const ROUTE_PERMISSIONS = {
   // Public
-  '/health':         { level: 'none' },
+  '/health': { level: 'none' },
+  '/ready': { level: 'none' },
 
   // Read-only
-  '/metrics':        { level: 'read' },
-  '/commands':       { level: 'read' },
-  '/skills':         { level: 'read' },
+  '/metrics': { level: 'read' },
+  '/commands': { level: 'read' },
+  '/skills': { level: 'read' },
 
   // Plugin management
-  '/plugins':        { level: 'read', methods: { POST: 'admin' } },
+  '/plugins': { level: 'read', methods: { POST: 'admin' } },
 
   // Admin-only
-  '/daemon':         { level: 'admin' },
-  '/remote-access':  { level: 'admin' },
+  '/daemon': { level: 'admin' },
+  '/remote-access': { level: 'admin' },
 
   // Voice
-  '/voice':          { level: 'read', methods: { POST: 'write' } },
+  '/voice': { level: 'read', methods: { POST: 'write' } },
 
   // Browser (write by default, GET overridden to read)
-  '/browser':        { level: 'write', methods: { GET: 'read' } },
+  '/browser': { level: 'write', methods: { GET: 'read' } },
 
   // Memory
-  '/memory':         { level: 'read', methods: { POST: 'write', DELETE: 'delete' } },
+  '/memory': { level: 'read', methods: { POST: 'write', DELETE: 'delete' } },
 
   // Heartbeat
-  '/heartbeat':      { level: 'read', methods: { POST: 'write' } },
+  '/heartbeat': { level: 'read', methods: { POST: 'write' } },
 };
 
 // ============================================================================
@@ -78,9 +79,7 @@ export const SANDBOX_BLOCKED_ROUTES = {
     '/browser/type',
     '/browser/close',
   ],
-  shell: [
-    '/daemon',
-  ],
+  shell: ['/daemon'],
 };
 
 // ============================================================================
@@ -90,13 +89,17 @@ export const SANDBOX_BLOCKED_ROUTES = {
 /**
  * Create an API key authenticator.
  *
- * When apiKeys is empty, authentication is disabled and all requests
- * are treated as admin (backwards compatible).
+ * When no valid keys are configured, all non-public routes will be rejected
+ * unless `allowAnonymous` is explicitly enabled.
  *
  * @param {Array<{ key: string, name: string, level?: string, channels?: string[] }>} apiKeys
+ * @param {Object} [opts]
+ * @param {boolean} [opts.allowAnonymous=false] - When true and no keys are configured, treat all requests as authenticated.
+ * @param {{ name?: string, level?: string, channels?: string[] }} [opts.anonymousIdentity] - Identity to use when allowAnonymous is enabled.
+ * @param {boolean} [opts.allowQueryParam=false] - When true, allow `?api_key=<key>` authentication (not recommended).
  * @returns {{ authenticate: (req: import('http').IncomingMessage, url: URL) => { authenticated: boolean, identity?: Object } }}
  */
-export function createApiKeyAuth(apiKeys = []) {
+export function createApiKeyAuth(apiKeys = [], opts = {}) {
   const keyEntries = apiKeys
     .filter((e) => e.key && e.key.length > 0)
     .map((entry) => ({
@@ -106,10 +109,24 @@ export function createApiKeyAuth(apiKeys = []) {
       channels: entry.channels || null,
     }));
 
+  const allowAnonymous = opts.allowAnonymous === true;
+  const allowQueryParam = opts.allowQueryParam === true;
+  const anonymousIdentity = {
+    name: opts.anonymousIdentity?.name || 'anonymous',
+    level: opts.anonymousIdentity?.level || 'admin',
+    channels: opts.anonymousIdentity?.channels || null,
+  };
+  if (!Object.hasOwn(LEVELS, anonymousIdentity.level)) {
+    anonymousIdentity.level = 'admin';
+  }
+
   function authenticate(req, url) {
-    // No keys configured = auth disabled (backwards compatible)
+    // No keys configured
     if (keyEntries.length === 0) {
-      return { authenticated: true, identity: { name: 'anonymous', level: 'admin' } };
+      if (allowAnonymous) {
+        return { authenticated: true, identity: { ...anonymousIdentity } };
+      }
+      return { authenticated: false };
     }
 
     // Extract token from Bearer header or query param
@@ -118,7 +135,7 @@ export function createApiKeyAuth(apiKeys = []) {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       token = authHeader.slice(7);
     }
-    if (!token) {
+    if (!token && allowQueryParam) {
       token = url.searchParams.get('api_key');
     }
 
@@ -129,8 +146,10 @@ export function createApiKeyAuth(apiKeys = []) {
     const tokenBuffer = Buffer.from(token, 'utf-8');
 
     for (const entry of keyEntries) {
-      if (tokenBuffer.length === entry.keyBuffer.length &&
-          timingSafeEqual(tokenBuffer, entry.keyBuffer)) {
+      if (
+        tokenBuffer.length === entry.keyBuffer.length &&
+        timingSafeEqual(tokenBuffer, entry.keyBuffer)
+      ) {
         return {
           authenticated: true,
           identity: {
@@ -153,16 +172,15 @@ export function createApiKeyAuth(apiKeys = []) {
 // ============================================================================
 
 /**
- * Check if an identity has permission for a route.
+ * Get the required permission level for a route based on longest-prefix matching.
  *
- * @param {{ name: string, level: string }} identity
+ * Returns `null` when no permission rule matches.
+ *
  * @param {string} pathname
  * @param {string} method - HTTP method (GET, POST, DELETE, etc.)
- * @returns {{ allowed: boolean, reason?: string }}
+ * @returns {string|null}
  */
-export function checkRoutePermission(identity, pathname, method) {
-  const identityLevel = LEVELS[identity.level] ?? 0;
-
+export function getRequiredLevel(pathname, method) {
   // Find best matching route permission by longest prefix
   let matchedPermission = null;
   let matchedLength = 0;
@@ -176,15 +194,36 @@ export function checkRoutePermission(identity, pathname, method) {
     }
   }
 
-  // No matching route = default to read
   if (!matchedPermission) {
-    matchedPermission = { level: 'read' };
+    return null;
   }
 
   // Method-specific override or base level
   let requiredLevelName = matchedPermission.level;
   if (matchedPermission.methods && matchedPermission.methods[method]) {
     requiredLevelName = matchedPermission.methods[method];
+  }
+
+  return requiredLevelName;
+}
+
+/**
+ * Check if an identity has permission for a route.
+ *
+ * @param {{ name: string, level: string }} identity
+ * @param {string} pathname
+ * @param {string} method - HTTP method (GET, POST, DELETE, etc.)
+ * @returns {{ allowed: boolean, reason?: string }}
+ */
+export function checkRoutePermission(identity, pathname, method) {
+  const identityLevel = LEVELS[identity.level] ?? 0;
+
+  const requiredLevelName = getRequiredLevel(pathname, method);
+  if (!requiredLevelName) {
+    return {
+      allowed: false,
+      reason: `Route ${method} ${pathname} is not recognized by the permission map`,
+    };
   }
 
   const requiredLevel = LEVELS[requiredLevelName] ?? 0;

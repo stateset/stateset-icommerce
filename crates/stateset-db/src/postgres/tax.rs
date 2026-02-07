@@ -7,10 +7,10 @@ use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
     CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ExemptionType,
-    JurisdictionLevel, ProductTaxCategory, Result, TaxAddress, TaxBreakdown, TaxCalculationMethod,
-    TaxCalculationRequest, TaxCalculationResult, TaxCompoundMethod, TaxDetail, TaxExemption,
-    TaxJurisdiction, TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings,
-    TaxType, LineItemTax, JurisdictionSummary,
+    JurisdictionLevel, JurisdictionSummary, LineItemTax, ProductTaxCategory, Result, TaxAddress,
+    TaxBreakdown, TaxCalculationMethod, TaxCalculationRequest, TaxCalculationResult,
+    TaxCompoundMethod, TaxDetail, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
+    TaxRateFilter, TaxRepository, TaxSettings, TaxType,
 };
 use uuid::Uuid;
 
@@ -244,8 +244,8 @@ impl PgTaxRepository {
                 })
             })
             .collect::<Result<Vec<Uuid>>>()?;
-        let raw_exempt_categories: Vec<String> =
-            serde_json::from_value(exempt_categories).map_err(|e| {
+        let raw_exempt_categories: Vec<String> = serde_json::from_value(exempt_categories)
+            .map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for tax_exemption.exempt_categories: {}",
                     e
@@ -309,13 +309,12 @@ impl PgTaxRepository {
                 CommerceError::DatabaseError(format!("Invalid tax_settings.id '{}': {}", id, e))
             })?
         };
-        let calculation_method: TaxCalculationMethod =
-            calculation_method.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid tax_settings.calculation_method '{}': {}",
-                    calculation_method, e
-                ))
-            })?;
+        let calculation_method: TaxCalculationMethod = calculation_method.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid tax_settings.calculation_method '{}': {}",
+                calculation_method, e
+            ))
+        })?;
         let compound_method: TaxCompoundMethod = compound_method.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
                 "Invalid tax_settings.compound_method '{}': {}",
@@ -329,16 +328,15 @@ impl PgTaxRepository {
                     default_product_category, e
                 ))
             })?;
-        let origin_address =
-            origin_address
-                .map(serde_json::from_value)
-                .transpose()
-                .map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Invalid JSON for tax_settings.origin_address: {}",
-                        e
-                    ))
-                })?;
+        let origin_address = origin_address
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid JSON for tax_settings.origin_address: {}",
+                    e
+                ))
+            })?;
 
         Ok(TaxSettings {
             id,
@@ -510,7 +508,9 @@ impl PgTaxRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_rate_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_rate_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_rate_async(&self, id: Uuid) -> Result<Option<TaxRate>> {
@@ -551,7 +551,11 @@ impl PgTaxRepository {
             query.push_str(" AND active = true");
         }
         if filter.effective_date.is_some() {
-            query.push_str(&format!(" AND effective_from <= ${} AND (effective_to IS NULL OR effective_to >= ${})", param_idx, param_idx + 1));
+            query.push_str(&format!(
+                " AND effective_from <= ${} AND (effective_to IS NULL OR effective_to >= ${})",
+                param_idx,
+                param_idx + 1
+            ));
             param_idx += 2;
         }
 
@@ -588,13 +592,18 @@ impl PgTaxRepository {
     ) -> Result<Vec<TaxRate>> {
         let mut jurisdiction_ids = Vec::new();
 
-        if let Some(country) = self.get_jurisdiction_by_code_async(&address.country).await? {
+        if let Some(country) = self
+            .get_jurisdiction_by_code_async(&address.country)
+            .await?
+        {
             jurisdiction_ids.push(country.id);
         }
 
         if let Some(state) = &address.state {
             let state_code = format!("{}-{}", address.country, state);
-            if let Some(state_jurisdiction) = self.get_jurisdiction_by_code_async(&state_code).await? {
+            if let Some(state_jurisdiction) =
+                self.get_jurisdiction_by_code_async(&state_code).await?
+            {
                 jurisdiction_ids.push(state_jurisdiction.id);
             }
         }
@@ -823,7 +832,11 @@ impl PgTaxRepository {
             }
 
             let rates = self
-                .get_rates_for_address_async(&request.shipping_address, item.tax_category, transaction_date)
+                .get_rates_for_address_async(
+                    &request.shipping_address,
+                    item.tax_category,
+                    transaction_date,
+                )
                 .await?;
 
             let mut line_tax = Decimal::ZERO;
@@ -865,17 +878,19 @@ impl PgTaxRepository {
 
                 line_tax += rate_tax;
 
-                if let Some(jurisdiction) = self.get_jurisdiction_async(rate.jurisdiction_id).await? {
-                    jurisdictions_map
-                        .entry(jurisdiction.id)
-                        .or_insert_with(|| JurisdictionSummary {
+                if let Some(jurisdiction) =
+                    self.get_jurisdiction_async(rate.jurisdiction_id).await?
+                {
+                    jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
+                        JurisdictionSummary {
                             id: jurisdiction.id,
                             name: jurisdiction.name.clone(),
                             code: jurisdiction.code.clone(),
                             level: jurisdiction.level,
                             total_rate: Decimal::ZERO,
                             total_tax: Decimal::ZERO,
-                        });
+                        }
+                    });
 
                     if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
                         summary.total_rate += rate.rate;
@@ -977,17 +992,19 @@ impl PgTaxRepository {
 
                     shipping_tax += rate_tax;
 
-                    if let Some(jurisdiction) = self.get_jurisdiction_async(rate.jurisdiction_id).await? {
-                        jurisdictions_map
-                            .entry(jurisdiction.id)
-                            .or_insert_with(|| JurisdictionSummary {
+                    if let Some(jurisdiction) =
+                        self.get_jurisdiction_async(rate.jurisdiction_id).await?
+                    {
+                        jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
+                            JurisdictionSummary {
                                 id: jurisdiction.id,
                                 name: jurisdiction.name.clone(),
                                 code: jurisdiction.code.clone(),
                                 level: jurisdiction.level,
                                 total_rate: Decimal::ZERO,
                                 total_tax: Decimal::ZERO,
-                            });
+                            }
+                        });
 
                         if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
                             summary.total_rate += rate.rate;

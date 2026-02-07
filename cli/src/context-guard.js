@@ -44,8 +44,8 @@ export function estimateTokens(text) {
   // Count different character types
   const length = text.length;
   const whitespaceCount = (text.match(/\s/g) || []).length;
-  const punctuationCount = (text.match(/[.,!?;:'"()\[\]{}]/g) || []).length;
-  const codeIndicators = (text.match(/[{}\[\]();=<>]/g) || []).length;
+  const punctuationCount = (text.match(/[.,!?;:'"()[\]{}]/g) || []).length;
+  const codeIndicators = (text.match(/[{}[\]();=<>]/g) || []).length;
 
   // Base estimate: ~4 chars per token
   let estimate = length / 4;
@@ -86,8 +86,9 @@ export function estimateMessageTokens(message) {
         tokens += estimateTokens(JSON.stringify(block.input));
         tokens += estimateTokens(block.name);
       } else if (block.type === 'tool_result') {
-        tokens += estimateTokens(typeof block.content === 'string' ?
-          block.content : JSON.stringify(block.content));
+        tokens += estimateTokens(
+          typeof block.content === 'string' ? block.content : JSON.stringify(block.content),
+        );
       }
     }
   }
@@ -136,7 +137,7 @@ export class ConversationSummarizer {
       return {
         summary: null,
         keptMessages: history,
-        stats: { summarized: 0, kept: history.length }
+        stats: { summarized: 0, kept: history.length },
       };
     }
 
@@ -149,13 +150,18 @@ export class ConversationSummarizer {
     const summaryParts = [];
     const toolsUsed = new Set();
     const entitiesMentioned = new Set();
-    let userIntents = [];
-    let keyResults = [];
+    const userIntents = [];
 
     for (const msg of toSummarize) {
-      const content = typeof msg.content === 'string' ? msg.content :
-        (Array.isArray(msg.content) ?
-          msg.content.filter(b => b.type === 'text').map(b => b.text).join(' ') : '');
+      const content =
+        typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content
+                .filter((b) => b.type === 'text')
+                .map((b) => b.text)
+                .join(' ')
+            : '';
 
       if (msg.role === 'user') {
         // Extract user intent
@@ -175,8 +181,8 @@ export class ConversationSummarizer {
       // Extract entity references (IDs, emails, etc.)
       const idMatches = content.match(/\b[A-Z]+-[A-Z0-9]+\b/g) || [];
       const emailMatches = content.match(/\b[\w.-]+@[\w.-]+\.\w+\b/g) || [];
-      idMatches.forEach(id => entitiesMentioned.add(id));
-      emailMatches.forEach(email => entitiesMentioned.add(email));
+      idMatches.forEach((id) => entitiesMentioned.add(id));
+      emailMatches.forEach((email) => entitiesMentioned.add(email));
     }
 
     // Build summary
@@ -192,9 +198,10 @@ export class ConversationSummarizer {
       summaryParts.push(`**Entities:** ${Array.from(entitiesMentioned).slice(0, 10).join(', ')}`);
     }
 
-    const summary = summaryParts.length > 0 ?
-      `[Earlier conversation summary - ${toSummarize.length} messages]\n${summaryParts.join('\n')}` :
-      `[Earlier conversation: ${toSummarize.length} messages summarized]`;
+    const summary =
+      summaryParts.length > 0
+        ? `[Earlier conversation summary - ${toSummarize.length} messages]\n${summaryParts.join('\n')}`
+        : `[Earlier conversation: ${toSummarize.length} messages summarized]`;
 
     return {
       summary,
@@ -203,8 +210,8 @@ export class ConversationSummarizer {
         summarized: toSummarize.length,
         kept: toKeep.length,
         originalTokens: estimateHistoryTokens(toSummarize),
-        summaryTokens: estimateTokens(summary)
-      }
+        summaryTokens: estimateTokens(summary),
+      },
     };
   }
 
@@ -224,13 +231,13 @@ export class ConversationSummarizer {
     // Create a system message with the summary
     const summaryMessage = {
       role: 'user',
-      content: summary
+      content: summary,
     };
 
     // Add assistant acknowledgment
     const ackMessage = {
       role: 'assistant',
-      content: 'Understood. I have the context from our earlier conversation.'
+      content: 'Understood. I have the context from our earlier conversation.',
     };
 
     const compactedHistory = [summaryMessage, ackMessage, ...keptMessages];
@@ -240,8 +247,8 @@ export class ConversationSummarizer {
       stats: {
         ...stats,
         compactedLength: compactedHistory.length,
-        tokensSaved: stats.originalTokens - stats.summaryTokens - estimateMessageTokens(ackMessage)
-      }
+        tokensSaved: stats.originalTokens - stats.summaryTokens - estimateMessageTokens(ackMessage),
+      },
     };
   }
 }
@@ -304,7 +311,7 @@ export class ContextGuard {
       historyTokens,
       systemTokens,
       newMessageTokens,
-      maxTokens: this.effectiveMax
+      maxTokens: this.effectiveMax,
     };
 
     // Check thresholds in order
@@ -313,14 +320,15 @@ export class ContextGuard {
         safe: false,
         action: 'abort',
         usage,
-        message: `Context window at ${(percent * 100).toFixed(1)}% capacity (${totalTokens}/${this.effectiveMax} tokens). Cannot proceed safely.`
+        message: `Context window at ${(percent * 100).toFixed(1)}% capacity (${totalTokens}/${this.effectiveMax} tokens). Cannot proceed safely.`,
       };
     }
 
     if (percent >= this.compactThreshold) {
       // Auto-compact
       const { history: compactedHistory, stats } = this.summarizer.compact(history);
-      const compactedTokens = estimateHistoryTokens(compactedHistory) + systemTokens + newMessageTokens;
+      const compactedTokens =
+        estimateHistoryTokens(compactedHistory) + systemTokens + newMessageTokens;
       const compactedPercent = compactedTokens / this.effectiveMax;
 
       // Check if compaction helped enough
@@ -329,7 +337,7 @@ export class ContextGuard {
           safe: false,
           action: 'abort',
           usage,
-          message: `Context still at ${(compactedPercent * 100).toFixed(1)}% after compaction. Too much context to process.`
+          message: `Context still at ${(compactedPercent * 100).toFixed(1)}% after compaction. Too much context to process.`,
         };
       }
 
@@ -341,11 +349,11 @@ export class ContextGuard {
           afterCompaction: {
             tokens: compactedTokens,
             percent: compactedPercent,
-            tokensSaved: totalTokens - compactedTokens
-          }
+            tokensSaved: totalTokens - compactedTokens,
+          },
         },
         compactedHistory,
-        message: `Context at ${(percent * 100).toFixed(1)}%. Compacted to ${(compactedPercent * 100).toFixed(1)}% (saved ${stats.tokensSaved} tokens).`
+        message: `Context at ${(percent * 100).toFixed(1)}%. Compacted to ${(compactedPercent * 100).toFixed(1)}% (saved ${stats.tokensSaved} tokens).`,
       };
     }
 
@@ -354,14 +362,14 @@ export class ContextGuard {
         safe: true,
         action: 'warn',
         usage,
-        message: `Context at ${(percent * 100).toFixed(1)}% capacity. Consider starting a new session or compacting history.`
+        message: `Context at ${(percent * 100).toFixed(1)}% capacity. Consider starting a new session or compacting history.`,
       };
     }
 
     return {
       safe: true,
       action: 'none',
-      usage
+      usage,
     };
   }
 
@@ -381,7 +389,7 @@ export class ContextGuard {
       'gpt-4o-mini': 128000,
       'gpt-4-turbo': 128000,
       'gemini-2.0-flash': 1000000,
-      'gemini-1.5-pro': 2000000
+      'gemini-1.5-pro': 2000000,
     };
 
     // Match partial model names
@@ -429,7 +437,7 @@ export async function guardContext({
   newMessage,
   model,
   onWarn,
-  onCompact
+  onCompact,
 }) {
   const guard = ContextGuard.forModel(model);
   const result = guard.check(history, systemPrompt, newMessage);
@@ -439,7 +447,7 @@ export async function guardContext({
       return {
         proceed: false,
         history,
-        message: result.message
+        message: result.message,
       };
 
     case 'compact':
@@ -447,7 +455,7 @@ export async function guardContext({
       return {
         proceed: true,
         history: result.compactedHistory,
-        message: result.message
+        message: result.message,
       };
 
     case 'warn':
@@ -455,13 +463,13 @@ export async function guardContext({
       return {
         proceed: true,
         history,
-        message: result.message
+        message: result.message,
       };
 
     default:
       return {
         proceed: true,
-        history
+        history,
       };
   }
 }
@@ -476,5 +484,5 @@ export default {
   estimateTokens,
   estimateMessageTokens,
   estimateHistoryTokens,
-  guardContext
+  guardContext,
 };

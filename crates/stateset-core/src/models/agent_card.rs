@@ -210,12 +210,16 @@ impl AgentCard {
 
     /// Check if agent can sell
     pub fn can_sell(&self) -> bool {
-        self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Sell | A2ASkill::Quote))
+        self.a2a_skills
+            .iter()
+            .any(|s| matches!(s, A2ASkill::Sell | A2ASkill::Quote))
     }
 
     /// Check if agent can buy
     pub fn can_buy(&self) -> bool {
-        self.a2a_skills.iter().any(|s| matches!(s, A2ASkill::Buy | A2ASkill::RequestQuote))
+        self.a2a_skills
+            .iter()
+            .any(|s| matches!(s, A2ASkill::Buy | A2ASkill::RequestQuote))
     }
 }
 
@@ -254,9 +258,9 @@ impl TrustLevel {
     /// Get the default transaction limit for this trust level (in USDC cents)
     pub fn default_transaction_limit(&self) -> u64 {
         match self {
-            Self::Sandbox => 100_000_000,      // $100 (for testing)
-            Self::Standard => 1_000_000_000,   // $1,000
-            Self::Verified => 10_000_000_000,  // $10,000
+            Self::Sandbox => 100_000_000,        // $100 (for testing)
+            Self::Standard => 1_000_000_000,     // $1,000
+            Self::Verified => 10_000_000_000,    // $10,000
             Self::Enterprise => 100_000_000_000, // $100,000
         }
     }
@@ -264,9 +268,9 @@ impl TrustLevel {
     /// Get the default daily volume limit for this trust level
     pub fn default_daily_limit(&self) -> u64 {
         match self {
-            Self::Sandbox => 1_000_000_000,       // $1,000/day
-            Self::Standard => 10_000_000_000,     // $10,000/day
-            Self::Verified => 100_000_000_000,    // $100,000/day
+            Self::Sandbox => 1_000_000_000,        // $1,000/day
+            Self::Standard => 10_000_000_000,      // $10,000/day
+            Self::Verified => 100_000_000_000,     // $100,000/day
             Self::Enterprise => 1_000_000_000_000, // $1,000,000/day
         }
     }
@@ -441,14 +445,10 @@ mod tests {
 
     #[test]
     fn test_agent_card_creation() {
-        let card = AgentCard::new(
-            "TestAgent",
-            "0x1234567890abcdef",
-            "0xpubkey1234",
-        )
-        .with_networks(vec![X402Network::SetChain, X402Network::Base])
-        .with_assets(vec![X402Asset::Usdc, X402Asset::SsUsd])
-        .with_skills(vec![A2ASkill::Sell, A2ASkill::Quote]);
+        let card = AgentCard::new("TestAgent", "0x1234567890abcdef", "0xpubkey1234")
+            .with_networks(vec![X402Network::SetChain, X402Network::Base])
+            .with_assets(vec![X402Asset::Usdc, X402Asset::SsUsd])
+            .with_skills(vec![A2ASkill::Sell, A2ASkill::Quote]);
 
         assert_eq!(card.name, "TestAgent");
         assert!(card.supports_network(X402Network::SetChain));
@@ -458,8 +458,13 @@ mod tests {
 
     #[test]
     fn test_trust_level_limits() {
-        assert!(TrustLevel::Enterprise.default_transaction_limit() > TrustLevel::Standard.default_transaction_limit());
-        assert!(TrustLevel::Verified.default_daily_limit() > TrustLevel::Standard.default_daily_limit());
+        assert!(
+            TrustLevel::Enterprise.default_transaction_limit()
+                > TrustLevel::Standard.default_transaction_limit()
+        );
+        assert!(
+            TrustLevel::Verified.default_daily_limit() > TrustLevel::Standard.default_daily_limit()
+        );
     }
 
     #[test]

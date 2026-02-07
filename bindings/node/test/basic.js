@@ -9,6 +9,8 @@ const { test } = require('node:test');
 test('Commerce: basic operations', async (t) => {
   // Create an in-memory commerce instance
   const commerce = new Commerce(':memory:');
+  let widgetSmall;
+  let widgetLarge;
 
   await t.test('should have all APIs available', () => {
     assert.ok(commerce.customers, 'customers API should exist');
@@ -69,10 +71,15 @@ test('Commerce: basic operations', async (t) => {
     assert.strictEqual(product.name, 'Premium Widget');
 
     // Get variant by SKU
-    const variant = await commerce.products.getVariantBySku('WIDGET-001');
-    assert.ok(variant, 'variant should exist');
-    assert.strictEqual(variant.sku, 'WIDGET-001');
-    assert.strictEqual(variant.price, 19.99);
+    widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
+    assert.ok(widgetSmall, 'variant should exist');
+    assert.strictEqual(widgetSmall.sku, 'WIDGET-001');
+    assert.ok(Math.abs(widgetSmall.price - 19.99) < 1e-6);
+
+    widgetLarge = await commerce.products.getVariantBySku('WIDGET-002');
+    assert.ok(widgetLarge, 'variant should exist');
+    assert.strictEqual(widgetLarge.sku, 'WIDGET-002');
+    assert.ok(Math.abs(widgetLarge.price - 29.99) < 1e-6);
 
     // Count products
     const count = await commerce.products.count();
@@ -130,12 +137,31 @@ test('Commerce: basic operations', async (t) => {
       lastName: 'Johnson'
     });
 
+    if (!widgetSmall) widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
+    if (!widgetLarge) widgetLarge = await commerce.products.getVariantBySku('WIDGET-002');
+    assert.ok(widgetSmall, 'expected widgetSmall variant to exist');
+    assert.ok(widgetLarge, 'expected widgetLarge variant to exist');
+
     // Create order
     const order = await commerce.orders.create({
       customerId: customer.id,
       items: [
-        { sku: 'SKU-001', name: 'Widget', quantity: 2, unitPrice: 29.99 },
-        { sku: 'SKU-002', name: 'Gadget', quantity: 1, unitPrice: 49.99 }
+        {
+          sku: widgetSmall.sku,
+          name: widgetSmall.name,
+          quantity: 2,
+          unitPrice: widgetSmall.price,
+          productId: widgetSmall.productId,
+          variantId: widgetSmall.id,
+        },
+        {
+          sku: widgetLarge.sku,
+          name: widgetLarge.name,
+          quantity: 1,
+          unitPrice: widgetLarge.price,
+          productId: widgetLarge.productId,
+          variantId: widgetLarge.id,
+        },
       ],
       currency: 'USD',
       notes: 'Test order'
@@ -146,7 +172,7 @@ test('Commerce: basic operations', async (t) => {
     assert.strictEqual(order.customerId, customer.id);
     assert.strictEqual(order.status, 'pending');
     assert.strictEqual(order.items.length, 2);
-    assert.strictEqual(order.totalAmount, 109.97); // 2*29.99 + 49.99
+    assert.ok(Math.abs(order.totalAmount - 69.97) < 1e-6); // 2*19.99 + 29.99
 
     // Update status
     let updated = await commerce.orders.updateStatus(order.id, 'confirmed');
@@ -170,10 +196,20 @@ test('Commerce: basic operations', async (t) => {
       lastName: 'Williams'
     });
 
+    if (!widgetSmall) widgetSmall = await commerce.products.getVariantBySku('WIDGET-001');
+    assert.ok(widgetSmall, 'expected widgetSmall variant to exist');
+
     const order = await commerce.orders.create({
       customerId: customer.id,
       items: [
-        { sku: 'RET-001', name: 'Returnable Item', quantity: 1, unitPrice: 99.99 }
+        {
+          sku: widgetSmall.sku,
+          name: widgetSmall.name,
+          quantity: 1,
+          unitPrice: widgetSmall.price,
+          productId: widgetSmall.productId,
+          variantId: widgetSmall.id,
+        },
       ]
     });
 
@@ -208,7 +244,7 @@ test('Commerce: basic operations', async (t) => {
   await t.test('should run analytics and currency operations', async () => {
     const summary = await commerce.analytics.salesSummary({ period: 'last30days' });
     assert.ok(summary, 'sales summary should be returned');
-    assert.strictEqual(summary.orderCount, 0);
+    assert.ok(typeof summary.orderCount === 'number' && summary.orderCount >= 2);
 
     // Seed a rate and convert
     await commerce.currency.setRate({
@@ -222,5 +258,5 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(Math.abs(conversion.convertedAmount - 90) < 1e-6);
   });
 
-  console.log('\n✅ All tests passed!');
+  // Keep tests quiet; CI logs should be signal-heavy.
 });

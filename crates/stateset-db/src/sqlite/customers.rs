@@ -1,9 +1,8 @@
 //! SQLite customer repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, parse_datetime_row, parse_json_row,
-    parse_enum, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
-    json1_available,
+    build_in_clause, json1_available, map_db_error, params_refs, parse_datetime_row, parse_enum,
+    parse_enum_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
     with_immediate_transaction,
 };
 use chrono::Utc;
@@ -82,7 +81,11 @@ impl SqliteCustomerRepository {
                 "customer_address",
                 "customer_id",
             )?,
-            address_type: parse_enum_row(&row.get::<_, String>("address_type")?, "customer_address", "address_type")?,
+            address_type: parse_enum_row(
+                &row.get::<_, String>("address_type")?,
+                "customer_address",
+                "address_type",
+            )?,
             first_name: row.get("first_name")?,
             last_name: row.get("last_name")?,
             company: row.get("company")?,
@@ -261,11 +264,9 @@ impl CustomerRepository for SqliteCustomerRepository {
         if let Some(email) = &input.email {
             validate_email(email)?;
             let existing_id: Option<String> = conn
-                .query_row(
-                    "SELECT id FROM customers WHERE email = ?",
-                    [email],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT id FROM customers WHERE email = ?", [email], |row| {
+                    row.get(0)
+                })
                 .optional()
                 .map_err(map_db_error)?;
             if let Some(existing_id) = existing_id {
@@ -305,17 +306,24 @@ impl CustomerRepository for SqliteCustomerRepository {
         }
         if let Some(metadata) = &input.metadata {
             updates.push("metadata = ?");
-            params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
+            params.push(Box::new(
+                serde_json::to_string(metadata).unwrap_or_default(),
+            ));
         }
 
         updates.push("version = version + 1");
         params.push(Box::new(id.to_string()));
         params.push(Box::new(current_version));
 
-        let sql = format!("UPDATE customers SET {} WHERE id = ? AND version = ?", updates.join(", "));
+        let sql = format!(
+            "UPDATE customers SET {} WHERE id = ? AND version = ?",
+            updates.join(", ")
+        );
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let rows_affected = conn.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+        let rows_affected = conn
+            .execute(&sql, params_refs.as_slice())
+            .map_err(map_db_error)?;
         if rows_affected == 0 {
             return Err(CommerceError::VersionConflict {
                 entity: "customer".to_string(),
@@ -501,7 +509,11 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(addresses)
     }
 
-    fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+    fn update_address(
+        &self,
+        address_id: Uuid,
+        input: CreateCustomerAddress,
+    ) -> Result<CustomerAddress> {
         Self::validate_address_input(&input)?;
 
         let conn = self.conn()?;
@@ -608,7 +620,12 @@ impl CustomerRepository for SqliteCustomerRepository {
         Ok(())
     }
 
-    fn set_default_address(&self, customer_id: Uuid, address_id: Uuid, address_type: AddressType) -> Result<()> {
+    fn set_default_address(
+        &self,
+        customer_id: Uuid,
+        address_id: Uuid,
+        address_type: AddressType,
+    ) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
         let now = Utc::now();
@@ -865,11 +882,9 @@ impl CustomerRepository for SqliteCustomerRepository {
             if let Some(email) = &input.email {
                 validate_email(email)?;
                 let existing_id: Option<String> = tx
-                    .query_row(
-                        "SELECT id FROM customers WHERE email = ?",
-                        [email],
-                        |row| row.get(0),
-                    )
+                    .query_row("SELECT id FROM customers WHERE email = ?", [email], |row| {
+                        row.get(0)
+                    })
                     .optional()
                     .map_err(map_db_error)?;
                 if let Some(existing_id) = existing_id {
@@ -909,7 +924,9 @@ impl CustomerRepository for SqliteCustomerRepository {
             }
             if let Some(metadata) = &input.metadata {
                 update_parts.push("metadata = ?");
-                params.push(Box::new(serde_json::to_string(metadata).unwrap_or_default()));
+                params.push(Box::new(
+                    serde_json::to_string(metadata).unwrap_or_default(),
+                ));
             }
 
             update_parts.push("version = version + 1");
@@ -921,8 +938,11 @@ impl CustomerRepository for SqliteCustomerRepository {
                 update_parts.join(", ")
             );
 
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx
+                .execute(&sql, params_refs.as_slice())
+                .map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
                     entity: "customer".to_string(),

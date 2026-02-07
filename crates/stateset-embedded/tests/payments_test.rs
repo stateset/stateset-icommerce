@@ -3,8 +3,8 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     CardBrand, Commerce, CreateCustomer, CreateOrder, CreateOrderItem, CreatePayment,
-    CreatePaymentMethod, CreateRefund, Payment, PaymentFilter,
-    PaymentMethodType, PaymentTransactionStatus, RefundStatus, UpdatePayment,
+    CreatePaymentMethod, CreateRefund, Payment, PaymentFilter, PaymentMethodType,
+    PaymentTransactionStatus, RefundStatus, UpdatePayment,
 };
 use uuid::Uuid;
 
@@ -47,7 +47,11 @@ fn create_test_order(commerce: &Commerce, customer_id: Uuid) -> Uuid {
 }
 
 /// Helper to create a test payment for an order
-fn create_test_payment(commerce: &Commerce, order_id: Option<Uuid>, customer_id: Option<Uuid>) -> Payment {
+fn create_test_payment(
+    commerce: &Commerce,
+    order_id: Option<Uuid>,
+    customer_id: Option<Uuid>,
+) -> Payment {
     commerce
         .payments()
         .create(CreatePayment {
@@ -568,7 +572,10 @@ fn test_fail_refund() {
         .expect("Failed to fail refund");
 
     assert_eq!(failed_refund.status, RefundStatus::Failed);
-    assert_eq!(failed_refund.failure_reason, Some("Refund processing error".into()));
+    assert_eq!(
+        failed_refund.failure_reason,
+        Some("Refund processing error".into())
+    );
 }
 
 #[test]
@@ -674,7 +681,9 @@ fn test_list_payments_by_customer() {
         .expect("Failed to list payments");
 
     assert_eq!(customer1_payments.len(), 3);
-    assert!(customer1_payments.iter().all(|p| p.customer_id == Some(customer1)));
+    assert!(customer1_payments
+        .iter()
+        .all(|p| p.customer_id == Some(customer1)));
 }
 
 #[test]
@@ -838,7 +847,10 @@ fn test_payment_methods() {
 
     assert_eq!(credit_card.payment_method, PaymentMethodType::CreditCard);
     assert_eq!(paypal.payment_method, PaymentMethodType::PayPal);
-    assert_eq!(bank_transfer.payment_method, PaymentMethodType::BankTransfer);
+    assert_eq!(
+        bank_transfer.payment_method,
+        PaymentMethodType::BankTransfer
+    );
 }
 
 #[test]
@@ -1417,7 +1429,10 @@ fn test_full_payment_flow() {
         .expect("Payment not found");
 
     // After a partial refund, the payment status should be PartiallyRefunded
-    assert_eq!(updated_payment.status, PaymentTransactionStatus::PartiallyRefunded);
+    assert_eq!(
+        updated_payment.status,
+        PaymentTransactionStatus::PartiallyRefunded
+    );
 
     // 7. Verify we can list all refunds for this payment
     let refunds = commerce

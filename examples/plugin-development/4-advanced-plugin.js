@@ -12,18 +12,20 @@ export default function advancedPlugin(api, context) {
     name: 'complex_calc',
     description: 'Perform complex calculations with arithmetic operations',
     acceptsArgs: true,
-    handler: async (args) => {
-      const expression = args.trim();
+    handler: async (argText) => {
+      const expression = (argText || '').trim();
       
       if (!expression) {
-        return 'Usage: /complex_calc <expression>\nExample: /complex_calc "2 + 3 * 4"';
+        return {
+          response: 'Usage: /complex_calc <expression>\nExample: /complex_calc "2 + 3 * 4"',
+        };
       }
       
       try {
         const result = eval(expression);
-        return `Result: ${result}`;
+        return { response: `Result: ${result}` };
       } catch (e) {
-        return `Error evaluating expression: ${e.message}`;
+        return { response: `Error evaluating expression: ${e.message}` };
       }
     },
   });
@@ -176,39 +178,35 @@ export default function advancedPlugin(api, context) {
   api.registerHttpRoute({
     method: 'GET',
     path: '/advanced/stats',
-    handler: async (req, res) => {
+    level: 'read',
+    handler: async () => {
       const state = runtime ? runtime.getState() : {};
-      
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+
+      return {
+        status: 200,
+        body: {
         plugin: manifest.id,
         version: manifest.version,
         urgentMessageCount: state.urgentMessageCount || 0,
         logEntries: messageLog.length,
         uptime: process.uptime(),
-      }, null, 2));
+        },
+      };
     },
   });
   
   api.registerHttpRoute({
     method: 'POST',
     path: '/advanced/config',
-    handler: async (req, res) => {
-      let body = '';
-      
-      for await (const chunk of req) {
-        body += chunk.toString();
-      }
-      
+    level: 'admin',
+    handler: async ({ body }) => {
       try {
-        const newConfig = JSON.parse(body);
+        const newConfig = body && typeof body === 'object' ? body : {};
         console.log('[advanced-plugin] Config update:', newConfig);
-        
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Config updated' }));
+
+        return { status: 200, body: { success: true, message: 'Config updated' } };
       } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: e.message }));
+        return { status: 400, body: { success: false, error: e.message } };
       }
     },
   });
@@ -216,14 +214,17 @@ export default function advancedPlugin(api, context) {
   api.registerHttpRoute({
     method: 'GET',
     path: '/advanced/health',
-    handler: async (req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status: 'healthy',
-        pluginId: manifest.id,
-        version: manifest.version,
-        services: ['message-logger'],
-      }));
+    level: 'none',
+    handler: async () => {
+      return {
+        status: 200,
+        body: {
+          status: 'healthy',
+          pluginId: manifest.id,
+          version: manifest.version,
+          services: ['message-logger'],
+        },
+      };
     },
   });
 }

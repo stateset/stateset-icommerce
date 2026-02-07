@@ -9,13 +9,8 @@
  * @see https://bluebubbles.app/
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler, BOT_PREFIX } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
-import { richMessageToPlainText } from '../channels/rich-messages.js';
 
 // ============================================================================
 // BlueBubbles REST helpers
@@ -198,7 +193,11 @@ async function startPolling({ baseUrl, password, pollIntervalMs, onMessage, sign
   // Start first poll
   poll();
 
-  return { get lastMessageDate() { return lastDate; } };
+  return {
+    get lastMessageDate() {
+      return lastDate;
+    },
+  };
 }
 
 // ============================================================================
@@ -218,7 +217,7 @@ export async function startIMessageGateway(config, shared) {
 
   if (!password) {
     throw new Error(
-      'iMessage gateway requires BLUEBUBBLES_PASSWORD env var or blueBubblesPassword in config'
+      'iMessage gateway requires BLUEBUBBLES_PASSWORD env var or blueBubblesPassword in config',
     );
   }
 
@@ -267,7 +266,7 @@ export async function startIMessageGateway(config, shared) {
   const abortController = new AbortController();
 
   // Start polling
-  const poller = await startPolling({
+  await startPolling({
     baseUrl,
     password,
     pollIntervalMs,

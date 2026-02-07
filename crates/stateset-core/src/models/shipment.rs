@@ -35,7 +35,8 @@ impl ShippingCarrier {
 
     /// Generate a full tracking URL for a tracking number
     pub fn tracking_url(&self, tracking_number: &str) -> Option<String> {
-        self.tracking_url_base().map(|base| format!("{}{}", base, tracking_number))
+        self.tracking_url_base()
+            .map(|base| format!("{}{}", base, tracking_number))
     }
 }
 
@@ -179,7 +180,10 @@ impl ShipmentStatus {
 
     /// Check if this is a terminal status
     pub fn is_terminal(&self) -> bool {
-        matches!(self, ShipmentStatus::Delivered | ShipmentStatus::Cancelled | ShipmentStatus::Returned)
+        matches!(
+            self,
+            ShipmentStatus::Delivered | ShipmentStatus::Cancelled | ShipmentStatus::Returned
+        )
     }
 }
 
@@ -423,7 +427,10 @@ mod tests {
 
     #[test]
     fn test_shipment_status_from_str() {
-        assert_eq!(ShipmentStatus::from_str("pending").unwrap(), ShipmentStatus::Pending);
+        assert_eq!(
+            ShipmentStatus::from_str("pending").unwrap(),
+            ShipmentStatus::Pending
+        );
         assert_eq!(
             ShipmentStatus::from_str("ready_to_ship").unwrap(),
             ShipmentStatus::ReadyToShip
@@ -440,7 +447,10 @@ mod tests {
 
     #[test]
     fn test_shipping_carrier_from_str() {
-        assert_eq!(ShippingCarrier::from_str("ups").unwrap(), ShippingCarrier::Ups);
+        assert_eq!(
+            ShippingCarrier::from_str("ups").unwrap(),
+            ShippingCarrier::Ups
+        );
         assert_eq!(
             ShippingCarrier::from_str("fed_ex").unwrap(),
             ShippingCarrier::FedEx

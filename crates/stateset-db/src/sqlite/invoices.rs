@@ -1,19 +1,19 @@
 //! SQLite implementation of invoice repository
 
-use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row, parse_enum, parse_enum_row, sum_decimal_query,
-};
 use super::parse_helpers::parse_decimal as parse_decimal_with_context;
+use super::{
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum, parse_enum_row, parse_uuid_opt_row,
+    parse_uuid_row, sum_decimal_query, uuid_params,
+};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::{params, Row};
+use rust_decimal::Decimal;
 use stateset_core::{
-    validate_batch_size, BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem,
-    Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
-    RecordInvoicePayment, Result, UpdateInvoice, generate_invoice_number,
+    generate_invoice_number, validate_batch_size, BatchResult, CommerceError, CreateInvoice,
+    CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
+    RecordInvoicePayment, Result, UpdateInvoice,
 };
 use uuid::Uuid;
 
@@ -36,12 +36,32 @@ impl SqliteInvoiceRepository {
         Ok(Invoice {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "invoice", "id")?,
             invoice_number: row.get("invoice_number")?,
-            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "invoice", "customer_id")?,
-            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_id")?, "invoice", "order_id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>("customer_id")?,
+                "invoice",
+                "customer_id",
+            )?,
+            order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("order_id")?,
+                "invoice",
+                "order_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "invoice", "status")?,
-            invoice_type: parse_enum_row(&row.get::<_, String>("invoice_type")?, "invoice", "invoice_type")?,
-            invoice_date: parse_datetime_row(&row.get::<_, String>("invoice_date")?, "invoice", "invoice_date")?,
-            due_date: parse_datetime_row(&row.get::<_, String>("due_date")?, "invoice", "due_date")?,
+            invoice_type: parse_enum_row(
+                &row.get::<_, String>("invoice_type")?,
+                "invoice",
+                "invoice_type",
+            )?,
+            invoice_date: parse_datetime_row(
+                &row.get::<_, String>("invoice_date")?,
+                "invoice",
+                "invoice_date",
+            )?,
+            due_date: parse_datetime_row(
+                &row.get::<_, String>("due_date")?,
+                "invoice",
+                "due_date",
+            )?,
             payment_terms: row.get("payment_terms")?,
             currency: row.get("currency")?,
             billing_name: row.get("billing_name")?,
@@ -52,45 +72,137 @@ impl SqliteInvoiceRepository {
             billing_postal_code: row.get("billing_postal_code")?,
             billing_country: row.get("billing_country")?,
             subtotal: parse_decimal_row(&row.get::<_, String>("subtotal")?, "invoice", "subtotal")?,
-            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "invoice", "discount_amount")?,
-            discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>("discount_percent")?, "invoice", "discount_percent")?,
-            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "invoice", "tax_amount")?,
-            tax_rate: parse_decimal_opt_row(row.get::<_, Option<String>>("tax_rate")?, "invoice", "tax_rate")?,
-            shipping_amount: parse_decimal_row(&row.get::<_, String>("shipping_amount")?, "invoice", "shipping_amount")?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "invoice",
+                "discount_amount",
+            )?,
+            discount_percent: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("discount_percent")?,
+                "invoice",
+                "discount_percent",
+            )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "invoice",
+                "tax_amount",
+            )?,
+            tax_rate: parse_decimal_opt_row(
+                row.get::<_, Option<String>>("tax_rate")?,
+                "invoice",
+                "tax_rate",
+            )?,
+            shipping_amount: parse_decimal_row(
+                &row.get::<_, String>("shipping_amount")?,
+                "invoice",
+                "shipping_amount",
+            )?,
             total: parse_decimal_row(&row.get::<_, String>("total")?, "invoice", "total")?,
-            amount_paid: parse_decimal_row(&row.get::<_, String>("amount_paid")?, "invoice", "amount_paid")?,
-            balance_due: parse_decimal_row(&row.get::<_, String>("balance_due")?, "invoice", "balance_due")?,
+            amount_paid: parse_decimal_row(
+                &row.get::<_, String>("amount_paid")?,
+                "invoice",
+                "amount_paid",
+            )?,
+            balance_due: parse_decimal_row(
+                &row.get::<_, String>("balance_due")?,
+                "invoice",
+                "balance_due",
+            )?,
             po_number: row.get("po_number")?,
             notes: row.get("notes")?,
             terms: row.get("terms")?,
             footer: row.get("footer")?,
-            sent_at: parse_datetime_opt_row(row.get::<_, Option<String>>("sent_at")?, "invoice", "sent_at")?,
-            viewed_at: parse_datetime_opt_row(row.get::<_, Option<String>>("viewed_at")?, "invoice", "viewed_at")?,
-            paid_at: parse_datetime_opt_row(row.get::<_, Option<String>>("paid_at")?, "invoice", "paid_at")?,
-            voided_at: parse_datetime_opt_row(row.get::<_, Option<String>>("voided_at")?, "invoice", "voided_at")?,
+            sent_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("sent_at")?,
+                "invoice",
+                "sent_at",
+            )?,
+            viewed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("viewed_at")?,
+                "invoice",
+                "viewed_at",
+            )?,
+            paid_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("paid_at")?,
+                "invoice",
+                "paid_at",
+            )?,
+            voided_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("voided_at")?,
+                "invoice",
+                "voided_at",
+            )?,
             items: Vec::new(),
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "invoice", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "invoice", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "invoice",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "invoice",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_invoice_item(row: &Row) -> rusqlite::Result<InvoiceItem> {
         Ok(InvoiceItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "invoice_item", "id")?,
-            invoice_id: parse_uuid_row(&row.get::<_, String>("invoice_id")?, "invoice_item", "invoice_id")?,
-            order_item_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_item_id")?, "invoice_item", "order_item_id")?,
-            product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "invoice_item", "product_id")?,
+            invoice_id: parse_uuid_row(
+                &row.get::<_, String>("invoice_id")?,
+                "invoice_item",
+                "invoice_id",
+            )?,
+            order_item_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("order_item_id")?,
+                "invoice_item",
+                "order_item_id",
+            )?,
+            product_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("product_id")?,
+                "invoice_item",
+                "product_id",
+            )?,
             sku: row.get("sku")?,
             description: row.get("description")?,
-            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "invoice_item", "quantity")?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>("quantity")?,
+                "invoice_item",
+                "quantity",
+            )?,
             unit_of_measure: row.get("unit_of_measure")?,
-            unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "invoice_item", "unit_price")?,
-            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "invoice_item", "discount_amount")?,
-            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "invoice_item", "tax_amount")?,
-            line_total: parse_decimal_row(&row.get::<_, String>("line_total")?, "invoice_item", "line_total")?,
+            unit_price: parse_decimal_row(
+                &row.get::<_, String>("unit_price")?,
+                "invoice_item",
+                "unit_price",
+            )?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "invoice_item",
+                "discount_amount",
+            )?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "invoice_item",
+                "tax_amount",
+            )?,
+            line_total: parse_decimal_row(
+                &row.get::<_, String>("line_total")?,
+                "invoice_item",
+                "line_total",
+            )?,
             sort_order: row.get("sort_order")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "invoice_item", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "invoice_item", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "invoice_item",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "invoice_item",
+                "updated_at",
+            )?,
         })
     }
 
@@ -149,10 +261,12 @@ impl SqliteInvoiceRepository {
             )
             .map_err(map_db_error)?;
 
-        let total = subtotal - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
+        let total = subtotal
+            - parse_decimal_with_context(&discount_amount, "invoice", "discount_amount")?
             + parse_decimal_with_context(&tax_amount, "invoice", "tax_amount")?
             + parse_decimal_with_context(&shipping_amount, "invoice", "shipping_amount")?;
-        let balance_due = total - parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?;
+        let balance_due =
+            total - parse_decimal_with_context(&amount_paid, "invoice", "amount_paid")?;
 
         conn.execute(
             "UPDATE invoices SET subtotal = ?, total = ?, balance_due = ?, updated_at = ? WHERE id = ?",
@@ -379,8 +493,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(params_refs.as_slice(), Self::row_to_invoice).map_err(map_db_error)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::row_to_invoice)
+            .map_err(map_db_error)?;
 
         let mut invoices = Vec::new();
         for row in rows {
@@ -392,11 +509,17 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter { customer_id: Some(customer_id), ..Default::default() })
+        self.list(InvoiceFilter {
+            customer_id: Some(customer_id),
+            ..Default::default()
+        })
     }
 
     fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter { order_id: Some(order_id), ..Default::default() })
+        self.list(InvoiceFilter {
+            order_id: Some(order_id),
+            ..Default::default()
+        })
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
@@ -412,11 +535,16 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             .map_err(map_db_error)?;
 
         if parse_enum::<InvoiceStatus>(&status, "invoice", "status")? != InvoiceStatus::Draft {
-            return Err(CommerceError::ValidationError("Can only delete draft invoices".to_string()));
+            return Err(CommerceError::ValidationError(
+                "Can only delete draft invoices".to_string(),
+            ));
         }
 
-        tx.execute("DELETE FROM invoice_items WHERE invoice_id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        tx.execute(
+            "DELETE FROM invoice_items WHERE invoice_id = ?",
+            [id.to_string()],
+        )
+        .map_err(map_db_error)?;
         tx.execute("DELETE FROM invoices WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
@@ -429,8 +557,14 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         conn.execute(
             "UPDATE invoices SET status = ?, sent_at = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::Sent.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+            params![
+                InvoiceStatus::Sent.to_string(),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
@@ -443,7 +577,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             "UPDATE invoices SET status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END,
              viewed_at = COALESCE(viewed_at, ?), updated_at = ? WHERE id = ?",
             params![now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
@@ -490,7 +625,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 now.to_rfc3339(),
                 id.to_string(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -503,8 +639,14 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         conn.execute(
             "UPDATE invoices SET status = ?, voided_at = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::Voided.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+            params![
+                InvoiceStatus::Voided.to_string(),
+                now.to_rfc3339(),
+                now.to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
@@ -515,8 +657,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         conn.execute(
             "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::WrittenOff.to_string(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+            params![
+                InvoiceStatus::WrittenOff.to_string(),
+                now.to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
@@ -527,17 +674,26 @@ impl InvoiceRepository for SqliteInvoiceRepository {
 
         conn.execute(
             "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?",
-            params![InvoiceStatus::Disputed.to_string(), now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+            params![
+                InvoiceStatus::Disputed.to_string(),
+                now.to_rfc3339(),
+                id.to_string()
+            ],
+        )
+        .map_err(map_db_error)?;
 
         Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
     }
 
     fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
-        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default() + item.tax_amount.unwrap_or_default();
+        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
+            + item.tax_amount.unwrap_or_default();
 
         conn.execute(
             "INSERT INTO invoice_items (id, invoice_id, order_item_id, product_id, sku, description,
@@ -563,14 +719,21 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             ],
         ).map_err(map_db_error)?;
 
-        let mut stmt = conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
+        let mut stmt = conn
+            .prepare("SELECT * FROM invoice_items WHERE id = ?")
+            .map_err(map_db_error)?;
+        stmt.query_row([id.to_string()], Self::row_to_invoice_item)
+            .map_err(map_db_error)
     }
 
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = chrono::Utc::now();
-        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default() + item.tax_amount.unwrap_or_default();
+        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
+            + item.tax_amount.unwrap_or_default();
 
         conn.execute(
             "UPDATE invoice_items SET sku = ?, description = ?, quantity = ?, unit_of_measure = ?,
@@ -589,15 +752,26 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 now.to_rfc3339(),
                 item_id.to_string(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        let mut stmt = conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([item_id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
+        let mut stmt = conn
+            .prepare("SELECT * FROM invoice_items WHERE id = ?")
+            .map_err(map_db_error)?;
+        stmt.query_row([item_id.to_string()], Self::row_to_invoice_item)
+            .map_err(map_db_error)
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        conn.execute("DELETE FROM invoice_items WHERE id = ?", [item_id.to_string()]).map_err(map_db_error)?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM invoice_items WHERE id = ?",
+            [item_id.to_string()],
+        )
+        .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -616,11 +790,17 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn get_overdue(&self) -> Result<Vec<Invoice>> {
-        self.list(InvoiceFilter { overdue_only: Some(true), ..Default::default() })
+        self.list(InvoiceFilter {
+            overdue_only: Some(true),
+            ..Default::default()
+        })
     }
 
     fn count(&self, filter: InvoiceFilter) -> Result<u64> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = "SELECT COUNT(*) FROM invoices WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -637,8 +817,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')");
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-        let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = conn
+            .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
+            .map_err(map_db_error)?;
         Ok(count as u64)
     }
 
@@ -781,11 +964,13 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             Self::recalculate_with_conn(&tx, id)?;
 
             // Query for the computed invoice values
-            let invoice = tx.query_row(
-                "SELECT * FROM invoices WHERE id = ?",
-                [id.to_string()],
-                Self::row_to_invoice,
-            ).map_err(map_db_error)?;
+            let invoice = tx
+                .query_row(
+                    "SELECT * FROM invoices WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_invoice,
+                )
+                .map_err(map_db_error)?;
 
             results.push(Invoice {
                 id,

@@ -31,7 +31,7 @@ const COLORS = {
   bgRed: '\x1b[41m',
   bgGreen: '\x1b[42m',
   bgYellow: '\x1b[43m',
-  bgBlue: '\x1b[44m'
+  bgBlue: '\x1b[44m',
 };
 
 // ============================================================================
@@ -60,7 +60,7 @@ export const ICONS = {
   arrow: '→',
   bullet: '•',
   database: '🗄️',
-  session: '💾'
+  session: '💾',
 };
 
 // ============================================================================
@@ -91,14 +91,30 @@ export class RichOutput {
     return `${COLORS[color] || ''}${text}${COLORS.reset}`;
   }
 
-  bold(text) { return this._c('bold', text); }
-  dim(text) { return this._c('dim', text); }
-  green(text) { return this._c('green', text); }
-  red(text) { return this._c('red', text); }
-  yellow(text) { return this._c('yellow', text); }
-  blue(text) { return this._c('blue', text); }
-  cyan(text) { return this._c('cyan', text); }
-  gray(text) { return this._c('gray', text); }
+  bold(text) {
+    return this._c('bold', text);
+  }
+  dim(text) {
+    return this._c('dim', text);
+  }
+  green(text) {
+    return this._c('green', text);
+  }
+  red(text) {
+    return this._c('red', text);
+  }
+  yellow(text) {
+    return this._c('yellow', text);
+  }
+  blue(text) {
+    return this._c('blue', text);
+  }
+  cyan(text) {
+    return this._c('cyan', text);
+  }
+  gray(text) {
+    return this._c('gray', text);
+  }
 
   // --------------------------------------------------------------------------
   // Table Formatting
@@ -123,28 +139,28 @@ export class RichOutput {
     const widths = {};
     for (const col of columns) {
       const headerLen = col.header.length;
-      const maxDataLen = Math.max(...data.map(row => {
-        let val = row[col.key];
-        if (col.format) val = col.format(val, row);
-        return String(val ?? '').length;
-      }));
+      const maxDataLen = Math.max(
+        ...data.map((row) => {
+          let val = row[col.key];
+          if (col.format) val = col.format(val, row);
+          return String(val ?? '').length;
+        }),
+      );
       widths[col.key] = col.width || Math.min(Math.max(headerLen, maxDataLen), 40);
     }
 
     // Build header
-    const headerCells = columns.map(col =>
-      this._padCell(this.bold(col.header), widths[col.key], col.align || 'left')
+    const headerCells = columns.map((col) =>
+      this._padCell(this.bold(col.header), widths[col.key], col.align || 'left'),
     );
     const header = '  ' + headerCells.join(' │ ');
 
     // Separator
-    const separator = '  ' + columns.map(col =>
-      '─'.repeat(widths[col.key])
-    ).join('─┼─');
+    const separator = '  ' + columns.map((col) => '─'.repeat(widths[col.key])).join('─┼─');
 
     // Build rows
-    const rows = data.map(row => {
-      const cells = columns.map(col => {
+    const rows = data.map((row) => {
+      const cells = columns.map((col) => {
         let val = row[col.key];
         if (col.format) val = col.format(val, row);
         val = String(val ?? '');
@@ -158,6 +174,7 @@ export class RichOutput {
 
   _padCell(text, width, align) {
     // Strip ANSI codes for length calculation
+    // eslint-disable-next-line no-control-regex
     const visibleLength = text.replace(/\x1b\[[0-9;]*m/g, '').length;
     const padding = Math.max(0, width - visibleLength);
 
@@ -194,7 +211,7 @@ export class RichOutput {
       success: 'green',
       error: 'red',
       warning: 'yellow',
-      info: 'cyan'
+      info: 'cyan',
     }[type];
 
     const text = colorFn ? this[colorFn](message) : message;
@@ -224,7 +241,7 @@ export class RichOutput {
     try {
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency: code
+        currency: code,
       }).format(amount);
     } catch {
       return `${code} ${Number(amount).toFixed(2)}`;
@@ -238,7 +255,7 @@ export class RichOutput {
     if (value === null || value === undefined) return '—';
     return Number(value).toLocaleString('en-US', {
       minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals
+      maximumFractionDigits: decimals,
     });
   }
 
@@ -263,7 +280,7 @@ export class RichOutput {
     return d.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
     });
   }
 
@@ -278,7 +295,7 @@ export class RichOutput {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   }
 
@@ -316,7 +333,7 @@ export class RichOutput {
       shipped: { color: 'magenta', icon: '◕' },
       delivered: { color: 'green', icon: '●' },
       cancelled: { color: 'red', icon: '✗' },
-      refunded: { color: 'gray', icon: '↩' }
+      refunded: { color: 'gray', icon: '↩' },
     };
 
     const style = styles[status] || { color: 'gray', icon: '?' };
@@ -332,7 +349,7 @@ export class RichOutput {
       processing: 'cyan',
       completed: 'green',
       failed: 'red',
-      refunded: 'gray'
+      refunded: 'gray',
     };
     return this._c(styles[status] || 'gray', status);
   }
@@ -369,7 +386,7 @@ export class RichOutput {
       `│ Total:    ${this.currency(order.totalAmount, order.currency).padEnd(width - 14)}│`,
       `│ Items:    ${String(order.items?.length || order.itemCount || 0).padEnd(width - 14)}│`,
       `│ Created:  ${this.relativeTime(order.createdAt).padEnd(width - 14)}│`,
-      `└${hr}┘`
+      `└${hr}┘`,
     ];
 
     return lines.join('\n');
@@ -391,7 +408,7 @@ export class RichOutput {
       `│ Items:    ${String(cart.itemCount || cart.items?.length || 0).padEnd(width - 14)}│`,
       `│ Subtotal: ${this.currency(cart.subtotal, cart.currency).padEnd(width - 14)}│`,
       `│ Total:    ${this.bold(this.currency(cart.grandTotal, cart.currency)).padEnd(width - 14 + 8)}│`,
-      `└${hr}┘`
+      `└${hr}┘`,
     ];
 
     return lines.join('\n');
@@ -414,7 +431,7 @@ export class RichOutput {
       `│ Phone:  ${(customer.phone || '—').slice(0, width - 12).padEnd(width - 11)}│`,
       `│ Status: ${(customer.status || '—').padEnd(width - 11)}│`,
       `│ Since:  ${this.date(customer.createdAt).padEnd(width - 11)}│`,
-      `└${hr}┘`
+      `└${hr}┘`,
     ];
 
     return lines.join('\n');
@@ -444,7 +461,7 @@ export class RichOutput {
    */
   list(items, options = {}) {
     const bullet = options.bullet || ICONS.bullet;
-    return items.map(item => `  ${bullet} ${item}`).join('\n');
+    return items.map((item) => `  ${bullet} ${item}`).join('\n');
   }
 
   /**
@@ -478,7 +495,7 @@ export class RichOutput {
    */
   box(text, options = {}) {
     const lines = text.split('\n');
-    const maxLen = Math.max(...lines.map(l => l.length));
+    const maxLen = Math.max(...lines.map((l) => l.length));
     const width = Math.min(maxLen + 4, this.width);
     const title = options.title || '';
 
@@ -486,9 +503,7 @@ export class RichOutput {
       ? `┌─ ${title} ${'─'.repeat(width - title.length - 5)}┐`
       : `┌${'─'.repeat(width - 2)}┐`;
 
-    const middle = lines.map(line =>
-      `│ ${line.padEnd(width - 4)} │`
-    );
+    const middle = lines.map((line) => `│ ${line.padEnd(width - 4)} │`);
 
     const bottom = `└${'─'.repeat(width - 2)}┘`;
 
@@ -505,9 +520,7 @@ export class RichOutput {
   toolCall(name, input, options = {}) {
     const shortName = name.replace('mcp__stateset-commerce__', '');
     const inputStr = JSON.stringify(input);
-    const truncatedInput = inputStr.length > 60
-      ? inputStr.slice(0, 57) + '...'
-      : inputStr;
+    const truncatedInput = inputStr.length > 60 ? inputStr.slice(0, 57) + '...' : inputStr;
 
     if (options.showDuration) {
       return `${ICONS.tool} ${this.cyan(shortName)}(${this.dim(truncatedInput)}) ${this.dim(`[${options.duration}ms]`)}`;
@@ -536,7 +549,10 @@ export class RichOutput {
         return this.status('success', `Customer: ${result.customer.email}`);
       }
       if (result.order) {
-        return this.status('success', `Order: ${result.order.orderNumber} (${result.order.status})`);
+        return this.status(
+          'success',
+          `Order: ${result.order.orderNumber} (${result.order.status})`,
+        );
       }
       if (result.cart) {
         return this.status('success', `Cart: ${result.cart.cartNumber || result.cart.id}`);
@@ -566,32 +582,38 @@ function normalizeRowsForTable(data) {
     }
     const first = data[0];
     if (first && typeof first === 'object' && !Array.isArray(first)) {
-      const keys = Array.from(new Set(data.flatMap(row => Object.keys(row || {}))));
-      const rows = data.map(row => {
+      const keys = Array.from(new Set(data.flatMap((row) => Object.keys(row || {}))));
+      const rows = data.map((row) => {
         const out = {};
         for (const key of keys) {
           out[key] = normalizeScalar(row?.[key]);
         }
         return out;
       });
-      const columns = keys.map(key => ({ key, header: key }));
+      const columns = keys.map((key) => ({ key, header: key }));
       return { rows, columns };
     }
-    const rows = data.map(value => ({ value: normalizeScalar(value) }));
+    const rows = data.map((value) => ({ value: normalizeScalar(value) }));
     return { rows, columns: [{ key: 'value', header: 'value' }] };
   }
 
   if (data && typeof data === 'object') {
     const rows = Object.entries(data).map(([key, value]) => ({
       key,
-      value: normalizeScalar(value)
+      value: normalizeScalar(value),
     }));
-    return { rows, columns: [{ key: 'key', header: 'key' }, { key: 'value', header: 'value' }] };
+    return {
+      rows,
+      columns: [
+        { key: 'key', header: 'key' },
+        { key: 'value', header: 'value' },
+      ],
+    };
   }
 
   return {
     rows: [{ value: normalizeScalar(data) }],
-    columns: [{ key: 'value', header: 'value' }]
+    columns: [{ key: 'value', header: 'value' }],
   };
 }
 
@@ -607,11 +629,9 @@ function formatAsTable(data) {
 function formatAsCsv(data) {
   const { rows, columns } = normalizeRowsForTable(data);
   if (!rows.length) return '';
-  const headers = columns.map(col => col.header);
-  const keys = columns.map(col => col.key);
-  const lines = rows.map(row =>
-    keys.map(key => JSON.stringify(row[key] ?? '')).join(',')
-  );
+  const headers = columns.map((col) => col.header);
+  const keys = columns.map((col) => col.key);
+  const lines = rows.map((row) => keys.map((key) => JSON.stringify(row[key] ?? '')).join(','));
   return [headers.join(','), ...lines].join('\n');
 }
 
@@ -627,7 +647,7 @@ function formatYamlValue(value) {
 function formatAsYaml(data) {
   if (data === null || data === undefined) return '';
   if (Array.isArray(data)) {
-    return data.map(item => `- ${formatYamlValue(item)}`).join('\n');
+    return data.map((item) => `- ${formatYamlValue(item)}`).join('\n');
   }
   if (typeof data === 'object') {
     return Object.entries(data)

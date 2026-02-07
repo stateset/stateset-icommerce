@@ -102,7 +102,10 @@ fn test_refund_idempotency_key() {
         .expect("Failed to retry refund");
 
     assert_eq!(refund.id, retry.id);
-    assert_eq!(commerce.payments().get_refunds(payment.id).unwrap().len(), 1);
+    assert_eq!(
+        commerce.payments().get_refunds(payment.id).unwrap().len(),
+        1
+    );
 }
 
 #[test]

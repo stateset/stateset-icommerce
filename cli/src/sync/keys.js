@@ -75,10 +75,10 @@ export class AgentKeyManager {
       const data = await fs.readFile(this._keyFilePath(agentId, keyType), 'utf8');
       const keys = JSON.parse(data);
       // Convert hex strings back to buffers
-      return keys.map(k => ({
+      return keys.map((k) => ({
         ...k,
         publicKey: hexToBuffer(k.publicKey),
-        privateKey: hexToBuffer(k.privateKey)
+        privateKey: hexToBuffer(k.privateKey),
       }));
     } catch (e) {
       if (e.code === 'ENOENT') return [];
@@ -95,15 +95,15 @@ export class AgentKeyManager {
   async _saveKeys(agentId, keyType, keys) {
     await this._ensureAgentDir(agentId);
     // Convert buffers to hex for storage
-    const serialized = keys.map(k => ({
+    const serialized = keys.map((k) => ({
       ...k,
       publicKey: bufferToHex(k.publicKey),
-      privateKey: bufferToHex(k.privateKey)
+      privateKey: bufferToHex(k.privateKey),
     }));
     await fs.writeFile(
       this._keyFilePath(agentId, keyType),
       JSON.stringify(serialized, null, 2),
-      { mode: 0o600 } // Restrict permissions
+      { mode: 0o600 }, // Restrict permissions
     );
   }
 
@@ -116,7 +116,7 @@ export class AgentKeyManager {
   async _nextKeyId(agentId, keyType) {
     const keys = await this._loadKeys(agentId, keyType);
     if (keys.length === 0) return 1;
-    return Math.max(...keys.map(k => k.keyId)) + 1;
+    return Math.max(...keys.map((k) => k.keyId)) + 1;
   }
 
   // ===========================================================================
@@ -147,7 +147,7 @@ export class AgentKeyManager {
       keyId,
       publicKey: pubKey32,
       privateKey: privKey32,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     // Save to storage
@@ -166,9 +166,9 @@ export class AgentKeyManager {
   async getCurrentSigningKey(agentId) {
     const keys = await this._loadKeys(agentId, 'signing');
     // Find latest non-revoked key
-    const activeKeys = keys.filter(k => !k.revokedAt);
+    const activeKeys = keys.filter((k) => !k.revokedAt);
     if (activeKeys.length === 0) return null;
-    return activeKeys.reduce((a, b) => a.keyId > b.keyId ? a : b);
+    return activeKeys.reduce((a, b) => (a.keyId > b.keyId ? a : b));
   }
 
   /**
@@ -179,7 +179,7 @@ export class AgentKeyManager {
    */
   async getSigningKey(agentId, keyId) {
     const keys = await this._loadKeys(agentId, 'signing');
-    return keys.find(k => k.keyId === keyId) || null;
+    return keys.find((k) => k.keyId === keyId) || null;
   }
 
   /**
@@ -198,7 +198,7 @@ export class AgentKeyManager {
    */
   async revokeSigningKey(agentId, keyId) {
     const keys = await this._loadKeys(agentId, 'signing');
-    const key = keys.find(k => k.keyId === keyId);
+    const key = keys.find((k) => k.keyId === keyId);
     if (!key) throw new Error(`Signing key ${keyId} not found`);
     if (key.revokedAt) throw new Error(`Signing key ${keyId} already revoked`);
 
@@ -233,7 +233,7 @@ export class AgentKeyManager {
       keyId,
       publicKey: pubKey32,
       privateKey: privKey32,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     // Save to storage
@@ -251,9 +251,9 @@ export class AgentKeyManager {
    */
   async getCurrentEncryptionKey(agentId) {
     const keys = await this._loadKeys(agentId, 'encryption');
-    const activeKeys = keys.filter(k => !k.revokedAt);
+    const activeKeys = keys.filter((k) => !k.revokedAt);
     if (activeKeys.length === 0) return null;
-    return activeKeys.reduce((a, b) => a.keyId > b.keyId ? a : b);
+    return activeKeys.reduce((a, b) => (a.keyId > b.keyId ? a : b));
   }
 
   /**
@@ -264,7 +264,7 @@ export class AgentKeyManager {
    */
   async getEncryptionKey(agentId, keyId) {
     const keys = await this._loadKeys(agentId, 'encryption');
-    return keys.find(k => k.keyId === keyId) || null;
+    return keys.find((k) => k.keyId === keyId) || null;
   }
 
   /**
@@ -283,7 +283,7 @@ export class AgentKeyManager {
    */
   async revokeEncryptionKey(agentId, keyId) {
     const keys = await this._loadKeys(agentId, 'encryption');
-    const key = keys.find(k => k.keyId === keyId);
+    const key = keys.find((k) => k.keyId === keyId);
     if (!key) throw new Error(`Encryption key ${keyId} not found`);
     if (key.revokedAt) throw new Error(`Encryption key ${keyId} already revoked`);
 
@@ -325,7 +325,7 @@ export class AgentKeyManager {
     const encryptionKey = await this.getCurrentEncryptionKey(agentId);
     return {
       hasSigningKey: signingKey !== null,
-      hasEncryptionKey: encryptionKey !== null
+      hasEncryptionKey: encryptionKey !== null,
     };
   }
 
@@ -349,7 +349,7 @@ export class AgentKeyManager {
     return {
       keyId: key.keyId,
       publicKey: bufferToHex(key.publicKey),
-      createdAt: key.createdAt
+      createdAt: key.createdAt,
     };
   }
 
@@ -369,7 +369,7 @@ export class AgentKeyManager {
     return {
       keyId: key.keyId,
       publicKey: bufferToHex(key.publicKey),
-      createdAt: key.createdAt
+      createdAt: key.createdAt,
     };
   }
 
@@ -390,10 +390,10 @@ export class AgentKeyManager {
     if (privateKey.length !== 32) throw new Error('Private key must be 32 bytes');
 
     const keys = await this._loadKeys(agentId, 'signing');
-    const newKeyId = keyId ?? (keys.length === 0 ? 1 : Math.max(...keys.map(k => k.keyId)) + 1);
+    const newKeyId = keyId ?? (keys.length === 0 ? 1 : Math.max(...keys.map((k) => k.keyId)) + 1);
 
     // Check for duplicate keyId
-    if (keys.some(k => k.keyId === newKeyId)) {
+    if (keys.some((k) => k.keyId === newKeyId)) {
       throw new Error(`Signing key ${newKeyId} already exists`);
     }
 
@@ -401,7 +401,7 @@ export class AgentKeyManager {
       keyId: newKeyId,
       publicKey,
       privateKey,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     keys.push(keyPair);
@@ -423,9 +423,9 @@ export class AgentKeyManager {
     if (privateKey.length !== 32) throw new Error('Private key must be 32 bytes');
 
     const keys = await this._loadKeys(agentId, 'encryption');
-    const newKeyId = keyId ?? (keys.length === 0 ? 1 : Math.max(...keys.map(k => k.keyId)) + 1);
+    const newKeyId = keyId ?? (keys.length === 0 ? 1 : Math.max(...keys.map((k) => k.keyId)) + 1);
 
-    if (keys.some(k => k.keyId === newKeyId)) {
+    if (keys.some((k) => k.keyId === newKeyId)) {
       throw new Error(`Encryption key ${newKeyId} already exists`);
     }
 
@@ -433,7 +433,7 @@ export class AgentKeyManager {
       keyId: newKeyId,
       publicKey,
       privateKey,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
 
     keys.push(keyPair);
@@ -461,18 +461,20 @@ export class AgentKeyManager {
     const gracePeriodHours = options.gracePeriodHours ?? policy.gracePeriodHours;
 
     // Get current key
-    const currentKey = keyType === 'signing'
-      ? await this.getCurrentSigningKey(agentId)
-      : await this.getCurrentEncryptionKey(agentId);
+    const currentKey =
+      keyType === 'signing'
+        ? await this.getCurrentSigningKey(agentId)
+        : await this.getCurrentEncryptionKey(agentId);
 
     if (!currentKey) {
       throw new Error(`No ${keyType} key found for agent ${agentId}`);
     }
 
     // Generate new key
-    const newKey = keyType === 'signing'
-      ? await this.generateSigningKey(agentId)
-      : await this.generateEncryptionKey(agentId);
+    const newKey =
+      keyType === 'signing'
+        ? await this.generateSigningKey(agentId)
+        : await this.generateEncryptionKey(agentId);
 
     // Set grace period on old key instead of immediate revocation
     const graceUntil = new Date();
@@ -499,7 +501,7 @@ export class AgentKeyManager {
    */
   async _setKeyGracePeriod(agentId, keyType, keyId, graceUntil) {
     const keys = await this._loadKeys(agentId, keyType);
-    const key = keys.find(k => k.keyId === keyId);
+    const key = keys.find((k) => k.keyId === keyId);
 
     if (!key) throw new Error(`${keyType} key ${keyId} not found`);
 
@@ -518,7 +520,7 @@ export class AgentKeyManager {
    */
   async setKeyExpiration(agentId, keyType, keyId, expiresAt) {
     const keys = await this._loadKeys(agentId, keyType);
-    const key = keys.find(k => k.keyId === keyId);
+    const key = keys.find((k) => k.keyId === keyId);
 
     if (!key) throw new Error(`${keyType} key ${keyId} not found`);
 
@@ -535,9 +537,10 @@ export class AgentKeyManager {
    * @returns {Promise<'active'|'grace_period'|'expired'|'revoked'|'not_found'>}
    */
   async getKeyStatus(agentId, keyType, keyId) {
-    const key = keyType === 'signing'
-      ? await this.getSigningKey(agentId, keyId)
-      : await this.getEncryptionKey(agentId, keyId);
+    const key =
+      keyType === 'signing'
+        ? await this.getSigningKey(agentId, keyId)
+        : await this.getEncryptionKey(agentId, keyId);
 
     if (!key) return 'not_found';
     if (key.revokedAt) return 'revoked';
@@ -572,9 +575,10 @@ export class AgentKeyManager {
    * @returns {Promise<Object|null>}
    */
   async getKeyInfo(agentId, keyType, keyId) {
-    const key = keyType === 'signing'
-      ? await this.getSigningKey(agentId, keyId)
-      : await this.getEncryptionKey(agentId, keyId);
+    const key =
+      keyType === 'signing'
+        ? await this.getSigningKey(agentId, keyId)
+        : await this.getEncryptionKey(agentId, keyId);
 
     if (!key) return null;
 
@@ -679,9 +683,10 @@ export class AgentKeyManager {
         continue;
       }
 
-      const currentKey = keyType === 'signing'
-        ? await this.getCurrentSigningKey(agentId)
-        : await this.getCurrentEncryptionKey(agentId);
+      const currentKey =
+        keyType === 'signing'
+          ? await this.getCurrentSigningKey(agentId)
+          : await this.getCurrentEncryptionKey(agentId);
 
       if (!currentKey) {
         results.push({ keyType, rotated: false, reason: 'no_current_key' });
@@ -692,7 +697,7 @@ export class AgentKeyManager {
         agentId,
         currentKey.keyId,
         keyType,
-        currentKey
+        currentKey,
       );
 
       if (shouldRotate) {

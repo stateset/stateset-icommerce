@@ -12,11 +12,8 @@
  *   GET  /chat/history/:sessionId - Retrieve conversation history
  */
 
-import {
-  createSessionManager,
-  processWithAgent,
-  handleBotCommand,
-} from './base.js';
+import { createSessionManager, processWithAgent, handleBotCommand } from './base.js';
+import { runMiddleware } from './middleware.js';
 import crypto from 'crypto';
 
 // ============================================================================
@@ -411,7 +408,7 @@ header button:hover {
       .replace(/>/g, "&gt;");
 
     // Code blocks
-    s = s.replace(/\x60\x60\x60([\\s\\S]*?)\x60\x60\x60/g, function (_, code) {
+    s = s.replace(/\x60\x60\x60(.*?)\x60\x60\x60/gs, function (_, code) {
       return "<pre><code>" + code.trim() + "</code></pre>";
     });
 
@@ -419,27 +416,27 @@ header button:hover {
     s = s.replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>");
 
     // Bold **text** or __text__
-    s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/[*]{2}(.+?)[*]{2}/g, "<strong>$1</strong>");
     s = s.replace(/__(.+?)__/g, "<strong>$1</strong>");
 
     // Italic *text* or _text_  (but not inside words with underscores)
-    s = s.replace(/(?<![\\w])\*([^\\*]+)\*(?![\\w])/g, "<em>$1</em>");
-    s = s.replace(/(?<![\\w])_([^_]+)_(?![\\w])/g, "<em>$1</em>");
+    s = s.replace(/(?<![A-Za-z0-9_])[*]([^*]+)[*](?![A-Za-z0-9_])/g, "<em>$1</em>");
+    s = s.replace(/(?<![A-Za-z0-9_])_([^_]+)_(?![A-Za-z0-9_])/g, "<em>$1</em>");
 
     // Unordered lists: lines starting with - or *
-    s = s.replace(/(^|\\n)([\\-\\*]) (.+)/g, function (_, pre, bullet, content) {
+    s = s.replace(/(^|\n)([-*]) (.+)/g, function (_, pre, bullet, content) {
       return (pre || "") + "<li>" + content + "</li>";
     });
     // Wrap consecutive <li> in <ul>
-    s = s.replace(/((?:<li>.*<\\/li>\\n?)+)/g, "<ul>$1</ul>");
+    s = s.replace(/((?:<li>.*<\\/li>\n?)+)/g, "<ul>$1</ul>");
 
     // Ordered lists: lines starting with 1. 2. etc
-    s = s.replace(/(^|\\n)(\\d+)\\. (.+)/g, function (_, pre, num, content) {
+    s = s.replace(/(^|\n)([0-9]+)[.] (.+)/g, function (_, pre, num, content) {
       return (pre || "") + "<li>" + content + "</li>";
     });
 
     // Line breaks
-    s = s.replace(/\\n/g, "<br>");
+    s = s.replace(/\n/g, "<br>");
 
     return s;
   }
@@ -636,11 +633,43 @@ export function startWebChatChannel(config = {}) {
       return { status: 400, body: { error: 'Missing "text" field.' } };
     }
 
-    const trimmed = text.trim();
-
     // Resolve or create session id
     const sessionId = incomingSessionId || crypto.randomUUID();
     const session = sessionManager.getSession(sessionId);
+
+    let trimmed = text.trim();
+
+    // Middleware pipeline (mirrors createMessageHandler behavior for other gateways)
+    if (middleware.length > 0) {
+      try {
+        const ctx = {
+          text: trimmed,
+          senderId: sessionId,
+          targetId: sessionId,
+          session,
+          raw: body,
+          channel: 'webchat',
+          metadata: {},
+          blocked: false,
+          blockReason: null,
+        };
+
+        await runMiddleware(middleware, ctx);
+
+        if (ctx.blocked) {
+          const response = ctx.blockReason || 'Message blocked by middleware';
+          pushMessage(sessionId, 'agent', response);
+          sessionManager.persistSession(sessionId, session);
+          return { status: 200, body: { response, sessionId, blocked: true } };
+        }
+
+        if (typeof ctx.text === 'string') {
+          trimmed = ctx.text.trim();
+        }
+      } catch (err) {
+        console.error('[WebChat] Middleware error:', err.message);
+      }
+    }
 
     // Record user message in history
     pushMessage(sessionId, 'user', trimmed);
@@ -687,7 +716,9 @@ export function startWebChatChannel(config = {}) {
       sessionManager.persistSession(sessionId, session);
 
       if (verbose) {
-        console.log(`[WebChat] Replied to ${sessionId} (${response.length} chars, agent: ${result.agent})`);
+        console.log(
+          `[WebChat] Replied to ${sessionId} (${response.length} chars, agent: ${result.agent})`,
+        );
       }
 
       return {

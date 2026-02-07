@@ -1,11 +1,21 @@
 //! SQLite database implementation
 
+mod accounts_payable;
+mod accounts_receivable;
+mod agent_cards;
+mod agent_identities;
+mod agent_reputation;
+mod agent_validation;
 mod analytics;
+mod backorder;
 mod bom;
 mod carts;
+mod cost_accounting;
+mod credit;
 mod currency;
 mod customers;
 mod fulfillment;
+mod general_ledger;
 mod inventory;
 mod invoices;
 mod lots;
@@ -25,42 +35,28 @@ mod tax;
 mod warehouse;
 mod warranties;
 mod work_orders;
-mod accounts_payable;
-mod accounts_receivable;
-mod cost_accounting;
-mod credit;
-mod backorder;
-mod general_ledger;
-mod x402_payment_intents;
 mod x402_credits;
-mod agent_cards;
-mod agent_identities;
-mod agent_reputation;
-mod agent_validation;
+mod x402_payment_intents;
 
 #[cfg(feature = "vector")]
 mod vector;
 
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
-pub use backorder::*;
-pub use cost_accounting::*;
-pub use credit::*;
-pub use general_ledger::*;
-pub use x402_payment_intents::*;
-pub use x402_credits::*;
 pub use agent_cards::*;
 pub use agent_identities::*;
 pub use agent_reputation::*;
 pub use agent_validation::*;
-#[cfg(feature = "vector")]
-pub use vector::*;
 pub use analytics::*;
+pub use backorder::*;
 pub use bom::*;
 pub use carts::*;
+pub use cost_accounting::*;
+pub use credit::*;
 pub use currency::*;
 pub use customers::*;
 pub use fulfillment::*;
+pub use general_ledger::*;
 pub use inventory::*;
 pub use invoices::*;
 pub use lots::*;
@@ -76,16 +72,20 @@ pub use serials::*;
 pub use shipments::*;
 pub use subscriptions::*;
 pub use tax::*;
+#[cfg(feature = "vector")]
+pub use vector::*;
 pub use warehouse::*;
 pub use warranties::*;
 pub use work_orders::*;
+pub use x402_credits::*;
+pub use x402_payment_intents::*;
 
 use crate::migrations;
 use crate::DatabaseConfig;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::OpenFlags;
+use rust_decimal::Decimal;
 use stateset_core::CommerceError;
 use std::thread;
 use std::time::Duration;
@@ -376,16 +376,24 @@ pub(crate) fn map_db_error(e: rusqlite::Error) -> CommerceError {
 
 // Re-export parse helpers for use in submodules
 pub(crate) use parse_helpers::{
-    parse_uuid_row, parse_uuid_opt_row,
-    parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row,
-    parse_json_row, parse_json_opt_row,
     parse_date_row,
-    parse_enum_row,
-    // Non-row variants for use outside rusqlite closures
-    parse_uuid, parse_uuid_opt, parse_datetime, parse_datetime_opt,
-    parse_decimal as parse_decimal_strict, parse_decimal_opt,
+    parse_datetime,
+    parse_datetime_opt,
+    parse_datetime_opt_row,
+    parse_datetime_row,
+    parse_decimal as parse_decimal_strict,
+    parse_decimal_opt,
+    parse_decimal_opt_row,
+    parse_decimal_row,
     parse_enum,
+    parse_enum_row,
+    parse_json_opt_row,
+    parse_json_row,
+    // Non-row variants for use outside rusqlite closures
+    parse_uuid,
+    parse_uuid_opt,
+    parse_uuid_opt_row,
+    parse_uuid_row,
 };
 
 // ============================================================================
@@ -478,7 +486,7 @@ pub(crate) fn is_retryable_error(e: &rusqlite::Error) -> bool {
             matches!(
                 ffi_err.code,
                 rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
-            ) || msg.as_ref().map_or(false, |m| {
+            ) || msg.as_ref().is_some_and(|m| {
                 m.contains("database is locked") || m.contains("database table is locked")
             })
         }
@@ -517,7 +525,7 @@ where
                     s ^= s >> 7;
                     s ^= s << 17;
                     seed.set(s);
-                    (s % 50) as u64
+                    s % 50
                 });
                 let delay = backoff_ms.min(MAX_BACKOFF_MS) + jitter;
                 thread::sleep(Duration::from_millis(delay));
@@ -565,7 +573,8 @@ impl DatabaseExt for SqliteDatabase {
     where
         F: FnOnce(&rusqlite::Connection) -> std::result::Result<T, rusqlite::Error>,
     {
-        let mut conn = self.pool
+        let mut conn = self
+            .pool
             .get()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         // Use IMMEDIATE transaction to prevent lock upgrade deadlocks

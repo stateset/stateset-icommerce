@@ -122,7 +122,7 @@ export class UnifiedSequencerClient extends EventEmitter {
       await this._connectGrpc();
     } else if (requestedTransport === 'grpc' && !this._grpcAvailable) {
       console.warn(
-        'gRPC requested but not available. Install @grpc/grpc-js and @grpc/proto-loader for gRPC support. Falling back to REST.'
+        'gRPC requested but not available. Install @grpc/grpc-js and @grpc/proto-loader for gRPC support. Falling back to REST.',
       );
       await this._connectRest();
     } else {

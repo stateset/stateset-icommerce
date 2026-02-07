@@ -3,13 +3,13 @@
 use super::{block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
-    CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
-    LotTransaction, LotTransactionType, MergeLots, ReserveLot, Result, SplitLot,
-    TraceabilityResult, TraceNode, TraceNodeType, TransferLot, UpdateLot, validate_batch_size,
+    validate_batch_size, AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError,
+    ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter, LotLocation, LotRepository, LotStatus,
+    LotTransaction, LotTransactionType, MergeLots, ReserveLot, Result, SplitLot, TraceNode,
+    TraceNodeType, TraceabilityResult, TransferLot, UpdateLot,
 };
 use uuid::Uuid;
 
@@ -95,10 +95,7 @@ impl PgLotRepository {
     fn generate_lot_number(sku: &str) -> String {
         format!(
             "LOT-{}-{}",
-            sku.chars()
-                .take(6)
-                .collect::<String>()
-                .to_uppercase(),
+            sku.chars().take(6).collect::<String>().to_uppercase(),
             Utc::now().format("%Y%m%d%H%M%S")
         )
     }
@@ -445,13 +442,12 @@ impl PgLotRepository {
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM lot_transactions WHERE lot_id = $1",
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM lot_transactions WHERE lot_id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         if count.0 > 1 {
             return Err(CommerceError::ValidationError(
@@ -486,15 +482,13 @@ impl PgLotRepository {
             ));
         }
 
-        sqlx::query(
-            "UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(new_remaining)
-        .bind(Utc::now())
-        .bind(input.lot_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3")
+            .bind(new_remaining)
+            .bind(Utc::now())
+            .bind(input.lot_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         let transaction = self
             .record_transaction_tx(
@@ -502,7 +496,10 @@ impl PgLotRepository {
                 input.lot_id,
                 LotTransactionType::Adjusted,
                 input.quantity_change,
-                input.reference_type.as_deref().unwrap_or("manual_adjustment"),
+                input
+                    .reference_type
+                    .as_deref()
+                    .unwrap_or("manual_adjustment"),
                 input.reference_id.unwrap_or(input.lot_id),
                 None,
                 input.location_id,
@@ -617,30 +614,27 @@ impl PgLotRepository {
         .map_err(map_db_error)?;
 
         let new_reserved = lot.quantity_reserved + input.quantity;
-        sqlx::query(
-            "UPDATE lots SET quantity_reserved = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(new_reserved)
-        .bind(now)
-        .bind(input.lot_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE lots SET quantity_reserved = $1, updated_at = $2 WHERE id = $3")
+            .bind(new_reserved)
+            .bind(now)
+            .bind(input.lot_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
-        self
-            .record_transaction_tx(
-                &mut tx,
-                input.lot_id,
-                LotTransactionType::Reserved,
-                input.quantity,
-                &input.reference_type,
-                input.reference_id,
-                None,
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.record_transaction_tx(
+            &mut tx,
+            input.lot_id,
+            LotTransactionType::Reserved,
+            input.quantity,
+            &input.reference_type,
+            input.reference_id,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -663,14 +657,12 @@ impl PgLotRepository {
 
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE lot_reservations SET released_at = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(reservation_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE lot_reservations SET released_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(reservation_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         sqlx::query(
             "UPDATE lots SET quantity_reserved = quantity_reserved - $1, updated_at = $2 WHERE id = $3",
@@ -682,20 +674,19 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_transaction_tx(
-                &mut tx,
-                row.lot_id,
-                LotTransactionType::Released,
-                -row.quantity,
-                &row.reference_type,
-                row.reference_id,
-                None,
-                None,
-                Some("Reservation released"),
-                None,
-            )
-            .await?;
+        self.record_transaction_tx(
+            &mut tx,
+            row.lot_id,
+            LotTransactionType::Released,
+            -row.quantity,
+            &row.reference_type,
+            row.reference_id,
+            None,
+            None,
+            Some("Reservation released"),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -718,14 +709,12 @@ impl PgLotRepository {
 
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE lot_reservations SET confirmed_at = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(reservation_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE lot_reservations SET confirmed_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(reservation_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         sqlx::query(
             "UPDATE lots SET quantity_reserved = quantity_reserved - $1, quantity_remaining = quantity_remaining - $1, updated_at = $2 WHERE id = $3",
@@ -849,7 +838,12 @@ impl PgLotRepository {
         .bind(new_lot_id)
         .bind(&new_lot_number)
         .bind(input.quantity)
-        .bind(input.reason.as_ref().map(|r| format!("Split from {}: {}", original.lot_number, r)))
+        .bind(
+            input
+                .reason
+                .as_ref()
+                .map(|r| format!("Split from {}: {}", original.lot_number, r)),
+        )
         .bind(now)
         .bind(input.lot_id)
         .execute(tx.as_mut())
@@ -857,49 +851,47 @@ impl PgLotRepository {
         .map_err(map_db_error)?;
 
         let new_remaining = original.quantity_remaining - input.quantity;
-        sqlx::query(
-            "UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3",
+        sqlx::query("UPDATE lots SET quantity_remaining = $1, updated_at = $2 WHERE id = $3")
+            .bind(new_remaining)
+            .bind(now)
+            .bind(input.lot_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        self.record_transaction_tx(
+            &mut tx,
+            input.lot_id,
+            LotTransactionType::Split,
+            -input.quantity,
+            "lot_split",
+            new_lot_id,
+            None,
+            None,
+            input.reason.as_deref(),
+            None,
         )
-        .bind(new_remaining)
-        .bind(now)
-        .bind(input.lot_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        .await?;
 
-        self
-            .record_transaction_tx(
-                &mut tx,
-                input.lot_id,
-                LotTransactionType::Split,
-                -input.quantity,
-                "lot_split",
-                new_lot_id,
-                None,
-                None,
-                input.reason.as_deref(),
-                None,
-            )
-            .await?;
-
-        self
-            .record_transaction_tx(
-                &mut tx,
-                new_lot_id,
-                LotTransactionType::Received,
-                input.quantity,
-                "lot_split",
-                input.lot_id,
-                None,
-                None,
-                Some(&format!("Split from lot {}", original.lot_number)),
-                None,
-            )
-            .await?;
+        self.record_transaction_tx(
+            &mut tx,
+            new_lot_id,
+            LotTransactionType::Received,
+            input.quantity,
+            "lot_split",
+            input.lot_id,
+            None,
+            None,
+            Some(&format!("Split from lot {}", original.lot_number)),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(new_lot_id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(new_lot_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn merge_async(&self, input: MergeLots) -> Result<Lot> {
@@ -941,7 +933,8 @@ impl PgLotRepository {
             lots_to_consume.push((lot.id, lot.lot_number, lot.quantity_remaining));
         }
 
-        let sku = sku.ok_or_else(|| CommerceError::ValidationError("No lots to merge".to_string()))?;
+        let sku =
+            sku.ok_or_else(|| CommerceError::ValidationError("No lots to merge".to_string()))?;
 
         let new_lot_id = Uuid::new_v4();
         let new_lot_number = input
@@ -988,40 +981,40 @@ impl PgLotRepository {
             .await
             .map_err(map_db_error)?;
 
-            self
-                .record_transaction_tx(
-                    &mut tx,
-                    lot_id,
-                    LotTransactionType::Merged,
-                    -quantity,
-                    "lot_merge",
-                    new_lot_id,
-                    None,
-                    None,
-                    Some(&format!("Merged into lot {}", new_lot_number)),
-                    None,
-                )
-                .await?;
-        }
-
-        self
-            .record_transaction_tx(
+            self.record_transaction_tx(
                 &mut tx,
-                new_lot_id,
-                LotTransactionType::Received,
-                total_quantity,
+                lot_id,
+                LotTransactionType::Merged,
+                -quantity,
                 "lot_merge",
-                input.source_lot_ids[0],
+                new_lot_id,
                 None,
                 None,
-                Some("Created from merge"),
+                Some(&format!("Merged into lot {}", new_lot_number)),
                 None,
             )
             .await?;
+        }
+
+        self.record_transaction_tx(
+            &mut tx,
+            new_lot_id,
+            LotTransactionType::Received,
+            total_quantity,
+            "lot_merge",
+            input.source_lot_ids[0],
+            None,
+            None,
+            Some("Created from merge"),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(new_lot_id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(new_lot_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn quarantine_async(&self, id: Uuid, reason: &str) -> Result<Lot> {
@@ -1049,20 +1042,19 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_transaction_tx(
-                &mut tx,
-                id,
-                LotTransactionType::Quarantined,
-                available,
-                "quarantine",
-                id,
-                None,
-                None,
-                Some(reason),
-                None,
-            )
-            .await?;
+        self.record_transaction_tx(
+            &mut tx,
+            id,
+            LotTransactionType::Quarantined,
+            available,
+            "quarantine",
+            id,
+            None,
+            None,
+            Some(reason),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1073,13 +1065,12 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let (quarantined,): (Decimal,) = sqlx::query_as(
-            "SELECT quantity_quarantined FROM lots WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let (quarantined,): (Decimal,) =
+            sqlx::query_as("SELECT quantity_quarantined FROM lots WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         sqlx::query(
             "UPDATE lots SET status = 'active', quantity_quarantined = 0, updated_at = $1 WHERE id = $2",
@@ -1090,27 +1081,30 @@ impl PgLotRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_transaction_tx(
-                &mut tx,
-                id,
-                LotTransactionType::QuarantineReleased,
-                quarantined,
-                "quarantine_release",
-                id,
-                None,
-                None,
-                Some("Released from quarantine"),
-                None,
-            )
-            .await?;
+        self.record_transaction_tx(
+            &mut tx,
+            id,
+            LotTransactionType::QuarantineReleased,
+            quarantined,
+            "quarantine_release",
+            id,
+            None,
+            None,
+            Some("Released from quarantine"),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn get_transactions_async(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
+    pub async fn get_transactions_async(
+        &self,
+        lot_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<LotTransaction>> {
         let rows = sqlx::query_as::<_, LotTransactionRow>(
             "SELECT * FROM lot_transactions WHERE lot_id = $1 ORDER BY created_at DESC LIMIT $2",
         )
@@ -1127,7 +1121,11 @@ impl PgLotRepository {
         Ok(transactions)
     }
 
-    pub async fn get_quantity_at_location_async(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
+    pub async fn get_quantity_at_location_async(
+        &self,
+        lot_id: Uuid,
+        location_id: i32,
+    ) -> Result<Option<Decimal>> {
         let row = sqlx::query_as::<_, (Decimal,)>(
             "SELECT quantity FROM lot_locations WHERE lot_id = $1 AND location_id = $2",
         )
@@ -1262,18 +1260,20 @@ impl PgLotRepository {
     }
 
     pub async fn get_available_lots_for_sku_async(&self, sku: &str) -> Result<Vec<Lot>> {
-        self
-            .list_async(LotFilter {
-                sku: Some(sku.to_string()),
-                status: Some(LotStatus::Active),
-                has_quantity: Some(true),
-                ..Default::default()
-            })
-            .await
+        self.list_async(LotFilter {
+            sku: Some(sku.to_string()),
+            status: Some(LotStatus::Active),
+            has_quantity: Some(true),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn trace_async(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
-        let lot = self.get_async(lot_id).await?.ok_or(CommerceError::NotFound)?;
+        let lot = self
+            .get_async(lot_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         let mut upstream = Vec::new();
         if let Some(po_id) = lot.purchase_order_id {

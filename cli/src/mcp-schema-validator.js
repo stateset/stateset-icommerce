@@ -20,13 +20,13 @@ export class EnhancedValidator {
   validate(schema, data, path = '') {
     try {
       const result = schema.passthrough().safeParse(data);
-      
+
       if (result.success) {
         return {
           valid: true,
           data: result.data,
           errors: [],
-          suggestions: []
+          suggestions: [],
         };
       }
 
@@ -37,18 +37,20 @@ export class EnhancedValidator {
         valid: false,
         errors,
         suggestions,
-        context: this.buildErrorContext(errors, data)
+        context: this.buildErrorContext(errors, data),
       };
     } catch (error) {
       return {
         valid: false,
-        errors: [{
-          path,
-          code: 'VALIDATION_ERROR',
-          message: error.message,
-          severity: 'critical'
-        }],
-        suggestions: ['Review the schema configuration']
+        errors: [
+          {
+            path,
+            code: 'VALIDATION_ERROR',
+            message: error.message,
+            severity: 'critical',
+          },
+        ],
+        suggestions: ['Review the schema configuration'],
       };
     }
   }
@@ -58,9 +60,10 @@ export class EnhancedValidator {
    */
   formatErrors(errors, basePath = '') {
     return errors.map((error, index) => {
-      const path = error.path.length > 0 
-        ? `${basePath ? basePath + '.' : ''}${error.path.join('.')}`
-        : basePath || 'root';
+      const path =
+        error.path.length > 0
+          ? `${basePath ? basePath + '.' : ''}${error.path.join('.')}`
+          : basePath || 'root';
 
       const formattedError = {
         path,
@@ -70,7 +73,7 @@ export class EnhancedValidator {
         received: error.received,
         rule: this.explainRule(error),
         examples: this.getExamples(error.code),
-        index: index + 1
+        index: index + 1,
       };
 
       return formattedError;
@@ -95,7 +98,7 @@ export class EnhancedValidator {
       invalid_date: `${path ? `Field "${path}"` : 'Value'} is not a valid date. Example: 2024-01-25 or ISO 8601: 2024-01-25T10:30:00Z`,
       invalid_uuid: `${path ? `Field "${path}"` : 'Value'} is not a valid UUID. Example: 550e8400-e29b-41d4-a716-446655440000`,
       required: `Required field "${path}" is missing or is null/undefined`,
-      custom: `${path ? `Field "${path}"` : 'Value'} failed custom validation: ${error.message}`
+      custom: `${path ? `Field "${path}"` : 'Value'} failed custom validation: ${error.message}`,
     };
 
     return messages[error.code] || error.message || `Validation error at ${path}`;
@@ -116,7 +119,7 @@ export class EnhancedValidator {
       invalid_date: `Dates should be in a standard format: YYYY-MM-DD or ISO 8601 for timestamps.`,
       invalid_uuid: `UUIDs must be 32 hexadecimal characters, separated by hyphens in the pattern 8-4-4-4-12.`,
       required: `This field cannot be omitted, null, or undefined. It must be provided with a valid value.`,
-      custom: `This field has custom business logic validation that must be satisfied.`
+      custom: `This field has custom business logic validation that must be satisfied.`,
     };
 
     return explanations[error.code] || 'Standard validation rule';
@@ -128,14 +131,14 @@ export class EnhancedValidator {
   generateSuggestions(errors, data) {
     const suggestions = [];
 
-    errors.forEach(error => {
+    errors.forEach((error) => {
       const suggestion = this.buildSuggestion(error, data);
       if (suggestion) {
         suggestions.push({
           error: error.path,
           suggestion,
           priority: error.severity === 'critical' ? 'high' : 'medium',
-          fix: this.provideFix(error, data)
+          fix: this.provideFix(error, data),
         });
       }
     });
@@ -146,7 +149,7 @@ export class EnhancedValidator {
   /**
    * Build specific suggestions per error type
    */
-  buildSuggestion(error, data) {
+  buildSuggestion(error, _data) {
     const suggestionMap = {
       invalid_email: 'Provide a valid email address with @ symbol and domain',
       invalid_url: 'Include protocol (http:// or https://) and full domain path',
@@ -156,7 +159,7 @@ export class EnhancedValidator {
       invalid_uuid: 'Use UUID v4 format or generate with uuid v4() library',
       invalid_date: 'Use YYYY-MM-DD format or ISO 8601 timestamp',
       required: `Provide a value for ${error.path} or use a default value`,
-      invalid_type: `Convert ${error.path} to ${this.formatExpectedType(error.expected)}`
+      invalid_type: `Convert ${error.path} to ${this.formatExpectedType(error.expected)}`,
     };
 
     return suggestionMap[error.code];
@@ -165,38 +168,38 @@ export class EnhancedValidator {
   /**
    * Provide concrete fix suggestions with code examples
    */
-  provideFix(error, data) {
+  provideFix(error, _data) {
     const fixes = {
       invalid_email: {
         wrong: 'user(at)example.com',
         correct: 'user@example.com',
-        code: `const email = 'john.doe@example.com'; // Standard format`
+        code: `const email = 'john.doe@example.com'; // Standard format`,
       },
       invalid_url: {
         wrong: 'example.com',
         correct: 'https://example.com',
-        code: `const url = 'https://example.com/path'; // With protocol`
+        code: `const url = 'https://example.com/path'; // With protocol`,
       },
       too_small: {
         wrong: error.received,
         correct: error.minimum,
-        code: `const value = ${error.minimum}; // Meets minimum`
+        code: `const value = ${error.minimum}; // Meets minimum`,
       },
       too_big: {
         wrong: error.received,
         correct: error.maximum,
-        code: `const value = ${error.maximum}; // Stays within limit`
+        code: `const value = ${error.maximum}; // Stays within limit`,
       },
       invalid_type: {
         wrong: JSON.stringify(error.received),
         correct: this.formatExpectedType(error.expected),
-        code: `const value = ${this.getExampleForType(error.expected)}; // Correct type`
+        code: `const value = ${this.getExampleForType(error.expected)}; // Correct type`,
       },
       required: {
         wrong: `null or undefined`,
         correct: `valid value`,
-        code: `const ${error.path.split('.').pop()} = 'some-value'; // Provide value`
-      }
+        code: `const ${error.path.split('.').pop()} = 'some-value'; // Provide value`,
+      },
     };
 
     return fixes[error.code];
@@ -209,9 +212,9 @@ export class EnhancedValidator {
     const context = {
       errorCount: errors.length,
       severitySummary: this.summarizeSeverity(errors),
-      affectedFields: errors.map(e => e.path).filter((v, i, a) => a.indexOf(v) === i),
+      affectedFields: errors.map((e) => e.path).filter((v, i, a) => a.indexOf(v) === i),
       dataSample: this.extractSafeSample(data),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     return context;
@@ -243,7 +246,7 @@ export class EnhancedValidator {
       }
 
       if (Array.isArray(obj)) {
-        return obj.slice(0, 3).map(item => extract(item, depth + 1));
+        return obj.slice(0, 3).map((item) => extract(item, depth + 1));
       }
 
       const keys = Object.keys(obj).slice(0, maxKeys);
@@ -252,7 +255,7 @@ export class EnhancedValidator {
       for (const key of keys) {
         // Mask sensitive fields
         const isSensitive = /password|secret|token|key|credit/i.test(key);
-        
+
         if (isSensitive) {
           result[key] = '[REDACTED]';
         } else {
@@ -281,7 +284,7 @@ export class EnhancedValidator {
       invalid_url: 'medium',
       invalid_date: 'medium',
       invalid_uuid: 'medium',
-      custom: 'medium'
+      custom: 'medium',
     };
 
     return severityMap[code] || 'low';
@@ -292,7 +295,7 @@ export class EnhancedValidator {
    */
   formatEnumValues(values) {
     if (Array.isArray(values)) {
-      return values.map(v => typeof v === 'string' ? `"${v}"` : v).join(', ');
+      return values.map((v) => (typeof v === 'string' ? `"${v}"` : v)).join(', ');
     }
     return String(values);
   }
@@ -307,7 +310,7 @@ export class EnhancedValidator {
       boolean: 'true/false',
       array: 'list/array',
       object: 'object/map',
-      date: 'date/datetime'
+      date: 'date/datetime',
     };
 
     return typeMap[expected] || expected;
@@ -324,7 +327,7 @@ export class EnhancedValidator {
       return `"${value.length > 50 ? value.substring(0, 50) + '...' : value}"`;
     }
     if (typeof value === 'object') {
-      return typeof Array.isArray(value) ? `array (${value.length} items)` : 'object';
+      return Array.isArray(value) ? `array (${value.length} items)` : 'object';
     }
     return String(value);
   }
@@ -339,10 +342,10 @@ export class EnhancedValidator {
       boolean: 'true',
       array: '[1, 2, 3]',
       object: '{ key: "value" }',
-      date: "new Date()",
+      date: 'new Date()',
       email: "'user@example.com'",
       url: "'https://example.com'",
-      uuid: "'550e8400-e29b-41d4-a716-446655440000'"
+      uuid: "'550e8400-e29b-41d4-a716-446655440000'",
     };
 
     return examples[type] || `'${type} example'`;
@@ -353,20 +356,12 @@ export class EnhancedValidator {
    */
   getExamples(code) {
     const examples = {
-      invalid_email: [
-        'john.doe@example.com',
-        'user@domain.co.uk',
-        'name+tag@gmail.com'
-      ],
-      invalid_url: [
-        'https://example.com',
-        'https://example.com/path',
-        'http://localhost:8080'
-      ],
+      invalid_email: ['john.doe@example.com', 'user@domain.co.uk', 'name+tag@gmail.com'],
+      invalid_url: ['https://example.com', 'https://example.com/path', 'http://localhost:8080'],
       invalid_uuid: [
         '550e8400-e29b-41d4-a716-446655440000',
-        '00000000-0000-0000-0000-000000000000'
-      ]
+        '00000000-0000-0000-0000-000000000000',
+      ],
     };
 
     return examples[code] || [];
@@ -381,7 +376,7 @@ export class EnhancedValidator {
       url: /^https?:\/\/.+/,
       uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
       phone: /^\+?[\d\s-()]+$/,
-      zipCode: /^\d{5}(-\d{4})?$/
+      zipCode: /^\d{5}(-\d{4})?$/,
     };
   }
 
@@ -394,7 +389,7 @@ export class EnhancedValidator {
       total: items.length,
       valid: 0,
       invalid: 0,
-      commonErrors: new Map()
+      commonErrors: new Map(),
     };
 
     items.forEach((item, index) => {
@@ -405,8 +400,8 @@ export class EnhancedValidator {
         summary.valid++;
       } else {
         summary.invalid++;
-        
-        result.errors.forEach(error => {
+
+        result.errors.forEach((error) => {
           const key = `${error.code}:${error.path}`;
           summary.commonErrors.set(key, (summary.commonErrors.get(key) || 0) + 1);
         });
@@ -419,8 +414,8 @@ export class EnhancedValidator {
         ...summary,
         commonErrors: Array.from(summary.commonErrors.entries())
           .map(([code, count]) => ({ code, count }))
-          .sort((a, b) => b.count - a.count)
-      }
+          .sort((a, b) => b.count - a.count),
+      },
     };
   }
 
@@ -437,15 +432,15 @@ export class EnhancedValidator {
         valid: result.valid,
         errors: result.errors,
         suggestions: result.suggestions,
-        context: result.context
+        context: result.context,
       },
       summary: {
         total: result.errors.length,
-        critical: result.errors.filter(e => e.severity === 'critical').length,
-        high: result.errors.filter(e => e.severity === 'high').length,
-        medium: result.errors.filter(e => e.severity === 'medium').length,
-        low: result.errors.filter(e => e.severity === 'low').length
-      }
+        critical: result.errors.filter((e) => e.severity === 'critical').length,
+        high: result.errors.filter((e) => e.severity === 'high').length,
+        medium: result.errors.filter((e) => e.severity === 'medium').length,
+        low: result.errors.filter((e) => e.severity === 'low').length,
+      },
     };
   }
 }
@@ -461,8 +456,11 @@ export const CommerceValidators = {
     email: z.string().email('Must be a valid email address'),
     firstName: z.string().min(1, 'First name is required').max(100, 'First name too long'),
     lastName: z.string().min(1, 'Last name is required').max(100, 'Last name too long'),
-    phone: z.string().optional().regex(/^\+?[\d\s-()]+$/, 'Invalid phone format'),
-    acceptsMarketing: z.boolean().optional()
+    phone: z
+      .string()
+      .regex(/^\+?[\d\s-()]+$/, 'Invalid phone format')
+      .optional(),
+    acceptsMarketing: z.boolean().optional(),
   }),
 
   /**
@@ -470,14 +468,18 @@ export const CommerceValidators = {
    */
   order: z.object({
     customerId: z.string().uuid('Must be a valid UUID'),
-    items: z.array(z.object({
-      sku: z.string().min(1, 'SKU is required'),
-      name: z.string().min(1, 'Item name is required'),
-      quantity: z.number().int().positive('Quantity must be positive'),
-      unitPrice: z.number().nonnegative('Price cannot be negative')
-    })).min(1, 'Order must have at least one item'),
+    items: z
+      .array(
+        z.object({
+          sku: z.string().min(1, 'SKU is required'),
+          name: z.string().min(1, 'Item name is required'),
+          quantity: z.number().int().positive('Quantity must be positive'),
+          unitPrice: z.number().nonnegative('Price cannot be negative'),
+        }),
+      )
+      .min(1, 'Order must have at least one item'),
     currency: z.string().length(3, 'Currency code must be 3 characters (e.g., USD)'),
-    notes: z.string().optional()
+    notes: z.string().optional(),
   }),
 
   /**
@@ -485,12 +487,18 @@ export const CommerceValidators = {
    */
   product: z.object({
     name: z.string().min(1, 'Product name is required').max(500, 'Name too long'),
-    slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must contain lowercase letters, numbers, and hyphens only'),
+    slug: z
+      .string()
+      .regex(/^[a-z0-9-]+$/, 'Slug must contain lowercase letters, numbers, and hyphens only'),
     status: z.enum(['active', 'inactive', 'draft', 'archived'], 'Invalid product status'),
-    variants: z.array(z.object({
-      sku: z.string().min(1, 'SKU is required'),
-      price: z.number().nonnegative('Price cannot be negative')
-    })).optional()
+    variants: z
+      .array(
+        z.object({
+          sku: z.string().min(1, 'SKU is required'),
+          price: z.number().nonnegative('Price cannot be negative'),
+        }),
+      )
+      .optional(),
   }),
 
   /**
@@ -499,8 +507,8 @@ export const CommerceValidators = {
   inventoryAdjustment: z.object({
     sku: z.string().min(1, 'SKU is required'),
     quantity: z.number().int('Quantity must be an integer'),
-    reason: z.string().min(1, 'Reason is required').max(500, 'Reason too long')
-  })
+    reason: z.string().min(1, 'Reason is required').max(500, 'Reason too long'),
+  }),
 };
 
 export default EnhancedValidator;

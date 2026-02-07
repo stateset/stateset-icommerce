@@ -1,47 +1,49 @@
-const { PluginAPI } = require('@stateset/cli/src/channels/plugin-api');
+/**
+ * Example Plugin: Simple Commands + Hooks
+ *
+ * Demonstrates:
+ * - `api.registerCommand()` signature: handler(argText, context) => { response }
+ * - `api.on()` hooks
+ */
 
-async function init(api, context) {
-  const { config, manifest } = context;
-  const pluginName = 'Simple Plugin';
+export default function init(api, context = {}) {
+  const { config = {}, manifest = {} } = context;
+  const pluginName = manifest.name || 'Simple Plugin';
 
   api.registerCommand({
     name: 'simple-greet',
-    description: 'Greet the world with a personalized message',
-    options: [
-      { name: 'name', type: 'String', description: 'Your name', required: false }
-    ]
-  }, async (args, req) => {
-    const name = args.name || 'World';
-    return { message: `Hello, ${name}! This is ${pluginName}.` };
+    description: 'Greet the user with a personalized message',
+    acceptsArgs: true,
+    handler: async (argText) => {
+      const name = (argText || '').trim() || 'World';
+      return { response: `Hello, ${name}! This is ${pluginName}.` };
+    },
   });
 
   api.registerCommand({
     name: 'simple-status',
     description: 'Check plugin status',
-    options: []
-  }, async (args, req) => {
-    return {
-      status: 'active',
-      name: pluginName,
-      version: manifest.version || '1.0.0',
-      uptime: process.uptime(),
-      customConfig: config.customOption || 'default'
-    };
+    acceptsArgs: false,
+    handler: async () => {
+      const lines = [
+        `status: active`,
+        `name: ${pluginName}`,
+        `version: ${manifest.version || '1.0.0'}`,
+        `uptime_s: ${Math.round(process.uptime())}`,
+        `customOption: ${config.customOption || 'default'}`,
+      ];
+      return { response: lines.join('\n') };
+    },
   });
 
-  api.on('agent_start', async (agent, ctx) => {
-    console.log(`[Simple Plugin] Agent started: ${agent.name} in stream ${ctx.streamId}`);
+  api.on('plugin_loaded', async () => {
+    console.log(`[${pluginName}] plugin_loaded`);
   });
 
-  api.on('message_received', async (message, ctx) => {
-    console.log(`[Simple Plugin] Message received from ${message.source}: ${message.content?.substring(0, 50)}...`);
-  });
-
-  api.on('agent_end', async (result, ctx) => {
-    console.log(`[Simple Plugin] Agent ended: ${ctx.agentName}, success: ${result.success}`);
+  api.on('message_received', async (data) => {
+    const text = data?.text || data?.message?.content || '';
+    console.log(`[${pluginName}] message_received: ${text.slice(0, 80)}`);
   });
 
   console.log(`${pluginName} initialized successfully`);
 }
-
-module.exports = { init };

@@ -14,7 +14,6 @@
 import crypto from 'crypto';
 import { deriveWallet } from './wallet.js';
 import {
-  CHAINS,
   getChain,
   getToken,
   getDefaultStablecoin,
@@ -79,37 +78,26 @@ import {
  * @returns {Promise<PaymentIntent>}
  */
 export async function createPaymentIntent(params, options = {}) {
-  const {
-    agentId,
-    chainId,
-    toAddress,
-    amount,
-    tokenSymbol,
-    metadata = {},
-  } = params;
+  const { agentId, chainId, toAddress, amount, tokenSymbol, metadata = {} } = params;
 
   const { configDir = '.stateset' } = options;
 
   // Validate agent ID
   if (!agentId || typeof agentId !== 'string') {
-    throw new ValidationError(
-      ValidationErrorCodes.MISSING_REQUIRED,
-      'Agent ID is required',
-      { field: 'agentId' }
-    );
+    throw new ValidationError(ValidationErrorCodes.MISSING_REQUIRED, 'Agent ID is required', {
+      field: 'agentId',
+    });
   }
 
   // Validate chain using comprehensive validator
   validateChainId(chainId);
-  const chain = getChain(chainId);
+  getChain(chainId);
 
   // Validate token
   validateToken(chainId, tokenSymbol);
 
   // Get token config
-  const token = tokenSymbol
-    ? getToken(chainId, tokenSymbol)
-    : getDefaultStablecoin(chainId);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
 
   // Validate amount (returns parsed number)
   const amountNum = validateAmount(amount);
@@ -127,7 +115,7 @@ export async function createPaymentIntent(params, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.SELF_TRANSFER,
       'Cannot transfer to the same address',
-      { fromAddress: wallet.address, toAddress }
+      { fromAddress: wallet.address, toAddress },
     );
   }
 
@@ -184,20 +172,9 @@ export async function createPaymentIntent(params, options = {}) {
  * @returns {Promise<PaymentResult>}
  */
 export async function executePayment(params, options = {}) {
-  const {
-    agentId,
-    chainId,
-    toAddress,
-    amount,
-    tokenSymbol,
-    metadata = {},
-  } = params;
+  const { agentId, chainId, toAddress, amount, tokenSymbol, metadata = {} } = params;
 
-  const {
-    configDir = '.stateset',
-    simulate = false,
-    onProgress = () => {},
-  } = options;
+  const { configDir = '.stateset', simulate = false, onProgress = () => {} } = options;
 
   const vesEventIds = [];
   let intent;
@@ -206,14 +183,17 @@ export async function executePayment(params, options = {}) {
     // Step 1: Create payment intent
     onProgress({ step: 'creating_intent', message: 'Creating payment intent...' });
 
-    intent = await createPaymentIntent({
-      agentId,
-      chainId,
-      toAddress,
-      amount,
-      tokenSymbol,
-      metadata,
-    }, { configDir });
+    intent = await createPaymentIntent(
+      {
+        agentId,
+        chainId,
+        toAddress,
+        amount,
+        tokenSymbol,
+        metadata,
+      },
+      { configDir },
+    );
 
     onProgress({
       step: 'intent_created',
@@ -273,11 +253,10 @@ export async function executePayment(params, options = {}) {
     // Step 6: Wait for confirmation
     onProgress({ step: 'confirming', message: 'Waiting for confirmation...' });
 
-    const confirmation = await waitForConfirmation(
-      submitResult.txHash,
-      chainId,
-      { onProgress, isMock: submitResult.isMock }
-    );
+    const confirmation = await waitForConfirmation(submitResult.txHash, chainId, {
+      onProgress,
+      isMock: submitResult.isMock,
+    });
 
     intent.status = 'confirmed';
 
@@ -301,7 +280,6 @@ export async function executePayment(params, options = {}) {
       intent,
       vesEventIds,
     };
-
   } catch (error) {
     onProgress({
       step: 'failed',
@@ -352,7 +330,7 @@ async function buildTransaction(intent, wallet, chainId) {
  * Build Solana SPL token transfer transaction
  * Note: In production, use @solana/web3.js and @solana/spl-token
  */
-async function buildSolanaTransaction(intent, wallet) {
+async function buildSolanaTransaction(intent, _wallet) {
   // This is a simplified representation
   // In production, use proper Solana SDK
 
@@ -440,7 +418,8 @@ async function buildBitcoinTransaction(intent, wallet, chainId) {
 async function signTransaction(txData, wallet, chainId) {
   if (txData.mockTx) {
     // For mock transactions, create a deterministic "signature"
-    const mockSig = crypto.createHash('sha256')
+    const mockSig = crypto
+      .createHash('sha256')
       .update(JSON.stringify(txData))
       .update(wallet.privateKey)
       .digest('hex');
@@ -469,12 +448,9 @@ async function signSolanaTransaction(txData, wallet) {
   const message = Buffer.from(JSON.stringify(txData), 'utf8');
 
   const keyObj = crypto.createPrivateKey({
-    key: Buffer.concat([
-      Buffer.from('302e020100300506032b657004220420', 'hex'),
-      wallet.privateKey
-    ]),
+    key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), wallet.privateKey]),
     format: 'der',
-    type: 'pkcs8'
+    type: 'pkcs8',
   });
 
   const signature = crypto.sign(null, message, keyObj);
@@ -486,7 +462,7 @@ async function signSolanaTransaction(txData, wallet) {
   };
 }
 
-async function signEvmTransaction(txData, wallet) {
+async function signEvmTransaction(txData, _wallet) {
   // In production: use ethers.js Wallet.signTransaction()
   // For now, create a mock signature
   const message = Buffer.from(JSON.stringify(txData), 'utf8');
@@ -499,14 +475,15 @@ async function signEvmTransaction(txData, wallet) {
   };
 }
 
-async function signZcashTransaction(txData, wallet) {
+async function signZcashTransaction(txData, _wallet) {
   // In production: use secp256k1 ECDSA signature
   // Zcash uses Bitcoin-style transaction signing (SIGHASH_ALL)
   const message = Buffer.from(JSON.stringify(txData), 'utf8');
 
   // Create ECDSA-style signature using the wallet's secp256k1 private key
   // For mock, we use double SHA256 hash as signature placeholder
-  const hash = crypto.createHash('sha256')
+  const hash = crypto
+    .createHash('sha256')
     .update(crypto.createHash('sha256').update(message).digest())
     .digest();
 
@@ -517,14 +494,15 @@ async function signZcashTransaction(txData, wallet) {
   };
 }
 
-async function signBitcoinTransaction(txData, wallet) {
+async function signBitcoinTransaction(txData, _wallet) {
   // In production: use secp256k1 ECDSA signature with SIGHASH_ALL
   // Bitcoin uses DER-encoded signatures with sighash byte appended
   const message = Buffer.from(JSON.stringify(txData), 'utf8');
 
   // Create ECDSA-style signature using the wallet's secp256k1 private key
   // For mock, we use double SHA256 hash as signature placeholder
-  const hash = crypto.createHash('sha256')
+  const hash = crypto
+    .createHash('sha256')
     .update(crypto.createHash('sha256').update(message).digest())
     .digest();
 
@@ -547,17 +525,17 @@ async function submitTransaction(signedTx, chainId) {
     // Mock submission - generate a fake tx hash with a prefix we can detect
     let mockTxHash;
     if (isEd25519Chain(chainId)) {
-      mockTxHash = crypto.randomBytes(64).toString('base64');  // Solana signatures are 64 bytes
+      mockTxHash = crypto.randomBytes(64).toString('base64'); // Solana signatures are 64 bytes
     } else if (isZcashChain(chainId)) {
-      mockTxHash = crypto.randomBytes(32).toString('hex');  // Zcash uses 32-byte txids (64 hex chars)
+      mockTxHash = crypto.randomBytes(32).toString('hex'); // Zcash uses 32-byte txids (64 hex chars)
     } else if (isBitcoinChain(chainId)) {
-      mockTxHash = crypto.randomBytes(32).toString('hex');  // Bitcoin uses 32-byte txids (64 hex chars)
+      mockTxHash = crypto.randomBytes(32).toString('hex'); // Bitcoin uses 32-byte txids (64 hex chars)
     } else {
-      mockTxHash = '0xMOCK' + crypto.randomBytes(30).toString('hex');  // EVM with MOCK prefix
+      mockTxHash = '0xMOCK' + crypto.randomBytes(30).toString('hex'); // EVM with MOCK prefix
     }
 
     // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     return {
       txHash: mockTxHash,
@@ -567,8 +545,6 @@ async function submitTransaction(signedTx, chainId) {
   }
 
   // In production, submit to actual RPC endpoint
-  const chain = getChain(chainId);
-
   if (isEd25519Chain(chainId)) {
     // Solana: sendTransaction RPC call
     throw new Error('Production Solana submission not implemented. Use @solana/web3.js.');
@@ -592,20 +568,24 @@ async function submitTransaction(signedTx, chainId) {
  * Wait for transaction confirmation
  */
 async function waitForConfirmation(txHash, chainId, options = {}) {
-  const { onProgress = () => {}, maxAttempts = 60, pollInterval = 2000, isMock: isMockFromSubmit } = options;
+  const {
+    onProgress = () => {},
+    maxAttempts = 60,
+    pollInterval = 2000,
+    isMock: isMockFromSubmit,
+  } = options;
 
   const chain = getChain(chainId);
   const requiredConfirmations = chain?.confirmations || 1;
 
   // For mock transactions, simulate confirmation
   // Detect mock from: submit result flag, MOCK prefix in hash, or non-hex hash (Solana base64)
-  const isMock = isMockFromSubmit ||
-    txHash.includes('MOCK') ||
-    (!txHash.startsWith('0x') && txHash.length > 20);  // Base64 Solana sigs
+  const isMock =
+    isMockFromSubmit || txHash.includes('MOCK') || (!txHash.startsWith('0x') && txHash.length > 20); // Base64 Solana sigs
 
   if (isMock || process.env.MOCK_BLOCKCHAIN === 'true') {
     // Simulate confirmation delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     onProgress({
       step: 'confirmation_update',
@@ -636,11 +616,10 @@ async function waitForConfirmation(txHash, chainId, options = {}) {
         required: requiredConfirmations,
       });
 
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-    } catch (error) {
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    } catch {
       // Transaction might not be indexed yet
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
   }
 
@@ -650,7 +629,7 @@ async function waitForConfirmation(txHash, chainId, options = {}) {
 /**
  * Get transaction status from blockchain
  */
-async function getTransactionStatus(txHash, chainId) {
+async function getTransactionStatus(_txHash, _chainId) {
   // In production, query the RPC endpoint
   throw new Error('Production transaction status check not implemented.');
 }
@@ -677,9 +656,7 @@ export async function getBalance(address, chainId, tokenSymbol) {
   // Validate address
   validateAddress(address, chainId);
 
-  const token = tokenSymbol
-    ? getToken(chainId, tokenSymbol)
-    : getDefaultStablecoin(chainId);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
 
   // In production, query the blockchain
   // For now, return mock balance
@@ -702,9 +679,7 @@ export async function getBalance(address, chainId, tokenSymbol) {
 export async function hasSufficientBalance(address, chainId, amount, tokenSymbol) {
   const { balanceSmallest, symbol } = await getBalance(address, chainId, tokenSymbol);
 
-  const token = tokenSymbol
-    ? getToken(chainId, tokenSymbol)
-    : getDefaultStablecoin(chainId);
+  const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
 
   const requiredAmount = toSmallestUnit(amount, token.decimals);
 

@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
-    BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
+    generate_backorder_number, AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation,
+    BackorderFilter, BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
     BackorderSummary, CommerceError, CreateBackorder, FulfillBackorder, FulfillmentSourceType,
-    Result, SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
+    Result, SkuBackorderSummary, UpdateBackorder,
 };
 use uuid::Uuid;
 
@@ -156,14 +156,12 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        let row = sqlx::query_as::<_, BackorderRow>(
-            "SELECT * FROM backorders WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
+        let row = sqlx::query_as::<_, BackorderRow>("SELECT * FROM backorders WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
 
         Self::row_to_backorder(row)
     }
@@ -292,7 +290,9 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_backorder_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_backorder_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_backorder_async(&self, id: Uuid) -> Result<Option<Backorder>> {
@@ -325,7 +325,11 @@ impl PgBackorderRepository {
         Ok(row.map(Self::row_to_backorder).transpose()?)
     }
 
-    pub async fn update_backorder_async(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
+    pub async fn update_backorder_async(
+        &self,
+        id: Uuid,
+        input: UpdateBackorder,
+    ) -> Result<Backorder> {
         let now = Utc::now();
 
         sqlx::query(
@@ -344,14 +348,17 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_backorder_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_backorder_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_backorders_async(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
         let mut sql = "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
                 quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
                 expected_date, promised_date, source_location_id, notes, created_at, updated_at
-            FROM backorders WHERE 1=1".to_string();
+            FROM backorders WHERE 1=1"
+            .to_string();
         let mut param_idx = 1;
 
         if filter.order_id.is_some() {
@@ -408,27 +415,42 @@ impl PgBackorderRepository {
 
     pub async fn cancel_backorder_async(&self, id: Uuid) -> Result<Backorder> {
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE backorders SET status = 'cancelled', updated_at = $1 WHERE id = $2",
-        )
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        self.get_backorder_async(id).await?.ok_or(CommerceError::NotFound)
+        sqlx::query("UPDATE backorders SET status = 'cancelled', updated_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        self.get_backorder_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_backorders_for_order_async(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        self.list_backorders_async(BackorderFilter { order_id: Some(order_id), ..Default::default() }).await
+        self.list_backorders_async(BackorderFilter {
+            order_id: Some(order_id),
+            ..Default::default()
+        })
+        .await
     }
 
-    pub async fn get_backorders_for_customer_async(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
-        self.list_backorders_async(BackorderFilter { customer_id: Some(customer_id), ..Default::default() }).await
+    pub async fn get_backorders_for_customer_async(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Vec<Backorder>> {
+        self.list_backorders_async(BackorderFilter {
+            customer_id: Some(customer_id),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn get_backorders_for_sku_async(&self, sku: &str) -> Result<Vec<Backorder>> {
-        self.list_backorders_async(BackorderFilter { sku: Some(sku.to_string()), ..Default::default() }).await
+        self.list_backorders_async(BackorderFilter {
+            sku: Some(sku.to_string()),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn fulfill_backorder_async(&self, input: FulfillBackorder) -> Result<Backorder> {
@@ -437,8 +459,12 @@ impl PgBackorderRepository {
             .await?
             .ok_or(CommerceError::NotFound)?;
 
-        if backorder.status == BackorderStatus::Cancelled || backorder.status == BackorderStatus::Fulfilled {
-            return Err(CommerceError::ValidationError("Backorder cannot be fulfilled".into()));
+        if backorder.status == BackorderStatus::Cancelled
+            || backorder.status == BackorderStatus::Fulfilled
+        {
+            return Err(CommerceError::ValidationError(
+                "Backorder cannot be fulfilled".into(),
+            ));
         }
 
         let new_fulfilled = backorder.quantity_fulfilled + input.quantity;
@@ -479,7 +505,9 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_backorder_async(input.backorder_id).await?.ok_or(CommerceError::NotFound)
+        self.get_backorder_async(input.backorder_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_fulfillment_history_async(
@@ -542,7 +570,10 @@ impl PgBackorderRepository {
         Ok(Self::row_to_allocation(row)?)
     }
 
-    pub async fn get_allocations_async(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
+    pub async fn get_allocations_async(
+        &self,
+        backorder_id: Uuid,
+    ) -> Result<Vec<BackorderAllocation>> {
         let rows = sqlx::query_as::<_, AllocationRow>(
             "SELECT id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at
              FROM backorder_allocations WHERE backorder_id = $1",
@@ -558,7 +589,10 @@ impl PgBackorderRepository {
             .collect::<Result<Vec<_>>>()?)
     }
 
-    pub async fn release_allocation_async(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    pub async fn release_allocation_async(
+        &self,
+        allocation_id: Uuid,
+    ) -> Result<BackorderAllocation> {
         sqlx::query("UPDATE backorder_allocations SET status = 'released' WHERE id = $1")
             .bind(allocation_id)
             .execute(&self.pool)
@@ -577,7 +611,10 @@ impl PgBackorderRepository {
         Ok(Self::row_to_allocation(row)?)
     }
 
-    pub async fn confirm_allocation_async(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    pub async fn confirm_allocation_async(
+        &self,
+        allocation_id: Uuid,
+    ) -> Result<BackorderAllocation> {
         sqlx::query("UPDATE backorder_allocations SET status = 'confirmed' WHERE id = $1")
             .bind(allocation_id)
             .execute(&self.pool)
@@ -610,7 +647,10 @@ impl PgBackorderRepository {
         Ok(count as u32)
     }
 
-    pub async fn auto_allocate_inventory_async(&self, _sku: &str) -> Result<Vec<BackorderAllocation>> {
+    pub async fn auto_allocate_inventory_async(
+        &self,
+        _sku: &str,
+    ) -> Result<Vec<BackorderAllocation>> {
         Ok(Vec::new())
     }
 
@@ -648,7 +688,16 @@ impl PgBackorderRepository {
     }
 
     pub async fn get_sku_summary_async(&self, sku: &str) -> Result<Option<SkuBackorderSummary>> {
-        let row = sqlx::query_as::<_, (String, Decimal, i64, Option<chrono::DateTime<Utc>>, Option<chrono::DateTime<Utc>> )>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                Decimal,
+                i64,
+                Option<chrono::DateTime<Utc>>,
+                Option<chrono::DateTime<Utc>>,
+            ),
+        >(
             "SELECT
                 sku,
                 COALESCE(SUM(quantity_remaining), 0),
@@ -693,12 +742,11 @@ impl PgBackorderRepository {
     }
 
     pub async fn count_pending_async(&self) -> Result<u64> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM backorders WHERE status = 'pending'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM backorders WHERE status = 'pending'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
         Ok(count as u64)
     }
 }

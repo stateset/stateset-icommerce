@@ -93,9 +93,8 @@ impl PgX402PaymentIntentRepository {
     }
 
     fn to_i64(value: u64, field: &str) -> Result<i64> {
-        i64::try_from(value).map_err(|_| {
-            CommerceError::ValidationError(format!("{} exceeds i64 range", field))
-        })
+        i64::try_from(value)
+            .map_err(|_| CommerceError::ValidationError(format!("{} exceeds i64 range", field)))
     }
 
     fn row_to_intent(row: IntentRow) -> Result<X402PaymentIntent> {
@@ -165,7 +164,10 @@ impl PgX402PaymentIntentRepository {
             value = serde_json::json!({});
         }
         if let Some(obj) = value.as_object_mut() {
-            obj.insert("failure_reason".to_string(), serde_json::Value::String(reason.to_string()));
+            obj.insert(
+                "failure_reason".to_string(),
+                serde_json::Value::String(reason.to_string()),
+            );
         }
 
         Some(value.to_string())
@@ -179,7 +181,9 @@ impl PgX402PaymentIntentRepository {
             Some(n) => n,
             None => self.get_next_nonce_async(&input.payer_address).await?,
         };
-        let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+        let validity_seconds = input
+            .validity_seconds
+            .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
         let valid_until = now_unix + validity_seconds;
 
         let asset = input.asset;
@@ -235,24 +239,24 @@ impl PgX402PaymentIntentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_async(&self, id: Uuid) -> Result<Option<X402PaymentIntent>> {
-        let row = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, IntentRow>("SELECT * FROM x402_payment_intents WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         row.map(Self::row_to_intent).transpose()
     }
 
-    pub async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<X402PaymentIntent>> {
+    pub async fn get_by_idempotency_key_async(
+        &self,
+        key: &str,
+    ) -> Result<Option<X402PaymentIntent>> {
         let row = sqlx::query_as::<_, IntentRow>(
             "SELECT * FROM x402_payment_intents WHERE idempotency_key = $1",
         )
@@ -300,7 +304,10 @@ impl PgX402PaymentIntentRepository {
         let hash_bytes = intent.sequencer_signing_hash();
         let signing_hash = format!(
             "0x{}",
-            hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+            hash_bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
         );
 
         sqlx::query(
@@ -318,9 +325,7 @@ impl PgX402PaymentIntentRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_sequenced_async(
@@ -365,9 +370,7 @@ impl PgX402PaymentIntentRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_settled_async(
@@ -389,9 +392,7 @@ impl PgX402PaymentIntentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_failed_async(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent> {
@@ -409,49 +410,42 @@ impl PgX402PaymentIntentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn mark_expired_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(X402IntentStatus::Expired.to_string())
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
+            .bind(X402IntentStatus::Expired.to_string())
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<X402PaymentIntent> {
         let intent = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
+        if !matches!(
+            intent.status,
+            X402IntentStatus::Created | X402IntentStatus::Signed
+        ) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot cancel intent in {} status",
                 intent.status
             )));
         }
 
-        sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(X402IntentStatus::Cancelled.to_string())
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE x402_payment_intents SET status = $1, updated_at = $2 WHERE id = $3")
+            .bind(X402IntentStatus::Cancelled.to_string())
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
-        self.get_async(id)
-            .await?
-            .ok_or(CommerceError::NotFound)
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn for_cart_async(&self, cart_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
@@ -490,7 +484,10 @@ impl PgX402PaymentIntentRepository {
         Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
     }
 
-    pub async fn list_async(&self, filter: X402PaymentIntentFilter) -> Result<Vec<X402PaymentIntent>> {
+    pub async fn list_async(
+        &self,
+        filter: X402PaymentIntentFilter,
+    ) -> Result<Vec<X402PaymentIntent>> {
         let mut qb = QueryBuilder::<Postgres>::new("SELECT * FROM x402_payment_intents");
         let mut has_where = false;
 
@@ -673,7 +670,9 @@ impl PgX402PaymentIntentRepository {
                 Some(n) => n,
                 None => self.get_next_nonce_async(&input.payer_address).await?,
             };
-            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let validity_seconds = input
+                .validity_seconds
+                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
 
             let asset = input.asset;
@@ -741,13 +740,12 @@ impl PgX402PaymentIntentRepository {
             return Ok(vec![]);
         }
 
-        let rows = sqlx::query_as::<_, IntentRow>(
-            "SELECT * FROM x402_payment_intents WHERE id = ANY($1)",
-        )
-        .bind(&ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, IntentRow>("SELECT * FROM x402_payment_intents WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_intent).collect()
     }
@@ -770,11 +768,21 @@ impl X402PaymentIntentRepository for PgX402PaymentIntentRepository {
         block_on(self.sign_async(id, input))
     }
 
-    fn mark_sequenced(&self, id: Uuid, sequence_number: u64, batch_id: Uuid) -> Result<X402PaymentIntent> {
+    fn mark_sequenced(
+        &self,
+        id: Uuid,
+        sequence_number: u64,
+        batch_id: Uuid,
+    ) -> Result<X402PaymentIntent> {
         block_on(self.mark_sequenced_async(id, sequence_number, batch_id))
     }
 
-    fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64) -> Result<X402PaymentIntent> {
+    fn mark_settled(
+        &self,
+        id: Uuid,
+        tx_hash: &str,
+        block_number: u64,
+    ) -> Result<X402PaymentIntent> {
         block_on(self.mark_settled_async(id, tx_hash, block_number))
     }
 
@@ -814,11 +822,17 @@ impl X402PaymentIntentRepository for PgX402PaymentIntentRepository {
         block_on(self.expire_stale_intents_async())
     }
 
-    fn create_batch(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>> {
+    fn create_batch(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<BatchResult<X402PaymentIntent>> {
         block_on(self.create_batch_async(inputs))
     }
 
-    fn create_batch_atomic(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>> {
+    fn create_batch_atomic(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<Vec<X402PaymentIntent>> {
         block_on(self.create_batch_atomic_async(inputs))
     }
 

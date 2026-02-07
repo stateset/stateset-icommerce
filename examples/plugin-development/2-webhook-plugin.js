@@ -38,27 +38,24 @@ export default function init(api, context) {
   api.registerHttpRoute({
     method: 'POST',
     path: webhookPath,
-    handler: async (req, res) => {
+    level: 'none', // public webhook endpoint; validate Slack token/signature inside the handler
+    handler: async ({ body }) => {
       try {
-        const body = req.body || {};
+        const payload = body || {};
 
         // Verify Slack token if provided
-        if (slackToken && body.token !== slackToken) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid token' }));
-          return;
+        if (slackToken && payload.token !== slackToken) {
+          return { status: 401, body: { error: 'Invalid token' } };
         }
 
         // Handle different event types
-        if (body.type === 'url_verification') {
+        if (payload.type === 'url_verification') {
           // Slack challenge
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ challenge: body.challenge }));
-          return;
+          return { status: 200, body: { challenge: payload.challenge } };
         }
 
-        if (body.type === 'event_callback') {
-          const event = body.event;
+        if (payload.type === 'event_callback') {
+          const event = payload.event;
 
           // Only handle message events
           if (event.type === 'message' && !event.subtype && !event.bot_id) {
@@ -77,12 +74,10 @@ export default function init(api, context) {
           }
         }
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok' }));
+        return { status: 200, body: { status: 'ok' } };
       } catch (err) {
         console.error('[slack-webhook] Webhook error:', err);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal server error' }));
+        return { status: 500, body: { error: 'Internal server error' } };
       }
     }
   });

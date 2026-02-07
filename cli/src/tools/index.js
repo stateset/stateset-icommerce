@@ -17,15 +17,15 @@ const TOOL_MODULES = {
   orders: () => orderTools,
   vector: () => vectorTools,
   // Additional categories loaded on demand
-  products: () => import('./products.js').then(m => m.default),
-  inventory: () => import('./inventory.js').then(m => m.default),
-  returns: () => import('./returns.js').then(m => m.default),
-  carts: () => import('./carts.js').then(m => m.default),
-  analytics: () => import('./analytics.js').then(m => m.default),
-  currency: () => import('./currency.js').then(m => m.default),
-  tax: () => import('./tax.js').then(m => m.default),
-  promotions: () => import('./promotions.js').then(m => m.default),
-  subscriptions: () => import('./subscriptions.js').then(m => m.default)
+  products: () => import('./products.js').then((m) => m.default),
+  inventory: () => import('./inventory.js').then((m) => m.default),
+  returns: () => import('./returns.js').then((m) => m.default),
+  carts: () => import('./carts.js').then((m) => m.default),
+  analytics: () => import('./analytics.js').then((m) => m.default),
+  currency: () => import('./currency.js').then((m) => m.default),
+  tax: () => import('./tax.js').then((m) => m.default),
+  promotions: () => import('./promotions.js').then((m) => m.default),
+  subscriptions: () => import('./subscriptions.js').then((m) => m.default),
 };
 
 /**
@@ -62,9 +62,7 @@ export class ToolRegistry {
    * Load all tools (for full server)
    */
   async loadAll() {
-    await Promise.all(
-      Object.keys(TOOL_MODULES).map(cat => this.loadCategory(cat))
-    );
+    await Promise.all(Object.keys(TOOL_MODULES).map((cat) => this.loadCategory(cat)));
   }
 
   /**
@@ -73,7 +71,7 @@ export class ToolRegistry {
   async loadForAgent(agentName) {
     const agentCategories = AGENT_TOOL_CATEGORIES[agentName];
     if (agentCategories) {
-      await Promise.all(agentCategories.map(cat => this.loadCategory(cat)));
+      await Promise.all(agentCategories.map((cat) => this.loadCategory(cat)));
     }
   }
 
@@ -95,14 +93,14 @@ export class ToolRegistry {
    * Get tools by category
    */
   getByCategory(category) {
-    return this.getAll().filter(t => t.category === category);
+    return this.getAll().filter((t) => t.category === category);
   }
 
   /**
    * Get tools by permission level
    */
   getByPermission(permission) {
-    return this.getAll().filter(t => t.permission === permission);
+    return this.getAll().filter((t) => t.permission === permission);
   }
 
   /**
@@ -116,9 +114,7 @@ export class ToolRegistry {
    * Get write tools (require --apply)
    */
   getWriteTools() {
-    return this.getAll().filter(t =>
-      ['write', 'delete', 'admin'].includes(t.permission)
-    );
+    return this.getAll().filter((t) => ['write', 'delete', 'admin'].includes(t.permission));
   }
 
   /**
@@ -139,7 +135,7 @@ export class ToolRegistry {
    * Convert to MCP server format
    */
   toMcpFormat(context) {
-    return this.getAll().map(tool => ({
+    return this.getAll().map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
@@ -147,23 +143,27 @@ export class ToolRegistry {
         try {
           const result = await tool.handler({
             ...context,
-            params
+            params,
           });
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify(result, null, 2)
-            }]
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
           };
         } catch (error) {
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({ error: error.message })
-            }]
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ error: error.message }),
+              },
+            ],
           };
         }
-      }
+      },
     }));
   }
 }
@@ -172,15 +172,28 @@ export class ToolRegistry {
  * Agent to tool category mappings
  */
 export const AGENT_TOOL_CATEGORIES = {
-  'customer-service': ['customers', 'orders', 'products', 'inventory', 'returns', 'carts', 'analytics', 'currency', 'tax', 'promotions', 'subscriptions', 'vector'],
-  'checkout': ['carts', 'products', 'inventory', 'promotions', 'tax', 'currency', 'vector'],
-  'orders': ['orders', 'customers', 'inventory', 'vector'],
-  'inventory': ['inventory', 'products', 'vector'],
-  'returns': ['returns', 'orders', 'customers', 'inventory'],
-  'analytics': ['analytics', 'vector'],
-  'promotions': ['promotions', 'products', 'vector'],
-  'subscriptions': ['subscriptions', 'customers'],
-  'vector': ['vector', 'products', 'customers']
+  'customer-service': [
+    'customers',
+    'orders',
+    'products',
+    'inventory',
+    'returns',
+    'carts',
+    'analytics',
+    'currency',
+    'tax',
+    'promotions',
+    'subscriptions',
+    'vector',
+  ],
+  checkout: ['carts', 'products', 'inventory', 'promotions', 'tax', 'currency', 'vector'],
+  orders: ['orders', 'customers', 'inventory', 'vector'],
+  inventory: ['inventory', 'products', 'vector'],
+  returns: ['returns', 'orders', 'customers', 'inventory'],
+  analytics: ['analytics', 'vector'],
+  promotions: ['promotions', 'products', 'vector'],
+  subscriptions: ['subscriptions', 'customers'],
+  vector: ['vector', 'products', 'customers'],
 };
 
 /**
@@ -206,7 +219,7 @@ export async function getToolsForAgent(agentName) {
 export const immediateTools = {
   customers: customerTools,
   orders: orderTools,
-  vector: vectorTools
+  vector: vectorTools,
 };
 
 export default {
@@ -214,5 +227,5 @@ export default {
   createToolRegistry,
   getToolsForAgent,
   AGENT_TOOL_CATEGORIES,
-  immediateTools
+  immediateTools,
 };

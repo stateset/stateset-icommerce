@@ -9,9 +9,8 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    CommerceError, Result, X402Asset, X402CreditAccount, X402CreditAdjustment,
-    X402CreditDirection, X402CreditRepository, X402CreditTransaction,
-    X402CreditTransactionFilter, X402Network,
+    CommerceError, Result, X402Asset, X402CreditAccount, X402CreditAdjustment, X402CreditDirection,
+    X402CreditRepository, X402CreditTransaction, X402CreditTransactionFilter, X402Network,
 };
 use uuid::Uuid;
 
@@ -35,8 +34,16 @@ impl SqliteX402CreditRepository {
         Ok(X402CreditAccount {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "x402_credit_account", "id")?,
             payer_address: row.get("payer_address")?,
-            asset: parse_enum_row(&row.get::<_, String>("asset")?, "x402_credit_account", "asset")?,
-            network: parse_enum_row(&row.get::<_, String>("network")?, "x402_credit_account", "network")?,
+            asset: parse_enum_row(
+                &row.get::<_, String>("asset")?,
+                "x402_credit_account",
+                "asset",
+            )?,
+            network: parse_enum_row(
+                &row.get::<_, String>("network")?,
+                "x402_credit_account",
+                "network",
+            )?,
             balance: row.get::<_, i64>("balance")? as u64,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
@@ -213,12 +220,8 @@ impl X402CreditRepository for SqliteX402CreditRepository {
         })?;
 
         with_immediate_transaction(&self.pool, |tx| {
-            let (account_id, current_balance) = Self::insert_account_if_missing(
-                tx,
-                &payer_address,
-                asset,
-                network,
-            )?;
+            let (account_id, current_balance) =
+                Self::insert_account_if_missing(tx, &payer_address, asset, network)?;
 
             if current_balance < 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(

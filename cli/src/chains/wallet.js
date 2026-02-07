@@ -10,7 +10,12 @@
 import crypto from 'crypto';
 import { getKeyManager } from '../sync/keys.js';
 import { CHAINS, isEd25519Chain, isEvmChain, isZcashChain, isBitcoinChain } from './config.js';
-import { privateKeyToEthAddress, secp256k1GetPublicKey, ripemd160, sha256Double } from './crypto-utils.js';
+import {
+  privateKeyToEthAddress,
+  secp256k1GetPublicKey,
+  ripemd160,
+  sha256Double,
+} from './crypto-utils.js';
 
 // =============================================================================
 // BIP-44 DERIVATION PATHS (per VES-CHAIN-1)
@@ -18,7 +23,7 @@ import { privateKeyToEthAddress, secp256k1GetPublicKey, ripemd160, sha256Double 
 
 const DERIVATION_PATHS = {
   // VES keys (signing and encryption)
-  ves_signing: "m/44'/9999'",   // VES signing keys
+  ves_signing: "m/44'/9999'", // VES signing keys
   ves_encryption: "m/44'/9998'", // VES encryption keys
 
   // Blockchain-specific paths
@@ -104,26 +109,9 @@ export async function deriveWallet(agentId, chainId, options = {}) {
  * @param {Object} chain - Chain config
  * @returns {DerivedWallet}
  */
-function deriveEd25519Wallet(seed, chainId, chain) {
+function deriveEd25519Wallet(seed, chainId, _chain) {
   // For Ed25519 chains, we can use the seed directly as the private key
   // or derive using HKDF for additional isolation
-
-  // Use HKDF to derive chain-specific key from the seed
-  const info = Buffer.from(`stateset:chain:${chainId}`, 'utf8');
-  const derivedKey = Buffer.from(crypto.hkdfSync('sha256', seed, Buffer.alloc(0), info, 32));
-
-  // Generate Ed25519 keypair from derived key
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
-    privateKeyEncoding: { type: 'pkcs8', format: 'der' },
-    publicKeyEncoding: { type: 'spki', format: 'der' },
-  });
-
-  // For deterministic derivation, we need to use the derived key as seed
-  // Node.js crypto doesn't support seeding Ed25519 directly, so we use
-  // the derived key bytes
-
-  // Extract raw bytes from DER encoding
-  const pubKeyRaw = publicKey.subarray(-32);
 
   // For Solana, the private key is the 32-byte seed, and the full keypair
   // is seed || publicKey (64 bytes total)
@@ -136,22 +124,15 @@ function deriveEd25519Wallet(seed, chainId, chain) {
     // In production, use @solana/web3.js Keypair
 
     // Derive deterministic keypair using HKDF
-    const solanaPrivKey = Buffer.from(crypto.hkdfSync(
-      'sha256',
-      seed,
-      Buffer.alloc(0),
-      Buffer.from('solana-keypair', 'utf8'),
-      32
-    ));
+    const solanaPrivKey = Buffer.from(
+      crypto.hkdfSync('sha256', seed, Buffer.alloc(0), Buffer.from('solana-keypair', 'utf8'), 32),
+    );
 
     // Generate Ed25519 keypair
     const keyObj = crypto.createPrivateKey({
-      key: Buffer.concat([
-        Buffer.from('302e020100300506032b657004220420', 'hex'),
-        solanaPrivKey
-      ]),
+      key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), solanaPrivKey]),
       format: 'der',
-      type: 'pkcs8'
+      type: 'pkcs8',
     });
 
     const pubKeyObj = crypto.createPublicKey(keyObj);
@@ -172,21 +153,14 @@ function deriveEd25519Wallet(seed, chainId, chain) {
   }
 
   // Generic Ed25519 (NEAR, etc.)
-  const genericPrivKey = Buffer.from(crypto.hkdfSync(
-    'sha256',
-    seed,
-    Buffer.alloc(0),
-    Buffer.from(`${chainId}-keypair`, 'utf8'),
-    32
-  ));
+  const genericPrivKey = Buffer.from(
+    crypto.hkdfSync('sha256', seed, Buffer.alloc(0), Buffer.from(`${chainId}-keypair`, 'utf8'), 32),
+  );
 
   const keyObjGeneric = crypto.createPrivateKey({
-    key: Buffer.concat([
-      Buffer.from('302e020100300506032b657004220420', 'hex'),
-      genericPrivKey
-    ]),
+    key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), genericPrivKey]),
     format: 'der',
-    type: 'pkcs8'
+    type: 'pkcs8',
   });
 
   const pubKeyObjGeneric = crypto.createPublicKey(keyObjGeneric);
@@ -209,7 +183,7 @@ function deriveEd25519Wallet(seed, chainId, chain) {
  * @param {Object} chain - Chain config
  * @returns {DerivedWallet}
  */
-function deriveEvmWallet(seed, chainId, chain) {
+function deriveEvmWallet(seed, chainId, _chain) {
   // Derive a deterministic private key from Ed25519 seed using HKDF
   // This creates a chain-specific secp256k1 private key
   const info = Buffer.from(`stateset:evm:${chainId}`, 'utf8');
@@ -237,12 +211,12 @@ function deriveEvmWallet(seed, chainId, chain) {
 
 const ZCASH_ADDRESS_VERSIONS = {
   mainnet: {
-    p2pkh: Buffer.from([0x1C, 0xB8]), // t1 addresses
-    p2sh: Buffer.from([0x1C, 0xBD]),  // t3 addresses
+    p2pkh: Buffer.from([0x1c, 0xb8]), // t1 addresses
+    p2sh: Buffer.from([0x1c, 0xbd]), // t3 addresses
   },
   testnet: {
-    p2pkh: Buffer.from([0x1D, 0x25]), // tm addresses
-    p2sh: Buffer.from([0x1C, 0xBA]),  // t2 addresses
+    p2pkh: Buffer.from([0x1d, 0x25]), // tm addresses
+    p2sh: Buffer.from([0x1c, 0xba]), // t2 addresses
   },
 };
 
@@ -280,7 +254,7 @@ function compressPublicKey(uncompressedKey) {
  * @param {Object} chain - Chain config
  * @returns {DerivedWallet}
  */
-function deriveZcashWallet(seed, chainId, chain) {
+function deriveZcashWallet(seed, chainId, _chain) {
   // Step 1: Derive secp256k1 private key using HKDF
   const info = Buffer.from(`stateset:zcash:${chainId}`, 'utf8');
   const privKeyBytes = Buffer.from(crypto.hkdfSync('sha256', seed, Buffer.alloc(0), info, 32));
@@ -328,11 +302,11 @@ function deriveZcashWallet(seed, chainId, chain) {
 const BITCOIN_ADDRESS_VERSIONS = {
   mainnet: {
     p2pkh: Buffer.from([0x00]), // 1... addresses
-    p2sh: Buffer.from([0x05]),  // 3... addresses
+    p2sh: Buffer.from([0x05]), // 3... addresses
   },
   testnet: {
-    p2pkh: Buffer.from([0x6F]), // m... or n... addresses
-    p2sh: Buffer.from([0xC4]),  // 2... addresses
+    p2pkh: Buffer.from([0x6f]), // m... or n... addresses
+    p2sh: Buffer.from([0xc4]), // 2... addresses
   },
 };
 
@@ -351,7 +325,7 @@ const BITCOIN_ADDRESS_VERSIONS = {
  * @param {Object} chain - Chain config
  * @returns {DerivedWallet}
  */
-function deriveBitcoinWallet(seed, chainId, chain) {
+function deriveBitcoinWallet(seed, chainId, _chain) {
   // Step 1: Derive secp256k1 private key using HKDF
   const info = Buffer.from(`stateset:bitcoin:${chainId}`, 'utf8');
   const privKeyBytes = Buffer.from(crypto.hkdfSync('sha256', seed, Buffer.alloc(0), info, 32));
@@ -469,7 +443,7 @@ function base58Encode(buffer) {
   }
 
   // Convert to base58
-  const size = Math.ceil(buffer.length * 138 / 100) + 1;
+  const size = Math.ceil((buffer.length * 138) / 100) + 1;
   const b58 = new Uint8Array(size);
 
   let length = 0;
@@ -517,7 +491,7 @@ function base58Decode(str) {
   }
 
   // Decode
-  const size = Math.ceil(str.length * 733 / 1000) + 1;
+  const size = Math.ceil((str.length * 733) / 1000) + 1;
   const bytes = new Uint8Array(size);
 
   let length = 0;
@@ -561,12 +535,7 @@ function base58Decode(str) {
 // EXPORTS
 // =============================================================================
 
-export {
-  DERIVATION_PATHS,
-  base58Encode,
-  base58Decode,
-  compressPublicKey,
-};
+export { DERIVATION_PATHS, base58Encode, base58Decode, compressPublicKey };
 
 export default {
   deriveWallet,

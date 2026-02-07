@@ -1,29 +1,28 @@
 //! SQLite implementation of Accounts Receivable repository
 
-use crate::sqlite::{
-    map_db_error, parse_decimal_row, parse_decimal_opt_row, parse_datetime_row,
-    parse_datetime_opt_row, parse_enum_row, parse_uuid, parse_uuid_row, parse_uuid_opt_row,
-    sum_decimal_query,
-};
 use crate::sqlite::parse_helpers::{
     parse_datetime as parse_datetime_safe, parse_decimal as parse_decimal_safe,
+};
+use crate::sqlite::{
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_uuid, parse_uuid_opt_row, parse_uuid_row,
+    sum_decimal_query,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::{params, OptionalExtension};
-use std::collections::HashMap;
+use rust_decimal::Decimal;
 use stateset_core::{
-    AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices,
-    ArAgingFilter, ArAgingSummary, ArPaymentApplication, CollectionActivity,
-    CollectionActivityFilter, CollectionActivityType, CollectionStatus,
-    CreateCollectionActivity, CreateCreditMemo, CreateWriteOff, CreditMemo,
-    CreditMemoFilter, CreditMemoStatus, CustomerArAging, CustomerArSummary,
-    CustomerStatement, DunningLetterType, GenerateStatementRequest, Invoice,
-    Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter,
-    generate_credit_memo_number, generate_write_off_number,
+    generate_credit_memo_number, generate_write_off_number, AccountsReceivableRepository,
+    ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter, ArAgingSummary, ArPaymentApplication,
+    CollectionActivity, CollectionActivityFilter, CollectionActivityType, CollectionStatus,
+    CreateCollectionActivity, CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter,
+    CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
+    GenerateStatementRequest, Invoice, Result, StatementLineItem, StatementTransactionType,
+    WriteOff, WriteOffFilter,
 };
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub struct SqliteAccountsReceivableRepository {
@@ -37,24 +36,56 @@ impl SqliteAccountsReceivableRepository {
 
     fn map_collection_activity_row(row: &rusqlite::Row) -> rusqlite::Result<CollectionActivity> {
         let dunning_letter_type = match row.get::<_, Option<String>>(5)? {
-            Some(value) => Some(parse_enum_row(&value, "collection_activity", "dunning_letter_type")?),
+            Some(value) => Some(parse_enum_row(
+                &value,
+                "collection_activity",
+                "dunning_letter_type",
+            )?),
             None => None,
         };
 
         Ok(CollectionActivity {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "collection_activity", "id")?,
-            invoice_id: parse_uuid_row(&row.get::<_, String>(1)?, "collection_activity", "invoice_id")?,
-            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "collection_activity", "customer_id")?,
-            activity_type: parse_enum_row(&row.get::<_, String>(3)?, "collection_activity", "activity_type")?,
-            activity_date: parse_datetime_row(&row.get::<_, String>(4)?, "collection_activity", "activity_date")?,
+            invoice_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "collection_activity",
+                "invoice_id",
+            )?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "collection_activity",
+                "customer_id",
+            )?,
+            activity_type: parse_enum_row(
+                &row.get::<_, String>(3)?,
+                "collection_activity",
+                "activity_type",
+            )?,
+            activity_date: parse_datetime_row(
+                &row.get::<_, String>(4)?,
+                "collection_activity",
+                "activity_date",
+            )?,
             dunning_letter_type,
             notes: row.get(6)?,
             contact_method: row.get(7)?,
             contact_result: row.get(8)?,
-            promise_to_pay_date: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "collection_activity", "promise_to_pay_date")?,
-            promise_to_pay_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(10)?, "collection_activity", "promise_to_pay_amount")?,
+            promise_to_pay_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(9)?,
+                "collection_activity",
+                "promise_to_pay_date",
+            )?,
+            promise_to_pay_amount: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "collection_activity",
+                "promise_to_pay_amount",
+            )?,
             performed_by: row.get(11)?,
-            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "collection_activity", "created_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(12)?,
+                "collection_activity",
+                "created_at",
+            )?,
         })
     }
 
@@ -67,11 +98,27 @@ impl SqliteAccountsReceivableRepository {
             amount: parse_decimal_row(&row.get::<_, String>(4)?, "write_off", "amount")?,
             reason: parse_enum_row(&row.get::<_, String>(5)?, "write_off", "reason")?,
             notes: row.get(6)?,
-            write_off_date: parse_datetime_row(&row.get::<_, String>(7)?, "write_off", "write_off_date")?,
+            write_off_date: parse_datetime_row(
+                &row.get::<_, String>(7)?,
+                "write_off",
+                "write_off_date",
+            )?,
             approved_by: row.get(8)?,
-            approved_at: parse_datetime_opt_row(row.get::<_, Option<String>>(9)?, "write_off", "approved_at")?,
-            reversed_at: parse_datetime_opt_row(row.get::<_, Option<String>>(10)?, "write_off", "reversed_at")?,
-            gl_journal_entry_id: parse_uuid_opt_row(row.get::<_, Option<String>>(11)?, "write_off", "gl_journal_entry_id")?,
+            approved_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(9)?,
+                "write_off",
+                "approved_at",
+            )?,
+            reversed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(10)?,
+                "write_off",
+                "reversed_at",
+            )?,
+            gl_journal_entry_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "write_off",
+                "gl_journal_entry_id",
+            )?,
             created_at: parse_datetime_row(&row.get::<_, String>(12)?, "write_off", "created_at")?,
         })
     }
@@ -81,43 +128,99 @@ impl SqliteAccountsReceivableRepository {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_memo", "id")?,
             credit_memo_number: row.get(1)?,
             customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "credit_memo", "customer_id")?,
-            original_invoice_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "credit_memo", "original_invoice_id")?,
+            original_invoice_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(3)?,
+                "credit_memo",
+                "original_invoice_id",
+            )?,
             reason: parse_enum_row(&row.get::<_, String>(4)?, "credit_memo", "reason")?,
             amount: parse_decimal_row(&row.get::<_, String>(5)?, "credit_memo", "amount")?,
-            applied_amount: parse_decimal_row(&row.get::<_, String>(6)?, "credit_memo", "applied_amount")?,
-            unapplied_amount: parse_decimal_row(&row.get::<_, String>(7)?, "credit_memo", "unapplied_amount")?,
+            applied_amount: parse_decimal_row(
+                &row.get::<_, String>(6)?,
+                "credit_memo",
+                "applied_amount",
+            )?,
+            unapplied_amount: parse_decimal_row(
+                &row.get::<_, String>(7)?,
+                "credit_memo",
+                "unapplied_amount",
+            )?,
             status: parse_enum_row(&row.get::<_, String>(8)?, "credit_memo", "status")?,
             notes: row.get(9)?,
-            issue_date: parse_datetime_row(&row.get::<_, String>(10)?, "credit_memo", "issue_date")?,
-            gl_journal_entry_id: parse_uuid_opt_row(row.get::<_, Option<String>>(11)?, "credit_memo", "gl_journal_entry_id")?,
-            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "credit_memo", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>(13)?, "credit_memo", "updated_at")?,
+            issue_date: parse_datetime_row(
+                &row.get::<_, String>(10)?,
+                "credit_memo",
+                "issue_date",
+            )?,
+            gl_journal_entry_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(11)?,
+                "credit_memo",
+                "gl_journal_entry_id",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(12)?,
+                "credit_memo",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(13)?,
+                "credit_memo",
+                "updated_at",
+            )?,
         })
     }
 
     fn map_payment_application_row(row: &rusqlite::Row) -> rusqlite::Result<ArPaymentApplication> {
         Ok(ArPaymentApplication {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "payment_application", "id")?,
-            payment_id: parse_uuid_row(&row.get::<_, String>(1)?, "payment_application", "payment_id")?,
-            invoice_id: parse_uuid_row(&row.get::<_, String>(2)?, "payment_application", "invoice_id")?,
-            applied_amount: parse_decimal_row(&row.get::<_, String>(3)?, "payment_application", "applied_amount")?,
-            applied_date: parse_datetime_row(&row.get::<_, String>(4)?, "payment_application", "applied_date")?,
-            created_at: parse_datetime_row(&row.get::<_, String>(5)?, "payment_application", "created_at")?,
+            payment_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "payment_application",
+                "payment_id",
+            )?,
+            invoice_id: parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "payment_application",
+                "invoice_id",
+            )?,
+            applied_amount: parse_decimal_row(
+                &row.get::<_, String>(3)?,
+                "payment_application",
+                "applied_amount",
+            )?,
+            applied_date: parse_datetime_row(
+                &row.get::<_, String>(4)?,
+                "payment_application",
+                "applied_date",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(5)?,
+                "payment_application",
+                "created_at",
+            )?,
         })
     }
 
     fn get_invoice_customer_id(&self, invoice_id: Uuid) -> Result<Uuid> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let customer_id: String = conn.query_row(
-            "SELECT customer_id FROM invoices WHERE id = ?1",
-            params![invoice_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let customer_id: String = conn
+            .query_row(
+                "SELECT customer_id FROM invoices WHERE id = ?1",
+                params![invoice_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
         parse_uuid_row(&customer_id, "invoice", "customer_id").map_err(map_db_error)
     }
 
     fn recalculate_invoice(&self, invoice_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Sum all payment applications
         let paid: String = conn.query_row(
@@ -138,11 +241,13 @@ impl SqliteAccountsReceivableRepository {
         let total_applied = paid_dec + credits_dec;
 
         // Get invoice total
-        let total: String = conn.query_row(
-            "SELECT total FROM invoices WHERE id = ?1",
-            params![invoice_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let total: String = conn
+            .query_row(
+                "SELECT total FROM invoices WHERE id = ?1",
+                params![invoice_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
 
         let total_dec = parse_decimal_safe(&total, "invoice", "total")?;
         let balance_due = total_dec - total_applied;
@@ -164,7 +269,8 @@ impl SqliteAccountsReceivableRepository {
                 status,
                 invoice_id.to_string()
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -172,7 +278,10 @@ impl SqliteAccountsReceivableRepository {
 
 impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     fn get_aging_summary(&self) -> Result<ArAgingSummary> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
         let cutoff_30 = now - chrono::Duration::days(30);
@@ -224,7 +333,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let customer_row: Option<(String, String, String)> = conn
             .query_row(
                 "SELECT first_name, last_name, email FROM customers WHERE id = ?1",
@@ -252,12 +364,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut invoice_count: i32 = 0;
         let mut oldest_invoice_date: Option<chrono::DateTime<Utc>> = None;
 
-        let mut stmt = conn.prepare(
-            "SELECT due_date, balance_due, created_at
+        let mut stmt = conn
+            .prepare(
+                "SELECT due_date, balance_due, created_at
              FROM invoices
              WHERE customer_id = ?1
                AND status NOT IN ('paid', 'voided', 'written_off')",
-        ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
         let mut rows = stmt
             .query(params![customer_id.to_string()])
             .map_err(map_db_error)?;
@@ -314,7 +428,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT
@@ -379,12 +496,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             let due_date = parse_datetime_safe(&due_date_str, "invoice", "due_date")?;
             let created_at = parse_datetime_safe(&created_at_str, "invoice", "created_at")?;
 
-            let entry = by_customer.entry(customer_id).or_insert_with(|| AgingAccum {
-                customer_id,
-                customer_name: format!("{} {}", first_name, last_name),
-                customer_email: email,
-                ..Default::default()
-            });
+            let entry = by_customer
+                .entry(customer_id)
+                .or_insert_with(|| AgingAccum {
+                    customer_id,
+                    customer_name: format!("{} {}", first_name, last_name),
+                    customer_email: email,
+                    ..Default::default()
+                });
 
             entry.invoice_count += 1;
             entry.oldest_invoice_date = match entry.oldest_invoice_date {
@@ -457,8 +576,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         Ok(results)
     }
 
-    fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn log_collection_activity(
+        &self,
+        input: CreateCollectionActivity,
+    ) -> Result<CollectionActivity> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -501,8 +626,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         })
     }
 
-    fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn list_collection_activities(
+        &self,
+        filter: CollectionActivityFilter,
+    ) -> Result<Vec<CollectionActivity>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, invoice_id, customer_id, activity_type, activity_date, dunning_letter_type, notes, contact_method, contact_result, promise_to_pay_date, promise_to_pay_amount, performed_by, created_at
@@ -529,24 +660,34 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_collection_activity_row).map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        let rows = stmt
+            .query_map([], Self::map_collection_activity_row)
+            .map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)
     }
 
     fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE invoices SET collection_status = ?1 WHERE id = ?2",
             params![status.to_string(), invoice_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
 
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
         // Return invoices that are overdue and haven't had recent dunning
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn.prepare(
             "SELECT id, invoice_number, order_id, customer_id, status, issue_date, due_date, subtotal, tax, shipping, discount, total, amount_paid, balance_due, currency, notes, terms, created_at, updated_at
@@ -558,53 +699,104 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
              ORDER BY due_date ASC"
         ).map_err(map_db_error)?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok(Invoice {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?,
-                invoice_number: row.get(1)?,
-                order_id: parse_uuid_opt_row(row.get::<_, Option<String>>(2)?, "invoice", "order_id")?,
-                customer_id: parse_uuid_row(&row.get::<_, String>(3)?, "invoice", "customer_id")?,
-                status: parse_enum_row(&row.get::<_, String>(4)?, "invoice", "status")?,
-                invoice_type: stateset_core::InvoiceType::Standard,
-                invoice_date: parse_datetime_row(&row.get::<_, String>(5)?, "invoice", "invoice_date")?,
-                due_date: parse_datetime_row(&row.get::<_, String>(6)?, "invoice", "due_date")?,
-                payment_terms: None,
-                subtotal: parse_decimal_row(&row.get::<_, String>(7)?, "invoice", "subtotal")?,
-                tax_amount: parse_decimal_row(&row.get::<_, String>(8)?, "invoice", "tax_amount")?,
-                tax_rate: None,
-                shipping_amount: parse_decimal_row(&row.get::<_, String>(9)?, "invoice", "shipping_amount")?,
-                discount_amount: parse_decimal_row(&row.get::<_, String>(10)?, "invoice", "discount_amount")?,
-                discount_percent: None,
-                total: parse_decimal_row(&row.get::<_, String>(11)?, "invoice", "total")?,
-                amount_paid: parse_decimal_row(&row.get::<_, String>(12)?, "invoice", "amount_paid")?,
-                balance_due: parse_decimal_row(&row.get::<_, String>(13)?, "invoice", "balance_due")?,
-                currency: row.get(14)?,
-                billing_name: None,
-                billing_email: None,
-                billing_address: None,
-                billing_city: None,
-                billing_state: None,
-                billing_postal_code: None,
-                billing_country: None,
-                po_number: None,
-                notes: row.get(15)?,
-                terms: row.get(16)?,
-                footer: None,
-                sent_at: None,
-                viewed_at: None,
-                paid_at: None,
-                voided_at: None,
-                items: vec![],
-                created_at: parse_datetime_row(&row.get::<_, String>(17)?, "invoice", "created_at")?,
-                updated_at: parse_datetime_row(&row.get::<_, String>(18)?, "invoice", "updated_at")?,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Invoice {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "invoice", "id")?,
+                    invoice_number: row.get(1)?,
+                    order_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(2)?,
+                        "invoice",
+                        "order_id",
+                    )?,
+                    customer_id: parse_uuid_row(
+                        &row.get::<_, String>(3)?,
+                        "invoice",
+                        "customer_id",
+                    )?,
+                    status: parse_enum_row(&row.get::<_, String>(4)?, "invoice", "status")?,
+                    invoice_type: stateset_core::InvoiceType::Standard,
+                    invoice_date: parse_datetime_row(
+                        &row.get::<_, String>(5)?,
+                        "invoice",
+                        "invoice_date",
+                    )?,
+                    due_date: parse_datetime_row(&row.get::<_, String>(6)?, "invoice", "due_date")?,
+                    payment_terms: None,
+                    subtotal: parse_decimal_row(&row.get::<_, String>(7)?, "invoice", "subtotal")?,
+                    tax_amount: parse_decimal_row(
+                        &row.get::<_, String>(8)?,
+                        "invoice",
+                        "tax_amount",
+                    )?,
+                    tax_rate: None,
+                    shipping_amount: parse_decimal_row(
+                        &row.get::<_, String>(9)?,
+                        "invoice",
+                        "shipping_amount",
+                    )?,
+                    discount_amount: parse_decimal_row(
+                        &row.get::<_, String>(10)?,
+                        "invoice",
+                        "discount_amount",
+                    )?,
+                    discount_percent: None,
+                    total: parse_decimal_row(&row.get::<_, String>(11)?, "invoice", "total")?,
+                    amount_paid: parse_decimal_row(
+                        &row.get::<_, String>(12)?,
+                        "invoice",
+                        "amount_paid",
+                    )?,
+                    balance_due: parse_decimal_row(
+                        &row.get::<_, String>(13)?,
+                        "invoice",
+                        "balance_due",
+                    )?,
+                    currency: row.get(14)?,
+                    billing_name: None,
+                    billing_email: None,
+                    billing_address: None,
+                    billing_city: None,
+                    billing_state: None,
+                    billing_postal_code: None,
+                    billing_country: None,
+                    po_number: None,
+                    notes: row.get(15)?,
+                    terms: row.get(16)?,
+                    footer: None,
+                    sent_at: None,
+                    viewed_at: None,
+                    paid_at: None,
+                    voided_at: None,
+                    items: vec![],
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(17)?,
+                        "invoice",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(18)?,
+                        "invoice",
+                        "updated_at",
+                    )?,
+                })
             })
-        }).map_err(map_db_error)?;
+            .map_err(map_db_error)?;
 
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)
     }
 
-    fn send_dunning_letter(&self, invoice_id: Uuid, letter_type: DunningLetterType, sent_by: Option<&str>) -> Result<CollectionActivity> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn send_dunning_letter(
+        &self,
+        invoice_id: Uuid,
+        letter_type: DunningLetterType,
+        sent_by: Option<&str>,
+    ) -> Result<CollectionActivity> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Update invoice dunning info
         conn.execute(
@@ -617,7 +809,9 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             DunningLetterType::Reminder1 => CollectionStatus::Reminder1Sent,
             DunningLetterType::Reminder2 => CollectionStatus::Reminder2Sent,
             DunningLetterType::Reminder3 => CollectionStatus::Reminder3Sent,
-            DunningLetterType::DemandLetter | DunningLetterType::CollectionNotice => CollectionStatus::InCollections,
+            DunningLetterType::DemandLetter | DunningLetterType::CollectionNotice => {
+                CollectionStatus::InCollections
+            }
         };
 
         self.update_collection_status(invoice_id, new_status)?;
@@ -634,7 +828,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -683,7 +880,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_write_off(&self, id: Uuid) -> Result<Option<WriteOff>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, reversed_at, gl_journal_entry_id, created_at
@@ -700,7 +900,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn list_write_offs(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, write_off_number, invoice_id, customer_id, amount, reason, notes, write_off_date, approved_by, approved_at, reversed_at, gl_journal_entry_id, created_at
@@ -724,33 +927,45 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_write_off_row).map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        let rows = stmt
+            .query_map([], Self::map_write_off_row)
+            .map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)
     }
 
     fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
 
         // Get the write-off
-        let wo = self.get_write_off(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let wo = self
+            .get_write_off(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if wo.reversed_at.is_some() {
-            return Err(stateset_core::CommerceError::ValidationError("Write-off already reversed".into()));
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Write-off already reversed".into(),
+            ));
         }
 
         // Mark as reversed
         conn.execute(
             "UPDATE ar_write_offs SET reversed_at = ?1 WHERE id = ?2",
             params![now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         // Restore invoice status
         conn.execute(
             "UPDATE invoices SET status = 'overdue', collection_status = 'none' WHERE id = ?1",
             params![wo.invoice_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(WriteOff {
             reversed_at: Some(now),
@@ -759,7 +974,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -802,7 +1020,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_credit_memo(&self, id: Uuid) -> Result<Option<CreditMemo>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, credit_memo_number, customer_id, original_invoice_id, reason, amount, applied_amount, unapplied_amount, status, notes, issue_date, gl_journal_entry_id, created_at, updated_at
@@ -819,7 +1040,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_credit_memo_by_number(&self, number: &str) -> Result<Option<CreditMemo>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, credit_memo_number, customer_id, original_invoice_id, reason, amount, applied_amount, unapplied_amount, status, notes, issue_date, gl_journal_entry_id, created_at, updated_at
@@ -836,7 +1060,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn list_credit_memos(&self, filter: CreditMemoFilter) -> Result<Vec<CreditMemo>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, credit_memo_number, customer_id, original_invoice_id, reason, amount, applied_amount, unapplied_amount, status, notes, issue_date, gl_journal_entry_id, created_at, updated_at
@@ -860,21 +1087,33 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map([], Self::map_credit_memo_row).map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        let rows = stmt
+            .query_map([], Self::map_credit_memo_row)
+            .map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)
     }
 
     fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let cm = self.get_credit_memo(input.credit_memo_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let cm = self
+            .get_credit_memo(input.credit_memo_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !cm.can_apply() {
-            return Err(stateset_core::CommerceError::ValidationError("Credit memo cannot be applied".into()));
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Credit memo cannot be applied".into(),
+            ));
         }
 
         if input.amount > cm.unapplied_amount {
-            return Err(stateset_core::CommerceError::ValidationError("Amount exceeds unapplied balance".into()));
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Amount exceeds unapplied balance".into(),
+            ));
         }
 
         let now = Utc::now();
@@ -926,18 +1165,26 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn void_credit_memo(&self, id: Uuid) -> Result<CreditMemo> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let cm = self.get_credit_memo(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let cm = self
+            .get_credit_memo(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if cm.applied_amount > Decimal::ZERO {
-            return Err(stateset_core::CommerceError::ValidationError("Cannot void credit memo with applications".into()));
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Cannot void credit memo with applications".into(),
+            ));
         }
 
         conn.execute(
             "UPDATE ar_credit_memos SET status = 'voided' WHERE id = ?1",
             params![id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(CreditMemo {
             status: CreditMemoStatus::Voided,
@@ -954,8 +1201,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         })
     }
 
-    fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn apply_payment_to_invoices(
+        &self,
+        input: ApplyPaymentToInvoices,
+    ) -> Result<Vec<ArPaymentApplication>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
         let mut applications = Vec::new();
@@ -993,35 +1246,53 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, payment_id, invoice_id, applied_amount, applied_date, created_at
-             FROM ar_payment_applications WHERE payment_id = ?1"
-        ).map_err(map_db_error)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, payment_id, invoice_id, applied_amount, applied_date, created_at
+             FROM ar_payment_applications WHERE payment_id = ?1",
+            )
+            .map_err(map_db_error)?;
 
-        let rows = stmt.query_map(params![payment_id.to_string()], Self::map_payment_application_row).map_err(map_db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+        let rows = stmt
+            .query_map(
+                params![payment_id.to_string()],
+                Self::map_payment_application_row,
+            )
+            .map_err(map_db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)
     }
 
     fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Get invoice_id first
-        let invoice_id: String = conn.query_row(
-            "SELECT invoice_id FROM ar_payment_applications WHERE id = ?1",
-            params![application_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let invoice_id: String = conn
+            .query_row(
+                "SELECT invoice_id FROM ar_payment_applications WHERE id = ?1",
+                params![application_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
 
         // Delete application
         conn.execute(
             "DELETE FROM ar_payment_applications WHERE id = ?1",
             params![application_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         // Recalculate invoice
-        let parsed_invoice_id = parse_uuid_row(&invoice_id, "payment_application", "invoice_id").map_err(map_db_error)?;
+        let parsed_invoice_id = parse_uuid_row(&invoice_id, "payment_application", "invoice_id")
+            .map_err(map_db_error)?;
         self.recalculate_invoice(parsed_invoice_id)?;
 
         Ok(())
@@ -1034,7 +1305,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         };
 
         // Get unapplied credits
-        let unapplied_credits = self.get_unapplied_credits(customer_id)?
+        let unapplied_credits = self
+            .get_unapplied_credits(customer_id)?
             .iter()
             .map(|cm| cm.unapplied_amount)
             .sum();
@@ -1057,18 +1329,25 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let now = Utc::now();
-        let period_start = request.period_start.unwrap_or_else(|| now - chrono::Duration::days(30));
+        let period_start = request
+            .period_start
+            .unwrap_or_else(|| now - chrono::Duration::days(30));
         let period_end = request.period_end.unwrap_or(now);
 
         // Get customer info
-        let (customer_name, customer_email): (String, Option<String>) = conn.query_row(
-            "SELECT first_name || ' ' || last_name, email FROM customers WHERE id = ?1",
-            params![request.customer_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (customer_name, customer_email): (String, Option<String>) = conn
+            .query_row(
+                "SELECT first_name || ' ' || last_name, email FROM customers WHERE id = ?1",
+                params![request.customer_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         // Get aging
         let aging = self
@@ -1080,21 +1359,29 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut running_balance = Decimal::ZERO;
 
         // Get invoices
-        let mut stmt = conn.prepare(
-            "SELECT created_at, invoice_number, total FROM invoices
+        let mut stmt = conn
+            .prepare(
+                "SELECT created_at, invoice_number, total FROM invoices
              WHERE customer_id = ?1 AND created_at >= ?2 AND created_at <= ?3
-             ORDER BY created_at"
-        ).map_err(map_db_error)?;
+             ORDER BY created_at",
+            )
+            .map_err(map_db_error)?;
 
-        let inv_rows = stmt.query_map(
-            params![request.customer_id.to_string(), period_start.to_rfc3339(), period_end.to_rfc3339()],
-            |row| {
-                let date: String = row.get(0)?;
-                let number: String = row.get(1)?;
-                let total: String = row.get(2)?;
-                Ok((date, number, total))
-            }
-        ).map_err(map_db_error)?;
+        let inv_rows = stmt
+            .query_map(
+                params![
+                    request.customer_id.to_string(),
+                    period_start.to_rfc3339(),
+                    period_end.to_rfc3339()
+                ],
+                |row| {
+                    let date: String = row.get(0)?;
+                    let number: String = row.get(1)?;
+                    let total: String = row.get(2)?;
+                    Ok((date, number, total))
+                },
+            )
+            .map_err(map_db_error)?;
 
         for inv in inv_rows {
             let (date, number, total) = inv.map_err(map_db_error)?;
@@ -1112,24 +1399,32 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         }
 
         // Get payments
-        let mut stmt = conn.prepare(
-            "SELECT pa.applied_date, p.id, pa.applied_amount
+        let mut stmt = conn
+            .prepare(
+                "SELECT pa.applied_date, p.id, pa.applied_amount
              FROM ar_payment_applications pa
              JOIN payments p ON pa.payment_id = p.id
              JOIN invoices i ON pa.invoice_id = i.id
              WHERE i.customer_id = ?1 AND pa.applied_date >= ?2 AND pa.applied_date <= ?3
-             ORDER BY pa.applied_date"
-        ).map_err(map_db_error)?;
+             ORDER BY pa.applied_date",
+            )
+            .map_err(map_db_error)?;
 
-        let pay_rows = stmt.query_map(
-            params![request.customer_id.to_string(), period_start.to_rfc3339(), period_end.to_rfc3339()],
-            |row| {
-                let date: String = row.get(0)?;
-                let id: String = row.get(1)?;
-                let amount: String = row.get(2)?;
-                Ok((date, id, amount))
-            }
-        ).map_err(map_db_error)?;
+        let pay_rows = stmt
+            .query_map(
+                params![
+                    request.customer_id.to_string(),
+                    period_start.to_rfc3339(),
+                    period_end.to_rfc3339()
+                ],
+                |row| {
+                    let date: String = row.get(0)?;
+                    let id: String = row.get(1)?;
+                    let amount: String = row.get(2)?;
+                    Ok((date, id, amount))
+                },
+            )
+            .map_err(map_db_error)?;
 
         for pay in pay_rows {
             let (date, id, amount_str) = pay.map_err(map_db_error)?;
@@ -1150,11 +1445,13 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         line_items.sort_by(|a, b| a.date.cmp(&b.date));
 
         // Calculate totals
-        let total_invoices: Decimal = line_items.iter()
+        let total_invoices: Decimal = line_items
+            .iter()
             .filter(|l| matches!(l.transaction_type, StatementTransactionType::Invoice))
             .filter_map(|l| l.debit)
             .sum();
-        let total_payments: Decimal = line_items.iter()
+        let total_payments: Decimal = line_items
+            .iter()
             .filter(|l| matches!(l.transaction_type, StatementTransactionType::Payment))
             .filter_map(|l| l.credit)
             .sum();
@@ -1183,7 +1480,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_dso(&self, days: i32) -> Result<Decimal> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // DSO = (Accounts Receivable / Total Credit Sales) × Number of Days
         let ar_balance = sum_decimal_query(
@@ -1198,13 +1498,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{} days')",
             days
         );
-        let total_sales = sum_decimal_query(
-            &conn,
-            &sales_sql,
-            &[],
-            "invoices",
-            "total",
-        )?;
+        let total_sales = sum_decimal_query(&conn, &sales_sql, &[], "invoices", "total")?;
 
         if total_sales == Decimal::ZERO {
             return Ok(Decimal::ZERO);
@@ -1215,7 +1509,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let result: rusqlite::Result<f64> = conn.query_row(
             "SELECT AVG(JULIANDAY(pa.applied_date) - JULIANDAY(i.issue_date))

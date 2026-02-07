@@ -8,9 +8,9 @@
  * pipeline, then synthesizes the response back to audio.
  */
 
-import { createLogger } from "../logger.js";
-import { getTTSProvider } from "./tts.js";
-import { getSTTProvider } from "./stt.js";
+import { createLogger } from '../logger.js';
+import { getTTSProvider } from './tts.js';
+import { getSTTProvider } from './stt.js';
 
 // ============================================================================
 // Constants
@@ -47,8 +47,8 @@ export class VoiceModeController {
   constructor(options = {}) {
     this.tts = options.ttsProvider || getTTSProvider();
     this.stt = options.sttProvider || getSTTProvider();
-    this.log = createLogger({ level: process.env.LOG_LEVEL || "info" }).child({
-      module: "voice-mode",
+    this.log = createLogger({ level: process.env.LOG_LEVEL || 'info' }).child({
+      module: 'voice-mode',
     });
 
     /**
@@ -77,8 +77,8 @@ export class VoiceModeController {
    * @returns {{ enabled: boolean, ttsAvailable: boolean, sttAvailable: boolean }}
    */
   enableVoiceMode(session, settings = {}) {
-    if (!session || typeof session !== "string") {
-      throw new Error("enableVoiceMode requires a valid session identifier");
+    if (!session || typeof session !== 'string') {
+      throw new Error('enableVoiceMode requires a valid session identifier');
     }
 
     this.sessions.set(session, {
@@ -96,7 +96,7 @@ export class VoiceModeController {
     const ttsAvailable = !!this.tts.apiKey;
     const sttAvailable = !!this.stt.apiKey;
 
-    this.log.info("Voice mode enabled", {
+    this.log.info('Voice mode enabled', {
       session,
       ttsAvailable,
       sttAvailable,
@@ -112,8 +112,8 @@ export class VoiceModeController {
    * @returns {{ enabled: boolean }}
    */
   disableVoiceMode(session) {
-    if (!session || typeof session !== "string") {
-      throw new Error("disableVoiceMode requires a valid session identifier");
+    if (!session || typeof session !== 'string') {
+      throw new Error('disableVoiceMode requires a valid session identifier');
     }
 
     const entry = this.sessions.get(session);
@@ -122,7 +122,7 @@ export class VoiceModeController {
       entry.lastActive = Date.now();
     }
 
-    this.log.info("Voice mode disabled", { session });
+    this.log.info('Voice mode disabled', { session });
     return { enabled: false };
   }
 
@@ -139,7 +139,7 @@ export class VoiceModeController {
     // Auto-expire stale sessions
     if (Date.now() - entry.lastActive > VOICE_SESSION_TTL_MS) {
       this.sessions.delete(session);
-      this.log.debug("Voice session expired", { session });
+      this.log.debug('Voice session expired', { session });
       return false;
     }
 
@@ -173,8 +173,8 @@ export class VoiceModeController {
   async processVoiceMessage(audioBuffer, session, opts = {}) {
     const totalStart = Date.now();
 
-    if (!opts.agentHandler || typeof opts.agentHandler !== "function") {
-      throw new Error("processVoiceMessage requires opts.agentHandler function");
+    if (!opts.agentHandler || typeof opts.agentHandler !== 'function') {
+      throw new Error('processVoiceMessage requires opts.agentHandler function');
     }
 
     // Update session activity
@@ -185,13 +185,13 @@ export class VoiceModeController {
 
     // Merge session settings with per-call options
     const sessionSettings = sessionEntry?.settings || {};
-    const format = opts.format || "mp3";
+    const format = opts.format || 'mp3';
     const language = opts.language || sessionSettings.language || null;
     const voiceId = opts.voiceId || sessionSettings.voiceId || null;
     const outputFormat = sessionSettings.outputFormat || null;
     const skipTTS = opts.skipTTS || false;
 
-    this.log.info("Processing voice message", {
+    this.log.info('Processing voice message', {
       session,
       format,
       language,
@@ -208,16 +208,16 @@ export class VoiceModeController {
     const sttMs = Date.now() - sttStart;
 
     if (!transcription || !transcription.text) {
-      this.log.warn("STT returned empty transcription", { session });
+      this.log.warn('STT returned empty transcription', { session });
       return {
-        transcription: { text: "", language: null, duration: null },
-        textResponse: "",
+        transcription: { text: '', language: null, duration: null },
+        textResponse: '',
         audioResponse: null,
         timing: { sttMs, agentMs: 0, ttsMs: 0, totalMs: Date.now() - totalStart },
       };
     }
 
-    this.log.debug("STT complete", {
+    this.log.debug('STT complete', {
       session,
       text: transcription.text.slice(0, 100),
       sttMs,
@@ -229,19 +229,19 @@ export class VoiceModeController {
     try {
       textResponse = await opts.agentHandler(transcription.text);
     } catch (err) {
-      this.log.error("Agent handler failed during voice processing", {
+      this.log.error('Agent handler failed during voice processing', {
         session,
         error: err.message,
       });
-      textResponse = "I encountered an error processing your request. Please try again.";
+      textResponse = 'I encountered an error processing your request. Please try again.';
     }
     const agentMs = Date.now() - agentStart;
 
-    if (!textResponse || typeof textResponse !== "string") {
-      textResponse = "";
+    if (!textResponse || typeof textResponse !== 'string') {
+      textResponse = '';
     }
 
-    this.log.debug("Agent processing complete", {
+    this.log.debug('Agent processing complete', {
       session,
       responseLength: textResponse.length,
       agentMs,
@@ -257,7 +257,7 @@ export class VoiceModeController {
       // Truncate overly long responses for TTS
       const ttsText =
         textResponse.length > MAX_TTS_TEXT_LENGTH
-          ? textResponse.slice(0, MAX_TTS_TEXT_LENGTH) + "..."
+          ? textResponse.slice(0, MAX_TTS_TEXT_LENGTH) + '...'
           : textResponse;
 
       const ttsOpts = {};
@@ -267,7 +267,7 @@ export class VoiceModeController {
       audioResponse = await this.tts.synthesize(ttsText, ttsOpts);
       ttsMs = Date.now() - ttsStart;
 
-      this.log.debug("TTS complete", {
+      this.log.debug('TTS complete', {
         session,
         audioBytes: audioResponse?.length || 0,
         ttsMs,
@@ -276,7 +276,7 @@ export class VoiceModeController {
 
     const totalMs = Date.now() - totalStart;
 
-    this.log.info("Voice message processed", {
+    this.log.info('Voice message processed', {
       session,
       sttMs,
       agentMs,
@@ -315,7 +315,7 @@ export class VoiceModeController {
     // Count active (non-expired) voice sessions
     let activeVoiceSessions = 0;
     const now = Date.now();
-    for (const [id, entry] of this.sessions) {
+    for (const entry of this.sessions.values()) {
       if (entry.enabled && now - entry.lastActive <= VOICE_SESSION_TTL_MS) {
         activeVoiceSessions++;
       }
@@ -339,25 +339,28 @@ export class VoiceModeController {
   _ensureCleanup() {
     if (this._cleanupInterval) return;
 
-    this._cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      let removed = 0;
-      for (const [id, entry] of this.sessions) {
-        if (now - entry.lastActive > VOICE_SESSION_TTL_MS) {
-          this.sessions.delete(id);
-          removed++;
+    this._cleanupInterval = setInterval(
+      () => {
+        const now = Date.now();
+        let removed = 0;
+        for (const [id, entry] of this.sessions) {
+          if (now - entry.lastActive > VOICE_SESSION_TTL_MS) {
+            this.sessions.delete(id);
+            removed++;
+          }
         }
-      }
-      if (removed > 0) {
-        this.log.debug("Cleaned up stale voice sessions", { removed });
-      }
+        if (removed > 0) {
+          this.log.debug('Cleaned up stale voice sessions', { removed });
+        }
 
-      // Stop interval when no sessions remain
-      if (this.sessions.size === 0 && this._cleanupInterval) {
-        clearInterval(this._cleanupInterval);
-        this._cleanupInterval = null;
-      }
-    }, 5 * 60 * 1000); // Check every 5 minutes
+        // Stop interval when no sessions remain
+        if (this.sessions.size === 0 && this._cleanupInterval) {
+          clearInterval(this._cleanupInterval);
+          this._cleanupInterval = null;
+        }
+      },
+      5 * 60 * 1000,
+    ); // Check every 5 minutes
 
     // Ensure the interval does not prevent process exit
     if (this._cleanupInterval.unref) {
@@ -374,7 +377,7 @@ export class VoiceModeController {
       this._cleanupInterval = null;
     }
     this.sessions.clear();
-    this.log.debug("VoiceModeController destroyed");
+    this.log.debug('VoiceModeController destroyed');
   }
 }
 

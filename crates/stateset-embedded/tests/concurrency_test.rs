@@ -3,7 +3,9 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use stateset_embedded::{Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem};
+use stateset_embedded::{
+    Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use uuid::Uuid;
@@ -67,12 +69,13 @@ fn test_concurrent_reservations_same_quantity() {
             barrier_clone.wait();
 
             let reference_id = Uuid::new_v4().to_string();
-            let result =
-                commerce_clone
-                    .inventory()
-                    .reserve(&sku_clone, dec!(1), "order", &reference_id, None);
-
-            result
+            commerce_clone.inventory().reserve(
+                sku_clone.as_str(),
+                dec!(1),
+                "order",
+                &reference_id,
+                None,
+            )
         });
 
         handles.push(handle);
@@ -109,12 +112,13 @@ fn test_concurrent_reservations_exceed_stock() {
             barrier_clone.wait();
 
             let reference_id = Uuid::new_v4().to_string();
-            let result =
-                commerce_clone
-                    .inventory()
-                    .reserve(&sku_clone, dec!(1), "order", &reference_id, None);
-
-            result
+            commerce_clone.inventory().reserve(
+                sku_clone.as_str(),
+                dec!(1),
+                "order",
+                &reference_id,
+                None,
+            )
         });
 
         handles.push(handle);
@@ -127,11 +131,7 @@ fn test_concurrent_reservations_exceed_stock() {
     let successful = results.iter().filter(|r| r.is_ok()).count();
     let failed = results.iter().filter(|r| r.is_err()).count();
 
-    assert_eq!(
-        successful,
-        10,
-        "Only first 10 reservations should succeed"
-    );
+    assert_eq!(successful, 10, "Only first 10 reservations should succeed");
     assert_eq!(failed, 5, "Last 5 reservations should fail");
 }
 
@@ -254,7 +254,7 @@ fn test_concurrent_order_creation_same_inventory() {
     let mut handles = vec![];
 
     // Try to create 3 orders for the same inventory (10 items)
-    for i in 0..3 {
+    for _ in 0..3 {
         let commerce_clone = commerce.clone();
         let barrier_clone = barrier.clone();
 
@@ -545,13 +545,14 @@ fn test_reservation_release_and_reuse() {
     // Reserve all items
     let reservation = commerce
         .inventory()
-        .reserve(&sku, dec!(5), "order", &Uuid::new_v4().to_string(), None)
+        .reserve(sku, dec!(5), "order", &Uuid::new_v4().to_string(), None)
         .expect("Failed to reserve");
 
     // Try to reserve again (should fail)
-    let result = commerce
-        .inventory()
-        .reserve(&sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
+    let result =
+        commerce
+            .inventory()
+            .reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
     assert!(
         result.is_err(),
@@ -565,9 +566,10 @@ fn test_reservation_release_and_reuse() {
         .expect("Failed to release reservation");
 
     // Now reservation should succeed
-    let result = commerce
-        .inventory()
-        .reserve(&sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
+    let result =
+        commerce
+            .inventory()
+            .reserve(sku, dec!(1), "order", &Uuid::new_v4().to_string(), None);
 
     assert!(result.is_ok(), "Reservation should succeed after release");
 }

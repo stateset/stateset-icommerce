@@ -125,7 +125,7 @@ impl CommerceBuilder {
         let event_system = Arc::new(
             self.event_config
                 .map(EventSystem::with_config)
-                .unwrap_or_default()
+                .unwrap_or_default(),
         );
 
         // Check if PostgreSQL URL is set
@@ -153,7 +153,9 @@ impl CommerceBuilder {
         // Default to SQLite
         #[cfg(feature = "sqlite")]
         {
-            let path = self.sqlite_path.unwrap_or_else(|| "stateset.db".to_string());
+            let path = self
+                .sqlite_path
+                .unwrap_or_else(|| "stateset.db".to_string());
 
             let mut config = if path == ":memory:" {
                 DatabaseConfig::in_memory()

@@ -12,7 +12,11 @@
 
 import { runAgentLoop, AGENTS } from '../src/claude-harness.js';
 import { createConfirmHandler } from '../src/utils/confirm.js';
-import { buildAgentOutputData, resolveOutputFormat, writeAgentOutputFile } from '../src/utils/agent-output.js';
+import {
+  buildAgentOutputData,
+  resolveOutputFormat,
+  writeAgentOutputFile,
+} from '../src/utils/agent-output.js';
 import { resolveAgentRuntimeOptions, createStreamingHandler } from '../src/utils/agent-runtime.js';
 import { DEFAULT_MODEL, CLI_VERSION } from '../src/config.js';
 import { parseArgs } from 'node:util';
@@ -103,9 +107,9 @@ async function main() {
       output: { type: 'string' },
       yes: { type: 'boolean', short: 'y', default: false },
       help: { type: 'boolean', short: 'h', default: false },
-      version: { type: 'boolean', short: 'v', default: false }
+      version: { type: 'boolean', short: 'v', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -129,12 +133,14 @@ async function main() {
   const outputFormat = resolveOutputFormat({
     format: values.format,
     json: values.json,
-    argv: process.argv
+    argv: process.argv,
   });
   const isJsonOutput = outputFormat === 'json';
 
   if (values.stream && isJsonOutput) {
-    console.error('Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.');
+    console.error(
+      'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
+    );
     process.exit(1);
   }
 
@@ -150,7 +156,8 @@ async function main() {
     process.exit(1);
   }
 
-  const { thinkLevel, providerName, streaming, maxBudgetUsd, memoryOverride, enableX402 } = runtimeOptions;
+  const { thinkLevel, providerName, streaming, maxBudgetUsd, memoryOverride, enableX402 } =
+    runtimeOptions;
 
   if (!isJsonOutput) {
     console.log(`\n📊 StateSet Inventory Agent`);
@@ -167,7 +174,7 @@ async function main() {
     const onConfirmRequired = createConfirmHandler({
       output: null,
       assumeYes: values.yes,
-      nonInteractive
+      nonInteractive,
     });
 
     const result = await runAgentLoop({
@@ -190,14 +197,14 @@ async function main() {
           const toolName = toolCall.name.replace('mcp__stateset-commerce__', '');
           console.log(`🔧 ${toolName}(${JSON.stringify(toolCall.input)})`);
         }
-      }
+      },
     });
 
     const outputData = buildAgentOutputData({
       agent: 'inventory',
       request,
       allowApply: values.apply,
-      result
+      result,
     });
 
     if (values.output) {
@@ -231,4 +238,5 @@ async function main() {
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-inventory', main);

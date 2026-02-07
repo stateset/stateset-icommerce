@@ -5,6 +5,7 @@
  */
 
 import { EventEmitter } from 'events';
+import crypto from 'node:crypto';
 
 export class ConversationContext extends EventEmitter {
   constructor(commerce) {
@@ -20,7 +21,7 @@ export class ConversationContext extends EventEmitter {
    * @returns {Object} The new session object
    */
   createSession(metadata = {}) {
-    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const sessionId = `session-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`;
     const session = {
       id: sessionId,
       createdAt: new Date().toISOString(),
@@ -33,14 +34,14 @@ export class ConversationContext extends EventEmitter {
         pendingOrders: [],
         reservedInventory: [],
         pendingPayments: [],
-        createdResources: new Map()
+        createdResources: new Map(),
       },
       context: {
         currentTask: null,
         goals: [],
         constraints: [],
-        preferences: {}
-      }
+        preferences: {},
+      },
     };
 
     this.sessions.set(sessionId, session);
@@ -71,7 +72,7 @@ export class ConversationContext extends EventEmitter {
   recordToolCall(toolName, params, result, options = {}) {
     const session = this.getActiveSession();
     const toolCall = {
-      id: `call-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `call-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`,
       timestamp: new Date().toISOString(),
       tool: toolName,
       params,
@@ -80,7 +81,7 @@ export class ConversationContext extends EventEmitter {
       duration: options.duration,
       context: options.context,
       rollbackFn: options.rollbackFn,
-      enrollmentId: options.enrollmentId
+      enrollmentId: options.enrollmentId,
     };
 
     session.toolCallHistory.push(toolCall);
@@ -104,9 +105,9 @@ export class ConversationContext extends EventEmitter {
   recordOperation(operation) {
     const session = this.getActiveSession();
     const operationRecord = {
-      id: `op-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `op-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`,
       timestamp: new Date().toISOString(),
-      ...operation
+      ...operation,
     };
 
     session.operations.push(operationRecord);
@@ -128,7 +129,7 @@ export class ConversationContext extends EventEmitter {
     session.state.createdResources.set(resourceId, {
       type: resourceType,
       createdAt: new Date().toISOString(),
-      rollback: rollbackFn
+      rollback: rollbackFn,
     });
 
     if (resourceType === 'reservation') {
@@ -147,7 +148,7 @@ export class ConversationContext extends EventEmitter {
    * @param {Object} options - Rollback options
    * @returns {Promise<Object>} Rollback results
    */
-  async rollbackSession(options = {}) {
+  async rollbackSession(_options = {}) {
     const session = this.getActiveSession();
     const results = [];
 
@@ -167,7 +168,7 @@ export class ConversationContext extends EventEmitter {
             resourceId,
             resourceType: resource.type,
             status: 'success',
-            result
+            result,
           });
           this.emit('rollback:success', { sessionId: session.id, resourceId });
         } else {
@@ -175,7 +176,7 @@ export class ConversationContext extends EventEmitter {
             resourceId,
             resourceType: resource.type,
             status: 'skipped',
-            reason: 'No rollback function available'
+            reason: 'No rollback function available',
           });
         }
       } catch (error) {
@@ -183,7 +184,7 @@ export class ConversationContext extends EventEmitter {
           resourceId,
           resourceType: resource.type,
           status: 'failed',
-          error: error.message
+          error: error.message,
         });
         this.emit('rollback:failed', { sessionId: session.id, resourceId, error });
       }
@@ -197,9 +198,9 @@ export class ConversationContext extends EventEmitter {
     this.emit('rollback:completed', { sessionId: session.id, results });
 
     return {
-      success: results.every(r => r.status === 'success' || r.status === 'skipped'),
+      success: results.every((r) => r.status === 'success' || r.status === 'skipped'),
       message: `Rolled back ${results.length} resources`,
-      results
+      results,
     };
   }
 
@@ -215,32 +216,36 @@ export class ConversationContext extends EventEmitter {
     if (!resource) {
       return {
         success: false,
-        error: `Resource ${resourceId} not found in session`
+        error: `Resource ${resourceId} not found in session`,
       };
     }
 
     try {
       const result = await resource.rollback();
       session.state.createdResources.delete(resourceId);
-      
-      session.state.pendingOrders = session.state.pendingOrders.filter(id => id !== resourceId);
-      session.state.reservedInventory = session.state.reservedInventory.filter(id => id !== resourceId);
-      session.state.pendingPayments = session.state.pendingPayments.filter(id => id !== resourceId);
+
+      session.state.pendingOrders = session.state.pendingOrders.filter((id) => id !== resourceId);
+      session.state.reservedInventory = session.state.reservedInventory.filter(
+        (id) => id !== resourceId,
+      );
+      session.state.pendingPayments = session.state.pendingPayments.filter(
+        (id) => id !== resourceId,
+      );
 
       this.emit('rollback:success', { sessionId: session.id, resourceId });
-      
+
       return {
         success: true,
         resourceType: resource.type,
-        result
+        result,
       };
     } catch (error) {
       this.emit('rollback:failed', { sessionId: session.id, resourceId, error });
-      
+
       return {
         success: false,
         resourceType: resource.type,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -260,25 +265,27 @@ export class ConversationContext extends EventEmitter {
       error: error.message,
       tool: toolName,
       timestamp: new Date().toISOString(),
-      recentActivity: recentCalls.map(c => ({
+      recentActivity: recentCalls.map((c) => ({
         tool: c.tool,
         status: c.status,
-        timestamp: c.timestamp
+        timestamp: c.timestamp,
       })),
       pendingResources: pendingResources.map(([id, r]) => ({
         id,
         type: r.type,
-        createdAt: r.createdAt
+        createdAt: r.createdAt,
       })),
       suggestions: [],
-      canRollback: pendingResources.length > 0
+      canRollback: pendingResources.length > 0,
     };
 
     if (error.message.includes('insufficient stock')) {
       analysis.suggestions.push('Check available stock with get_stock before reserving');
       analysis.suggestions.push('Adjust inventory with adjust_inventory or create a backorder');
-      
-      const recentStockCheck = recentCalls.find(c => c.tool === 'get_stock' || c.tool === 'reserve_inventory');
+
+      const recentStockCheck = recentCalls.find(
+        (c) => c.tool === 'get_stock' || c.tool === 'reserve_inventory',
+      );
       if (recentStockCheck) {
         analysis.context = 'You recently checked stock or attempted to reserve inventory';
       }
@@ -287,10 +294,10 @@ export class ConversationContext extends EventEmitter {
     if (error.message.includes('order not found')) {
       analysis.suggestions.push('Verify order ID is correct');
       analysis.suggestions.push('Use list_orders to find valid order IDs');
-      
-      const recentOrderCalls = recentCalls.filter(c => c.tool.includes('order'));
+
+      const recentOrderCalls = recentCalls.filter((c) => c.tool.includes('order'));
       if (recentOrderCalls.length > 0) {
-        analysis.context = `You recently worked with orders: ${recentOrderCalls.map(c => c.params.orderId).join(', ')}`;
+        analysis.context = `You recently worked with orders: ${recentOrderCalls.map((c) => c.params.orderId).join(', ')}`;
       }
     }
 
@@ -303,7 +310,7 @@ export class ConversationContext extends EventEmitter {
     if (error.message.includes('customer not found')) {
       analysis.suggestions.push('Verify customer ID or email exists');
       analysis.suggestions.push('Use get_customer or list_customers to find valid customer');
-      
+
       if (session.context.goals.includes('Create order')) {
         analysis.recommendation = 'Create customer first with create_customer, then create order';
       }
@@ -325,25 +332,25 @@ export class ConversationContext extends EventEmitter {
         {
           priority: 'high',
           action: 'list_products',
-          reason: 'Start by exploring available products'
+          reason: 'Start by exploring available products',
         },
         {
           priority: 'medium',
           action: 'list_customers',
-          reason: 'Check existing customers'
-        }
+          reason: 'Check existing customers',
+        },
       ];
     }
 
     const lastCall = session.toolCallHistory[session.toolCallHistory.length - 1];
-    const recentTools = new Set(session.toolCallHistory.slice(-5).map(c => c.tool));
+    const recentTools = new Set(session.toolCallHistory.slice(-5).map((c) => c.tool));
 
     if (lastCall.tool === 'list_products' && !recentTools.has('get_product')) {
       suggestions.push({
         priority: 'high',
         action: 'get_product_variant',
         reason: 'Get detailed information about a specific product',
-        params: { sku: '<choose a SKU from list>' }
+        params: { sku: '<choose a SKU from list>' },
       });
     }
 
@@ -352,7 +359,7 @@ export class ConversationContext extends EventEmitter {
         priority: 'high',
         action: 'get_stock',
         reason: 'Check stock availability for the product',
-        params: { sku: lastCall.params.sku }
+        params: { sku: lastCall.params.sku },
       });
     }
 
@@ -361,7 +368,7 @@ export class ConversationContext extends EventEmitter {
         priority: 'high',
         action: 'reserve_inventory',
         reason: 'Reserve inventory for an order',
-        params: { sku: lastCall.params.sku, quantity: 1, referenceType: 'order' }
+        params: { sku: lastCall.params.sku, quantity: 1, referenceType: 'order' },
       });
     }
 
@@ -369,7 +376,7 @@ export class ConversationContext extends EventEmitter {
       suggestions.push({
         priority: 'high',
         action: 'process_payment',
-        reason: `Complete payment for ${session.state.pendingOrders.length} pending order(s)`
+        reason: `Complete payment for ${session.state.pendingOrders.length} pending order(s)`,
       });
     }
 
@@ -377,7 +384,7 @@ export class ConversationContext extends EventEmitter {
       suggestions.push({
         priority: 'medium',
         action: 'confirm_reservation',
-        reason: 'Confirm reserved inventory to prevent expiration'
+        reason: 'Confirm reserved inventory to prevent expiration',
       });
     }
 
@@ -386,7 +393,7 @@ export class ConversationContext extends EventEmitter {
         priority: 'high',
         action: 'get_order',
         reason: 'Verify the created order details',
-        params: { orderId: '<order ID from creation>' }
+        params: { orderId: '<order ID from creation>' },
       });
     }
 
@@ -394,7 +401,7 @@ export class ConversationContext extends EventEmitter {
       suggestions.push({
         priority: 'high',
         action: 'process_payment',
-        reason: 'Process payment for the created order'
+        reason: 'Process payment for the created order',
       });
     }
 
@@ -408,8 +415,8 @@ export class ConversationContext extends EventEmitter {
   getSessionSummary() {
     const session = this.getActiveSession();
     const toolCalls = session.toolCallHistory;
-    const successfulCalls = toolCalls.filter(c => c.status === 'success').length;
-    const failedCalls = toolCalls.filter(c => c.status === 'error').length;
+    const successfulCalls = toolCalls.filter((c) => c.status === 'success').length;
+    const failedCalls = toolCalls.filter((c) => c.status === 'error').length;
 
     return {
       sessionId: session.id,
@@ -424,7 +431,7 @@ export class ConversationContext extends EventEmitter {
       reservedInventory: session.state.reservedInventory.length,
       pendingPayments: session.state.pendingPayments.length,
       currentTask: session.context.currentTask,
-      goals: session.context.goals
+      goals: session.context.goals,
     };
   }
 
@@ -454,7 +461,7 @@ export class ConversationContext extends EventEmitter {
    */
   completeGoal(goal) {
     const session = this.getActiveSession();
-    session.context.goals = session.context.goals.filter(g => g !== goal);
+    session.context.goals = session.context.goals.filter((g) => g !== goal);
     this.emit('goal:completed', { sessionId: session.id, goal });
   }
 
@@ -486,12 +493,12 @@ export class ConversationContext extends EventEmitter {
    * @returns {Array<Object>} Array of sessions
    */
   listSessions() {
-    return Array.from(this.sessions.values()).map(s => ({
+    return Array.from(this.sessions.values()).map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
       lastActivityAt: s.lastActivityAt,
       toolCallCount: s.toolCallHistory.length,
-      active: s.id === this.activeSessionId
+      active: s.id === this.activeSessionId,
     }));
   }
 
@@ -512,6 +519,6 @@ export class ConversationContext extends EventEmitter {
   }
 }
 
-function isPendingStatus(resourceId) {
+function isPendingStatus(_resourceId) {
   return true;
 }

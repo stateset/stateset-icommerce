@@ -42,13 +42,13 @@ export function upsertPricingRule(pricing, rule) {
   const rules = pricing.rules || [];
   const keyTool = rule.tool.trim();
   const chainId = rule.chainId;
-  const idx = rules.findIndex(r => r.tool === keyTool && r.chainId === chainId);
+  const idx = rules.findIndex((r) => r.tool === keyTool && r.chainId === chainId);
 
   const entry = {
     ...rule,
     tool: keyTool,
     chainId,
-    tokenSymbol: rule.tokenSymbol.toUpperCase()
+    tokenSymbol: rule.tokenSymbol.toUpperCase(),
   };
 
   if (idx >= 0) {
@@ -62,13 +62,13 @@ export function upsertPricingRule(pricing, rule) {
 
 export function removePricingRule(pricing, tool, chainId) {
   const keyTool = tool.trim();
-  const rules = (pricing.rules || []).filter(r => !(r.tool === keyTool && r.chainId === chainId));
+  const rules = (pricing.rules || []).filter((r) => !(r.tool === keyTool && r.chainId === chainId));
   return { rules };
 }
 
 export function getPricingRule(pricing, tool) {
   const keyTool = tool.trim();
-  return (pricing.rules || []).find(r => r.tool === keyTool) || null;
+  return (pricing.rules || []).find((r) => r.tool === keyTool) || null;
 }
 
 export default {
@@ -77,5 +77,5 @@ export default {
   savePricing,
   upsertPricingRule,
   removePricingRule,
-  getPricingRule
+  getPricingRule,
 };

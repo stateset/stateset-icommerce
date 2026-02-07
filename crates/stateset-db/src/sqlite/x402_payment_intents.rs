@@ -1,20 +1,18 @@
 //! SQLite x402 payment intent repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params, with_immediate_transaction,
-    parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_enum_row,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::OptionalExtension;
+use rust_decimal::Decimal;
 use stateset_core::{
-    BatchResult, CommerceError, CreateX402PaymentIntent, Result,
-    SignX402PaymentIntent, X402IntentStatus, X402PaymentIntent,
-    X402PaymentIntentFilter, X402PaymentIntentRepository, validate_batch_size,
-    X402_DEFAULT_VALIDITY_SECONDS,
+    validate_batch_size, BatchResult, CommerceError, CreateX402PaymentIntent, Result,
+    SignX402PaymentIntent, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
+    X402PaymentIntentRepository, X402_DEFAULT_VALIDITY_SECONDS,
 };
 use uuid::Uuid;
 
@@ -84,7 +82,9 @@ impl SqliteX402PaymentIntentRepository {
             payer_signature: row.get("payer_signature")?,
             payer_public_key: row.get("payer_public_key")?,
 
-            sequence_number: row.get::<_, Option<i64>>("sequence_number")?.map(|n| n as u64),
+            sequence_number: row
+                .get::<_, Option<i64>>("sequence_number")?
+                .map(|n| n as u64),
             sequenced_at: parse_datetime_opt_row(
                 row.get::<_, Option<String>>("sequenced_at")?,
                 "x402_intent",
@@ -96,8 +96,7 @@ impl SqliteX402PaymentIntentRepository {
                 "batch_id",
             )?,
             batch_merkle_root: row.get("batch_merkle_root")?,
-            inclusion_proof: inclusion_proof
-                .map(|s| serde_json::from_str(&s).unwrap_or_default()),
+            inclusion_proof: inclusion_proof.map(|s| serde_json::from_str(&s).unwrap_or_default()),
 
             tx_hash: row.get("tx_hash")?,
             block_number: row.get::<_, Option<i64>>("block_number")?.map(|n| n as u64),
@@ -133,7 +132,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             // Get next nonce for this payer
             self.get_next_nonce(&input.payer_address).unwrap_or(0)
         });
-        let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+        let validity_seconds = input
+            .validity_seconds
+            .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
         let valid_until = now_unix + validity_seconds;
 
         let asset = input.asset;
@@ -189,9 +190,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn get(&self, id: Uuid) -> Result<Option<X402PaymentIntent>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare(
-                "SELECT * FROM x402_payment_intents WHERE id = ?",
-            )
+            .prepare("SELECT * FROM x402_payment_intents WHERE id = ?")
             .map_err(map_db_error)?;
 
         stmt.query_row([id.to_string()], Self::row_to_intent)
@@ -231,9 +230,14 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         }
 
         // Compute signing hash and store signature
-        let mut updated_intent = intent.clone();
-        let hash_bytes = updated_intent.sequencer_signing_hash();
-        let signing_hash = format!("0x{}", hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        let hash_bytes = intent.sequencer_signing_hash();
+        let signing_hash = format!(
+            "0x{}",
+            hash_bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        );
 
         conn.execute(
             "UPDATE x402_payment_intents SET
@@ -253,7 +257,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_sequenced(&self, id: Uuid, sequence_number: u64, batch_id: Uuid) -> Result<X402PaymentIntent> {
+    fn mark_sequenced(
+        &self,
+        id: Uuid,
+        sequence_number: u64,
+        batch_id: Uuid,
+    ) -> Result<X402PaymentIntent> {
         let conn = self.conn()?;
 
         let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
@@ -282,7 +291,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64) -> Result<X402PaymentIntent> {
+    fn mark_settled(
+        &self,
+        id: Uuid,
+        tx_hash: &str,
+        block_number: u64,
+    ) -> Result<X402PaymentIntent> {
         let conn = self.conn()?;
 
         conn.execute(
@@ -342,7 +356,10 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let conn = self.conn()?;
 
         let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        if !matches!(intent.status, X402IntentStatus::Created | X402IntentStatus::Signed) {
+        if !matches!(
+            intent.status,
+            X402IntentStatus::Created | X402IntentStatus::Signed
+        ) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot cancel intent in {} status",
                 intent.status
@@ -365,10 +382,14 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn for_cart(&self, cart_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM x402_payment_intents WHERE cart_id = ? ORDER BY created_at DESC")
+            .prepare(
+                "SELECT * FROM x402_payment_intents WHERE cart_id = ? ORDER BY created_at DESC",
+            )
             .map_err(map_db_error)?;
 
-        let rows = stmt.query_map([cart_id.to_string()], Self::row_to_intent).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([cart_id.to_string()], Self::row_to_intent)
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -379,10 +400,14 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn for_order(&self, order_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare("SELECT * FROM x402_payment_intents WHERE order_id = ? ORDER BY created_at DESC")
+            .prepare(
+                "SELECT * FROM x402_payment_intents WHERE order_id = ? ORDER BY created_at DESC",
+            )
             .map_err(map_db_error)?;
 
-        let rows = stmt.query_map([order_id.to_string()], Self::row_to_intent).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([order_id.to_string()], Self::row_to_intent)
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -458,7 +483,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), Self::row_to_intent).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_intent)
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -499,7 +526,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -509,23 +538,27 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let conn = self.conn()?;
         let now_unix = Utc::now().timestamp();
 
-        let count = conn.execute(
-            "UPDATE x402_payment_intents SET status = ?, updated_at = ?
+        let count = conn
+            .execute(
+                "UPDATE x402_payment_intents SET status = ?, updated_at = ?
              WHERE status IN (?, ?) AND valid_until < ?",
-            rusqlite::params![
-                X402IntentStatus::Expired.to_string(),
-                Utc::now().to_rfc3339(),
-                X402IntentStatus::Created.to_string(),
-                X402IntentStatus::Signed.to_string(),
-                now_unix,
-            ],
-        )
-        .map_err(map_db_error)?;
+                rusqlite::params![
+                    X402IntentStatus::Expired.to_string(),
+                    Utc::now().to_rfc3339(),
+                    X402IntentStatus::Created.to_string(),
+                    X402IntentStatus::Signed.to_string(),
+                    now_unix,
+                ],
+            )
+            .map_err(map_db_error)?;
 
         Ok(count as u64)
     }
 
-    fn create_batch(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>> {
+    fn create_batch(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<BatchResult<X402PaymentIntent>> {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
@@ -539,7 +572,10 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         Ok(result)
     }
 
-    fn create_batch_atomic(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>> {
+    fn create_batch_atomic(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<Vec<X402PaymentIntent>> {
         validate_batch_size(&inputs)?;
         if inputs.is_empty() {
             return Ok(vec![]);
@@ -553,7 +589,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let validity_seconds = input.validity_seconds.unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let validity_seconds = input
+                .validity_seconds
+                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
 
             let asset = input.asset;
@@ -627,7 +665,9 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), Self::row_to_intent).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_intent)
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);

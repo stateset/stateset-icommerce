@@ -163,10 +163,12 @@ export class HandoffQueue {
     const entry = this.getEntry(channel, senderId);
     if (!entry || entry.messages.length === 0) return 'No messages recorded.';
 
-    return entry.messages.map((m) => {
-      const ts = new Date(m.timestamp).toLocaleTimeString();
-      return `[${ts}] ${m.from}: ${m.text}`;
-    }).join('\n');
+    return entry.messages
+      .map((m) => {
+        const ts = new Date(m.timestamp).toLocaleTimeString();
+        return `[${ts}] ${m.from}: ${m.text}`;
+      })
+      .join('\n');
   }
 
   /**

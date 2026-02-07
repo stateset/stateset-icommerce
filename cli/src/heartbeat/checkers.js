@@ -33,7 +33,11 @@ async function lowStock(commerce, config = {}) {
     }
     return { triggered: false, data: { threshold }, summary: 'All stock levels OK' };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Low-stock check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Low-stock check failed: ${err.message}`,
+    };
   }
 }
 
@@ -62,7 +66,11 @@ async function abandonedCarts(commerce, config = {}) {
     }
     return { triggered: false, data: { minAgeHours }, summary: 'No stale abandoned carts' };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Abandoned-cart check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Abandoned-cart check failed: ${err.message}`,
+    };
   }
 }
 
@@ -91,7 +99,11 @@ async function revenueMilestone(commerce, config = {}) {
       summary: `Revenue $${revenue.toLocaleString()} / $${target.toLocaleString()} (${period})`,
     };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Revenue check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Revenue check failed: ${err.message}`,
+    };
   }
 }
 
@@ -122,7 +134,11 @@ async function pendingReturns(commerce, config = {}) {
     }
     return { triggered: false, data: { maxAgeDays }, summary: 'No overdue pending returns' };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Pending-returns check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Pending-returns check failed: ${err.message}`,
+    };
   }
 }
 
@@ -146,7 +162,11 @@ async function overdueInvoices(commerce, _config = {}) {
     }
     return { triggered: false, data: {}, summary: 'No overdue invoices' };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Overdue-invoice check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Overdue-invoice check failed: ${err.message}`,
+    };
   }
 }
 
@@ -172,7 +192,11 @@ async function subscriptionChurn(commerce, _config = {}) {
     }
     return { triggered: false, data: {}, summary: 'No subscription churn detected' };
   } catch (err) {
-    return { triggered: false, data: { error: err.message }, summary: `Churn check failed: ${err.message}` };
+    return {
+      triggered: false,
+      data: { error: err.message },
+      summary: `Churn check failed: ${err.message}`,
+    };
   }
 }
 

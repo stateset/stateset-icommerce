@@ -6,16 +6,45 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 
 // ============================================================================
 // Trace & Span Management
 // ============================================================================
 
+/** @type {RegExp} Pattern matching sensitive field names */
+const SENSITIVE_KEY_PATTERN = /password|token|secret|key|apiKey|api_key|authorization|credential/i;
+
 /**
- * Generate a unique trace/span ID
+ * Generate a unique trace/span ID using crypto.randomUUID
+ * @returns {string}
  */
 function generateId() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+  return randomUUID();
+}
+
+/**
+ * Recursively redact sensitive fields from an object for safe logging.
+ * @param {unknown} obj - The object to redact
+ * @param {number} [depth=0] - Current recursion depth
+ * @returns {unknown} A copy with sensitive values replaced by '[REDACTED]'
+ */
+function redactSensitiveFields(obj, depth = 0) {
+  if (depth > 5 || obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map((item) => redactSensitiveFields(item, depth + 1));
+
+  const redacted = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (SENSITIVE_KEY_PATTERN.test(k)) {
+      redacted[k] = '[REDACTED]';
+    } else if (typeof v === 'object' && v !== null) {
+      redacted[k] = redactSensitiveFields(v, depth + 1);
+    } else {
+      redacted[k] = v;
+    }
+  }
+  return redacted;
 }
 
 /**
@@ -43,7 +72,7 @@ export class Span {
     this.events.push({
       name,
       timestamp: Date.now(),
-      data
+      data,
     });
   }
 
@@ -82,7 +111,7 @@ export class Span {
       metadata: this.metadata,
       attributes: this.attributes,
       events: this.events,
-      result: this.result
+      result: this.result,
     };
   }
 }
@@ -116,7 +145,7 @@ export class AgentTelemetry extends EventEmitter {
       successfulToolCalls: 0,
       failedToolCalls: 0,
       totalDuration: 0,
-      toolDurations: {}
+      toolDurations: {},
     };
 
     // Current context
@@ -163,7 +192,9 @@ export class AgentTelemetry extends EventEmitter {
       this.emit('span:end', span);
 
       if (this.verbose) {
-        this._log('span', `Ended: ${span.name} (${span.duration}ms, ${status})`, { spanId: span.id });
+        this._log('span', `Ended: ${span.name} (${span.duration}ms, ${status})`, {
+          spanId: span.id,
+        });
       }
     }
     return span;
@@ -178,7 +209,9 @@ export class AgentTelemetry extends EventEmitter {
       this.emit('span:end', span);
 
       if (this.verbose) {
-        this._log('span', `Ended: ${span.name} (${span.duration}ms, ${status})`, { spanId: span.id });
+        this._log('span', `Ended: ${span.name} (${span.duration}ms, ${status})`, {
+          spanId: span.id,
+        });
       }
     }
     return span;
@@ -207,7 +240,7 @@ export class AgentTelemetry extends EventEmitter {
       startTime,
       endTime,
       duration: actualDuration,
-      success: isSuccess
+      success: isSuccess,
     };
 
     this.toolCalls.push(record);
@@ -231,7 +264,11 @@ export class AgentTelemetry extends EventEmitter {
 
     // Add event to current span
     if (this.currentSpan) {
-      this.currentSpan.addEvent('tool_call', { toolName, duration: actualDuration, success: isSuccess });
+      this.currentSpan.addEvent('tool_call', {
+        toolName,
+        duration: actualDuration,
+        success: isSuccess,
+      });
     }
 
     this.emit('tool:call', record);
@@ -239,7 +276,7 @@ export class AgentTelemetry extends EventEmitter {
     if (this.verbose) {
       const status = isSuccess ? 'ok' : 'error';
       this._log('tool', `${toolName} (${actualDuration}ms) [${status}]`, {
-        input: this._truncate(JSON.stringify(input), 100)
+        input: this._truncate(JSON.stringify(redactSensitiveFields(input)), 100),
       });
     }
 
@@ -271,7 +308,7 @@ export class AgentTelemetry extends EventEmitter {
       request: this._truncate(request, 200),
       selectedAgent,
       confidence,
-      alternatives
+      alternatives,
     };
 
     if (this.currentSpan) {
@@ -281,9 +318,16 @@ export class AgentTelemetry extends EventEmitter {
     this.emit('agent:routing', record);
 
     if (this.verbose) {
-      this._log('route', `Selected "${selectedAgent}" (${Math.round(confidence * 100)}% confidence)`, {
-        alternatives: alternatives.slice(0, 2).map(a => a.agent).join(', ')
-      });
+      this._log(
+        'route',
+        `Selected "${selectedAgent}" (${Math.round(confidence * 100)}% confidence)`,
+        {
+          alternatives: alternatives
+            .slice(0, 2)
+            .map((a) => a.agent)
+            .join(', '),
+        },
+      );
     }
   }
 
@@ -294,7 +338,7 @@ export class AgentTelemetry extends EventEmitter {
     if (this.currentSpan) {
       this.currentSpan.addEvent('assistant_message', {
         length: message.length,
-        preview: this._truncate(message, 100)
+        preview: this._truncate(message, 100),
       });
     }
 
@@ -309,7 +353,7 @@ export class AgentTelemetry extends EventEmitter {
       timestamp: Date.now(),
       error: error.message,
       stack: error.stack,
-      context
+      context: redactSensitiveFields(context),
     };
 
     if (this.currentSpan) {
@@ -331,7 +375,7 @@ export class AgentTelemetry extends EventEmitter {
     const record = {
       timestamp: Date.now(),
       eventName,
-      ...data
+      ...data,
     };
 
     if (this.currentSpan) {
@@ -358,9 +402,9 @@ export class AgentTelemetry extends EventEmitter {
       startTime: this.startTime,
       endTime: Date.now(),
       totalDuration: Date.now() - this.startTime,
-      spans: this.spans.map(s => s.toJSON()),
+      spans: this.spans.map((s) => s.toJSON()),
       toolCalls: this.toolCalls,
-      metrics: this.metrics
+      metrics: this.metrics,
     };
   }
 
@@ -376,17 +420,20 @@ export class AgentTelemetry extends EventEmitter {
         total: this.metrics.totalToolCalls,
         successful: this.metrics.successfulToolCalls,
         failed: this.metrics.failedToolCalls,
-        successRate: this.metrics.totalToolCalls > 0
-          ? (this.metrics.successfulToolCalls / this.metrics.totalToolCalls * 100).toFixed(1) + '%'
-          : 'N/A'
+        successRate:
+          this.metrics.totalToolCalls > 0
+            ? ((this.metrics.successfulToolCalls / this.metrics.totalToolCalls) * 100).toFixed(1) +
+              '%'
+            : 'N/A',
       },
-      avgToolDuration: this.metrics.totalToolCalls > 0
-        ? Math.round(this.metrics.totalDuration / this.metrics.totalToolCalls)
-        : 0,
+      avgToolDuration:
+        this.metrics.totalToolCalls > 0
+          ? Math.round(this.metrics.totalDuration / this.metrics.totalToolCalls)
+          : 0,
       topTools: Object.entries(this.metrics.toolDurations)
         .sort((a, b) => b[1].count - a[1].count)
         .slice(0, 5)
-        .map(([name, stats]) => ({ name, ...stats }))
+        .map(([name, stats]) => ({ name, ...stats })),
     };
   }
 
@@ -401,7 +448,9 @@ export class AgentTelemetry extends EventEmitter {
     console.log('─'.repeat(50));
     console.log(`Trace ID:     ${summary.traceId}`);
     console.log(`Duration:     ${summary.duration}ms`);
-    console.log(`Tool Calls:   ${summary.toolCalls.total} (${summary.toolCalls.successRate} success)`);
+    console.log(
+      `Tool Calls:   ${summary.toolCalls.total} (${summary.toolCalls.successRate} success)`,
+    );
     console.log(`Avg Latency:  ${summary.avgToolDuration}ms per tool`);
 
     if (summary.topTools.length > 0) {
@@ -425,7 +474,7 @@ export class AgentTelemetry extends EventEmitter {
       tool: '🔧',
       route: '🧭',
       error: '❌',
-      info: 'ℹ️'
+      info: 'ℹ️',
     };
 
     const timestamp = new Date().toISOString().split('T')[1].slice(0, 12);
@@ -434,9 +483,7 @@ export class AgentTelemetry extends EventEmitter {
     if (this.outputFormat === 'json') {
       console.log(JSON.stringify({ timestamp, type, message, ...data }));
     } else {
-      const dataStr = Object.keys(data).length > 0
-        ? ` ${JSON.stringify(data)}`
-        : '';
+      const dataStr = Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : '';
       console.log(`[${timestamp}] ${icon} ${message}${dataStr}`);
     }
   }
@@ -462,21 +509,37 @@ export function createTelemetry(options = {}) {
  * No-op telemetry for when telemetry is disabled
  */
 export class NoOpTelemetry {
-  startSpan() { return { end: () => {}, addEvent: () => {}, setAttribute: () => {} }; }
-  endSpan() { return null; }
-  endSpanRef() { return null; }
-  logToolCall() { return {}; }
-  startToolCall() { return () => ({}); }
+  startSpan() {
+    return { end: () => {}, addEvent: () => {}, setAttribute: () => {} };
+  }
+  endSpan() {
+    return null;
+  }
+  endSpanRef() {
+    return null;
+  }
+  logToolCall() {
+    return {};
+  }
+  startToolCall() {
+    return () => ({});
+  }
   logAgentRouting() {}
   logAssistantMessage() {}
   logError() {}
   logCustomEvent() {}
-  getTrace() { return {}; }
-  getSummary() { return {}; }
+  getTrace() {
+    return {};
+  }
+  getSummary() {
+    return {};
+  }
   printSummary() {}
   on() {}
   emit() {}
-  get traceId() { return null; }
+  get traceId() {
+    return null;
+  }
 }
 
 export const noOpTelemetry = new NoOpTelemetry();

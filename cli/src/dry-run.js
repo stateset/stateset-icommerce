@@ -17,7 +17,7 @@ export const PREVIEWABLE_OPERATIONS = {
   // Customer operations
   create_customer: {
     description: 'Create new customer',
-    format: (params) => `Create customer: ${params.email} (${params.firstName} ${params.lastName})`
+    format: (params) => `Create customer: ${params.email} (${params.firstName} ${params.lastName})`,
   },
 
   // Order operations
@@ -25,97 +25,102 @@ export const PREVIEWABLE_OPERATIONS = {
     description: 'Create new order',
     format: (params) => {
       const itemCount = params.items?.length || 0;
-      const total = params.items?.reduce((sum, i) => sum + (i.quantity || 1) * (i.unitPrice || 0), 0) || 0;
-      return `Create order for customer ${params.customerId} with ${itemCount} items (${params.currency || 'USD'} ${total.toFixed(2)})`
-    }
+      const total =
+        params.items?.reduce((sum, i) => sum + (i.quantity || 1) * (i.unitPrice || 0), 0) || 0;
+      return `Create order for customer ${params.customerId} with ${itemCount} items (${params.currency || 'USD'} ${total.toFixed(2)})`;
+    },
   },
   update_order_status: {
     description: 'Update order status',
-    format: (params) => `Update order ${params.orderId} status to: ${params.status}`
+    format: (params) => `Update order ${params.orderId} status to: ${params.status}`,
   },
   ship_order: {
     description: 'Ship order',
-    format: (params) => `Ship order ${params.orderId}${params.trackingNumber ? ` with tracking: ${params.trackingNumber}` : ''}`
+    format: (params) =>
+      `Ship order ${params.orderId}${params.trackingNumber ? ` with tracking: ${params.trackingNumber}` : ''}`,
   },
   cancel_order: {
     description: 'Cancel order',
-    format: (params) => `Cancel order ${params.orderId}`
+    format: (params) => `Cancel order ${params.orderId}`,
   },
 
   // Inventory operations
   create_inventory_item: {
     description: 'Create inventory item',
-    format: (params) => `Create inventory item: ${params.sku} (${params.name}) with ${params.initialQuantity || 0} units`
+    format: (params) =>
+      `Create inventory item: ${params.sku} (${params.name}) with ${params.initialQuantity || 0} units`,
   },
   adjust_inventory: {
     description: 'Adjust inventory',
     format: (params) => {
       const sign = params.quantity > 0 ? '+' : '';
-      return `Adjust ${params.sku} by ${sign}${params.quantity} (${params.reason})`
-    }
+      return `Adjust ${params.sku} by ${sign}${params.quantity} (${params.reason})`;
+    },
   },
   reserve_inventory: {
     description: 'Reserve inventory',
-    format: (params) => `Reserve ${params.quantity} units of ${params.sku}${params.orderId ? ` for order ${params.orderId}` : ''}`
+    format: (params) =>
+      `Reserve ${params.quantity} units of ${params.sku}${params.orderId ? ` for order ${params.orderId}` : ''}`,
   },
   confirm_reservation: {
     description: 'Confirm reservation',
-    format: (params) => `Confirm reservation for ${params.sku}`
+    format: (params) => `Confirm reservation for ${params.sku}`,
   },
   release_reservation: {
     description: 'Release reservation',
-    format: (params) => `Release ${params.quantity} reserved units of ${params.sku}`
+    format: (params) => `Release ${params.quantity} reserved units of ${params.sku}`,
   },
 
   // Return operations
   create_return: {
     description: 'Create return',
-    format: (params) => `Create return for order ${params.orderId} (${params.reason})`
+    format: (params) => `Create return for order ${params.orderId} (${params.reason})`,
   },
   approve_return: {
     description: 'Approve return',
-    format: (params) => `Approve return ${params.returnId}`
+    format: (params) => `Approve return ${params.returnId}`,
   },
   reject_return: {
     description: 'Reject return',
-    format: (params) => `Reject return ${params.returnId} (${params.reason})`
+    format: (params) => `Reject return ${params.returnId} (${params.reason})`,
   },
 
   // Cart operations
   create_cart: {
     description: 'Create cart',
-    format: (params) => `Create cart${params.customerEmail ? ` for ${params.customerEmail}` : ''}`
+    format: (params) => `Create cart${params.customerEmail ? ` for ${params.customerEmail}` : ''}`,
   },
   add_cart_item: {
     description: 'Add item to cart',
-    format: (params) => `Add ${params.quantity || 1}x ${params.sku} to cart ${params.cartId}`
+    format: (params) => `Add ${params.quantity || 1}x ${params.sku} to cart ${params.cartId}`,
   },
   update_cart_item: {
     description: 'Update cart item',
-    format: (params) => `Update cart item quantity to ${params.quantity}`
+    format: (params) => `Update cart item quantity to ${params.quantity}`,
   },
   remove_cart_item: {
     description: 'Remove cart item',
-    format: (params) => `Remove item ${params.itemId} from cart ${params.cartId}`
+    format: (params) => `Remove item ${params.itemId} from cart ${params.cartId}`,
   },
   complete_checkout: {
     description: 'Complete checkout',
-    format: (params) => `Complete checkout for cart ${params.cartId}`
+    format: (params) => `Complete checkout for cart ${params.cartId}`,
   },
   cancel_cart: {
     description: 'Cancel cart',
-    format: (params) => `Cancel cart ${params.cartId}`
+    format: (params) => `Cancel cart ${params.cartId}`,
   },
 
   // Admin operations
   set_exchange_rate: {
     description: 'Set exchange rate',
-    format: (params) => `Set exchange rate ${params.fromCurrency} → ${params.toCurrency}: ${params.rate}`
+    format: (params) =>
+      `Set exchange rate ${params.fromCurrency} → ${params.toCurrency}: ${params.rate}`,
   },
   set_base_currency: {
     description: 'Set base currency',
-    format: (params) => `Set store base currency to ${params.currency}`
-  }
+    format: (params) => `Set store base currency to ${params.currency}`,
+  },
 };
 
 /**
@@ -153,7 +158,7 @@ export class DryRunManager {
       description: operation?.description || `Execute ${operationName}`,
       formatted: operation?.format?.(params) || `${operationName}(${JSON.stringify(params)})`,
       params,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     this.operations.push(preview);
@@ -192,7 +197,7 @@ export class DryRunManager {
 
     return {
       total: this.operations.length,
-      byType
+      byType,
     };
   }
 
@@ -204,9 +209,7 @@ export class DryRunManager {
       return 'No operations to preview.';
     }
 
-    const lines = [
-      `\n${ICONS.info} Dry-run mode: The following operations would be executed:\n`
-    ];
+    const lines = [`\n${ICONS.info} Dry-run mode: The following operations would be executed:\n`];
 
     for (let i = 0; i < this.operations.length; i++) {
       const op = this.operations[i];
@@ -232,15 +235,21 @@ export class DryRunManager {
         const preview = this.preview(toolName, params);
 
         return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              dryRun: true,
-              wouldExecute: toolName,
-              preview: preview.formatted,
-              params
-            }, null, 2)
-          }]
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  dryRun: true,
+                  wouldExecute: toolName,
+                  preview: preview.formatted,
+                  params,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
         };
       }
 
@@ -276,7 +285,7 @@ export function formatDryRunResult(result, options = {}) {
 
   const lines = [
     `\n${yellow}[DRY-RUN]${reset} Would execute: ${result.operation}`,
-    `${gray}${result.formatted}${reset}`
+    `${gray}${result.formatted}${reset}`,
   ];
 
   if (options.showParams) {
@@ -290,11 +299,11 @@ export function formatDryRunResult(result, options = {}) {
  * Parse --dry-run flag from CLI arguments
  */
 export function parseDryRunFlag(args) {
-  const index = args.findIndex(a => a === '--dry-run' || a === '-n');
+  const index = args.findIndex((a) => a === '--dry-run' || a === '-n');
   if (index !== -1) {
     return {
       enabled: true,
-      args: [...args.slice(0, index), ...args.slice(index + 1)]
+      args: [...args.slice(0, index), ...args.slice(index + 1)],
     };
   }
   return { enabled: false, args };
@@ -305,5 +314,5 @@ export default {
   DryRunManager,
   createDryRunManager,
   formatDryRunResult,
-  parseDryRunFlag
+  parseDryRunFlag,
 };

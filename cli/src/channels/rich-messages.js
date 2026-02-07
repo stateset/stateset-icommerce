@@ -53,19 +53,33 @@ export function createOrderSummary(order) {
   ];
 
   if (order.customerEmail || order.customer_email) {
-    fields.push({ name: 'Customer', value: order.customerEmail || order.customer_email, inline: true });
+    fields.push({
+      name: 'Customer',
+      value: order.customerEmail || order.customer_email,
+      inline: true,
+    });
   }
 
   if (order.items && order.items.length > 0) {
     const itemList = order.items
       .slice(0, 5)
-      .map((i) => `${i.quantity || 1}x ${i.name || i.sku} ($${(i.unitPrice || i.unit_price || 0).toFixed(2)})`)
+      .map(
+        (i) =>
+          `${i.quantity || 1}x ${i.name || i.sku} ($${(i.unitPrice || i.unit_price || 0).toFixed(2)})`,
+      )
       .join('\n');
-    fields.push({ name: 'Items', value: itemList + (order.items.length > 5 ? `\n...and ${order.items.length - 5} more` : '') });
+    fields.push({
+      name: 'Items',
+      value: itemList + (order.items.length > 5 ? `\n...and ${order.items.length - 5} more` : ''),
+    });
   }
 
   if (order.trackingNumber || order.tracking_number) {
-    fields.push({ name: 'Tracking', value: order.trackingNumber || order.tracking_number, inline: true });
+    fields.push({
+      name: 'Tracking',
+      value: order.trackingNumber || order.tracking_number,
+      inline: true,
+    });
   }
 
   const createdAt = order.createdAt || order.created_at;
@@ -150,15 +164,25 @@ export function createCartSummary(cart) {
   ];
 
   if (cart.customerEmail || cart.customer_email) {
-    fields.push({ name: 'Customer', value: cart.customerEmail || cart.customer_email, inline: true });
+    fields.push({
+      name: 'Customer',
+      value: cart.customerEmail || cart.customer_email,
+      inline: true,
+    });
   }
 
   if (cart.items && cart.items.length > 0) {
     const itemList = cart.items
       .slice(0, 5)
-      .map((i) => `${i.quantity || 1}x ${i.name || i.sku} ($${(i.unitPrice || i.unit_price || 0).toFixed(2)})`)
+      .map(
+        (i) =>
+          `${i.quantity || 1}x ${i.name || i.sku} ($${(i.unitPrice || i.unit_price || 0).toFixed(2)})`,
+      )
       .join('\n');
-    fields.push({ name: 'Items', value: itemList + (cart.items.length > 5 ? `\n...and ${cart.items.length - 5} more` : '') });
+    fields.push({
+      name: 'Items',
+      value: itemList + (cart.items.length > 5 ? `\n...and ${cart.items.length - 5} more` : ''),
+    });
   }
 
   return {

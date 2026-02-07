@@ -121,9 +121,9 @@ export class GrpcSequencerClient extends EventEmitter {
       grpc = await import('@grpc/grpc-js');
       protoLoader = await import('@grpc/proto-loader');
       this._grpcLoaded = true;
-    } catch (err) {
+    } catch {
       throw new Error(
-        'gRPC dependencies not installed. Run: npm install @grpc/grpc-js @grpc/proto-loader'
+        'gRPC dependencies not installed. Run: npm install @grpc/grpc-js @grpc/proto-loader',
       );
     }
   }
@@ -253,10 +253,7 @@ export class GrpcSequencerClient extends EventEmitter {
       return;
     }
 
-    const delay = Math.min(
-      baseDelayMs * Math.pow(2, this.reconnectAttempt),
-      maxDelayMs
-    );
+    const delay = Math.min(baseDelayMs * Math.pow(2, this.reconnectAttempt), maxDelayMs);
 
     this.reconnectAttempt++;
     this.emit('reconnecting', { attempt: this.reconnectAttempt, delayMs: delay });
@@ -364,7 +361,11 @@ export class GrpcSequencerClient extends EventEmitter {
       agent_signature: agentSignature,
       base_version: event.baseVersion || event.base_version || 0,
       created_at: {
-        seconds: Math.floor((event.createdAt instanceof Date ? event.createdAt.getTime() : event.createdAt || Date.now()) / 1000),
+        seconds: Math.floor(
+          (event.createdAt instanceof Date
+            ? event.createdAt.getTime()
+            : event.createdAt || Date.now()) / 1000,
+        ),
         nanos: 0,
       },
     };
@@ -409,7 +410,7 @@ export class GrpcSequencerClient extends EventEmitter {
           if (events.length > 0) {
             this.lastSequence = Math.max(
               this.lastSequence,
-              ...events.map((e) => Number(e.sequenceNumber))
+              ...events.map((e) => Number(e.sequenceNumber)),
             );
           }
           resolve({
@@ -441,9 +442,7 @@ export class GrpcSequencerClient extends EventEmitter {
       payload: envelope.payload ? JSON.parse(Buffer.from(envelope.payload).toString()) : {},
       payloadHash: envelope.payload_plain_hash,
       baseVersion: envelope.base_version || null,
-      createdAt: envelope.created_at
-        ? new Date(Number(envelope.created_at.seconds) * 1000)
-        : null,
+      createdAt: envelope.created_at ? new Date(Number(envelope.created_at.seconds) * 1000) : null,
       sequenceNumber: Number(protoEvent.sequence_number),
       sequencedAt: protoEvent.sequenced_at
         ? new Date(Number(protoEvent.sequenced_at.seconds) * 1000)
@@ -579,7 +578,8 @@ export class GrpcSequencerClient extends EventEmitter {
 
     this.syncStream.on('data', (message) => {
       // Handle push acknowledgment (proto field: push_ack)
-      const pushAck = message.pushAck || message.push_ack || message.pushResponse || message.push_response;
+      const pushAck =
+        message.pushAck || message.push_ack || message.pushResponse || message.push_response;
       if (pushAck) {
         this.emit('push-ack', pushAck);
       } else if (message.pullResponse || message.pull_response) {
@@ -918,18 +918,10 @@ export class GrpcSequencerClient extends EventEmitter {
               keyType: k.key_type,
               publicKey: k.public_key,
               status: k.status,
-              createdAt: k.created_at
-                ? new Date(Number(k.created_at.seconds) * 1000)
-                : null,
-              validFrom: k.valid_from
-                ? new Date(Number(k.valid_from.seconds) * 1000)
-                : null,
-              validTo: k.valid_to
-                ? new Date(Number(k.valid_to.seconds) * 1000)
-                : null,
-              revokedAt: k.revoked_at
-                ? new Date(Number(k.revoked_at.seconds) * 1000)
-                : null,
+              createdAt: k.created_at ? new Date(Number(k.created_at.seconds) * 1000) : null,
+              validFrom: k.valid_from ? new Date(Number(k.valid_from.seconds) * 1000) : null,
+              validTo: k.valid_to ? new Date(Number(k.valid_to.seconds) * 1000) : null,
+              revokedAt: k.revoked_at ? new Date(Number(k.revoked_at.seconds) * 1000) : null,
             })),
           });
         }

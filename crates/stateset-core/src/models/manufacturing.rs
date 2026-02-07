@@ -217,7 +217,10 @@ impl WorkOrder {
 
     /// Check if work order can be started
     pub fn can_start(&self) -> bool {
-        matches!(self.status, WorkOrderStatus::Planned | WorkOrderStatus::OnHold)
+        matches!(
+            self.status,
+            WorkOrderStatus::Planned | WorkOrderStatus::OnHold
+        )
     }
 
     /// Check if work order can be completed
@@ -237,7 +240,10 @@ impl WorkOrder {
     /// Check if work order is overdue
     pub fn is_overdue(&self) -> bool {
         if let Some(scheduled_end) = self.scheduled_end {
-            if !matches!(self.status, WorkOrderStatus::Completed | WorkOrderStatus::Cancelled) {
+            if !matches!(
+                self.status,
+                WorkOrderStatus::Completed | WorkOrderStatus::Cancelled
+            ) {
                 return Utc::now() > scheduled_end;
             }
         }
@@ -643,7 +649,10 @@ mod tests {
 
     #[test]
     fn test_task_status_from_str() {
-        assert_eq!(TaskStatus::from_str("pending").unwrap(), TaskStatus::Pending);
+        assert_eq!(
+            TaskStatus::from_str("pending").unwrap(),
+            TaskStatus::Pending
+        );
         assert!(TaskStatus::from_str("unknown").is_err());
     }
 }

@@ -16,6 +16,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)]
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -2191,11 +2193,7 @@ impl Orders {
             .orders
             .values()
             .map(|data| {
-                let items = store
-                    .order_items
-                    .get(&data.id)
-                    .cloned()
-                    .unwrap_or_default();
+                let items = store.order_items.get(&data.id).cloned().unwrap_or_default();
                 let js_items: Vec<JsOrderItem> = items.iter().map(|i| i.into()).collect();
 
                 JsOrder {
@@ -2738,8 +2736,14 @@ impl Payments {
         let data = PaymentData {
             id,
             payment_number,
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-            customer_id: input.customer_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input
+                .order_id
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            customer_id: input
+                .customer_id
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
             amount: input.amount,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             status: "pending".to_string(),
@@ -2972,8 +2976,14 @@ impl Warranties {
             id,
             warranty_number,
             customer_id,
-            product_id: input.product_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            product_id: input
+                .product_id
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input
+                .order_id
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
             status: "active".to_string(),
             duration_months,
             start_date: now.to_rfc3339(),
@@ -3054,7 +3064,8 @@ impl Warranties {
     /// List all warranties.
     pub fn list(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let warranties: Vec<JsWarranty> = store.warranties.values().map(|data| data.into()).collect();
+        let warranties: Vec<JsWarranty> =
+            store.warranties.values().map(|data| data.into()).collect();
         serde_wasm_bindgen::to_value(&warranties).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -3161,8 +3172,7 @@ impl PurchaseOrders {
         match store.purchase_orders.get(&uuid) {
             Some(data) => {
                 let js_po: JsPurchaseOrder = data.into();
-                serde_wasm_bindgen::to_value(&js_po)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_po).map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -3205,7 +3215,11 @@ impl PurchaseOrders {
     /// List all purchase orders.
     pub fn list(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let pos: Vec<JsPurchaseOrder> = store.purchase_orders.values().map(|data| data.into()).collect();
+        let pos: Vec<JsPurchaseOrder> = store
+            .purchase_orders
+            .values()
+            .map(|data| data.into())
+            .collect();
         serde_wasm_bindgen::to_value(&pos).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -3249,7 +3263,10 @@ impl Invoices {
             id,
             invoice_number,
             customer_id,
-            order_id: input.order_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+            order_id: input
+                .order_id
+                .as_ref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
             status: "draft".to_string(),
             subtotal: input.subtotal,
             tax_amount,
@@ -3387,8 +3404,7 @@ impl Bom {
         match store.boms.get(&uuid) {
             Some(data) => {
                 let js_bom: JsBom = data.into();
-                serde_wasm_bindgen::to_value(&js_bom)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_bom).map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -3397,7 +3413,8 @@ impl Bom {
     /// Add a component to a BOM.
     #[wasm_bindgen(js_name = addComponent)]
     pub fn add_component(&self, bom_id: &str, input: JsValue) -> Result<JsValue, JsValue> {
-        let bom_uuid = Uuid::parse_str(bom_id).map_err(|_| JsValue::from_str("Invalid BOM UUID"))?;
+        let bom_uuid =
+            Uuid::parse_str(bom_id).map_err(|_| JsValue::from_str("Invalid BOM UUID"))?;
         let input: AddBomComponentInput =
             serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
@@ -3484,8 +3501,8 @@ impl WorkOrders {
         let input: CreateWorkOrderInput =
             serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let bom_id = Uuid::parse_str(&input.bom_id)
-            .map_err(|_| JsValue::from_str("Invalid BOM UUID"))?;
+        let bom_id =
+            Uuid::parse_str(&input.bom_id).map_err(|_| JsValue::from_str("Invalid BOM UUID"))?;
 
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
@@ -3523,8 +3540,7 @@ impl WorkOrders {
         match store.work_orders.get(&uuid) {
             Some(data) => {
                 let js_wo: JsWorkOrder = data.into();
-                serde_wasm_bindgen::to_value(&js_wo)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_wo).map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -3589,7 +3605,8 @@ impl WorkOrders {
     /// List all work orders.
     pub fn list(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let work_orders: Vec<JsWorkOrder> = store.work_orders.values().map(|data| data.into()).collect();
+        let work_orders: Vec<JsWorkOrder> =
+            store.work_orders.values().map(|data| data.into()).collect();
         serde_wasm_bindgen::to_value(&work_orders).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
@@ -3768,7 +3785,8 @@ impl Carts {
         // Now update cart totals
         let cart = store.carts.get_mut(&uuid).unwrap();
         cart.subtotal += total;
-        cart.grand_total = cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
+        cart.grand_total =
+            cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
         cart.updated_at = Utc::now().to_rfc3339();
 
         serde_wasm_bindgen::to_value(&js_item).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -3777,8 +3795,10 @@ impl Carts {
     /// Remove an item from the cart.
     #[wasm_bindgen(js_name = removeItem)]
     pub fn remove_item(&self, cart_id: &str, item_id: &str) -> Result<(), JsValue> {
-        let cart_uuid = Uuid::parse_str(cart_id).map_err(|_| JsValue::from_str("Invalid cart UUID"))?;
-        let item_uuid = Uuid::parse_str(item_id).map_err(|_| JsValue::from_str("Invalid item UUID"))?;
+        let cart_uuid =
+            Uuid::parse_str(cart_id).map_err(|_| JsValue::from_str("Invalid cart UUID"))?;
+        let item_uuid =
+            Uuid::parse_str(item_id).map_err(|_| JsValue::from_str("Invalid item UUID"))?;
 
         let mut store = self.store.borrow_mut();
 
@@ -3803,7 +3823,8 @@ impl Carts {
         if let Some(total) = item_total {
             let cart = store.carts.get_mut(&cart_uuid).unwrap();
             cart.subtotal -= total;
-            cart.grand_total = cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
+            cart.grand_total =
+                cart.subtotal + cart.tax_amount + cart.shipping_amount - cart.discount_amount;
             cart.updated_at = Utc::now().to_rfc3339();
         }
 
@@ -3895,7 +3916,7 @@ impl Carts {
         let mut store = self.store.borrow_mut();
 
         // First, extract all data we need from the cart (immutable borrow)
-        let (cart_status, customer_id, grand_total, currency, notes) = {
+        let (_cart_status, customer_id, grand_total, currency, notes) = {
             let cart = store
                 .carts
                 .get(&cart_uuid)
@@ -3903,10 +3924,14 @@ impl Carts {
 
             // Check cart status
             if cart.status != "active" && cart.status != "ready_for_payment" {
-                return Err(JsValue::from_str("Cart is not in a valid state for checkout"));
+                return Err(JsValue::from_str(
+                    "Cart is not in a valid state for checkout",
+                ));
             }
 
-            let customer_id = cart.customer_id.ok_or_else(|| JsValue::from_str("Cart has no customer"))?;
+            let customer_id = cart
+                .customer_id
+                .ok_or_else(|| JsValue::from_str("Cart has no customer"))?;
 
             (
                 cart.status.clone(),
@@ -3918,9 +3943,15 @@ impl Carts {
         };
 
         // Get cart items
-        let items = store.cart_items.get(&cart_uuid).cloned().unwrap_or_default();
+        let items = store
+            .cart_items
+            .get(&cart_uuid)
+            .cloned()
+            .unwrap_or_default();
         if items.is_empty() {
-            return Err(JsValue::from_str("Cannot complete checkout with empty cart"));
+            return Err(JsValue::from_str(
+                "Cannot complete checkout with empty cart",
+            ));
         }
 
         // Create order
@@ -4135,7 +4166,9 @@ impl Subscriptions {
             code: input.code,
             name: input.name,
             description: input.description,
-            billing_interval: input.billing_interval.unwrap_or_else(|| "monthly".to_string()),
+            billing_interval: input
+                .billing_interval
+                .unwrap_or_else(|| "monthly".to_string()),
             billing_interval_count: input.billing_interval_count.unwrap_or(1),
             price: input.price,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
@@ -4161,7 +4194,8 @@ impl Subscriptions {
         match store.subscription_plans.get(&uuid) {
             Some(plan) => {
                 let js_plan: JsSubscriptionPlan = plan.into();
-                serde_wasm_bindgen::to_value(&js_plan).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_plan)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4236,8 +4270,8 @@ impl Subscriptions {
 
         let customer_id = Uuid::parse_str(&input.customer_id)
             .map_err(|_| JsValue::from_str("Invalid customer UUID"))?;
-        let plan_id = Uuid::parse_str(&input.plan_id)
-            .map_err(|_| JsValue::from_str("Invalid plan UUID"))?;
+        let plan_id =
+            Uuid::parse_str(&input.plan_id).map_err(|_| JsValue::from_str("Invalid plan UUID"))?;
 
         let mut store = self.store.borrow_mut();
 
@@ -4346,7 +4380,9 @@ impl Subscriptions {
             .ok_or_else(|| JsValue::from_str("Subscription not found"))?;
 
         if sub.status != "active" && sub.status != "trialing" {
-            return Err(JsValue::from_str("Subscription cannot be paused in current state"));
+            return Err(JsValue::from_str(
+                "Subscription cannot be paused in current state",
+            ));
         }
 
         let now = Utc::now();
@@ -4359,12 +4395,18 @@ impl Subscriptions {
             id: Uuid::new_v4(),
             subscription_id: uuid,
             event_type: "paused".to_string(),
-            description: reason.map(|r| format!("Paused: {}", r)).unwrap_or_else(|| "Paused by customer".to_string()),
+            description: reason
+                .map(|r| format!("Paused: {}", r))
+                .unwrap_or_else(|| "Paused by customer".to_string()),
             created_at: now.to_rfc3339(),
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store.subscription_events.entry(uuid).or_default().push(event);
+        store
+            .subscription_events
+            .entry(uuid)
+            .or_default()
+            .push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4398,13 +4440,22 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store.subscription_events.entry(uuid).or_default().push(event);
+        store
+            .subscription_events
+            .entry(uuid)
+            .or_default()
+            .push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Cancel a subscription.
-    pub fn cancel(&self, id: &str, at_period_end: Option<bool>, reason: Option<String>) -> Result<JsValue, JsValue> {
+    pub fn cancel(
+        &self,
+        id: &str,
+        at_period_end: Option<bool>,
+        reason: Option<String>,
+    ) -> Result<JsValue, JsValue> {
         let uuid = Uuid::parse_str(id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
@@ -4440,7 +4491,11 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store.subscription_events.entry(uuid).or_default().push(event);
+        store
+            .subscription_events
+            .entry(uuid)
+            .or_default()
+            .push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4474,7 +4529,11 @@ impl Subscriptions {
         };
 
         let js_sub: JsSubscription = (&*sub).into();
-        store.subscription_events.entry(uuid).or_default().push(event);
+        store
+            .subscription_events
+            .entry(uuid)
+            .or_default()
+            .push(event);
 
         serde_wasm_bindgen::to_value(&js_sub).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -4486,7 +4545,8 @@ impl Subscriptions {
     /// Create a billing cycle for a subscription.
     #[wasm_bindgen(js_name = createBillingCycle)]
     pub fn create_billing_cycle(&self, subscription_id: &str) -> Result<JsValue, JsValue> {
-        let sub_uuid = Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let sub_uuid =
+            Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let mut store = self.store.borrow_mut();
 
         let sub = store
@@ -4525,7 +4585,9 @@ impl Subscriptions {
     #[wasm_bindgen(js_name = listBillingCycles)]
     pub fn list_billing_cycles(&self, subscription_id: Option<String>) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let sub_uuid = subscription_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let sub_uuid = subscription_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
 
         let cycles: Vec<JsBillingCycle> = store
             .billing_cycles
@@ -4546,7 +4608,8 @@ impl Subscriptions {
         match store.billing_cycles.get(&uuid) {
             Some(cycle) => {
                 let js_cycle: JsBillingCycle = cycle.into();
-                serde_wasm_bindgen::to_value(&js_cycle).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_cycle)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4559,7 +4622,8 @@ impl Subscriptions {
     /// Get events for a subscription.
     #[wasm_bindgen(js_name = getEvents)]
     pub fn get_events(&self, subscription_id: &str) -> Result<JsValue, JsValue> {
-        let uuid = Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
+        let uuid =
+            Uuid::parse_str(subscription_id).map_err(|_| JsValue::from_str("Invalid UUID"))?;
         let store = self.store.borrow();
 
         let events: Vec<JsSubscriptionEvent> = store
@@ -4623,16 +4687,18 @@ impl Promotions {
         let id = Uuid::new_v4();
 
         store.next_promotion_code_number += 1;
-        let code = input.code.unwrap_or_else(|| {
-            format!("PROMO-{:06}", store.next_promotion_code_number)
-        });
+        let code = input
+            .code
+            .unwrap_or_else(|| format!("PROMO-{:06}", store.next_promotion_code_number));
 
         let promo = PromotionData {
             id,
             code,
             name: input.name,
             description: input.description,
-            promotion_type: input.promotion_type.unwrap_or_else(|| "percentage_off".to_string()),
+            promotion_type: input
+                .promotion_type
+                .unwrap_or_else(|| "percentage_off".to_string()),
             trigger: input.trigger.unwrap_or_else(|| "automatic".to_string()),
             target: input.target.unwrap_or_else(|| "order".to_string()),
             stacking: input.stacking.unwrap_or_else(|| "stackable".to_string()),
@@ -4668,7 +4734,8 @@ impl Promotions {
         match store.promotions.get(&uuid) {
             Some(promo) => {
                 let js_promo: JsPromotion = promo.into();
-                serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_promo)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4682,7 +4749,8 @@ impl Promotions {
         match store.promotions.values().find(|p| p.code == code) {
             Some(promo) => {
                 let js_promo: JsPromotion = promo.into();
-                serde_wasm_bindgen::to_value(&js_promo).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_promo)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4690,7 +4758,11 @@ impl Promotions {
 
     /// List all promotions.
     #[wasm_bindgen(js_name = listPromotions)]
-    pub fn list_promotions(&self, status: Option<String>, is_active: Option<bool>) -> Result<JsValue, JsValue> {
+    pub fn list_promotions(
+        &self,
+        status: Option<String>,
+        is_active: Option<bool>,
+    ) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
 
         let promos: Vec<JsPromotion> = store
@@ -4872,7 +4944,8 @@ impl Promotions {
         match store.coupons.get(&uuid) {
             Some(coupon) => {
                 let js_coupon: JsCoupon = coupon.into();
-                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_coupon)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4886,7 +4959,8 @@ impl Promotions {
         match store.coupons.values().find(|c| c.code == code) {
             Some(coupon) => {
                 let js_coupon: JsCoupon = coupon.into();
-                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_coupon)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -4928,7 +5002,8 @@ impl Promotions {
                 }
 
                 let js_coupon: JsCoupon = coupon.into();
-                serde_wasm_bindgen::to_value(&js_coupon).map_err(|e| JsValue::from_str(&e.to_string()))
+                serde_wasm_bindgen::to_value(&js_coupon)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))
             }
             None => Ok(JsValue::NULL),
         }
@@ -5537,8 +5612,8 @@ impl Tax {
     /// Create a tax jurisdiction.
     #[wasm_bindgen(js_name = createJurisdiction)]
     pub fn create_jurisdiction(&self, input: JsValue) -> Result<JsValue, JsValue> {
-        let input: CreateJurisdictionInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let input: CreateJurisdictionInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let now = Utc::now();
         let id = Uuid::new_v4();
@@ -5562,7 +5637,8 @@ impl Tax {
         let js_jurisdiction: JsTaxJurisdiction = (&data).into();
         self.store.borrow_mut().tax_jurisdictions.insert(id, data);
 
-        serde_wasm_bindgen::to_value(&js_jurisdiction).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&js_jurisdiction)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Get a jurisdiction by ID.
@@ -5596,9 +5672,15 @@ impl Tax {
 
     /// List all jurisdictions.
     #[wasm_bindgen(js_name = listJurisdictions)]
-    pub fn list_jurisdictions(&self, country_code: Option<String>, level: Option<String>) -> Result<JsValue, JsValue> {
+    pub fn list_jurisdictions(
+        &self,
+        country_code: Option<String>,
+        level: Option<String>,
+    ) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
-        let jurisdictions: Vec<JsTaxJurisdiction> = store.tax_jurisdictions.values()
+        let jurisdictions: Vec<JsTaxJurisdiction> = store
+            .tax_jurisdictions
+            .values()
             .filter(|j| {
                 let country_match = country_code.as_ref().map_or(true, |c| &j.country_code == c);
                 let level_match = level.as_ref().map_or(true, |l| &j.level == l);
@@ -5617,8 +5699,8 @@ impl Tax {
     /// Create a tax rate.
     #[wasm_bindgen(js_name = createRate)]
     pub fn create_rate(&self, input: JsValue) -> Result<JsValue, JsValue> {
-        let input: CreateTaxRateInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let input: CreateTaxRateInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let jurisdiction_id = Uuid::parse_str(&input.jurisdiction_id)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -5630,7 +5712,9 @@ impl Tax {
             id,
             jurisdiction_id,
             tax_type: input.tax_type.unwrap_or_else(|| "sales_tax".to_string()),
-            product_category: input.product_category.unwrap_or_else(|| "standard".to_string()),
+            product_category: input
+                .product_category
+                .unwrap_or_else(|| "standard".to_string()),
             rate: input.rate,
             name: input.name,
             description: input.description,
@@ -5673,7 +5757,9 @@ impl Tax {
         let store = self.store.borrow();
         let filter_id = jurisdiction_id.and_then(|s| Uuid::parse_str(&s).ok());
 
-        let rates: Vec<JsTaxRate> = store.tax_rates.values()
+        let rates: Vec<JsTaxRate> = store
+            .tax_rates
+            .values()
             .filter(|r| filter_id.map_or(true, |id| r.jurisdiction_id == id))
             .map(|d| d.into())
             .collect();
@@ -5688,11 +5774,11 @@ impl Tax {
     /// Create a tax exemption.
     #[wasm_bindgen(js_name = createExemption)]
     pub fn create_exemption(&self, input: JsValue) -> Result<JsValue, JsValue> {
-        let input: CreateExemptionInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let input: CreateExemptionInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let customer_id = Uuid::parse_str(&input.customer_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let customer_id =
+            Uuid::parse_str(&input.customer_id).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let now = Utc::now();
         let id = Uuid::new_v4();
@@ -5703,7 +5789,8 @@ impl Tax {
             exemption_type: input.exemption_type,
             certificate_number: input.certificate_number,
             issuing_authority: input.issuing_authority,
-            jurisdiction_ids: input.jurisdiction_ids
+            jurisdiction_ids: input
+                .jurisdiction_ids
                 .unwrap_or_default()
                 .into_iter()
                 .filter_map(|s| Uuid::parse_str(&s).ok())
@@ -5743,11 +5830,13 @@ impl Tax {
     /// Get exemptions for a customer.
     #[wasm_bindgen(js_name = getCustomerExemptions)]
     pub fn get_customer_exemptions(&self, customer_id: &str) -> Result<JsValue, JsValue> {
-        let customer_uuid = Uuid::parse_str(customer_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let customer_uuid =
+            Uuid::parse_str(customer_id).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let store = self.store.borrow();
-        let exemptions: Vec<JsTaxExemption> = store.tax_exemptions.values()
+        let exemptions: Vec<JsTaxExemption> = store
+            .tax_exemptions
+            .values()
             .filter(|e| e.customer_id == customer_uuid && e.active)
             .map(|d| d.into())
             .collect();
@@ -5758,11 +5847,13 @@ impl Tax {
     /// Check if a customer is tax exempt.
     #[wasm_bindgen(js_name = customerIsExempt)]
     pub fn customer_is_exempt(&self, customer_id: &str) -> Result<bool, JsValue> {
-        let customer_uuid = Uuid::parse_str(customer_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let customer_uuid =
+            Uuid::parse_str(customer_id).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let store = self.store.borrow();
-        let has_exemption = store.tax_exemptions.values()
+        let has_exemption = store
+            .tax_exemptions
+            .values()
             .any(|e| e.customer_id == customer_uuid && e.active);
 
         Ok(has_exemption)
@@ -5775,20 +5866,23 @@ impl Tax {
     /// Calculate tax for a transaction.
     #[wasm_bindgen(js_name = calculate)]
     pub fn calculate(&self, input: JsValue) -> Result<JsValue, JsValue> {
-        let input: TaxCalculationInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let input: TaxCalculationInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let store = self.store.borrow();
         let now = Utc::now();
 
         // Find applicable rates based on address
-        let mut applicable_rates: Vec<&TaxRateData> = store.tax_rates.values()
+        let mut applicable_rates: Vec<&TaxRateData> = store
+            .tax_rates
+            .values()
             .filter(|r| {
                 // Simple matching - in a real implementation this would be more sophisticated
                 if let Some(jurisdiction) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
                     let country_match = jurisdiction.country_code == input.shipping_address.country;
-                    let state_match = input.shipping_address.state.as_ref()
-                        .map_or(true, |s| jurisdiction.state_code.as_ref().map_or(true, |js| js == s));
+                    let state_match = input.shipping_address.state.as_ref().map_or(true, |s| {
+                        jurisdiction.state_code.as_ref().map_or(true, |js| js == s)
+                    });
                     country_match && state_match && r.active
                 } else {
                     false
@@ -5854,8 +5948,13 @@ impl Tax {
             let mut line_tax = Money::zero();
             let item_category = item.tax_category.as_deref().unwrap_or(default_category);
 
-            for rate in applicable_rates.iter().filter(|r| r.product_category == item_category) {
-                let Some(capped_base) = rate_base(line_total, rate.threshold_min, rate.threshold_max) else {
+            for rate in applicable_rates
+                .iter()
+                .filter(|r| r.product_category == item_category)
+            {
+                let Some(capped_base) =
+                    rate_base(line_total, rate.threshold_min, rate.threshold_max)
+                else {
                     continue;
                 };
                 let taxable_amount = if rate.fixed_amount.is_some() {
@@ -5874,16 +5973,19 @@ impl Tax {
                 total_tax += rate_tax;
 
                 if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
-                    let entry = tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
-                        jurisdiction_id: j.id,
-                        jurisdiction_name: j.name.clone(),
-                        tax_type: rate.tax_type.clone(),
-                        rate_name: rate.name.clone(),
-                        rate: rate.rate,
-                        taxable_amount: Money::zero(),
-                        tax_amount: Money::zero(),
-                        is_compound: rate.is_compound,
-                    });
+                    let entry =
+                        tax_breakdown_map
+                            .entry(rate.id)
+                            .or_insert_with(|| TaxBreakdownAccum {
+                                jurisdiction_id: j.id,
+                                jurisdiction_name: j.name.clone(),
+                                tax_type: rate.tax_type.clone(),
+                                rate_name: rate.name.clone(),
+                                rate: rate.rate,
+                                taxable_amount: Money::zero(),
+                                tax_amount: Money::zero(),
+                                is_compound: rate.is_compound,
+                            });
                     entry.taxable_amount += taxable_amount;
                     entry.tax_amount += rate_tax;
                 }
@@ -5918,8 +6020,13 @@ impl Tax {
                 if shipping_taxable < Money::zero() {
                     shipping_taxable = Money::zero();
                 }
-                for rate in applicable_rates.iter().filter(|r| r.product_category == "standard") {
-                    let Some(capped_base) = rate_base(shipping_taxable, rate.threshold_min, rate.threshold_max) else {
+                for rate in applicable_rates
+                    .iter()
+                    .filter(|r| r.product_category == "standard")
+                {
+                    let Some(capped_base) =
+                        rate_base(shipping_taxable, rate.threshold_min, rate.threshold_max)
+                    else {
                         continue;
                     };
                     let taxable_amount = if rate.fixed_amount.is_some() {
@@ -5938,16 +6045,19 @@ impl Tax {
                     total_tax += rate_tax;
 
                     if let Some(j) = store.tax_jurisdictions.get(&rate.jurisdiction_id) {
-                        let entry = tax_breakdown_map.entry(rate.id).or_insert_with(|| TaxBreakdownAccum {
-                            jurisdiction_id: j.id,
-                            jurisdiction_name: j.name.clone(),
-                            tax_type: rate.tax_type.clone(),
-                            rate_name: rate.name.clone(),
-                            rate: rate.rate,
-                            taxable_amount: Money::zero(),
-                            tax_amount: Money::zero(),
-                            is_compound: rate.is_compound,
-                        });
+                        let entry =
+                            tax_breakdown_map
+                                .entry(rate.id)
+                                .or_insert_with(|| TaxBreakdownAccum {
+                                    jurisdiction_id: j.id,
+                                    jurisdiction_name: j.name.clone(),
+                                    tax_type: rate.tax_type.clone(),
+                                    rate_name: rate.name.clone(),
+                                    rate: rate.rate,
+                                    taxable_amount: Money::zero(),
+                                    tax_amount: Money::zero(),
+                                    is_compound: rate.is_compound,
+                                });
                         entry.taxable_amount += taxable_amount;
                         entry.tax_amount += rate_tax;
                     }
@@ -5990,11 +6100,14 @@ impl Tax {
     pub fn get_effective_rate(&self, country: &str, state: Option<String>) -> f64 {
         let store = self.store.borrow();
 
-        store.tax_rates.values()
+        store
+            .tax_rates
+            .values()
             .filter(|r| {
                 if let Some(j) = store.tax_jurisdictions.get(&r.jurisdiction_id) {
                     let country_match = j.country_code == country;
-                    let state_match = state.as_ref()
+                    let state_match = state
+                        .as_ref()
                         .map_or(true, |s| j.state_code.as_ref().map_or(true, |js| js == s));
                     country_match && state_match && r.active
                 } else {
@@ -6015,28 +6128,32 @@ impl Tax {
     pub fn get_settings(&self) -> Result<JsValue, JsValue> {
         let store = self.store.borrow();
 
-        let settings = store.tax_settings.as_ref().map(|s| {
-            let js: JsTaxSettings = s.into();
-            js
-        }).unwrap_or_else(|| {
-            let now = Utc::now();
-            JsTaxSettings {
-                id: Uuid::new_v4().to_string(),
-                enabled: true,
-                calculation_method: "exclusive".to_string(),
-                compound_method: "combined".to_string(),
-                tax_shipping: true,
-                tax_handling: true,
-                tax_gift_wrap: true,
-                default_product_category: "standard".to_string(),
-                rounding_mode: "half_up".to_string(),
-                decimal_places: 2,
-                validate_addresses: false,
-                tax_provider: None,
-                created_at: now.to_rfc3339(),
-                updated_at: now.to_rfc3339(),
-            }
-        });
+        let settings = store
+            .tax_settings
+            .as_ref()
+            .map(|s| {
+                let js: JsTaxSettings = s.into();
+                js
+            })
+            .unwrap_or_else(|| {
+                let now = Utc::now();
+                JsTaxSettings {
+                    id: Uuid::new_v4().to_string(),
+                    enabled: true,
+                    calculation_method: "exclusive".to_string(),
+                    compound_method: "combined".to_string(),
+                    tax_shipping: true,
+                    tax_handling: true,
+                    tax_gift_wrap: true,
+                    default_product_category: "standard".to_string(),
+                    rounding_mode: "half_up".to_string(),
+                    decimal_places: 2,
+                    validate_addresses: false,
+                    tax_provider: None,
+                    created_at: now.to_rfc3339(),
+                    updated_at: now.to_rfc3339(),
+                }
+            });
 
         serde_wasm_bindgen::to_value(&settings).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -6044,42 +6161,62 @@ impl Tax {
     /// Update tax settings.
     #[wasm_bindgen(js_name = updateSettings)]
     pub fn update_settings(&self, input: JsValue) -> Result<JsValue, JsValue> {
-        let input: UpdateTaxSettingsInput = serde_wasm_bindgen::from_value(input)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let input: UpdateTaxSettingsInput =
+            serde_wasm_bindgen::from_value(input).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let now = Utc::now();
         let mut store = self.store.borrow_mut();
 
-        let settings = store.tax_settings.get_or_insert_with(|| {
-            TaxSettingsData {
-                id: Uuid::new_v4(),
-                enabled: true,
-                calculation_method: "exclusive".to_string(),
-                compound_method: "combined".to_string(),
-                tax_shipping: true,
-                tax_handling: true,
-                tax_gift_wrap: true,
-                default_product_category: "standard".to_string(),
-                rounding_mode: "half_up".to_string(),
-                decimal_places: 2,
-                validate_addresses: false,
-                tax_provider: None,
-                created_at: now.to_rfc3339(),
-                updated_at: now.to_rfc3339(),
-            }
+        let settings = store.tax_settings.get_or_insert_with(|| TaxSettingsData {
+            id: Uuid::new_v4(),
+            enabled: true,
+            calculation_method: "exclusive".to_string(),
+            compound_method: "combined".to_string(),
+            tax_shipping: true,
+            tax_handling: true,
+            tax_gift_wrap: true,
+            default_product_category: "standard".to_string(),
+            rounding_mode: "half_up".to_string(),
+            decimal_places: 2,
+            validate_addresses: false,
+            tax_provider: None,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
         });
 
-        if let Some(v) = input.enabled { settings.enabled = v; }
-        if let Some(v) = input.calculation_method { settings.calculation_method = v; }
-        if let Some(v) = input.compound_method { settings.compound_method = v; }
-        if let Some(v) = input.tax_shipping { settings.tax_shipping = v; }
-        if let Some(v) = input.tax_handling { settings.tax_handling = v; }
-        if let Some(v) = input.tax_gift_wrap { settings.tax_gift_wrap = v; }
-        if let Some(v) = input.default_product_category { settings.default_product_category = v; }
-        if let Some(v) = input.rounding_mode { settings.rounding_mode = v; }
-        if let Some(v) = input.decimal_places { settings.decimal_places = v; }
-        if let Some(v) = input.validate_addresses { settings.validate_addresses = v; }
-        if let Some(v) = input.tax_provider { settings.tax_provider = Some(v); }
+        if let Some(v) = input.enabled {
+            settings.enabled = v;
+        }
+        if let Some(v) = input.calculation_method {
+            settings.calculation_method = v;
+        }
+        if let Some(v) = input.compound_method {
+            settings.compound_method = v;
+        }
+        if let Some(v) = input.tax_shipping {
+            settings.tax_shipping = v;
+        }
+        if let Some(v) = input.tax_handling {
+            settings.tax_handling = v;
+        }
+        if let Some(v) = input.tax_gift_wrap {
+            settings.tax_gift_wrap = v;
+        }
+        if let Some(v) = input.default_product_category {
+            settings.default_product_category = v;
+        }
+        if let Some(v) = input.rounding_mode {
+            settings.rounding_mode = v;
+        }
+        if let Some(v) = input.decimal_places {
+            settings.decimal_places = v;
+        }
+        if let Some(v) = input.validate_addresses {
+            settings.validate_addresses = v;
+        }
+        if let Some(v) = input.tax_provider {
+            settings.tax_provider = Some(v);
+        }
         settings.updated_at = now.to_rfc3339();
 
         let js_settings: JsTaxSettings = (&*settings).into();
@@ -6092,23 +6229,21 @@ impl Tax {
         let now = Utc::now();
         let mut store = self.store.borrow_mut();
 
-        let settings = store.tax_settings.get_or_insert_with(|| {
-            TaxSettingsData {
-                id: Uuid::new_v4(),
-                enabled: true,
-                calculation_method: "exclusive".to_string(),
-                compound_method: "combined".to_string(),
-                tax_shipping: true,
-                tax_handling: true,
-                tax_gift_wrap: true,
-                default_product_category: "standard".to_string(),
-                rounding_mode: "half_up".to_string(),
-                decimal_places: 2,
-                validate_addresses: false,
-                tax_provider: None,
-                created_at: now.to_rfc3339(),
-                updated_at: now.to_rfc3339(),
-            }
+        let settings = store.tax_settings.get_or_insert_with(|| TaxSettingsData {
+            id: Uuid::new_v4(),
+            enabled: true,
+            calculation_method: "exclusive".to_string(),
+            compound_method: "combined".to_string(),
+            tax_shipping: true,
+            tax_handling: true,
+            tax_gift_wrap: true,
+            default_product_category: "standard".to_string(),
+            rounding_mode: "half_up".to_string(),
+            decimal_places: 2,
+            validate_addresses: false,
+            tax_provider: None,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
         });
 
         settings.enabled = enabled;
@@ -6121,7 +6256,11 @@ impl Tax {
     /// Check if tax calculation is enabled.
     #[wasm_bindgen(js_name = isEnabled)]
     pub fn is_enabled(&self) -> bool {
-        self.store.borrow().tax_settings.as_ref().map_or(true, |s| s.enabled)
+        self.store
+            .borrow()
+            .tax_settings
+            .as_ref()
+            .map_or(true, |s| s.enabled)
     }
 
     // ========================================================================
@@ -6185,7 +6324,8 @@ impl Tax {
                     "NH" => "New Hampshire",
                     "OR" => "Oregon",
                     _ => state_code,
-                }.to_string(),
+                }
+                .to_string(),
                 state_rate: 0.0,
                 has_local_taxes: false,
                 origin_based: false,
@@ -6198,7 +6338,9 @@ impl Tax {
         };
 
         match info {
-            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            Some(i) => {
+                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
             None => Ok(JsValue::NULL),
         }
     }
@@ -6251,7 +6393,9 @@ impl Tax {
         };
 
         match info {
-            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            Some(i) => {
+                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
             None => Ok(JsValue::NULL),
         }
     }
@@ -6301,7 +6445,9 @@ impl Tax {
         };
 
         match info {
-            Some(i) => serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string())),
+            Some(i) => {
+                serde_wasm_bindgen::to_value(&i).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
             None => Ok(JsValue::NULL),
         }
     }
@@ -6310,9 +6456,8 @@ impl Tax {
     #[wasm_bindgen(js_name = isEuCountry)]
     pub fn is_eu_country(country_code: &str) -> bool {
         const EU_MEMBERS: &[&str] = &[
-            "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
-            "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
-            "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+            "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
+            "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
         ];
         EU_MEMBERS.contains(&country_code.to_uppercase().as_str())
     }

@@ -3,15 +3,15 @@
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
-use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
-    BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
-    CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentMethodAP, PaymentRun,
-    PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary,
-    UpdateBill, generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
-    validate_batch_size,
+    generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
+    validate_batch_size, AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter,
+    BillItem, BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill,
+    CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentMethodAP,
+    PaymentRun, PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary,
+    UpdateBill,
 };
 use uuid::Uuid;
 
@@ -137,10 +137,7 @@ impl PgAccountsPayableRepository {
         } = row;
 
         let status: BillStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid bill.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid bill.status '{}': {}", status, e))
         })?;
 
         Ok(Bill {
@@ -210,10 +207,7 @@ impl PgAccountsPayableRepository {
             ))
         })?;
         let status: PaymentStatusAP = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid bill_payment.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid bill_payment.status '{}': {}", status, e))
         })?;
 
         Ok(BillPayment {
@@ -263,10 +257,7 @@ impl PgAccountsPayableRepository {
         } = row;
 
         let status: PaymentRunStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid payment_run.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid payment_run.status '{}': {}", status, e))
         })?;
         let payment_method: PaymentMethodAP = payment_method.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -361,22 +352,25 @@ impl PgAccountsPayableRepository {
         .map_err(map_db_error)?;
 
         for item in input.items.iter() {
-            self.add_bill_item_async(id, CreateBillItem {
-                description: item.description.clone(),
-                account_code: item.account_code.clone(),
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                tax_rate: item.tax_rate,
-                po_line_id: item.po_line_id,
-            })
+            self.add_bill_item_async(
+                id,
+                CreateBillItem {
+                    description: item.description.clone(),
+                    account_code: item.account_code.clone(),
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    tax_rate: item.tax_rate,
+                    po_line_id: item.po_line_id,
+                },
+            )
             .await?;
         }
 
         self.recalculate_bill(id).await?;
 
-        self.get_bill_async(id).await?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to create bill".into())
-        })
+        self.get_bill_async(id)
+            .await?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create bill".into()))
     }
 
     pub async fn get_bill_async(&self, id: Uuid) -> Result<Option<Bill>> {
@@ -436,16 +430,22 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(purchase_order_id) = filter.purchase_order_id {
-            builder.push(" AND purchase_order_id = ").push_bind(purchase_order_id);
+            builder
+                .push(" AND purchase_order_id = ")
+                .push_bind(purchase_order_id);
         }
         if filter.overdue_only == Some(true) {
             builder.push(" AND due_date < CURRENT_DATE AND status NOT IN ('paid', 'cancelled')");
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND bill_date >= ").push_bind(to_date(from_date));
+            builder
+                .push(" AND bill_date >= ")
+                .push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder.push(" AND bill_date <= ").push_bind(to_date(to_date_value));
+            builder
+                .push(" AND bill_date <= ")
+                .push_bind(to_date(to_date_value));
         }
         if let Some(min_amount) = filter.min_amount {
             builder.push(" AND total_amount >= ").push_bind(min_amount);
@@ -469,14 +469,22 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_bill)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_bill_async(&self, id: Uuid) -> Result<()> {
-        let bill = self.get_bill_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let bill = self
+            .get_bill_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         if bill.status != BillStatus::Draft {
-            return Err(CommerceError::ValidationError("Can only delete draft bills".into()));
+            return Err(CommerceError::ValidationError(
+                "Can only delete draft bills".into(),
+            ));
         }
 
         sqlx::query("DELETE FROM ap_bills WHERE id = $1")
@@ -489,12 +497,14 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn approve_bill_async(&self, id: Uuid) -> Result<Bill> {
-        sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2 AND status IN ('draft','pending')")
-            .bind(BillStatus::Approved.to_string())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE ap_bills SET status = $1 WHERE id = $2 AND status IN ('draft','pending')",
+        )
+        .bind(BillStatus::Approved.to_string())
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_bill_async(id)
             .await?
@@ -539,7 +549,11 @@ impl PgAccountsPayableRepository {
         Ok(rows.into_iter().map(Self::row_to_bill_item).collect())
     }
 
-    pub async fn add_bill_item_async(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
+    pub async fn add_bill_item_async(
+        &self,
+        bill_id: Uuid,
+        item: CreateBillItem,
+    ) -> Result<BillItem> {
         let now = Utc::now();
         let id = Uuid::new_v4();
 
@@ -638,12 +652,11 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn get_overdue_bills_async(&self) -> Result<Vec<Bill>> {
-        self
-            .list_bills_async(BillFilter {
-                overdue_only: Some(true),
-                ..Default::default()
-            })
-            .await
+        self.list_bills_async(BillFilter {
+            overdue_only: Some(true),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn get_bills_due_soon_async(&self, days: i32) -> Result<Vec<Bill>> {
@@ -655,7 +668,10 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_bill)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn create_payment_async(&self, input: CreateBillPayment) -> Result<BillPayment> {
@@ -723,7 +739,10 @@ impl PgAccountsPayableRepository {
         for alloc in allocations {
             self.recalculate_bill(alloc.bill_id).await?;
 
-            let bill = self.get_bill_async(alloc.bill_id).await?.ok_or(CommerceError::NotFound)?;
+            let bill = self
+                .get_bill_async(alloc.bill_id)
+                .await?
+                .ok_or(CommerceError::NotFound)?;
             let new_status = if bill.amount_due <= Decimal::ZERO {
                 BillStatus::Paid
             } else if bill.amount_paid > Decimal::ZERO {
@@ -740,9 +759,9 @@ impl PgAccountsPayableRepository {
                 .map_err(map_db_error)?;
         }
 
-        self.get_payment_async(id).await?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to create payment".into())
-        })
+        self.get_payment_async(id)
+            .await?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create payment".into()))
     }
 
     pub async fn get_payment_async(&self, id: Uuid) -> Result<Option<BillPayment>> {
@@ -756,13 +775,12 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn get_payment_by_number_async(&self, number: &str) -> Result<Option<BillPayment>> {
-        let row = sqlx::query_as::<_, PaymentRow>(
-            "SELECT * FROM ap_payments WHERE payment_number = $1",
-        )
-        .bind(number)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, PaymentRow>("SELECT * FROM ap_payments WHERE payment_number = $1")
+                .bind(number)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(row.map(Self::row_to_payment).transpose()?)
     }
@@ -777,13 +795,19 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(method) = filter.payment_method {
-            builder.push(" AND payment_method = ").push_bind(method.to_string());
+            builder
+                .push(" AND payment_method = ")
+                .push_bind(method.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND payment_date >= ").push_bind(to_date(from_date));
+            builder
+                .push(" AND payment_date >= ")
+                .push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder.push(" AND payment_date <= ").push_bind(to_date(to_date_value));
+            builder
+                .push(" AND payment_date <= ")
+                .push_bind(to_date(to_date_value));
         }
 
         builder.push(" ORDER BY payment_date DESC");
@@ -801,7 +825,10 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_payment)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
@@ -830,7 +857,10 @@ impl PgAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to clear payment".into()))
     }
 
-    pub async fn get_payment_allocations_async(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+    pub async fn get_payment_allocations_async(
+        &self,
+        payment_id: Uuid,
+    ) -> Result<Vec<PaymentAllocation>> {
         let rows = sqlx::query_as::<_, PaymentAllocationRow>(
             "SELECT * FROM ap_payment_allocations WHERE payment_id = $1",
         )
@@ -839,7 +869,10 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment_allocation).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_payment_allocation)
+            .collect())
     }
 
     pub async fn get_payments_for_bill_async(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
@@ -851,11 +884,15 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_payment)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_payments_async(&self, filter: BillPaymentFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ap_payments WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ap_payments WHERE 1=1");
 
         if let Some(supplier_id) = filter.supplier_id {
             builder.push(" AND supplier_id = ").push_bind(supplier_id);
@@ -864,7 +901,9 @@ impl PgAccountsPayableRepository {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(method) = filter.payment_method {
-            builder.push(" AND payment_method = ").push_bind(method.to_string());
+            builder
+                .push(" AND payment_method = ")
+                .push_bind(method.to_string());
         }
 
         let row = builder
@@ -933,17 +972,24 @@ impl PgAccountsPayableRepository {
         Ok(row.map(Self::row_to_payment_run).transpose()?)
     }
 
-    pub async fn list_payment_runs_async(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
+    pub async fn list_payment_runs_async(
+        &self,
+        filter: PaymentRunFilter,
+    ) -> Result<Vec<PaymentRun>> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM ap_payment_runs WHERE 1=1");
 
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND payment_date >= ").push_bind(to_date(from_date));
+            builder
+                .push(" AND payment_date >= ")
+                .push_bind(to_date(from_date));
         }
         if let Some(to_date_value) = filter.to_date {
-            builder.push(" AND payment_date <= ").push_bind(to_date(to_date_value));
+            builder
+                .push(" AND payment_date <= ")
+                .push_bind(to_date(to_date_value));
         }
 
         builder.push(" ORDER BY created_at DESC");
@@ -961,10 +1007,17 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_payment_run).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_payment_run)
+            .collect::<Result<Vec<_>>>()?)
     }
 
-    pub async fn approve_payment_run_async(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
+    pub async fn approve_payment_run_async(
+        &self,
+        id: Uuid,
+        approved_by: &str,
+    ) -> Result<PaymentRun> {
         let now = Utc::now();
 
         sqlx::query(
@@ -1021,7 +1074,10 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_bill)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_aging_summary_async(&self) -> Result<ApAgingSummary> {
@@ -1072,14 +1128,16 @@ impl PgAccountsPayableRepository {
         })
     }
 
-    pub async fn get_supplier_summary_async(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
-        let supplier_exists: Option<i32> = sqlx::query_scalar(
-            "SELECT 1 FROM suppliers WHERE id = $1",
-        )
-        .bind(supplier_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+    pub async fn get_supplier_summary_async(
+        &self,
+        supplier_id: Uuid,
+    ) -> Result<Option<SupplierApSummary>> {
+        let supplier_exists: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM suppliers WHERE id = $1")
+                .bind(supplier_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         if supplier_exists.is_none() {
             return Ok(None);
@@ -1113,7 +1171,10 @@ impl PgAccountsPayableRepository {
         Ok(row.0)
     }
 
-    pub async fn create_bills_batch_async(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {
+    pub async fn create_bills_batch_async(
+        &self,
+        inputs: Vec<CreateBill>,
+    ) -> Result<BatchResult<Bill>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::new();
@@ -1146,7 +1207,10 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_bill).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_bill)
+            .collect::<Result<Vec<_>>>()?)
     }
 }
 

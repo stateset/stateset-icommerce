@@ -57,7 +57,10 @@ impl std::str::FromStr for WarehouseType {
             "third_party" | "thirdparty" => Ok(Self::ThirdParty),
             "consignment" => Ok(Self::Consignment),
             "returns" => Ok(Self::Returns),
-            _ => Err(crate::CommerceError::ValidationError(format!("Invalid warehouse type: {}", s))),
+            _ => Err(crate::CommerceError::ValidationError(format!(
+                "Invalid warehouse type: {}",
+                s
+            ))),
         }
     }
 }
@@ -121,7 +124,10 @@ impl std::str::FromStr for LocationType {
             "production" => Ok(Self::Production),
             "packing" => Ok(Self::Packing),
             "cross_dock" | "crossdock" => Ok(Self::CrossDock),
-            _ => Err(crate::CommerceError::ValidationError(format!("Invalid location type: {}", s))),
+            _ => Err(crate::CommerceError::ValidationError(format!(
+                "Invalid location type: {}",
+                s
+            ))),
         }
     }
 }
@@ -394,7 +400,10 @@ impl std::str::FromStr for MovementType {
             "adjustment" => Ok(Self::Adjustment),
             "shipment" => Ok(Self::Shipment),
             "return" => Ok(Self::Return),
-            _ => Err(crate::CommerceError::ValidationError(format!("Invalid movement type: {}", s))),
+            _ => Err(crate::CommerceError::ValidationError(format!(
+                "Invalid movement type: {}",
+                s
+            ))),
         }
     }
 }

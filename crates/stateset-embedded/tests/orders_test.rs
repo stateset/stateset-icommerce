@@ -502,7 +502,9 @@ fn test_list_orders_by_status() {
         })
         .expect("Failed to list orders");
 
-    assert!(pending_orders.iter().all(|o| o.status == OrderStatus::Pending));
+    assert!(pending_orders
+        .iter()
+        .all(|o| o.status == OrderStatus::Pending));
 
     // List confirmed orders
     let confirmed_orders = commerce
@@ -514,7 +516,9 @@ fn test_list_orders_by_status() {
         .expect("Failed to list orders");
 
     assert_eq!(confirmed_orders.len(), 2);
-    assert!(confirmed_orders.iter().all(|o| o.status == OrderStatus::Confirmed));
+    assert!(confirmed_orders
+        .iter()
+        .all(|o| o.status == OrderStatus::Confirmed));
 }
 
 #[test]
@@ -864,7 +868,9 @@ fn test_update_order_shipping_address() {
         )
         .expect("Failed to update order");
 
-    let addr = updated.shipping_address.expect("Should have shipping address");
+    let addr = updated
+        .shipping_address
+        .expect("Should have shipping address");
     assert_eq!(addr.line1, "999 New Street");
     assert_eq!(addr.city, "New York");
 }
@@ -1344,7 +1350,10 @@ fn test_order_fulfillment_status_transitions() {
             },
         )
         .expect("Failed to update");
-    assert_eq!(order.fulfillment_status, FulfillmentStatus::PartiallyFulfilled);
+    assert_eq!(
+        order.fulfillment_status,
+        FulfillmentStatus::PartiallyFulfilled
+    );
 
     // PartiallyFulfilled -> Fulfilled
     let order = commerce

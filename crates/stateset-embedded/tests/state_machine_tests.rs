@@ -12,10 +12,10 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     BillingInterval, CancelSubscription, Commerce, CreateBackorder, CreateBom, CreateCustomer,
-    CreateInventoryItem, CreateOrder, CreateOrderItem, CreateSerialNumbersBulk,
-    CreateSubscription, CreateSubscriptionPlan, CreateWorkOrder, FulfillmentSourceType, Order,
-    OrderStatus, PauseSubscription, ReservationStatus, ReserveSerialNumber, SerialStatus,
-    SubscriptionStatus, WorkOrderStatus,
+    CreateInventoryItem, CreateOrder, CreateOrderItem, CreateSerialNumbersBulk, CreateSubscription,
+    CreateSubscriptionPlan, CreateWorkOrder, FulfillmentSourceType, Order, OrderStatus,
+    PauseSubscription, ReservationStatus, ReserveSerialNumber, SerialStatus, SubscriptionStatus,
+    WorkOrderStatus,
 };
 use uuid::Uuid;
 
@@ -159,7 +159,7 @@ fn test_order_cancellation_after_shipment_fails() {
     // Ship the order
     order = commerce
         .orders()
-        .ship(order.id, Some("FEDEX123456".into()))
+        .ship(order.id, Some("FEDEX123456"))
         .expect("Failed to ship order");
 
     // Cannot cancel after shipment
@@ -171,7 +171,7 @@ fn test_order_cancellation_after_shipment_fails() {
 fn test_inventory_reservation_lifecycle() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let item = commerce
+    let _item = commerce
         .inventory()
         .create_item(CreateInventoryItem {
             sku: "SKU-001".into(),
@@ -227,7 +227,7 @@ fn test_inventory_reservation_lifecycle() {
 fn test_inventory_reservation_conflict_handling() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let item = commerce
+    let _item = commerce
         .inventory()
         .create_item(CreateInventoryItem {
             sku: "SKU-001".into(),
@@ -248,9 +248,10 @@ fn test_inventory_reservation_conflict_handling() {
         .expect("Failed to reserve inventory");
 
     // Try to reserve 5 more from order2 (only 2 available)
-    let result = commerce
-        .inventory()
-        .reserve("SKU-001", dec!(5), "order", &order2.id.to_string(), None);
+    let result =
+        commerce
+            .inventory()
+            .reserve("SKU-001", dec!(5), "order", &order2.id.to_string(), None);
     assert!(result.is_err());
 }
 

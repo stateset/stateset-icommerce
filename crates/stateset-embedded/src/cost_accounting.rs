@@ -34,11 +34,10 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use stateset_core::{
-    CostAccountingRepository, CostAdjustment, CostAdjustmentFilter, CostLayer, CostLayerFilter,
-    CostMethod, CostRollup, CostTransaction, CostTransactionFilter, CostTransactionType,
-    CostVariance, CostVarianceFilter, CreateCostAdjustment, CreateCostLayer, InventoryValuation,
-    IssueCostLayers, ItemCost, ItemCostFilter, RecordCostVariance, Result, SetItemCost,
-    SkuCostSummary,
+    CostAdjustment, CostAdjustmentFilter, CostLayer, CostLayerFilter, CostMethod, CostRollup,
+    CostTransaction, CostTransactionFilter, CostTransactionType, CostVariance, CostVarianceFilter,
+    CreateCostAdjustment, CreateCostLayer, InventoryValuation, IssueCostLayers, ItemCost,
+    ItemCostFilter, RecordCostVariance, Result, SetItemCost, SkuCostSummary,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -95,8 +94,15 @@ impl CostAccounting {
     ///
     /// This performs a weighted average calculation based on
     /// existing quantity/cost and new receipt.
-    pub fn update_average_cost(&self, sku: &str, quantity: Decimal, unit_cost: Decimal) -> Result<ItemCost> {
-        self.db.cost_accounting().update_average_cost(sku, quantity, unit_cost)
+    pub fn update_average_cost(
+        &self,
+        sku: &str,
+        quantity: Decimal,
+        unit_cost: Decimal,
+    ) -> Result<ItemCost> {
+        self.db
+            .cost_accounting()
+            .update_average_cost(sku, quantity, unit_cost)
     }
 
     /// Update the last purchase cost.
@@ -194,6 +200,7 @@ impl CostAccounting {
     // ========================================================================
 
     /// Record a cost transaction.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_cost_transaction(
         &self,
         sku: &str,
@@ -206,13 +213,22 @@ impl CostAccounting {
         notes: Option<&str>,
     ) -> Result<CostTransaction> {
         self.db.cost_accounting().record_cost_transaction(
-            sku, transaction_type, quantity, unit_cost,
-            layer_id, reference_type, reference_id, notes
+            sku,
+            transaction_type,
+            quantity,
+            unit_cost,
+            layer_id,
+            reference_type,
+            reference_id,
+            notes,
         )
     }
 
     /// List cost transactions with optional filtering.
-    pub fn list_cost_transactions(&self, filter: CostTransactionFilter) -> Result<Vec<CostTransaction>> {
+    pub fn list_cost_transactions(
+        &self,
+        filter: CostTransactionFilter,
+    ) -> Result<Vec<CostTransaction>> {
         self.db.cost_accounting().list_cost_transactions(filter)
     }
 
@@ -303,7 +319,9 @@ impl CostAccounting {
 
     /// Approve a cost adjustment.
     pub fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment> {
-        self.db.cost_accounting().approve_adjustment(id, approved_by)
+        self.db
+            .cost_accounting()
+            .approve_adjustment(id, approved_by)
     }
 
     /// Apply an approved cost adjustment.
@@ -354,7 +372,9 @@ impl CostAccounting {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        self.db.cost_accounting().get_inventory_valuation(cost_method)
+        self.db
+            .cost_accounting()
+            .get_inventory_valuation(cost_method)
     }
 
     /// Get cost summary for a specific SKU.

@@ -33,8 +33,8 @@ export const Operators = {
   matches: (a, b) => new RegExp(b).test(String(a)),
 
   // Collection
-  in: (a, b) => Array.isArray(b) ? b.includes(a) : false,
-  notIn: (a, b) => Array.isArray(b) ? !b.includes(a) : true,
+  in: (a, b) => (Array.isArray(b) ? b.includes(a) : false),
+  notIn: (a, b) => (Array.isArray(b) ? !b.includes(a) : true),
   isEmpty: (a) => !a || (Array.isArray(a) ? a.length === 0 : Object.keys(a).length === 0),
   isNotEmpty: (a) => a && (Array.isArray(a) ? a.length > 0 : Object.keys(a).length > 0),
 
@@ -46,7 +46,7 @@ export const Operators = {
 
   // Numeric
   between: (a, [min, max]) => a >= min && a <= max,
-  divisibleBy: (a, b) => a % b === 0
+  divisibleBy: (a, b) => a % b === 0,
 };
 
 /**
@@ -86,7 +86,7 @@ export class Condition {
     field, // Path to field in context (dot notation)
     operator, // Operator name
     value = null, // Value to compare against
-    negate = false // Negate the result
+    negate = false, // Negate the result
   }) {
     this.field = field;
     this.operator = operator;
@@ -119,7 +119,7 @@ export class Condition {
       field: this.field,
       operator: this.operator,
       value: this.value,
-      negate: this.negate
+      negate: this.negate,
     };
   }
 }
@@ -130,10 +130,10 @@ export class Condition {
 export class ConditionGroup {
   constructor({
     logic = 'and', // 'and' or 'or'
-    conditions = [] // Array of Condition or ConditionGroup
+    conditions = [], // Array of Condition or ConditionGroup
   }) {
     this.logic = logic;
-    this.conditions = conditions.map(c => {
+    this.conditions = conditions.map((c) => {
       if (c.conditions) {
         return new ConditionGroup(c);
       }
@@ -148,16 +148,16 @@ export class ConditionGroup {
     if (this.conditions.length === 0) return true;
 
     if (this.logic === 'and') {
-      return this.conditions.every(c => c.evaluate(context));
+      return this.conditions.every((c) => c.evaluate(context));
     } else {
-      return this.conditions.some(c => c.evaluate(context));
+      return this.conditions.some((c) => c.evaluate(context));
     }
   }
 
   toJSON() {
     return {
       logic: this.logic,
-      conditions: this.conditions.map(c => c.toJSON())
+      conditions: this.conditions.map((c) => c.toJSON()),
     };
   }
 }
@@ -173,7 +173,7 @@ export class PolicyAction {
     workflow = null, // Workflow to start
     notification = null, // Notification to send
     transform = null, // Data transformation
-    metadata = {}
+    metadata = {},
   }) {
     this.type = type;
     this.agent = agent;
@@ -192,7 +192,7 @@ export class PolicyAction {
       workflow: this.workflow,
       notification: this.notification,
       transform: this.transform,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -210,7 +210,7 @@ export class PolicyRule {
     conditions, // ConditionGroup or simple condition
     action, // PolicyAction or action config
     stopOnMatch = false, // Stop evaluating further rules if matched
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.name = name;
@@ -253,7 +253,7 @@ export class PolicyRule {
       conditions: this.conditions.toJSON(),
       action: this.action.toJSON(),
       stopOnMatch: this.stopOnMatch,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -270,7 +270,7 @@ export class PolicySet {
     version = '1.0.0',
     rules = [],
     defaultAction = { type: 'allow' },
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.name = name;
@@ -279,12 +279,11 @@ export class PolicySet {
     this.version = version;
     this.metadata = metadata;
 
-    this.rules = rules.map(r => r instanceof PolicyRule ? r : new PolicyRule(r));
+    this.rules = rules.map((r) => (r instanceof PolicyRule ? r : new PolicyRule(r)));
     this.rules.sort((a, b) => b.priority - a.priority);
 
-    this.defaultAction = defaultAction instanceof PolicyAction
-      ? defaultAction
-      : new PolicyAction(defaultAction);
+    this.defaultAction =
+      defaultAction instanceof PolicyAction ? defaultAction : new PolicyAction(defaultAction);
   }
 
   /**
@@ -306,8 +305,8 @@ export class PolicySet {
     return {
       matched: matchedRules.length > 0,
       rules: matchedRules,
-      actions: matchedRules.map(r => r.action),
-      defaultApplied: matchedRules.length === 0
+      actions: matchedRules.map((r) => r.action),
+      defaultApplied: matchedRules.length === 0,
     };
   }
 
@@ -318,9 +317,9 @@ export class PolicySet {
       description: this.description,
       domain: this.domain,
       version: this.version,
-      rules: this.rules.map(r => r.toJSON()),
+      rules: this.rules.map((r) => r.toJSON()),
       defaultAction: this.defaultAction.toJSON(),
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -338,7 +337,7 @@ export class PolicyResult {
     rules,
     actions,
     defaultApplied,
-    evaluatedAt = new Date().toISOString()
+    evaluatedAt = new Date().toISOString(),
   }) {
     this.policySetId = policySetId;
     this.policySetName = policySetName;
@@ -358,7 +357,7 @@ export class PolicyResult {
 export class PolicyEngine extends EventEmitter {
   constructor({
     storePath = null,
-    executor = null // Function to execute actions
+    executor = null, // Function to execute actions
   }) {
     super();
 
@@ -424,7 +423,10 @@ export class PolicyEngine extends EventEmitter {
       for (const [id, policySet] of this.policySets) {
         if (id.startsWith('domain:')) continue; // Skip domain indexes
 
-        const filePath = path.join(policiesDir, `${policySet.domain}-${policySet.id.slice(0, 8)}.json`);
+        const filePath = path.join(
+          policiesDir,
+          `${policySet.domain}-${policySet.id.slice(0, 8)}.json`,
+        );
         fs.writeFileSync(filePath, JSON.stringify(policySet.toJSON(), null, 2));
       }
 
@@ -448,7 +450,7 @@ export class PolicyEngine extends EventEmitter {
       this.policySets.set(domainKey, []);
     }
     const domainPolicies = this.policySets.get(domainKey);
-    const existingIndex = domainPolicies.findIndex(p => p.id === policySet.id);
+    const existingIndex = domainPolicies.findIndex((p) => p.id === policySet.id);
     if (existingIndex >= 0) {
       domainPolicies[existingIndex] = policySet;
     } else {
@@ -480,8 +482,8 @@ export class PolicyEngine extends EventEmitter {
    */
   listPolicySets() {
     return Array.from(this.policySets.values())
-      .filter(p => p instanceof PolicySet)
-      .map(p => p.toJSON());
+      .filter((p) => p instanceof PolicySet)
+      .map((p) => p.toJSON());
   }
 
   /**
@@ -501,9 +503,9 @@ export class PolicyEngine extends EventEmitter {
         domain,
         context,
         matched: evalResult.matched,
-        rules: evalResult.rules.map(r => ({ id: r.id, name: r.name })),
-        actions: evalResult.actions.map(a => a.toJSON()),
-        defaultApplied: evalResult.defaultApplied
+        rules: evalResult.rules.map((r) => ({ id: r.id, name: r.name })),
+        actions: evalResult.actions.map((a) => a.toJSON()),
+        defaultApplied: evalResult.defaultApplied,
       });
 
       allResults.push(result);
@@ -520,7 +522,7 @@ export class PolicyEngine extends EventEmitter {
       timestamp: new Date().toISOString(),
       domain,
       context,
-      results: allResults
+      results: allResults,
     });
 
     // Keep last 1000 evaluations
@@ -535,8 +537,8 @@ export class PolicyEngine extends EventEmitter {
       context,
       results: allResults,
       actions: allActions,
-      shouldAllow: !allActions.some(a => a.type === 'deny'),
-      shouldDeny: allActions.some(a => a.type === 'deny')
+      shouldAllow: !allActions.some((a) => a.type === 'deny'),
+      shouldDeny: allActions.some((a) => a.type === 'deny'),
     };
   }
 
@@ -567,7 +569,6 @@ export class PolicyEngine extends EventEmitter {
 
         executed.push({ action: action.toJSON(), result, success: true });
         this.emit('action:executed', { action, context, result });
-
       } catch (error) {
         executed.push({ action: action.toJSON(), error: error.message, success: false });
         this.emit('action:failed', { action, context, error });
@@ -584,7 +585,7 @@ export class PolicyEngine extends EventEmitter {
     let history = this.evaluationHistory;
 
     if (domain) {
-      history = history.filter(h => h.domain === domain);
+      history = history.filter((h) => h.domain === domain);
     }
 
     return history.slice(-limit);
@@ -594,8 +595,7 @@ export class PolicyEngine extends EventEmitter {
    * Get engine status
    */
   getStatus() {
-    const policySets = Array.from(this.policySets.values())
-      .filter(p => p instanceof PolicySet);
+    const policySets = Array.from(this.policySets.values()).filter((p) => p instanceof PolicySet);
 
     const byDomain = {};
     for (const ps of policySets) {
@@ -606,7 +606,7 @@ export class PolicyEngine extends EventEmitter {
       totalPolicySets: policySets.length,
       totalRules: policySets.reduce((sum, ps) => sum + ps.rules.length, 0),
       byDomain,
-      recentEvaluations: this.evaluationHistory.slice(-10)
+      recentEvaluations: this.evaluationHistory.slice(-10),
     };
   }
 }
@@ -630,15 +630,15 @@ export const PolicyTemplates = {
           conditions: [
             { field: 'return.value', operator: 'lt', value: 100 },
             { field: 'customer.lifetimeValue', operator: 'gt', value: 500 },
-            { field: 'customer.returnRate', operator: 'lt', value: 0.1 }
-          ]
+            { field: 'customer.returnRate', operator: 'lt', value: 0.1 },
+          ],
         },
         action: {
           type: 'agent',
           agent: 'returns',
-          request: 'Approve return {return.id} - auto-approved per policy'
+          request: 'Approve return {return.id} - auto-approved per policy',
         },
-        stopOnMatch: true
+        stopOnMatch: true,
       },
       {
         name: 'flag_high_value_returns',
@@ -648,17 +648,17 @@ export const PolicyTemplates = {
           logic: 'or',
           conditions: [
             { field: 'return.value', operator: 'gte', value: 500 },
-            { field: 'customer.returnRate', operator: 'gte', value: 0.2 }
-          ]
+            { field: 'customer.returnRate', operator: 'gte', value: 0.2 },
+          ],
         },
         action: {
           type: 'workflow',
           workflow: 'returnProcessing',
-          metadata: { requiresApproval: true }
-        }
-      }
+          metadata: { requiresApproval: true },
+        },
+      },
     ],
-    defaultAction: { type: 'allow' }
+    defaultAction: { type: 'allow' },
   },
 
   // Inventory restock triggers
@@ -675,15 +675,15 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'inventory.quantity', operator: 'lte', value: 5 },
-            { field: 'inventory.reorderPoint', operator: 'gt', value: 0 }
-          ]
+            { field: 'inventory.reorderPoint', operator: 'gt', value: 0 },
+          ],
         },
         action: {
           type: 'agent',
           agent: 'suppliers',
-          request: 'Create urgent purchase order for SKU {inventory.sku} - critical stock level'
+          request: 'Create urgent purchase order for SKU {inventory.sku} - critical stock level',
         },
-        stopOnMatch: true
+        stopOnMatch: true,
       },
       {
         name: 'low_stock_reorder',
@@ -692,16 +692,17 @@ export const PolicyTemplates = {
         conditions: {
           field: 'inventory.quantity',
           operator: 'lte',
-          value: '${inventory.reorderPoint}' // Dynamic reference
+          value: '${inventory.reorderPoint}', // Dynamic reference
         },
         action: {
           type: 'agent',
           agent: 'suppliers',
-          request: 'Create purchase order for SKU {inventory.sku} to restock to {inventory.targetQuantity}'
-        }
-      }
+          request:
+            'Create purchase order for SKU {inventory.sku} to restock to {inventory.targetQuantity}',
+        },
+      },
     ],
-    defaultAction: { type: 'allow' }
+    defaultAction: { type: 'allow' },
   },
 
   // Order fraud detection
@@ -718,14 +719,14 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'order.total', operator: 'gt', value: 1000 },
-            { field: 'customer.orderCount', operator: 'lt', value: 2 }
-          ]
+            { field: 'customer.orderCount', operator: 'lt', value: 2 },
+          ],
         },
         action: {
           type: 'workflow',
           workflow: 'orderFulfillment',
-          metadata: { requiresReview: true, riskLevel: 'high' }
-        }
+          metadata: { requiresReview: true, riskLevel: 'high' },
+        },
       },
       {
         name: 'velocity_check',
@@ -735,16 +736,17 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'customer.ordersLast24h', operator: 'gt', value: 3 },
-            { field: 'order.total', operator: 'gt', value: 200 }
-          ]
+            { field: 'order.total', operator: 'gt', value: 200 },
+          ],
         },
         action: {
           type: 'notify',
           notification: {
             channel: 'slack',
-            message: 'Velocity alert: Customer {customer.id} placed {customer.ordersLast24h} orders in 24h'
-          }
-        }
+            message:
+              'Velocity alert: Customer {customer.id} placed {customer.ordersLast24h} orders in 24h',
+          },
+        },
       },
       {
         name: 'shipping_billing_mismatch',
@@ -753,18 +755,22 @@ export const PolicyTemplates = {
         conditions: {
           logic: 'and',
           conditions: [
-            { field: 'order.shippingAddress.country', operator: 'neq', value: '${order.billingAddress.country}' },
-            { field: 'order.total', operator: 'gt', value: 500 }
-          ]
+            {
+              field: 'order.shippingAddress.country',
+              operator: 'neq',
+              value: '${order.billingAddress.country}',
+            },
+            { field: 'order.total', operator: 'gt', value: 500 },
+          ],
         },
         action: {
           type: 'workflow',
           workflow: 'orderFulfillment',
-          metadata: { requiresReview: true, riskLevel: 'medium' }
-        }
-      }
+          metadata: { requiresReview: true, riskLevel: 'medium' },
+        },
+      },
     ],
-    defaultAction: { type: 'allow' }
+    defaultAction: { type: 'allow' },
   },
 
   // Promotion eligibility
@@ -781,10 +787,10 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'promotion.vipOnly', operator: 'isTrue' },
-            { field: 'customer.tier', operator: 'in', value: ['gold', 'platinum'] }
-          ]
+            { field: 'customer.tier', operator: 'in', value: ['gold', 'platinum'] },
+          ],
         },
-        action: { type: 'allow' }
+        action: { type: 'allow' },
       },
       {
         name: 'block_vip_for_regular',
@@ -794,11 +800,11 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'promotion.vipOnly', operator: 'isTrue' },
-            { field: 'customer.tier', operator: 'notIn', value: ['gold', 'platinum'] }
-          ]
+            { field: 'customer.tier', operator: 'notIn', value: ['gold', 'platinum'] },
+          ],
         },
         action: { type: 'deny' },
-        stopOnMatch: true
+        stopOnMatch: true,
       },
       {
         name: 'no_double_discount',
@@ -808,14 +814,14 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'cart.hasPercentageDiscount', operator: 'isTrue' },
-            { field: 'promotion.type', operator: 'eq', value: 'percentage' }
-          ]
+            { field: 'promotion.type', operator: 'eq', value: 'percentage' },
+          ],
         },
         action: { type: 'deny' },
-        stopOnMatch: true
-      }
+        stopOnMatch: true,
+      },
     ],
-    defaultAction: { type: 'allow' }
+    defaultAction: { type: 'allow' },
   },
 
   // Subscription management
@@ -831,13 +837,13 @@ export const PolicyTemplates = {
         conditions: {
           field: 'subscription.consecutiveFailedPayments',
           operator: 'gte',
-          value: 3
+          value: 3,
         },
         action: {
           type: 'agent',
           agent: 'subscriptions',
-          request: 'Cancel subscription {subscription.id} due to payment failures'
-        }
+          request: 'Cancel subscription {subscription.id} due to payment failures',
+        },
       },
       {
         name: 'offer_discount_on_cancel',
@@ -847,18 +853,19 @@ export const PolicyTemplates = {
           logic: 'and',
           conditions: [
             { field: 'event', operator: 'eq', value: 'cancellation_requested' },
-            { field: 'subscription.monthsActive', operator: 'gte', value: 6 }
-          ]
+            { field: 'subscription.monthsActive', operator: 'gte', value: 6 },
+          ],
         },
         action: {
           type: 'agent',
           agent: 'subscriptions',
-          request: 'Offer 20% retention discount to customer {customer.id} for subscription {subscription.id}'
-        }
-      }
+          request:
+            'Offer 20% retention discount to customer {customer.id} for subscription {subscription.id}',
+        },
+      },
     ],
-    defaultAction: { type: 'allow' }
-  }
+    defaultAction: { type: 'allow' },
+  },
 };
 
 export default PolicyEngine;

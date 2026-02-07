@@ -19,7 +19,7 @@ export const commands = {
   orders,
   products,
   inventory,
-  returns
+  returns,
 };
 
 /**
@@ -27,32 +27,32 @@ export const commands = {
  */
 export const RESOURCE_ALIASES = {
   // Single letter shortcuts
-  'c': 'customers',
-  'o': 'orders',
-  'p': 'products',
-  'i': 'inventory',
-  'r': 'returns',
+  c: 'customers',
+  o: 'orders',
+  p: 'products',
+  i: 'inventory',
+  r: 'returns',
   // Common abbreviations
-  'cust': 'customers',
-  'ord': 'orders',
-  'prod': 'products',
-  'inv': 'inventory',
-  'ret': 'returns',
-  'stock': 'inventory'
+  cust: 'customers',
+  ord: 'orders',
+  prod: 'products',
+  inv: 'inventory',
+  ret: 'returns',
+  stock: 'inventory',
 };
 
 /**
  * Action aliases for shorthand actions
  */
 export const ACTION_ALIASES = {
-  'l': 'list',
-  'ls': 'list',
-  'g': 'get',
-  's': 'ship',
-  'x': 'cancel',
-  'a': 'adjust',
-  'n': 'count',
-  '#': 'count'
+  l: 'list',
+  ls: 'list',
+  g: 'get',
+  s: 'ship',
+  x: 'cancel',
+  a: 'adjust',
+  n: 'count',
+  '#': 'count',
 };
 
 /**
@@ -90,8 +90,10 @@ export async function executeCommand(resource, action, args, context) {
   if (!command) {
     throw new Error(
       `Unknown resource: ${resource}\n\n` +
-      'Available resources:\n' +
-      Object.keys(commands).map(r => `  ${r}`).join('\n')
+        'Available resources:\n' +
+        Object.keys(commands)
+          .map((r) => `  ${r}`)
+          .join('\n'),
     );
   }
 
@@ -126,7 +128,7 @@ export function generateHelp() {
 export function getCompletions() {
   const completions = {
     resources: [],
-    actions: {}
+    actions: {},
   };
 
   for (const [name, command] of Object.entries(commands)) {
@@ -152,5 +154,5 @@ export default {
   getCommand,
   executeCommand,
   generateHelp,
-  getCompletions
+  getCompletions,
 };

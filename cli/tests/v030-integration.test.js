@@ -24,6 +24,8 @@ const __dirname = dirname(__filename);
 const TMP_DIR = join(__dirname, '.tmp-v030-test');
 const MEMORY_SKIP_REASON = 'Skipping: better-sqlite3 native module not available.';
 let memoryAvailable = true;
+const API_KEY = 'test-admin-key-v030';
+const AUTH_HEADERS = { Authorization: `Bearer ${API_KEY}` };
 
 // ============================================================================
 // Helpers
@@ -146,7 +148,9 @@ describe('v0.3.0 — HttpGateway lifecycle', () => {
     const gw = createHttpGateway({ port: 0 });
     const addr = await gw.start();
     try {
-      const res = await request(addr.port, 'OPTIONS', '/health');
+      const res = await request(addr.port, 'OPTIONS', '/health', null, {
+        Origin: 'http://localhost:3000',
+      });
       assert.equal(res.status, 204);
       assert.ok(res.headers['access-control-allow-methods'].includes('DELETE'));
     } finally {
@@ -175,7 +179,10 @@ describe('v0.3.0 — Subsystem routes return 501 when disabled', () => {
 
   before(async () => {
     const { createHttpGateway } = await import('../src/channels/http-gateway.js');
-    gw = createHttpGateway({ port: 0 });
+    gw = createHttpGateway({
+      port: 0,
+      apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+    });
     const addr = await gw.start();
     port = addr.port;
     // Do NOT call setSubsystems — subsystems remain null
@@ -187,117 +194,135 @@ describe('v0.3.0 — Subsystem routes return 501 when disabled', () => {
 
   // Voice routes
   it('GET /voice/status → 501', async () => {
-    const res = await request(port, 'GET', '/voice/status');
+    const res = await request(port, 'GET', '/voice/status', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
     assert.ok(res.body.error.includes('Voice'));
   });
 
   it('POST /voice/transcribe → 501', async () => {
-    const res = await request(port, 'POST', '/voice/transcribe', Buffer.alloc(0));
+    const res = await request(port, 'POST', '/voice/transcribe', Buffer.alloc(0), AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /voice/synthesize → 501', async () => {
-    const res = await request(port, 'POST', '/voice/synthesize', { text: 'hello' });
+    const res = await request(port, 'POST', '/voice/synthesize', { text: 'hello' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /voice/session/enable/:id → 501', async () => {
-    const res = await request(port, 'POST', '/voice/session/enable/test-session');
+    const res = await request(port, 'POST', '/voice/session/enable/test-session', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /voice/session/disable/:id → 501', async () => {
-    const res = await request(port, 'POST', '/voice/session/disable/test-session');
+    const res = await request(
+      port,
+      'POST',
+      '/voice/session/disable/test-session',
+      null,
+      AUTH_HEADERS,
+    );
     assert.equal(res.status, 501);
   });
 
   // Browser routes
   it('GET /browser/status → 501', async () => {
-    const res = await request(port, 'GET', '/browser/status');
+    const res = await request(port, 'GET', '/browser/status', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
     assert.ok(res.body.error.includes('Browser'));
   });
 
   it('POST /browser/navigate → 501', async () => {
-    const res = await request(port, 'POST', '/browser/navigate', { url: 'https://example.com' });
+    const res = await request(
+      port,
+      'POST',
+      '/browser/navigate',
+      { url: 'https://example.com' },
+      AUTH_HEADERS,
+    );
     assert.equal(res.status, 501);
   });
 
   it('POST /browser/screenshot → 501', async () => {
-    const res = await request(port, 'POST', '/browser/screenshot');
+    const res = await request(port, 'POST', '/browser/screenshot', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /browser/evaluate → 501', async () => {
-    const res = await request(port, 'POST', '/browser/evaluate', { expression: '1+1' });
+    const res = await request(port, 'POST', '/browser/evaluate', { expression: '1+1' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /browser/click → 501', async () => {
-    const res = await request(port, 'POST', '/browser/click', { selector: '#btn' });
+    const res = await request(port, 'POST', '/browser/click', { selector: '#btn' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /browser/type → 501', async () => {
-    const res = await request(port, 'POST', '/browser/type', { selector: '#input', text: 'hi' });
+    const res = await request(
+      port,
+      'POST',
+      '/browser/type',
+      { selector: '#input', text: 'hi' },
+      AUTH_HEADERS,
+    );
     assert.equal(res.status, 501);
   });
 
   it('GET /browser/content → 501', async () => {
-    const res = await request(port, 'GET', '/browser/content');
+    const res = await request(port, 'GET', '/browser/content', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('GET /browser/links → 501', async () => {
-    const res = await request(port, 'GET', '/browser/links');
+    const res = await request(port, 'GET', '/browser/links', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /browser/close → 501', async () => {
-    const res = await request(port, 'POST', '/browser/close');
+    const res = await request(port, 'POST', '/browser/close', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   // Memory routes
   it('GET /memory/stats → 501', async () => {
-    const res = await request(port, 'GET', '/memory/stats');
+    const res = await request(port, 'GET', '/memory/stats', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
     assert.ok(res.body.error.includes('Memory'));
   });
 
   it('POST /memory/save → 501', async () => {
-    const res = await request(port, 'POST', '/memory/save', { summary: 'test' });
+    const res = await request(port, 'POST', '/memory/save', { summary: 'test' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /memory/search → 501', async () => {
-    const res = await request(port, 'POST', '/memory/search', { query: 'test' });
+    const res = await request(port, 'POST', '/memory/search', { query: 'test' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /memory/vector-search → 501', async () => {
-    const res = await request(port, 'POST', '/memory/vector-search', { query: 'test' });
+    const res = await request(port, 'POST', '/memory/vector-search', { query: 'test' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /memory/hybrid-search → 501', async () => {
-    const res = await request(port, 'POST', '/memory/hybrid-search', { query: 'test' });
+    const res = await request(port, 'POST', '/memory/hybrid-search', { query: 'test' }, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('GET /memory/recent/:channel/:senderId → 501', async () => {
-    const res = await request(port, 'GET', '/memory/recent/http/user1');
+    const res = await request(port, 'GET', '/memory/recent/http/user1', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /memory/backfill → 501', async () => {
-    const res = await request(port, 'POST', '/memory/backfill', {});
+    const res = await request(port, 'POST', '/memory/backfill', {}, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('DELETE /memory/:id → 501', async () => {
-    const res = await request(port, 'DELETE', '/memory/42');
+    const res = await request(port, 'DELETE', '/memory/42', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 });
@@ -323,7 +348,10 @@ describe('v0.3.0 — Memory API end-to-end', () => {
       resetMemoryStore();
       memoryStore = getVectorMemoryStore({ dbPath: memDbPath });
 
-      gw = createHttpGateway({ port: 0 });
+      gw = createHttpGateway({
+        port: 0,
+        apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+      });
       gw.setSubsystems({ memory: memoryStore });
       const addr = await gw.start();
       port = addr.port;
@@ -345,7 +373,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
 
   it('GET /memory/stats returns stats', async (t) => {
     if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
-    const res = await request(port, 'GET', '/memory/stats');
+    const res = await request(port, 'GET', '/memory/stats', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok('totalMemories' in res.body);
     assert.ok('totalVectors' in res.body);
@@ -359,14 +387,14 @@ describe('v0.3.0 — Memory API end-to-end', () => {
       facts: 'return_window:30_days',
       channel: 'http',
       senderId: 'test-user',
-    });
+    }, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok(res.body.id);
   });
 
   it('POST /memory/save requires summary', async (t) => {
     if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
-    const res = await request(port, 'POST', '/memory/save', { channel: 'http' });
+    const res = await request(port, 'POST', '/memory/save', { channel: 'http' }, AUTH_HEADERS);
     assert.equal(res.status, 400);
   });
 
@@ -376,7 +404,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
       query: 'return policy',
       channel: 'http',
       senderId: 'test-user',
-    });
+    }, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.results));
     assert.ok(res.body.results.length > 0);
@@ -387,7 +415,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
     if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
     const res = await request(port, 'POST', '/memory/vector-search', {
       query: 'electronics return policy',
-    });
+    }, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.results));
     assert.ok(res.body.results.length > 0);
@@ -399,7 +427,7 @@ describe('v0.3.0 — Memory API end-to-end', () => {
       query: 'return policy',
       channel: 'http',
       senderId: 'test-user',
-    });
+    }, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.results));
     assert.ok(res.body.results.length > 0);
@@ -407,13 +435,13 @@ describe('v0.3.0 — Memory API end-to-end', () => {
 
   it('POST /memory/vector-search requires query', async (t) => {
     if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
-    const res = await request(port, 'POST', '/memory/vector-search', {});
+    const res = await request(port, 'POST', '/memory/vector-search', {}, AUTH_HEADERS);
     assert.equal(res.status, 400);
   });
 
   it('POST /memory/backfill succeeds', async (t) => {
     if (!memoryAvailable) return t.skip(MEMORY_SKIP_REASON);
-    const res = await request(port, 'POST', '/memory/backfill', {});
+    const res = await request(port, 'POST', '/memory/backfill', {}, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok('processed' in res.body);
     assert.ok('errors' in res.body);
@@ -426,9 +454,9 @@ describe('v0.3.0 — Memory API end-to-end', () => {
       summary: 'Temporary memory to delete',
       channel: 'http',
       senderId: 'test-user',
-    });
+    }, AUTH_HEADERS);
     const id = saveRes.body.id;
-    const res = await request(port, 'DELETE', `/memory/${id}`);
+    const res = await request(port, 'DELETE', `/memory/${id}`, null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.equal(res.body.ok, true);
     assert.equal(res.body.deleted, id);
@@ -454,6 +482,7 @@ describe('v0.3.0 — WebChat HTML response', () => {
     getPluginRegistry()._routes.push({
       method: 'GET',
       path: '/chat',
+      level: 'none',
       handler: async () => ({
         status: 200,
         _html: '<html><body><h1>Chat</h1></body></html>',

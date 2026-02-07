@@ -1,14 +1,14 @@
 //! Analytics and forecasting operations
 
+use rust_decimal::Decimal;
 use stateset_core::{
     AnalyticsQuery, CustomerMetrics, DemandForecast, FulfillmentMetrics, InventoryHealth,
     InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance, Result,
-    ReturnMetrics, RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity,
-    TopCustomer, TopProduct,
+    ReturnMetrics, RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity, TopCustomer,
+    TopProduct,
 };
 use stateset_db::Database;
 use std::sync::Arc;
-use rust_decimal::Decimal;
 
 /// Analytics operations interface.
 ///
@@ -330,6 +330,8 @@ impl Analytics {
         periods_ahead: u32,
         granularity: TimeGranularity,
     ) -> Result<Vec<RevenueForecast>> {
-        self.db.analytics().get_revenue_forecast(periods_ahead, granularity)
+        self.db
+            .analytics()
+            .get_revenue_forecast(periods_ahead, granularity)
     }
 }

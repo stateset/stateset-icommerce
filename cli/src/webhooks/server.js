@@ -33,7 +33,7 @@ export class WebhookSource {
     payloadField = null, // Field containing payload (null = entire body)
     retryOnFailure = true,
     maxRetries = 3,
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.name = name;
@@ -57,16 +57,12 @@ export class WebhookSource {
   verifySignature(payload, signature) {
     if (!this.secret) return true; // No secret = no verification
 
-    const expectedSignature = this.signaturePrefix +
-      createHmac(this.signatureAlgorithm, this.secret)
-        .update(payload)
-        .digest('hex');
+    const expectedSignature =
+      this.signaturePrefix +
+      createHmac(this.signatureAlgorithm, this.secret).update(payload).digest('hex');
 
     try {
-      return timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature)
-      );
+      return timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
     } catch {
       return false;
     }
@@ -83,7 +79,7 @@ export class WebhookSource {
       eventTypeField: this.eventTypeField,
       retryOnFailure: this.retryOnFailure,
       maxRetries: this.maxRetries,
-      metadata: this.metadata
+      metadata: this.metadata,
       // Don't expose secret
     };
   }
@@ -103,7 +99,7 @@ export class WebhookHandler {
     conditions = null, // Optional conditions for filtering
     action, // Action to execute: { agent, request } or { workflow }
     priority = 0,
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.name = name;
@@ -153,7 +149,7 @@ export class WebhookHandler {
       conditions: this.conditions,
       action: this.action,
       priority: this.priority,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -183,7 +179,7 @@ export class WebhookEvent {
     handlers = [],
     results = [],
     error = null,
-    retryCount = 0
+    retryCount = 0,
   }) {
     this.id = id;
     this.sourceId = sourceId;
@@ -213,7 +209,7 @@ export class WebhookEvent {
       handlers: this.handlers,
       results: this.results,
       error: this.error,
-      retryCount: this.retryCount
+      retryCount: this.retryCount,
     };
   }
 }
@@ -227,7 +223,7 @@ export class WebhookServer extends EventEmitter {
     host = '0.0.0.0',
     storePath = null,
     executor = null, // Function to execute actions
-    autoStart = false
+    autoStart = false,
   }) {
     super();
 
@@ -277,7 +273,7 @@ export class WebhookServer extends EventEmitter {
 
       this.emit('loaded', {
         sourceCount: this.sources.size,
-        handlerCount: this.handlers.size
+        handlerCount: this.handlers.size,
       });
     } catch (error) {
       this.emit('error', { type: 'load', error });
@@ -297,13 +293,13 @@ export class WebhookServer extends EventEmitter {
       const handlersFile = path.join(this.storePath, 'webhook-handlers.json');
 
       // Don't save secrets to disk - they should come from environment
-      const sourcesData = Array.from(this.sources.values()).map(s => ({
+      const sourcesData = Array.from(this.sources.values()).map((s) => ({
         ...s.toJSON(),
-        secret: null // Redact
+        secret: null, // Redact
       }));
       fs.writeFileSync(sourcesFile, JSON.stringify(sourcesData, null, 2));
 
-      const handlersData = Array.from(this.handlers.values()).map(h => h.toJSON());
+      const handlersData = Array.from(this.handlers.values()).map((h) => h.toJSON());
       fs.writeFileSync(handlersFile, JSON.stringify(handlersData, null, 2));
 
       this.emit('saved');
@@ -349,10 +345,10 @@ export class WebhookServer extends EventEmitter {
   /**
    * Find handlers for source and event type
    */
-  findHandlers(sourceId, eventType) {
+  findHandlers(sourceId, _eventType) {
     return Array.from(this.handlers.values())
-      .filter(h => h.sourceId === sourceId || h.sourceId === '*')
-      .filter(h => h.enabled)
+      .filter((h) => h.sourceId === sourceId || h.sourceId === '*')
+      .filter((h) => h.enabled)
       .sort((a, b) => b.priority - a.priority);
   }
 
@@ -363,10 +359,11 @@ export class WebhookServer extends EventEmitter {
     event.status = 'processing';
     this.emit('event:processing', { event: event.toJSON() });
 
-    const handlers = this.findHandlers(event.sourceId, event.eventType)
-      .filter(h => h.matches(event.eventType, event.payload));
+    const handlers = this.findHandlers(event.sourceId, event.eventType).filter((h) =>
+      h.matches(event.eventType, event.payload),
+    );
 
-    event.handlers = handlers.map(h => h.id);
+    event.handlers = handlers.map((h) => h.id);
 
     if (handlers.length === 0) {
       event.status = 'completed';
@@ -387,7 +384,7 @@ export class WebhookServer extends EventEmitter {
             eventId: event.id,
             eventType: event.eventType,
             sourceId: event.sourceId,
-            payload: event.payload
+            payload: event.payload,
           });
         }
 
@@ -395,17 +392,16 @@ export class WebhookServer extends EventEmitter {
           handlerId: handler.id,
           handlerName: handler.name,
           success: true,
-          result
+          result,
         });
 
         this.emit('handler:executed', { handler: handler.toJSON(), event: event.toJSON(), result });
-
       } catch (error) {
         event.results.push({
           handlerId: handler.id,
           handlerName: handler.name,
           success: false,
-          error: error.message
+          error: error.message,
         });
 
         this.emit('handler:failed', { handler: handler.toJSON(), event: event.toJSON(), error });
@@ -522,7 +518,7 @@ export class WebhookServer extends EventEmitter {
       sourceName: source.name,
       eventType,
       payload: eventPayload,
-      headers: { ...req.headers }
+      headers: { ...req.headers },
     });
 
     this.emit('event:received', { event: event.toJSON() });
@@ -532,7 +528,7 @@ export class WebhookServer extends EventEmitter {
     res.end(JSON.stringify({ received: true, eventId: event.id }));
 
     // Process asynchronously
-    this.processEvent(event).catch(error => {
+    this.processEvent(event).catch((error) => {
       event.status = 'failed';
       event.error = error.message;
       this.emit('event:failed', { event: event.toJSON(), error });
@@ -546,7 +542,7 @@ export class WebhookServer extends EventEmitter {
     if (this.isRunning) return;
 
     this.server = createServer((req, res) => {
-      this.handleRequest(req, res).catch(error => {
+      this.handleRequest(req, res).catch((error) => {
         this.emit('error', { type: 'request', error });
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -560,7 +556,7 @@ export class WebhookServer extends EventEmitter {
       this.emit('started', { port: this.port, host: this.host });
     });
 
-    this.server.on('error', error => {
+    this.server.on('error', (error) => {
       this.emit('error', { type: 'server', error });
     });
   }
@@ -590,7 +586,7 @@ export class WebhookServer extends EventEmitter {
       host: this.host,
       sourceCount: this.sources.size,
       handlerCount: this.handlers.size,
-      recentEvents: this.eventHistory.slice(-10).map(e => e.toJSON())
+      recentEvents: this.eventHistory.slice(-10).map((e) => e.toJSON()),
     };
   }
 
@@ -601,32 +597,32 @@ export class WebhookServer extends EventEmitter {
     let history = this.eventHistory;
 
     if (sourceId) {
-      history = history.filter(e => e.sourceId === sourceId);
+      history = history.filter((e) => e.sourceId === sourceId);
     }
 
     if (eventType) {
-      history = history.filter(e => e.eventType === eventType);
+      history = history.filter((e) => e.eventType === eventType);
     }
 
     if (status) {
-      history = history.filter(e => e.status === status);
+      history = history.filter((e) => e.status === status);
     }
 
-    return history.slice(-limit).map(e => e.toJSON());
+    return history.slice(-limit).map((e) => e.toJSON());
   }
 
   /**
    * List sources
    */
   listSources() {
-    return Array.from(this.sources.values()).map(s => s.toJSON());
+    return Array.from(this.sources.values()).map((s) => s.toJSON());
   }
 
   /**
    * List handlers
    */
   listHandlers() {
-    return Array.from(this.handlers.values()).map(h => h.toJSON());
+    return Array.from(this.handlers.values()).map((h) => h.toJSON());
   }
 }
 
@@ -642,7 +638,7 @@ export const WebhookSourceTemplates = {
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
     eventTypeField: 'type',
-    payloadField: 'data.object'
+    payloadField: 'data.object',
   },
 
   shopify: {
@@ -652,7 +648,7 @@ export const WebhookSourceTemplates = {
     signatureHeader: 'x-shopify-hmac-sha256',
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
-    eventTypeField: 'topic'
+    eventTypeField: 'topic',
   },
 
   square: {
@@ -663,7 +659,7 @@ export const WebhookSourceTemplates = {
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
     eventTypeField: 'type',
-    payloadField: 'data'
+    payloadField: 'data',
   },
 
   shippo: {
@@ -673,7 +669,7 @@ export const WebhookSourceTemplates = {
     signatureHeader: 'x-shippo-signature',
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
-    eventTypeField: 'event'
+    eventTypeField: 'event',
   },
 
   custom: {
@@ -683,8 +679,8 @@ export const WebhookSourceTemplates = {
     signatureHeader: 'x-signature',
     signatureAlgorithm: 'sha256',
     signaturePrefix: '',
-    eventTypeField: 'event_type'
-  }
+    eventTypeField: 'event_type',
+  },
 };
 
 /**
@@ -696,8 +692,8 @@ export const WebhookHandlerTemplates = {
     eventTypes: ['payment_intent.succeeded', 'charge.succeeded'],
     action: {
       agent: 'payments',
-      request: 'Record successful payment of {amount} {currency} for customer {customer}'
-    }
+      request: 'Record successful payment of {amount} {currency} for customer {customer}',
+    },
   },
 
   stripePaymentFailed: {
@@ -705,8 +701,8 @@ export const WebhookHandlerTemplates = {
     eventTypes: ['payment_intent.payment_failed', 'charge.failed'],
     action: {
       agent: 'payments',
-      request: 'Handle failed payment for customer {customer}: {failure_message}'
-    }
+      request: 'Handle failed payment for customer {customer}: {failure_message}',
+    },
   },
 
   stripeSubscriptionUpdated: {
@@ -714,8 +710,8 @@ export const WebhookHandlerTemplates = {
     eventTypes: ['customer.subscription.updated', 'customer.subscription.deleted'],
     action: {
       agent: 'subscriptions',
-      request: 'Sync subscription status for {id}: status is now {status}'
-    }
+      request: 'Sync subscription status for {id}: status is now {status}',
+    },
   },
 
   shopifyOrderCreated: {
@@ -723,8 +719,8 @@ export const WebhookHandlerTemplates = {
     eventTypes: ['orders/create'],
     action: {
       agent: 'orders',
-      request: 'Import order {order_number} from Shopify with total {total_price}'
-    }
+      request: 'Import order {order_number} from Shopify with total {total_price}',
+    },
   },
 
   shippoTrackingUpdate: {
@@ -732,9 +728,9 @@ export const WebhookHandlerTemplates = {
     eventTypes: ['track_updated'],
     action: {
       agent: 'shipments',
-      request: 'Update tracking for {tracking_number}: status is {tracking_status.status}'
-    }
-  }
+      request: 'Update tracking for {tracking_number}: status is {tracking_status.status}',
+    },
+  },
 };
 
 export default WebhookServer;

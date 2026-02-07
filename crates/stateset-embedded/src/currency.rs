@@ -238,12 +238,7 @@ impl CurrencyOps {
     /// println!("€{}", eur_amount);
     /// # Ok::<(), CommerceError>(())
     /// ```
-    pub fn convert_amount(
-        &self,
-        amount: Decimal,
-        from: Currency,
-        to: Currency,
-    ) -> Result<Decimal> {
+    pub fn convert_amount(&self, amount: Decimal, from: Currency, to: Currency) -> Result<Decimal> {
         let result = self.convert(ConvertCurrency { from, to, amount })?;
         Ok(result.converted_amount)
     }
@@ -291,7 +286,10 @@ impl CurrencyOps {
     /// println!("Updated base currency to: {}", settings.base_currency);
     /// # Ok::<(), CommerceError>(())
     /// ```
-    pub fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
+    pub fn update_settings(
+        &self,
+        settings: StoreCurrencySettings,
+    ) -> Result<StoreCurrencySettings> {
         self.db.currency().update_settings(settings)
     }
 

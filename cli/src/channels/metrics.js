@@ -102,15 +102,15 @@ export class ChannelMetrics {
    */
   getSummary() {
     const uptimeMs = Date.now() - this._startedAt;
-    const avgResponseMs = this._totals.responsesSent > 0
-      ? Math.round(this._totals.totalResponseTimeMs / this._totals.responsesSent)
-      : 0;
+    const avgResponseMs =
+      this._totals.responsesSent > 0
+        ? Math.round(this._totals.totalResponseTimeMs / this._totals.responsesSent)
+        : 0;
 
     const channels = {};
     for (const [name, stats] of this._channels) {
-      const chAvg = stats.responsesSent > 0
-        ? Math.round(stats.totalResponseTimeMs / stats.responsesSent)
-        : 0;
+      const chAvg =
+        stats.responsesSent > 0 ? Math.round(stats.totalResponseTimeMs / stats.responsesSent) : 0;
       channels[name] = {
         messagesReceived: stats.messagesReceived,
         responsesSent: stats.responsesSent,
@@ -163,7 +163,9 @@ export class ChannelMetrics {
       lines.push('');
       lines.push('Per channel:');
       for (const [name, ch] of Object.entries(s.channels)) {
-        lines.push(`  ${name}: ${ch.messagesReceived} in / ${ch.responsesSent} out (avg ${ch.avgResponseMs}ms)`);
+        lines.push(
+          `  ${name}: ${ch.messagesReceived} in / ${ch.responsesSent} out (avg ${ch.avgResponseMs}ms)`,
+        );
       }
     }
 

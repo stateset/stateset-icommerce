@@ -5,13 +5,14 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
+use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
     DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
-    InspectionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold, QualityHoldFilter,
-    RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection, UpdateNonConformance,
+    InspectionType, NcrStatus, NonConformance, NonConformanceFilter, QualityHold,
+    QualityHoldFilter, RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
+    UpdateNonConformance,
 };
-use stateset_core::traits::QualityRepository;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -146,10 +147,7 @@ impl PgQualityRepository {
             ))
         })?;
         let status: InspectionStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid inspection.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid inspection.status '{}': {}", status, e))
         })?;
 
         Ok(Inspection {
@@ -188,17 +186,11 @@ impl PgQualityRepository {
         } = row;
 
         let defect_codes: Vec<String> = serde_json::from_value(defect_codes).map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid inspection_item.defect_codes: {}",
-                e
-            ))
+            CommerceError::DatabaseError(format!("Invalid inspection_item.defect_codes: {}", e))
         })?;
         let measurements = match measurements {
             Some(value) => Some(serde_json::from_value(value).map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid inspection_item.measurements: {}",
-                    e
-                ))
+                CommerceError::DatabaseError(format!("Invalid inspection_item.measurements: {}", e))
             })?),
             None => None,
         };
@@ -380,7 +372,10 @@ impl PgQualityRepository {
         })
     }
 
-    async fn load_inspection_items_async(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
+    async fn load_inspection_items_async(
+        &self,
+        inspection_id: Uuid,
+    ) -> Result<Vec<InspectionItem>> {
         let rows = sqlx::query_as::<_, InspectionItemRow>(
             "SELECT id, inspection_id, sku, lot_number, serial_number, quantity_inspected, quantity_passed,
                     quantity_failed, defect_codes, measurements, result, notes, created_at
@@ -391,11 +386,16 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_inspection_item).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_inspection_item)
+            .collect::<Result<Vec<_>>>()?)
     }
 
-
-    pub async fn get_inspection_items_async(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
+    pub async fn get_inspection_items_async(
+        &self,
+        inspection_id: Uuid,
+    ) -> Result<Vec<InspectionItem>> {
         self.load_inspection_items_async(inspection_id).await
     }
 
@@ -506,10 +506,7 @@ impl PgQualityRepository {
         }
     }
 
-    pub async fn get_inspection_by_number_async(
-        &self,
-        number: &str,
-    ) -> Result<Option<Inspection>> {
+    pub async fn get_inspection_by_number_async(&self, number: &str) -> Result<Option<Inspection>> {
         let row = sqlx::query_as::<_, InspectionRow>(
             "SELECT id, inspection_number, inspection_type, reference_type, reference_id, status, inspector_id,
                     scheduled_at, started_at, completed_at, notes, created_at, updated_at
@@ -550,7 +547,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_inspection_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_inspections_async(
@@ -656,7 +655,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_inspection_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn complete_inspection_async(&self, id: Uuid) -> Result<Inspection> {
@@ -678,7 +679,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_inspection_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_inspection_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn record_inspection_result_async(
@@ -810,7 +813,11 @@ impl PgQualityRepository {
         Ok(row.map(Self::row_to_ncr).transpose()?)
     }
 
-    pub async fn update_ncr_async(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
+    pub async fn update_ncr_async(
+        &self,
+        id: Uuid,
+        input: UpdateNonConformance,
+    ) -> Result<NonConformance> {
         let now = Utc::now();
 
         sqlx::query(
@@ -845,7 +852,10 @@ impl PgQualityRepository {
         self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn list_ncrs_async(&self, filter: NonConformanceFilter) -> Result<Vec<NonConformance>> {
+    pub async fn list_ncrs_async(
+        &self,
+        filter: NonConformanceFilter,
+    ) -> Result<Vec<NonConformance>> {
         let mut sql = "SELECT id, ncr_number, inspection_id, source, severity, status, sku, lot_number, serial_number,
                 quantity_affected, description, root_cause, corrective_action, preventive_action, disposition,
                 disposition_quantity, assigned_to, created_at, updated_at, closed_at
@@ -922,7 +932,10 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_ncr).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_ncr)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn close_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
@@ -943,15 +956,13 @@ impl PgQualityRepository {
 
     pub async fn cancel_ncr_async(&self, id: Uuid) -> Result<NonConformance> {
         let now = Utc::now();
-        sqlx::query(
-            "UPDATE non_conformances SET status = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(NcrStatus::Cancelled.to_string())
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE non_conformances SET status = $1, updated_at = $2 WHERE id = $3")
+            .bind(NcrStatus::Cancelled.to_string())
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         self.get_ncr_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -1010,7 +1021,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_hold_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_hold_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_hold_async(&self, id: Uuid) -> Result<Option<QualityHold>> {
@@ -1071,7 +1084,10 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_hold)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn release_hold_async(
@@ -1091,7 +1107,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_hold_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_hold_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_active_holds_for_sku_async(&self, sku: &str) -> Result<Vec<QualityHold>> {
@@ -1105,10 +1123,16 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_hold)
+            .collect::<Result<Vec<_>>>()?)
     }
 
-    pub async fn get_active_holds_for_lot_async(&self, lot_number: &str) -> Result<Vec<QualityHold>> {
+    pub async fn get_active_holds_for_lot_async(
+        &self,
+        lot_number: &str,
+    ) -> Result<Vec<QualityHold>> {
         let rows = sqlx::query_as::<_, HoldRow>(
             "SELECT id, sku, lot_number, serial_number, location_id, quantity_held, reason, hold_type,
                     ncr_id, inspection_id, placed_by, released_by, release_notes, placed_at, released_at, expires_at
@@ -1119,7 +1143,10 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_hold).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_hold)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_active_holds_async(&self) -> Result<u64> {
@@ -1155,7 +1182,9 @@ impl PgQualityRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_defect_code_async(&input.code).await?.ok_or(CommerceError::NotFound)
+        self.get_defect_code_async(&input.code)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_defect_code_async(&self, code: &str) -> Result<Option<DefectCode>> {
@@ -1172,8 +1201,10 @@ impl PgQualityRepository {
     }
 
     pub async fn list_defect_codes_async(&self, category: Option<&str>) -> Result<Vec<DefectCode>> {
-        let mut sql = "SELECT id, code, name, description, category, severity, is_active, created_at
-            FROM defect_codes WHERE is_active = true".to_string();
+        let mut sql =
+            "SELECT id, code, name, description, category, severity, is_active, created_at
+            FROM defect_codes WHERE is_active = true"
+                .to_string();
         let mut param_idx = 1;
 
         if category.is_some() {
@@ -1188,7 +1219,10 @@ impl PgQualityRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows.into_iter().map(Self::row_to_defect_code).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_defect_code)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn deactivate_defect_code_async(&self, id: Uuid) -> Result<()> {

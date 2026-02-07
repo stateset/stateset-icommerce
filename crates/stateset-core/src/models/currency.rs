@@ -734,9 +734,18 @@ mod tests {
 
     #[test]
     fn test_rounding_mode_from_str() {
-        assert_eq!(RoundingMode::from_str("half_up").unwrap(), RoundingMode::HalfUp);
-        assert_eq!(RoundingMode::from_str("HalfDown").unwrap(), RoundingMode::HalfDown);
-        assert_eq!(RoundingMode::from_str("half-even").unwrap(), RoundingMode::HalfEven);
+        assert_eq!(
+            RoundingMode::from_str("half_up").unwrap(),
+            RoundingMode::HalfUp
+        );
+        assert_eq!(
+            RoundingMode::from_str("HalfDown").unwrap(),
+            RoundingMode::HalfDown
+        );
+        assert_eq!(
+            RoundingMode::from_str("half-even").unwrap(),
+            RoundingMode::HalfEven
+        );
         assert!(RoundingMode::from_str("nope").is_err());
     }
 }

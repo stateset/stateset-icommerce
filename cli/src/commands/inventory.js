@@ -27,7 +27,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
                 name: variant.name || product.name,
                 onHand: stock?.totalOnHand ?? 0,
                 available: stock?.totalAvailable ?? 0,
-                allocated: stock?.totalAllocated ?? 0
+                allocated: stock?.totalAllocated ?? 0,
               });
             }
           }
@@ -47,7 +47,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const stock = await commerce.inventory.getStock(sku);
 
       if (!stock) {
-        throw new Error(`No inventory found for SKU: ${skuArg}\n\nTry 'stateset-direct inventory list' to see all inventory.`);
+        throw new Error(
+          `No inventory found for SKU: ${skuArg}\n\nTry 'stateset-direct inventory list' to see all inventory.`,
+        );
       }
 
       return formatStockDetail(stock, { output, jsonOutput });
@@ -61,9 +63,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!skuArg || isNaN(qty) || !reason) {
         throw new Error(
           'Usage: inventory adjust <sku> <quantity> <reason>\n\n' +
-          'Examples:\n' +
-          '  stateset-direct inventory adjust WIDGET-001 10 "Received shipment"\n' +
-          '  stateset-direct inventory adjust WIDGET-001 -5 "Damaged items"'
+            'Examples:\n' +
+            '  stateset-direct inventory adjust WIDGET-001 10 "Received shipment"\n' +
+            '  stateset-direct inventory adjust WIDGET-001 -5 "Damaged items"',
         );
       }
 
@@ -81,7 +83,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!sku || !name) {
         throw new Error(
           'Usage: inventory create <sku> <name> [initialQuantity]\n\n' +
-          'Example: stateset-direct inventory create WIDGET-002 "Premium Widget" 100'
+            'Example: stateset-direct inventory create WIDGET-002 "Premium Widget" 100',
         );
       }
 
@@ -105,7 +107,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
                   sku: variant.sku,
                   name: variant.name || product.name,
                   available: stock.totalAvailable,
-                  onHand: stock.totalOnHand
+                  onHand: stock.totalOnHand,
                 });
               }
             }
@@ -123,7 +125,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!skuArg || isNaN(qty)) {
         throw new Error(
           'Usage: inventory reserve <sku> <quantity> [orderId]\n\n' +
-          'Reserve inventory for an order.'
+            'Reserve inventory for an order.',
         );
       }
 
@@ -132,7 +134,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
 
       return {
         reservation,
-        formatted: `Reserved ${qty} units of ${sku}${orderId ? ` for order ${orderId}` : ''}`
+        formatted: `Reserved ${qty} units of ${sku}${orderId ? ` for order ${orderId}` : ''}`,
       };
     }
 
@@ -150,21 +152,21 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
 
       return {
         stock,
-        formatted: `Released ${qty} units of ${sku}. New available: ${stock.totalAvailable}`
+        formatted: `Released ${qty} units of ${sku}. New available: ${stock.totalAvailable}`,
       };
     }
 
     default:
       throw new Error(
         `Unknown action: inventory ${action}\n\n` +
-        'Available actions:\n' +
-        '  list              List all inventory with stock levels\n' +
-        '  stock <sku>       Get stock level for SKU\n' +
-        '  adjust <sku> <qty> <reason>  Adjust stock\n' +
-        '  create <sku> <name> [qty]    Create inventory item\n' +
-        '  low [threshold]   List low stock items\n' +
-        '  reserve <sku> <qty> [orderId]  Reserve inventory\n' +
-        '  release <sku> <qty>  Release reserved inventory'
+          'Available actions:\n' +
+          '  list              List all inventory with stock levels\n' +
+          '  stock <sku>       Get stock level for SKU\n' +
+          '  adjust <sku> <qty> <reason>  Adjust stock\n' +
+          '  create <sku> <name> [qty]    Create inventory item\n' +
+          '  low [threshold]   List low stock items\n' +
+          '  reserve <sku> <qty> [orderId]  Reserve inventory\n' +
+          '  release <sku> <qty>  Release reserved inventory',
       );
   }
 }
@@ -181,16 +183,13 @@ function formatInventoryList(items, { output, jsonOutput }) {
     return { formatted: 'No inventory found.' };
   }
 
-  const formatted = output.table(
-    items,
-    [
-      { key: 'sku', header: 'SKU' },
-      { key: 'name', header: 'Name' },
-      { key: 'onHand', header: 'On Hand', align: 'right' },
-      { key: 'allocated', header: 'Allocated', align: 'right' },
-      { key: 'available', header: 'Available', align: 'right' }
-    ]
-  );
+  const formatted = output.table(items, [
+    { key: 'sku', header: 'SKU' },
+    { key: 'name', header: 'Name' },
+    { key: 'onHand', header: 'On Hand', align: 'right' },
+    { key: 'allocated', header: 'Allocated', align: 'right' },
+    { key: 'available', header: 'Available', align: 'right' },
+  ]);
 
   return { items, formatted };
 }
@@ -198,7 +197,7 @@ function formatInventoryList(items, { output, jsonOutput }) {
 /**
  * Format stock detail
  */
-function formatStockDetail(stock, { output, jsonOutput }) {
+function formatStockDetail(stock, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return stock;
   }
@@ -217,7 +216,7 @@ ${'-'.repeat(40)}
 /**
  * Format adjustment result
  */
-function formatAdjustment(sku, qty, stock, { output, jsonOutput }) {
+function formatAdjustment(sku, qty, stock, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, sku, adjustment: qty, stock };
   }
@@ -225,21 +224,21 @@ function formatAdjustment(sku, qty, stock, { output, jsonOutput }) {
   const sign = qty > 0 ? '+' : '';
   return {
     stock,
-    formatted: `Adjusted ${sku} by ${sign}${qty}. New on-hand: ${stock.totalOnHand}`
+    formatted: `Adjusted ${sku} by ${sign}${qty}. New on-hand: ${stock.totalOnHand}`,
   };
 }
 
 /**
  * Format item created
  */
-function formatItemCreated(item, { output, jsonOutput }) {
+function formatItemCreated(item, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, item };
   }
 
   return {
     item,
-    formatted: `Created inventory item: ${item.sku} (${item.name})`
+    formatted: `Created inventory item: ${item.sku} (${item.name})`,
   };
 }
 
@@ -255,19 +254,16 @@ function formatLowStock(items, threshold, { output, jsonOutput }) {
     return { formatted: `No items below threshold of ${threshold} units.` };
   }
 
-  const formatted = output.table(
-    items,
-    [
-      { key: 'sku', header: 'SKU' },
-      { key: 'name', header: 'Name' },
-      { key: 'available', header: 'Available', align: 'right' },
-      { key: 'onHand', header: 'On Hand', align: 'right' }
-    ]
-  );
+  const formatted = output.table(items, [
+    { key: 'sku', header: 'SKU' },
+    { key: 'name', header: 'Name' },
+    { key: 'available', header: 'Available', align: 'right' },
+    { key: 'onHand', header: 'On Hand', align: 'right' },
+  ]);
 
   return {
     items,
-    formatted: `Low stock items (threshold: ${threshold}):\n\n${formatted}`
+    formatted: `Low stock items (threshold: ${threshold}):\n\n${formatted}`,
   };
 }
 
@@ -285,8 +281,8 @@ export const metadata = {
     create: { description: 'Create inventory item', args: ['<sku>', '<name>', '[quantity]'] },
     low: { description: 'List low stock items', args: ['[threshold]'] },
     reserve: { description: 'Reserve inventory', args: ['<sku>', '<quantity>', '[orderId]'] },
-    release: { description: 'Release reservation', args: ['<sku>', '<quantity>'] }
-  }
+    release: { description: 'Release reservation', args: ['<sku>', '<quantity>'] },
+  },
 };
 
 export default { execute, metadata };

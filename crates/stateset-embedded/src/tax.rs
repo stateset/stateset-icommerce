@@ -9,8 +9,8 @@
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ProductTaxCategory,
-    Result, TaxAddress, TaxCalculationRequest, TaxCalculationResult, TaxExemption, TaxJurisdiction,
+    CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ProductTaxCategory, Result,
+    TaxAddress, TaxCalculationRequest, TaxCalculationResult, TaxExemption, TaxJurisdiction,
     TaxJurisdictionFilter, TaxLineItem, TaxRate, TaxRateFilter, TaxSettings,
 };
 use stateset_db::Database;
@@ -178,9 +178,13 @@ impl Tax {
         category: ProductTaxCategory,
     ) -> Result<Decimal> {
         let today = chrono::Utc::now().date_naive();
-        let rates = self.db.tax().get_rates_for_address(address, category, today)?;
+        let rates = self
+            .db
+            .tax()
+            .get_rates_for_address(address, category, today)?;
 
-        let total_rate: Decimal = rates.iter()
+        let total_rate: Decimal = rates
+            .iter()
             .filter(|r| !r.is_compound)
             .map(|r| r.rate)
             .sum();
@@ -233,7 +237,10 @@ impl Tax {
     /// }
     /// # Ok::<(), CommerceError>(())
     /// ```
-    pub fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>> {
+    pub fn list_jurisdictions(
+        &self,
+        filter: TaxJurisdictionFilter,
+    ) -> Result<Vec<TaxJurisdiction>> {
         self.db.tax().list_jurisdictions(filter)
     }
 

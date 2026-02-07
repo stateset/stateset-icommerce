@@ -105,18 +105,21 @@ export function createSessionManager({ store, channel } = {}) {
   }
 
   function startCleanup() {
-    return setInterval(() => {
-      const now = Date.now();
-      for (const [id, session] of sessions) {
-        if (now - session.lastActive > SESSION_TTL_MS) {
-          sessions.delete(id);
+    return setInterval(
+      () => {
+        const now = Date.now();
+        for (const [id, session] of sessions) {
+          if (now - session.lastActive > SESSION_TTL_MS) {
+            sessions.delete(id);
+          }
         }
-      }
-      // Also clean persistent store
-      if (store) {
-        store.deleteExpired(SESSION_TTL_MS);
-      }
-    }, 5 * 60 * 1000);
+        // Also clean persistent store
+        if (store) {
+          store.deleteExpired(SESSION_TTL_MS);
+        }
+      },
+      5 * 60 * 1000,
+    );
   }
 
   function stopCleanup(handle) {
@@ -202,7 +205,12 @@ export function isAllowed(senderId, allowlist) {
  * @param {Object}  [opts.autonomousEngine] - Autonomous engine for dynamic commands
  * @returns {Promise<{ handled: boolean, response?: string, richMessage?: import('./rich-messages.js').RichMessage }>}
  */
-export async function handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId, autonomousEngine } = {}) {
+export async function handleBotCommand(
+  text,
+  session,
+  allowApply,
+  { commerce, identityStore, channel, senderId, autonomousEngine } = {},
+) {
   const lower = text.toLowerCase().trim();
   const parts = lower.split(/\s+/);
   const cmd = parts[0];
@@ -235,7 +243,7 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       '/cart [id] - Cart summary or list',
       '/track <order-id> - Shipment tracking',
       '/customers - Customer count',
-      '/analytics - Today\'s sales summary',
+      "/analytics - Today's sales summary",
       '/whoami - Show linked customer identity',
       '/link <email> - Link your identity to a customer',
       '/unlink - Remove identity link',
@@ -281,17 +289,24 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       session.thinkLevel = level === 'med' ? 'medium' : level;
       return { handled: true, response: `Extended thinking: ${session.thinkLevel}` };
     }
-    return { handled: true, response: `Thinking: ${session.thinkLevel || 'off'}\nUsage: /think off|low|medium|high` };
+    return {
+      handled: true,
+      response: `Thinking: ${session.thinkLevel || 'off'}\nUsage: /think off|low|medium|high`,
+    };
   }
 
   if (cmd === '/provider') {
     const p = (parts[1] || '').toLowerCase();
     if (['claude', 'openai', 'gemini', 'ollama'].includes(p)) {
       session.provider = p;
-      const note = p !== 'claude' ? '\nNote: Non-Claude providers run in chat-only mode (no tools)' : '';
+      const note =
+        p !== 'claude' ? '\nNote: Non-Claude providers run in chat-only mode (no tools)' : '';
       return { handled: true, response: `Provider: ${p}${note}` };
     }
-    return { handled: true, response: `Provider: ${session.provider || 'claude'}\nUsage: /provider claude|openai|gemini|ollama` };
+    return {
+      handled: true,
+      response: `Provider: ${session.provider || 'claude'}\nUsage: /provider claude|openai|gemini|ollama`,
+    };
   }
 
   if (cmd === '/memory') {
@@ -358,9 +373,12 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       const carts = await commerce.carts.list();
       const active = carts.filter((c) => c.status === 'active');
       if (active.length === 0) return { handled: true, response: 'No active carts.' };
-      const lines = active.slice(0, 10).map((c) =>
-        `${c.cartNumber || c.cart_number || c.id}: $${(c.subtotal || 0).toFixed(2)} (${c.items?.length || 0} items)`
-      );
+      const lines = active
+        .slice(0, 10)
+        .map(
+          (c) =>
+            `${c.cartNumber || c.cart_number || c.id}: $${(c.subtotal || 0).toFixed(2)} (${c.items?.length || 0} items)`,
+        );
       return { handled: true, response: `Active Carts (${active.length}):\n${lines.join('\n')}` };
     } catch (err) {
       return { handled: true, response: `Error fetching cart: ${err.message}` };
@@ -374,8 +392,15 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       const order = await commerce.orders.get(orderId);
       if (!order) return { handled: true, response: `Order ${orderId} not found.` };
       const tracking = order.trackingNumber || order.tracking_number;
-      if (!tracking) return { handled: true, response: `No tracking number for order ${orderId}. Status: ${(order.status || 'unknown').toUpperCase()}` };
-      return { handled: true, response: `Order ${orderId}\nStatus: ${(order.status || 'unknown').toUpperCase()}\nTracking: ${tracking}` };
+      if (!tracking)
+        return {
+          handled: true,
+          response: `No tracking number for order ${orderId}. Status: ${(order.status || 'unknown').toUpperCase()}`,
+        };
+      return {
+        handled: true,
+        response: `Order ${orderId}\nStatus: ${(order.status || 'unknown').toUpperCase()}\nTracking: ${tracking}`,
+      };
     } catch (err) {
       return { handled: true, response: `Error fetching tracking: ${err.message}` };
     }
@@ -406,19 +431,32 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
   if (cmd === '/whoami' && identityStore && channel && senderId) {
     const link = identityStore.getCustomerId(channel, senderId);
     if (!link) {
-      return { handled: true, response: 'No customer identity linked. Use /link <email> to connect your account.' };
+      return {
+        handled: true,
+        response: 'No customer identity linked. Use /link <email> to connect your account.',
+      };
     }
     let extra = '';
     if (commerce) {
       try {
         const customer = await commerce.customers.get(link.customerId);
         if (customer) {
-          const name = [customer.firstName || customer.first_name, customer.lastName || customer.last_name].filter(Boolean).join(' ');
+          const name = [
+            customer.firstName || customer.first_name,
+            customer.lastName || customer.last_name,
+          ]
+            .filter(Boolean)
+            .join(' ');
           extra = `\nName: ${name || 'N/A'}\nEmail: ${customer.email || 'N/A'}`;
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
-    return { handled: true, response: `Linked customer: ${link.customerId} (via ${link.linkedBy})${extra}` };
+    return {
+      handled: true,
+      response: `Linked customer: ${link.customerId} (via ${link.linkedBy})${extra}`,
+    };
   }
 
   if (cmd === '/link' && identityStore && channel && senderId && commerce) {
@@ -428,7 +466,12 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       const customer = await commerce.customers.getByEmail(email);
       if (!customer) return { handled: true, response: `No customer found with email: ${email}` };
       identityStore.link(channel, senderId, customer.id, 'manual');
-      const name = [customer.firstName || customer.first_name, customer.lastName || customer.last_name].filter(Boolean).join(' ');
+      const name = [
+        customer.firstName || customer.first_name,
+        customer.lastName || customer.last_name,
+      ]
+        .filter(Boolean)
+        .join(' ');
       return { handled: true, response: `Identity linked to ${name || email} (${customer.id}).` };
     } catch (err) {
       return { handled: true, response: `Error linking identity: ${err.message}` };
@@ -452,20 +495,31 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
   if (cmd === '/escalate' && channel && senderId) {
     const handoff = getHandoffQueue();
     if (handoff.isHandedOff(channel, senderId)) {
-      return { handled: true, response: 'You are already connected to a human agent. Send messages normally, or type /release to return to AI.' };
+      return {
+        handled: true,
+        response:
+          'You are already connected to a human agent. Send messages normally, or type /release to return to AI.',
+      };
     }
     const reason = parts.slice(1).join(' ') || undefined;
     handoff.escalate(channel, senderId, '', reason);
-    return { handled: true, response: 'You\'ve been connected to our support team. A human agent will respond shortly.\nType /release to return to the AI assistant.' };
+    return {
+      handled: true,
+      response:
+        "You've been connected to our support team. A human agent will respond shortly.\nType /release to return to the AI assistant.",
+    };
   }
 
   if (cmd === '/release' && channel && senderId) {
     const handoff = getHandoffQueue();
     const { released } = handoff.release(channel, senderId);
     if (released) {
-      return { handled: true, response: 'You\'re back with the AI assistant. How can I help?' };
+      return { handled: true, response: "You're back with the AI assistant. How can I help?" };
     }
-    return { handled: true, response: 'No active escalation found. You\'re already talking to the AI assistant.' };
+    return {
+      handled: true,
+      response: "No active escalation found. You're already talking to the AI assistant.",
+    };
   }
 
   // --- Skills commands ---
@@ -476,7 +530,10 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
       const category = parts[1] || null;
       const skills = category ? skillRegistry.listByCategory(category) : skillRegistry.list();
       if (skills.length === 0) {
-        return { handled: true, response: category ? `No skills in category "${category}".` : 'No skills loaded.' };
+        return {
+          handled: true,
+          response: category ? `No skills in category "${category}".` : 'No skills loaded.',
+        };
       }
       const lines = skills.map((s) => `- ${s.name}: ${s.description.slice(0, 80)}`);
       const header = category ? `Skills (${category}):` : `Skills (${skills.length}):`;
@@ -516,7 +573,13 @@ export async function handleBotCommand(text, session, allowApply, { commerce, id
     const argText = parts.slice(1).join(' ');
     try {
       const result = await def.handler(argText, {
-        senderId, channel, session, allowApply, commerce, identityStore, autonomousEngine,
+        senderId,
+        channel,
+        session,
+        allowApply,
+        commerce,
+        identityStore,
+        autonomousEngine,
       });
       return { handled: true, response: result.response, richMessage: result.richMessage };
     } catch (err) {
@@ -560,7 +623,11 @@ export async function processWithAgent(text, session, opts) {
       const { getFallbackChain } = await import('../providers/base.js');
       const chain = getFallbackChain({ verbose });
       const messages = [
-        { role: 'system', content: 'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations.' },
+        {
+          role: 'system',
+          content:
+            'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations.',
+        },
         { role: 'user', content: text },
       ];
       const result = await chain.chat(messages, { preferredProvider: provider });
@@ -588,7 +655,8 @@ export async function processWithAgent(text, session, opts) {
     if (result.sessionId) session.sessionId = result.sessionId;
     if (result.agent) session.agent = result.agent;
 
-    const response = result.response?.trim() || 'I processed your request but have no text response.';
+    const response =
+      result.response?.trim() || 'I processed your request but have no text response.';
     return { response, agent: result.agent };
   } catch (err) {
     // Claude failed — try automatic fallback if enabled
@@ -597,14 +665,23 @@ export async function processWithAgent(text, session, opts) {
         const { getFallbackChain } = await import('../providers/base.js');
         const chain = getFallbackChain({ verbose });
         const messages = [
-          { role: 'system', content: 'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations. Note: advanced commerce tools are temporarily unavailable.' },
+          {
+            role: 'system',
+            content:
+              'You are StateSet iCommerce, an AI-powered commerce assistant. Help the user with their commerce operations. Note: advanced commerce tools are temporarily unavailable.',
+          },
           { role: 'user', content: text },
         ];
         const result = await chain.chat(messages);
         if (verbose) {
           console.log(`[Gateway] Claude failed, fell back to ${result.provider}`);
         }
-        return { response: result.text, agent: 'chat-only', provider: result.provider, failedOver: true };
+        return {
+          response: result.text,
+          agent: 'chat-only',
+          provider: result.provider,
+          failedOver: true,
+        };
       } catch {
         // All providers failed
       }
@@ -737,7 +814,9 @@ export function createMessageHandler(adapter, opts) {
 
     const targetId = adapter.getTargetId(raw);
 
-    console.log(`[${new Date().toISOString()}] ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+    console.log(
+      `[${new Date().toISOString()}] ${senderId}: ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`,
+    );
 
     // 5. Run middleware pipeline
     if (middleware.length > 0) {
@@ -757,7 +836,8 @@ export function createMessageHandler(adapter, opts) {
       await runMiddleware(middleware, ctx);
 
       if (ctx.blocked) {
-        if (verbose) console.log(`Message blocked by middleware for ${senderId}: ${ctx.blockReason}`);
+        if (verbose)
+          console.log(`Message blocked by middleware for ${senderId}: ${ctx.blockReason}`);
         return;
       }
     }
@@ -767,7 +847,8 @@ export function createMessageHandler(adapter, opts) {
 
     if (session.processing) {
       session.queue.push(text);
-      if (verbose) console.log(`Queued message from ${senderId} (${session.queue.length} in queue)`);
+      if (verbose)
+        console.log(`Queued message from ${senderId} (${session.queue.length} in queue)`);
       return;
     }
 
@@ -778,14 +859,40 @@ export function createMessageHandler(adapter, opts) {
 
     try {
       await processSingle(adapter, targetId, senderId, text, session, {
-        dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine,
+        dbPath,
+        allowApply,
+        model,
+        maxTurns,
+        agent,
+        verbose,
+        thinkLevel,
+        provider,
+        enableFallback,
+        commerce,
+        persistSession,
+        channel,
+        identityStore,
+        autonomousEngine,
       });
 
       // Drain the queue
       while (session.queue.length > 0) {
         const queued = session.queue.shift();
         await processSingle(adapter, targetId, senderId, queued, session, {
-          dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine,
+          dbPath,
+          allowApply,
+          model,
+          maxTurns,
+          agent,
+          verbose,
+          thinkLevel,
+          provider,
+          enableFallback,
+          commerce,
+          persistSession,
+          channel,
+          identityStore,
+          autonomousEngine,
         });
       }
     } finally {
@@ -799,7 +906,22 @@ export function createMessageHandler(adapter, opts) {
  * @private
  */
 async function processSingle(adapter, targetId, senderId, text, session, opts) {
-  const { dbPath, allowApply, model, maxTurns, agent, verbose, commerce, persistSession, channel, identityStore, autonomousEngine } = opts;
+  const {
+    dbPath,
+    allowApply,
+    model,
+    maxTurns,
+    agent,
+    verbose,
+    thinkLevel = 'off',
+    provider = 'claude',
+    enableFallback = true,
+    commerce,
+    persistSession,
+    channel,
+    identityStore,
+    autonomousEngine,
+  } = opts;
   const startTime = Date.now();
   const metrics = getMetrics();
   const hookRunner = getPluginRegistry().getHookRunner();
@@ -811,7 +933,9 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
   if (adapter.sendTyping) {
     try {
       await adapter.sendTyping(targetId);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // Handoff check — if conversation is escalated to a human, forward to ops instead of AI
@@ -819,13 +943,23 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
     const handoff = getHandoffQueue();
     if (handoff.isHandedOff(channel, senderId)) {
       handoff.recordMessage(channel, senderId, text);
-      await adapter.send(targetId, BOT_PREFIX + 'Your message has been forwarded to a human agent. Please wait for a response.');
+      await adapter.send(
+        targetId,
+        BOT_PREFIX +
+          'Your message has been forwarded to a human agent. Please wait for a response.',
+      );
       return;
     }
   }
 
   // Bot commands (now async to support commerce data commands + identity)
-  const cmd = await handleBotCommand(text, session, allowApply, { commerce, identityStore, channel, senderId, autonomousEngine });
+  const cmd = await handleBotCommand(text, session, allowApply, {
+    commerce,
+    identityStore,
+    channel,
+    senderId,
+    autonomousEngine,
+  });
   if (cmd.handled) {
     // Record command usage
     const cmdName = text.toLowerCase().trim().split(/\s+/)[0];
@@ -863,8 +997,15 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
     }
 
     const result = await processWithAgent(processedText, session, {
-      dbPath, allowApply, model, maxTurns, agent, verbose,
-      thinkLevel, provider, enableFallback,
+      dbPath,
+      allowApply,
+      model,
+      maxTurns,
+      agent,
+      verbose,
+      thinkLevel,
+      provider,
+      enableFallback,
     });
 
     // Fire agent_end hook (parallel)
@@ -892,10 +1033,15 @@ async function processSingle(adapter, targetId, senderId, text, session, opts) {
     // Persist session after agent updates sessionId/agent
     if (persistSession) persistSession(senderId, session);
 
-    console.log(`[${new Date().toISOString()}] Replied to ${senderId} (${finalResponse.length} chars, agent: ${result.agent})`);
+    console.log(
+      `[${new Date().toISOString()}] Replied to ${senderId} (${finalResponse.length} chars, agent: ${result.agent})`,
+    );
   } catch (err) {
     metrics.recordError(channel || 'unknown');
     console.error(`Agent error for ${senderId}:`, err.message);
-    await adapter.send(targetId, BOT_PREFIX + 'Sorry, I encountered an error processing your request. Please try again.');
+    await adapter.send(
+      targetId,
+      BOT_PREFIX + 'Sorry, I encountered an error processing your request. Please try again.',
+    );
   }
 }

@@ -7,8 +7,8 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
     AgentValidationRepository, AgentValidationRequest, AgentValidationResponse,
-    AgentValidationStatus, CreateAgentValidationRequest, CreateAgentValidationResponse,
-    ValidationSummary, CommerceError, Result,
+    AgentValidationStatus, CommerceError, CreateAgentValidationRequest,
+    CreateAgentValidationResponse, Result, ValidationSummary,
 };
 use uuid::Uuid;
 
@@ -45,8 +45,13 @@ impl SqliteAgentValidationRepository {
 
     fn row_to_response(row: &rusqlite::Row) -> rusqlite::Result<AgentValidationResponse> {
         Ok(AgentValidationResponse {
-            id: Uuid::parse_str(&row.get::<_, String>("id")?)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
+            id: Uuid::parse_str(&row.get::<_, String>("id")?).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?,
             request_hash: row.get("request_hash")?,
             agent_registry: row.get("agent_registry")?,
             agent_id: row.get("agent_id")?,
@@ -65,7 +70,10 @@ impl SqliteAgentValidationRepository {
 }
 
 impl AgentValidationRepository for SqliteAgentValidationRepository {
-    fn request_validation(&self, input: CreateAgentValidationRequest) -> Result<AgentValidationRequest> {
+    fn request_validation(
+        &self,
+        input: CreateAgentValidationRequest,
+    ) -> Result<AgentValidationRequest> {
         let conn = self.conn()?;
         let now = Utc::now();
         let request_hash = input.request_hash.clone();
@@ -183,8 +191,9 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
             None => return Ok(None),
         };
 
-        let last_update = parse_datetime_row(&created_at, "agent_validation_response", "created_at")
-            .map_err(map_db_error)?;
+        let last_update =
+            parse_datetime_row(&created_at, "agent_validation_response", "created_at")
+                .map_err(map_db_error)?;
 
         Ok(Some(AgentValidationStatus {
             validator_address: request.validator_address,

@@ -73,9 +73,7 @@ export class GeminiProvider extends ModelProvider {
     }
 
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts
-      ?.map(p => p.text)
-      .join('') || '';
+    const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
 
     const usage = {
       inputTokens: data.usageMetadata?.promptTokenCount || 0,
@@ -155,9 +153,7 @@ export class GeminiProvider extends ModelProvider {
 
           try {
             const chunk = JSON.parse(buffer.slice(objStart, objEnd));
-            const text = chunk.candidates?.[0]?.content?.parts
-              ?.map(p => p.text)
-              .join('') || '';
+            const text = chunk.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '';
 
             if (text) {
               fullText += text;
@@ -165,8 +161,8 @@ export class GeminiProvider extends ModelProvider {
                 onPartialMessage({ content: text, text });
               }
             }
-          } catch {
-            // Malformed JSON, skip
+          } catch (err) {
+            console.debug('[gemini] Malformed streaming JSON chunk:', err.message);
           }
 
           startIdx = objEnd;
@@ -196,7 +192,7 @@ export class GeminiProvider extends ModelProvider {
    */
   _estimateCost(model, usage) {
     const prices = {
-      'gemini-2.0-flash': { input: 0.075, output: 0.30 },
+      'gemini-2.0-flash': { input: 0.075, output: 0.3 },
       'gemini-2.0-pro': { input: 1.25, output: 5.0 },
     };
 

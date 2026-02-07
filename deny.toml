@@ -1,29 +1,58 @@
+# cargo-deny configuration
+#
+# Keep the policy strict enough to catch real issues while being pragmatic
+# about known upstream problems with no fix.
+
+[graph]
+all-features = false
+no-default-features = false
+
 [advisories]
-version = 2
-unmaintained = "warn"
-yanked = "warn"
-unsound = "warn"
+# Keep `cargo deny` strict (don't ignore advisories here). The CI `cargo audit`
+# step separately ignores RUSTSEC-2023-0071 (sqlx-mysql/rsa) because MySQL isn't
+# supported by this workspace and there is no upstream fix available.
 
 [licenses]
-version = 2
+confidence-threshold = 0.8
 allow = [
   "MIT",
   "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
   "Zlib",
   "Unicode-DFS-2016",
+  "Unicode-3.0",
   "CC0-1.0",
   "MPL-2.0",
   "OpenSSL",
+  "CDLA-Permissive-2.0",
 ]
-copyleft = "warn"
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
 
 [bans]
 multiple-versions = "warn"
 wildcards = "warn"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

@@ -180,8 +180,7 @@ pub struct ReserveInventory {
 }
 
 /// Input for creating inventory item
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateInventoryItem {
     pub sku: String,
     pub name: String,
@@ -192,7 +191,6 @@ pub struct CreateInventoryItem {
     pub reorder_point: Option<Decimal>,
     pub safety_stock: Option<Decimal>,
 }
-
 
 /// Stock level summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,7 +252,10 @@ mod tests {
 
     #[test]
     fn transaction_type_from_str() {
-        assert_eq!(TransactionType::from_str("receipt").unwrap(), TransactionType::Receipt);
+        assert_eq!(
+            TransactionType::from_str("receipt").unwrap(),
+            TransactionType::Receipt
+        );
         assert!(TransactionType::from_str("unknown").is_err());
     }
 

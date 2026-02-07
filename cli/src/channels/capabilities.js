@@ -141,10 +141,7 @@ export function registerCapabilities(channelName, caps) {
  * @returns {Object<string, ChannelCapabilities>}
  */
 export function getAllCapabilities() {
-  const allChannels = new Set([
-    ...Object.keys(DEFAULT_CAPABILITIES),
-    ...Object.keys(_overrides),
-  ]);
+  const allChannels = new Set([...Object.keys(DEFAULT_CAPABILITIES), ...Object.keys(_overrides)]);
 
   const result = {};
   for (const channel of allChannels) {

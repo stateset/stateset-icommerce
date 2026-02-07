@@ -21,9 +21,10 @@ export function resolveOutputFormat({ format = 'table', json = false, argv = pro
     }
   }
 
-  const normalized = typeof (formatFromArgv || format) === 'string'
-    ? (formatFromArgv || format).toLowerCase()
-    : 'table';
+  const normalized =
+    typeof (formatFromArgv || format) === 'string'
+      ? (formatFromArgv || format).toLowerCase()
+      : 'table';
 
   if (formatFromArgv) {
     return normalized;
@@ -46,11 +47,11 @@ export function buildAgentOutputData({ agent, request, allowApply, result }) {
     sessionId: result?.sessionId,
     traceId: result?.traceId,
     response: result?.response,
-    toolResults: (result?.toolResults || []).map(tr => ({
+    toolResults: (result?.toolResults || []).map((tr) => ({
       tool: tr.toolCall.name,
       input: tr.toolCall.input,
-      result: tr.result
-    }))
+      result: tr.result,
+    })),
   };
 
   if (allowApply !== undefined) {

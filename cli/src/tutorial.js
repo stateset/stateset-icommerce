@@ -26,7 +26,7 @@ You can interact with it using natural language:
 
 The AI understands your intent and calls the right tools automatically.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Read vs Write Operations',
@@ -44,7 +44,7 @@ StateSet CLI has a safety-first design:
 
 Without --apply, write operations show a PREVIEW of what would happen.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Try a Read Operation',
@@ -56,7 +56,7 @@ Let's try listing customers. Run this command:
 This will show any customers in your database.
 If you don't have any yet, don't worry - we'll create some next!
 `,
-        tryCommand: 'stateset "list all customers"'
+        tryCommand: 'stateset "list all customers"',
       },
       {
         title: 'Preview Mode',
@@ -68,7 +68,8 @@ Now try a write operation WITHOUT --apply:
 You'll see a preview of what WOULD happen, but no data is changed.
 This is great for testing commands before running them for real.
 `,
-        tryCommand: 'stateset "create a customer named Tutorial User with email tutorial@example.com"'
+        tryCommand:
+          'stateset "create a customer named Tutorial User with email tutorial@example.com"',
       },
       {
         title: 'Executing Write Operations',
@@ -79,7 +80,8 @@ To actually create data, add the --apply flag:
 
 The AI will create the customer and return the new customer ID.
 `,
-        tryCommand: 'stateset --apply "create a customer named Tutorial User with email tutorial@example.com"'
+        tryCommand:
+          'stateset --apply "create a customer named Tutorial User with email tutorial@example.com"',
       },
       {
         title: 'Specialized Agents',
@@ -94,7 +96,7 @@ StateSet CLI has specialized agents for different domains:
 
 These agents have focused tools and knowledge for their domain.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Session Context',
@@ -109,7 +111,7 @@ For multi-step workflows, use sessions with --resume:
 
 Sessions remember context, so you can build on previous operations.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Getting Help',
@@ -126,9 +128,9 @@ Run specific tutorials for deeper dives:
   $ stateset-tutorial checkout    # Shopping cart flow
   $ stateset-tutorial analytics   # Business intelligence
 `,
-        action: null
-      }
-    ]
+        action: null,
+      },
+    ],
   },
 
   orders: {
@@ -144,7 +146,7 @@ Orders flow through these states:
 
 The orders agent helps you manage this entire lifecycle.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Listing Orders',
@@ -155,7 +157,7 @@ View your orders with natural language:
   $ stateset-orders "list pending orders"
   $ stateset-orders "find orders for customer alice@example.com"
 `,
-        tryCommand: 'stateset-orders "list all orders"'
+        tryCommand: 'stateset-orders "list all orders"',
       },
       {
         title: 'Creating Orders',
@@ -166,7 +168,7 @@ Create orders with the --apply flag:
 
 The order will be created in 'pending' status.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Shipping Orders',
@@ -177,7 +179,7 @@ Ship orders with tracking:
 
 This updates the order status to 'shipped' and records the tracking number.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Order Analytics',
@@ -188,9 +190,9 @@ Get insights about your orders:
   $ stateset-analytics "what's my average order value?"
   $ stateset-analytics "show orders by status"
 `,
-        action: null
-      }
-    ]
+        action: null,
+      },
+    ],
   },
 
   inventory: {
@@ -208,7 +210,7 @@ Key inventory concepts:
 
   Formula: Available = On-Hand - Allocated
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Checking Stock',
@@ -219,7 +221,7 @@ Check stock levels with natural language:
   $ stateset-inventory "show me low stock items"
   $ stateset-inventory "what's out of stock?"
 `,
-        tryCommand: 'stateset-inventory "show inventory health"'
+        tryCommand: 'stateset-inventory "show inventory health"',
       },
       {
         title: 'Adjusting Inventory',
@@ -231,7 +233,7 @@ Adjust stock with reasons:
 
 Always document the reason for inventory changes.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Reservations',
@@ -244,9 +246,9 @@ Reserve inventory for orders:
 
 Reservations prevent overselling.
 `,
-        action: null
-      }
-    ]
+        action: null,
+      },
+    ],
   },
 
   checkout: {
@@ -266,7 +268,7 @@ The checkout agent implements the Agentic Commerce Protocol:
 
 Each step uses the --apply flag for write operations.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Creating a Cart',
@@ -278,7 +280,7 @@ Start a checkout session:
 
 Use --resume for subsequent operations to maintain context.
 `,
-        tryCommand: 'stateset-checkout "list active carts"'
+        tryCommand: 'stateset-checkout "list active carts"',
       },
       {
         title: 'Adding Items',
@@ -290,7 +292,7 @@ Add products to the cart:
 
 The cart total updates automatically.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Completing Checkout',
@@ -302,7 +304,7 @@ Set shipping and complete:
 
 The cart becomes an order!
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Cart Recovery',
@@ -314,9 +316,9 @@ Recover abandoned carts:
 
 Great for cart abandonment campaigns.
 `,
-        action: null
-      }
-    ]
+        action: null,
+      },
+    ],
   },
 
   analytics: {
@@ -335,7 +337,7 @@ The analytics agent provides business intelligence:
 
 All analytics are read-only - no --apply needed.
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Sales Metrics',
@@ -346,7 +348,7 @@ Get sales performance data:
   $ stateset-analytics "show me sales for the last 7 days"
   $ stateset-analytics "what's my average order value?"
 `,
-        tryCommand: 'stateset-analytics "show sales summary"'
+        tryCommand: 'stateset-analytics "show sales summary"',
       },
       {
         title: 'Top Performers',
@@ -357,7 +359,7 @@ Find your best products and customers:
   $ stateset-analytics "who are my VIP customers?"
   $ stateset-analytics "show top 10 customers by spend"
 `,
-        action: null
+        action: null,
       },
       {
         title: 'Forecasting',
@@ -369,10 +371,10 @@ Predict future trends:
 
 Forecasts include confidence intervals.
 `,
-        action: null
-      }
-    ]
-  }
+        action: null,
+      },
+    ],
+  },
 };
 
 /**
@@ -422,7 +424,9 @@ export class TutorialRunner {
     for (let i = 0; i < tutorial.steps.length; i++) {
       const step = tutorial.steps[i];
 
-      console.log(`${this.cyan(`Step ${i + 1}/${tutorial.steps.length}:`)} ${this.bold(step.title)}`);
+      console.log(
+        `${this.cyan(`Step ${i + 1}/${tutorial.steps.length}:`)} ${this.bold(step.title)}`,
+      );
       console.log(`${this.dim('─'.repeat(50))}`);
       console.log(step.content);
 
@@ -453,7 +457,7 @@ export class TutorialRunner {
     return new Promise((resolve) => {
       const rl = readline.createInterface({
         input: process.stdin,
-        output: process.stdout
+        output: process.stdout,
       });
 
       rl.question(`${this.dim('Press Enter to continue (q to quit)...')} `, (answer) => {
@@ -464,11 +468,21 @@ export class TutorialRunner {
   }
 
   // Color helpers
-  bold(text) { return `\x1b[1m${text}\x1b[0m`; }
-  dim(text) { return `\x1b[90m${text}\x1b[0m`; }
-  cyan(text) { return `\x1b[36m${text}\x1b[0m`; }
-  green(text) { return `\x1b[32m${text}\x1b[0m`; }
-  yellow(text) { return `\x1b[33m${text}\x1b[0m`; }
+  bold(text) {
+    return `\x1b[1m${text}\x1b[0m`;
+  }
+  dim(text) {
+    return `\x1b[90m${text}\x1b[0m`;
+  }
+  cyan(text) {
+    return `\x1b[36m${text}\x1b[0m`;
+  }
+  green(text) {
+    return `\x1b[32m${text}\x1b[0m`;
+  }
+  yellow(text) {
+    return `\x1b[33m${text}\x1b[0m`;
+  }
 }
 
 /**
@@ -534,5 +548,5 @@ export default {
   TutorialRunner,
   createTutorialRunner,
   checkFirstRun,
-  showWelcome
+  showWelcome,
 };

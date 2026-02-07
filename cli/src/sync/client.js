@@ -5,14 +5,12 @@
  * Supports VES v1.0 signed events and encrypted payloads.
  */
 
-import crypto from 'crypto';
 import {
   computeEventSigningHash,
   verifyEventSignature,
   computeLeafHash,
   computeNodeHash,
   hexToBuffer,
-  DOMAIN
 } from './crypto.js';
 
 /**
@@ -194,7 +192,7 @@ export class SequencerClient {
     // Top-level uses camelCase (VesIngestRequest), event envelope uses snake_case (VesEventEnvelope)
     const payload = {
       agentId: batch.agentId,
-      events: batch.events.map(e => ({
+      events: batch.events.map((e) => ({
         // Core event fields (snake_case for VesEventEnvelope)
         event_id: e.eventId,
         command_id: e.commandId || null,
@@ -255,9 +253,9 @@ export class SequencerClient {
         if (attempt < max) {
           const delay = Math.min(
             retryPolicy.baseDelay * Math.pow(2, attempt),
-            retryPolicy.maxDelay
+            retryPolicy.maxDelay,
           );
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
@@ -281,7 +279,7 @@ export class SequencerClient {
 
     const response = await this._request('GET', `/api/v1/events?${params}`);
 
-    const events = (response.events || []).map(e => ({
+    const events = (response.events || []).map((e) => ({
       envelope: {
         // Core event fields
         eventId: e.envelope.event_id,
@@ -298,10 +296,14 @@ export class SequencerClient {
         payloadEncrypted: e.envelope.payload_encrypted,
         // Backwards compat: use payload_hash if payload_plain_hash not present
         payloadPlainHash: e.envelope.payload_plain_hash || e.envelope.payload_hash,
-        payloadCipherHash: e.envelope.payload_cipher_hash || '0000000000000000000000000000000000000000000000000000000000000000',
+        payloadCipherHash:
+          e.envelope.payload_cipher_hash ||
+          '0000000000000000000000000000000000000000000000000000000000000000',
         // VES v1.0 signature fields (may be null for legacy events)
         agentKeyId: e.envelope.agent_key_id || 0,
-        agentSignature: e.envelope.agent_signature || '0000000000000000000000000000000000000000000000000000000000000000',
+        agentSignature:
+          e.envelope.agent_signature ||
+          '0000000000000000000000000000000000000000000000000000000000000000',
         // Metadata
         baseVersion: e.envelope.base_version,
         createdAt: e.envelope.created_at,
@@ -312,9 +314,8 @@ export class SequencerClient {
       receiptHash: e.receipt_hash,
     }));
 
-    const maxSeq = events.length > 0
-      ? Math.max(...events.map(e => e.sequenceNumber))
-      : fromSequence;
+    const maxSeq =
+      events.length > 0 ? Math.max(...events.map((e) => e.sequenceNumber)) : fromSequence;
 
     return {
       events,
@@ -405,10 +406,10 @@ export class SequencerClient {
 
     const response = await this._request(
       'GET',
-      `/api/v1/entities/${entityType}/${entityId}?${params}`
+      `/api/v1/entities/${entityType}/${entityId}?${params}`,
     );
 
-    return (response.events || []).map(e => ({
+    return (response.events || []).map((e) => ({
       envelope: {
         // Core event fields
         eventId: e.event_id,
@@ -537,7 +538,7 @@ export class SequencerClient {
 
     const response = await this._request('GET', `/api/v1/agents/keys?${params}`);
 
-    return (response.keys || []).map(k => ({
+    return (response.keys || []).map((k) => ({
       keyId: k.key_id,
       publicKey: k.public_key,
       status: k.status,

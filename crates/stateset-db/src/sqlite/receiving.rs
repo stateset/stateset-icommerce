@@ -10,15 +10,15 @@ use crate::sqlite::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::params;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
-    BatchResult, CompletePutAway, CommerceError, CreatePutAway, CreateReceipt, CreateReceiptItem,
-    PutAway, PutAwayFilter, PutAwayStatus, Receipt, ReceiptFilter, ReceiptItem,
-    ReceiptStatus, ReceiptType, ReceiveItems, ReceivingRepository, Result, UpdateReceipt,
-    generate_receipt_number,
+    generate_receipt_number, BatchResult, CommerceError, CompletePutAway, CreatePutAway,
+    CreateReceipt, CreateReceiptItem, PutAway, PutAwayFilter, PutAwayStatus, Receipt,
+    ReceiptFilter, ReceiptItem, ReceiptStatus, ReceiptType, ReceiveItems, ReceivingRepository,
+    Result, UpdateReceipt,
 };
 
 /// SQLite receiving repository
@@ -41,7 +41,11 @@ impl SqliteReceivingRepository {
         Ok(Receipt {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "receipt", "id")?,
             receipt_number: row.get("receipt_number")?,
-            receipt_type: parse_enum_row(&row.get::<_, String>("receipt_type")?, "receipt", "receipt_type")?,
+            receipt_type: parse_enum_row(
+                &row.get::<_, String>("receipt_type")?,
+                "receipt",
+                "receipt_type",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "receipt", "status")?,
             reference_type: row.get("reference_type")?,
             reference_id: parse_uuid_opt_row(
@@ -94,15 +98,27 @@ impl SqliteReceivingRepository {
             )?,
             notes: row.get("notes")?,
             created_by: row.get("created_by")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "receipt", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "receipt", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "receipt",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "receipt",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_receipt_item(row: &rusqlite::Row) -> rusqlite::Result<ReceiptItem> {
         Ok(ReceiptItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "receipt_item", "id")?,
-            receipt_id: parse_uuid_row(&row.get::<_, String>("receipt_id")?, "receipt_item", "receipt_id")?,
+            receipt_id: parse_uuid_row(
+                &row.get::<_, String>("receipt_id")?,
+                "receipt_item",
+                "receipt_id",
+            )?,
             line_number: row.get("line_number")?,
             sku: row.get("sku")?,
             description: row.get("description")?,
@@ -140,15 +156,27 @@ impl SqliteReceivingRepository {
             )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "receipt_item", "status")?,
             notes: row.get("notes")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "receipt_item", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "receipt_item", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "receipt_item",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "receipt_item",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_put_away(row: &rusqlite::Row) -> rusqlite::Result<PutAway> {
         Ok(PutAway {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "put_away", "id")?,
-            receipt_id: parse_uuid_row(&row.get::<_, String>("receipt_id")?, "put_away", "receipt_id")?,
+            receipt_id: parse_uuid_row(
+                &row.get::<_, String>("receipt_id")?,
+                "put_away",
+                "receipt_id",
+            )?,
             receipt_item_id: parse_uuid_row(
                 &row.get::<_, String>("receipt_item_id")?,
                 "put_away",
@@ -157,8 +185,16 @@ impl SqliteReceivingRepository {
             sku: row.get("sku")?,
             from_location_id: row.get("from_location_id")?,
             to_location_id: row.get("to_location_id")?,
-            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "put_away", "quantity")?,
-            lot_id: parse_uuid_opt_row(row.get::<_, Option<String>>("lot_id")?, "put_away", "lot_id")?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>("quantity")?,
+                "put_away",
+                "quantity",
+            )?,
+            lot_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("lot_id")?,
+                "put_away",
+                "lot_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "put_away", "status")?,
             assigned_to: row.get("assigned_to")?,
             started_at: parse_datetime_opt_row(
@@ -172,7 +208,11 @@ impl SqliteReceivingRepository {
                 "completed_at",
             )?,
             notes: row.get("notes")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "put_away", "created_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "put_away",
+                "created_at",
+            )?,
         })
     }
 
@@ -201,7 +241,11 @@ impl SqliteReceivingRepository {
 
         conn.execute(
             "UPDATE receipts SET expected_quantity = ?1, received_quantity = ?2 WHERE id = ?3",
-            params![exp_total.to_string(), rcv_total.to_string(), receipt_id_param],
+            params![
+                exp_total.to_string(),
+                rcv_total.to_string(),
+                receipt_id_param
+            ],
         )
         .map_err(map_db_error)?;
 
@@ -271,8 +315,9 @@ impl ReceivingRepository for SqliteReceivingRepository {
             }
         }
 
-        self.get_receipt(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve created receipt".into()))
+        self.get_receipt(id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve created receipt".into())
+        })
     }
 
     fn get_receipt(&self, id: Uuid) -> Result<Option<Receipt>> {
@@ -326,8 +371,9 @@ impl ReceivingRepository for SqliteReceivingRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_receipt(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve updated receipt".into()))
+        self.get_receipt(id)?.ok_or_else(|| {
+            CommerceError::DatabaseError("Failed to retrieve updated receipt".into())
+        })
     }
 
     fn list_receipts(&self, filter: ReceiptFilter) -> Result<Vec<Receipt>> {
@@ -381,7 +427,8 @@ impl ReceivingRepository for SqliteReceivingRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -403,8 +450,11 @@ impl ReceivingRepository for SqliteReceivingRepository {
             ));
         }
 
-        conn.execute("DELETE FROM receipts WHERE id = ?1", params![id.to_string()])
-            .map_err(map_db_error)?;
+        conn.execute(
+            "DELETE FROM receipts WHERE id = ?1",
+            params![id.to_string()],
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -435,9 +485,13 @@ impl ReceivingRepository for SqliteReceivingRepository {
         let now = Utc::now().to_rfc3339();
 
         // Verify receipt exists and is in correct status
-        let existing = self.get_receipt(input.receipt_id)?.ok_or(CommerceError::NotFound)?;
+        let existing = self
+            .get_receipt(input.receipt_id)?
+            .ok_or(CommerceError::NotFound)?;
 
-        if existing.status != ReceiptStatus::InProgress && existing.status != ReceiptStatus::Expected {
+        if existing.status != ReceiptStatus::InProgress
+            && existing.status != ReceiptStatus::Expected
+        {
             return Err(CommerceError::ValidationError(
                 "Receipt must be 'expected' or 'in_progress' to receive items".into(),
             ));
@@ -577,7 +631,8 @@ impl ReceivingRepository for SqliteReceivingRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn
             .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
@@ -658,7 +713,8 @@ impl ReceivingRepository for SqliteReceivingRepository {
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut rows = stmt.query(params_refs.as_slice()).map_err(map_db_error)?;
 
@@ -675,7 +731,11 @@ impl ReceivingRepository for SqliteReceivingRepository {
 
         conn.execute(
             "UPDATE put_aways SET assigned_to = ?1, status = ?2 WHERE id = ?3",
-            params![assigned_to, PutAwayStatus::Assigned.to_string(), id.to_string()],
+            params![
+                assigned_to,
+                PutAwayStatus::Assigned.to_string(),
+                id.to_string()
+            ],
         )
         .map_err(map_db_error)?;
 
@@ -701,7 +761,9 @@ impl ReceivingRepository for SqliteReceivingRepository {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
-        let existing = self.get_put_away(input.put_away_id)?.ok_or(CommerceError::NotFound)?;
+        let existing = self
+            .get_put_away(input.put_away_id)?
+            .ok_or(CommerceError::NotFound)?;
 
         let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
 
@@ -775,7 +837,8 @@ impl ReceivingRepository for SqliteReceivingRepository {
             params_vec.push(Box::new(status.to_string()));
         }
 
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn
             .query_row(&sql, params_refs.as_slice(), |row| row.get(0))
@@ -792,7 +855,9 @@ impl ReceivingRepository for SqliteReceivingRepository {
             .prepare("SELECT sku, name, quantity, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
             .map_err(map_db_error)?;
 
-        let mut rows = stmt.query(params![po_id.to_string()]).map_err(map_db_error)?;
+        let mut rows = stmt
+            .query(params![po_id.to_string()])
+            .map_err(map_db_error)?;
 
         let mut items: Vec<CreateReceiptItem> = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {

@@ -11,12 +11,12 @@
 //!
 //! Run with: cargo bench -p stateset-embedded
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    AnalyticsQuery, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    CustomerFilter, OrderFilter, TimePeriod,
 };
-use std::time::Duration;
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
@@ -63,7 +63,11 @@ fn setup_test_data(commerce: &Commerce) {
     for i in 1..=100 {
         let customer_id = commerce
             .customers()
-            .list(0, 1)
+            .list(CustomerFilter {
+                limit: Some(1),
+                offset: Some(0),
+                ..Default::default()
+            })
             .expect("Failed to list customers")
             .into_iter()
             .next()
@@ -140,7 +144,7 @@ fn bench_inventory_operations(c: &mut Criterion) {
             black_box(
                 commerce
                     .inventory()
-                    .adjust("SKU-001", dec!(10), None, None)
+                    .adjust("SKU-001", dec!(10), "Benchmark adjustment")
                     .expect("Failed to adjust inventory"),
             );
         });
@@ -304,10 +308,11 @@ fn bench_order_status_transitions(c: &mut Criterion) {
                 .update_status(order.id, stateset_embedded::OrderStatus::Confirmed)
                 .expect("Failed to confirm order");
 
+            let tracking = format!("TRACKING-{}", Uuid::new_v4());
             black_box(
                 commerce
                     .orders()
-                    .ship(order.id, Some(format!("TRACKING-{}", Uuid::new_v4())))
+                    .ship(order.id, Some(tracking.as_str()))
                     .expect("Failed to ship order"),
             );
         });
@@ -326,7 +331,11 @@ fn bench_query_performance(c: &mut Criterion) {
             black_box(
                 commerce
                     .customers()
-                    .list(0, 20)
+                    .list(CustomerFilter {
+                        limit: Some(20),
+                        offset: Some(0),
+                        ..Default::default()
+                    })
                     .expect("Failed to list customers"),
             );
         });
@@ -334,7 +343,16 @@ fn bench_query_performance(c: &mut Criterion) {
 
     group.bench_function("list_orders", |b| {
         b.iter(|| {
-            black_box(commerce.orders().list(0, 20).expect("Failed to list orders"));
+            black_box(
+                commerce
+                    .orders()
+                    .list(OrderFilter {
+                        limit: Some(20),
+                        offset: Some(0),
+                        ..Default::default()
+                    })
+                    .expect("Failed to list orders"),
+            );
         });
     });
 
@@ -343,7 +361,10 @@ fn bench_query_performance(c: &mut Criterion) {
             black_box(
                 commerce
                     .analytics()
-                    .sales_summary("30d")
+                    .sales_summary(AnalyticsQuery {
+                        period: Some(TimePeriod::Last30Days),
+                        ..Default::default()
+                    })
                     .expect("Failed to get sales summary"),
             );
         });
@@ -362,92 +383,35 @@ fn bench_query_performance(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_concurrent_operations(c: &mut Criterion) {
-    let (commerce, _temp) = create_test_commerce();
-    setup_test_data(&commerce);
-
-    let mut group = c.benchmark_group("concurrent_operations");
-    group.measurement_time(Duration::from_secs(5));
-
-    group.bench_function("concurrent_customer_creation", |b| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
-        b.to_async(&rt).iter(|| async {
-            let handle = tokio::spawn(async move {
-                let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
-                commerce
-                    .customers()
-                    .create(CreateCustomer {
-                        email: format!("test-{}@example.com", Uuid::new_v4()),
-                        first_name: "Test".into(),
-                        last_name: "User".into(),
-                        ..Default::default()
-                    })
-                    .expect("Failed to create customer");
-            });
-            handle.await.ok();
-        });
-    });
-
-    group.bench_function("concurrent_order_creation", |b| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
-        let commerce = &commerce;
-        let customer_id = commerce
-            .customers()
-            .list(0, 1)
-            .expect("Failed to list customers")
-            .into_iter()
-            .next()
-            .expect("No customers found")
-            .id;
-
-        b.to_async(&rt).iter(|| async {
-            let handle = tokio::spawn(async move {
-                let commerce_ref = &*commerce;
-                commerce_ref
-                    .orders()
-                    .create(CreateOrder {
-                        customer_id,
-                        items: vec![CreateOrderItem {
-                            product_id: Uuid::new_v4(),
-                            sku: "SKU-001".into(),
-                            name: "Widget".into(),
-                            quantity: 1,
-                            unit_price: dec!(29.99),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    })
-                    .expect("Failed to create order");
-            });
-            handle.await.ok();
-        });
-    });
-    group.finish();
-}
-
 fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
 
-    for size in [10, 100, 1000].iter() {
-        group.bench_with_input(BenchmarkId::new("list_customers", size), size, |b, &size| {
-            let (commerce, _temp) = create_test_commerce();
+    for size in [10usize, 100, 1000].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("list_customers", size),
+            size,
+            |b, &size| {
+                let (commerce, _temp) = create_test_commerce();
 
-            // Create customers
-            for i in 0..size {
-                create_test_customer(&commerce, i);
-            }
+                // Create customers
+                for i in 0..size {
+                    create_test_customer(&commerce, i);
+                }
 
-            b.iter(|| {
-                black_box(
-                    commerce
-                        .customers()
-                        .list(0, size as i64)
-                        .expect("Failed to list customers"),
-                );
-            });
-        });
+                b.iter(|| {
+                    black_box(
+                        commerce
+                            .customers()
+                            .list(CustomerFilter {
+                                limit: Some(size as u32),
+                                offset: Some(0),
+                                ..Default::default()
+                            })
+                            .expect("Failed to list customers"),
+                    );
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -459,7 +423,6 @@ criterion_group!(
     bench_order_creation,
     bench_order_status_transitions,
     bench_query_performance,
-    bench_concurrent_operations,
     bench_scalability,
 );
 criterion_main!(benches);

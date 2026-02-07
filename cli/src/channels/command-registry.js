@@ -104,7 +104,7 @@ export class CommandRegistry {
 
     if (!NAME_PATTERN.test(normalized)) {
       throw new Error(
-        `Invalid command name "${normalized}": must match pattern ${NAME_PATTERN} (lowercase letters, numbers, hyphens, underscores)`
+        `Invalid command name "${normalized}": must match pattern ${NAME_PATTERN} (lowercase letters, numbers, hyphens, underscores)`,
       );
     }
 

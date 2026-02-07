@@ -10,13 +10,7 @@
  *   MATRIX_ACCESS_TOKEN    - Bot account access token
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  isAllowed,
-  chunkMessage,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 
 // ============================================================================
@@ -102,7 +96,7 @@ export async function startMatrixGateway({
   if (!homeserver) {
     throw new Error(
       'MATRIX_HOMESERVER_URL environment variable is required.\n' +
-      'Set it to the base URL of your Matrix homeserver, e.g. https://matrix.example.com'
+        'Set it to the base URL of your Matrix homeserver, e.g. https://matrix.example.com',
     );
   }
 
@@ -110,7 +104,7 @@ export async function startMatrixGateway({
   if (!accessToken) {
     throw new Error(
       'MATRIX_ACCESS_TOKEN environment variable is required.\n' +
-      'Create a bot account and generate an access token via Element or the API.'
+        'Create a bot account and generate an access token via Element or the API.',
     );
   }
 
@@ -278,7 +272,9 @@ export async function startMatrixGateway({
     for (const roomId of Object.keys(invite)) {
       try {
         const encodedRoomId = encodeURIComponent(roomId);
-        await matrixFetch(hs, accessToken, 'POST', `/_matrix/client/v3/join/${encodedRoomId}`, { body: {} });
+        await matrixFetch(hs, accessToken, 'POST', `/_matrix/client/v3/join/${encodedRoomId}`, {
+          body: {},
+        });
         console.log(`[Matrix] Auto-joined room ${roomId}`);
       } catch (err) {
         console.error(`[Matrix] Failed to auto-join room ${roomId}: ${err.message}`);
@@ -314,7 +310,9 @@ export async function startMatrixGateway({
         }),
       });
 
-      const initial = await matrixFetch(hs, accessToken, 'GET', '/_matrix/client/v3/sync', { query });
+      const initial = await matrixFetch(hs, accessToken, 'GET', '/_matrix/client/v3/sync', {
+        query,
+      });
       nextBatch = initial.next_batch;
 
       // Process any pending invites from the initial sync
@@ -349,13 +347,10 @@ export async function startMatrixGateway({
           }),
         });
 
-        const syncResponse = await matrixFetch(
-          hs,
-          accessToken,
-          'GET',
-          '/_matrix/client/v3/sync',
-          { query, signal: syncAbort.signal },
-        );
+        const syncResponse = await matrixFetch(hs, accessToken, 'GET', '/_matrix/client/v3/sync', {
+          query,
+          signal: syncAbort.signal,
+        });
 
         nextBatch = syncResponse.next_batch;
 
@@ -410,10 +405,12 @@ export async function startMatrixGateway({
   // We give it a brief window for the initial sync to complete.
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error(
-        `Matrix gateway timed out connecting to ${hs}.\n` +
-        'Check MATRIX_HOMESERVER_URL and MATRIX_ACCESS_TOKEN.'
-      ));
+      reject(
+        new Error(
+          `Matrix gateway timed out connecting to ${hs}.\n` +
+            'Check MATRIX_HOMESERVER_URL and MATRIX_ACCESS_TOKEN.',
+        ),
+      );
     }, 30_000);
 
     // Poll for the initial sync to complete (nextBatch is set)
@@ -451,7 +448,9 @@ export async function startMatrixGateway({
     if (syncAbort) {
       try {
         syncAbort.abort();
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('[matrix] Sync abort error:', err.message);
+      }
     }
 
     console.log('Matrix gateway shut down.');

@@ -43,12 +43,12 @@ export function upsertToken(registry, token) {
   const symbol = token.symbol.toUpperCase();
   const chainId = token.chainId;
   const tokens = registry.tokens || [];
-  const idx = tokens.findIndex(t => t.symbol.toUpperCase() === symbol && t.chainId === chainId);
+  const idx = tokens.findIndex((t) => t.symbol.toUpperCase() === symbol && t.chainId === chainId);
 
   const entry = {
     ...token,
     symbol,
-    chainId
+    chainId,
   };
 
   if (idx >= 0) {
@@ -63,7 +63,7 @@ export function upsertToken(registry, token) {
 export function removeToken(registry, symbol, chainId) {
   const upper = symbol.toUpperCase();
   const tokens = (registry.tokens || []).filter(
-    t => !(t.symbol.toUpperCase() === upper && t.chainId === chainId)
+    (t) => !(t.symbol.toUpperCase() === upper && t.chainId === chainId),
   );
   return { tokens };
 }
@@ -73,5 +73,5 @@ export default {
   loadTokenRegistry,
   saveTokenRegistry,
   upsertToken,
-  removeToken
+  removeToken,
 };

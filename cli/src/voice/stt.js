@@ -8,24 +8,24 @@
  * Requires: OPENAI_API_KEY environment variable
  */
 
-import { createLogger } from "../logger.js";
+import { createLogger } from '../logger.js';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 /** Default Whisper model. */
-const DEFAULT_MODEL = "whisper-1";
+const DEFAULT_MODEL = 'whisper-1';
 
 /** Supported audio formats and their MIME types. */
 const SUPPORTED_FORMATS = {
-  mp3: "audio/mpeg",
-  wav: "audio/wav",
-  m4a: "audio/mp4",
-  ogg: "audio/ogg",
-  webm: "audio/webm",
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  webm: 'audio/webm',
 };
 
 /** Maximum file size for Whisper API (25 MB). */
@@ -56,7 +56,7 @@ export class STTProvider {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || null;
     this.model = options.model || DEFAULT_MODEL;
     this.language = options.language || null;
-    this.log = createLogger({ level: process.env.LOG_LEVEL || "info" }).child({ module: "stt" });
+    this.log = createLogger({ level: process.env.LOG_LEVEL || 'info' }).child({ module: 'stt' });
   }
 
   // --------------------------------------------------------------------------
@@ -94,25 +94,25 @@ export class STTProvider {
    */
   async transcribe(audioBuffer, opts = {}) {
     if (!this.apiKey) {
-      this.log.debug("STT unavailable: no OPENAI_API_KEY configured");
+      this.log.debug('STT unavailable: no OPENAI_API_KEY configured');
       return null;
     }
 
     if (!audioBuffer || !Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
-      this.log.warn("STT transcribe called with empty or invalid audio buffer");
+      this.log.warn('STT transcribe called with empty or invalid audio buffer');
       return null;
     }
 
-    const format = opts.format || "mp3";
+    const format = opts.format || 'mp3';
     if (!SUPPORTED_FORMATS[format]) {
       throw new Error(
-        `Unsupported audio format: "${format}". Supported: ${Object.keys(SUPPORTED_FORMATS).join(", ")}`
+        `Unsupported audio format: "${format}". Supported: ${Object.keys(SUPPORTED_FORMATS).join(', ')}`,
       );
     }
 
     if (audioBuffer.length > MAX_FILE_SIZE) {
       throw new Error(
-        `Audio buffer too large (${(audioBuffer.length / 1024 / 1024).toFixed(1)} MB). Maximum: 25 MB.`
+        `Audio buffer too large (${(audioBuffer.length / 1024 / 1024).toFixed(1)} MB). Maximum: 25 MB.`,
       );
     }
 
@@ -120,7 +120,7 @@ export class STTProvider {
     const language = opts.language || this.language;
     const temperature = opts.temperature ?? 0;
 
-    this.log.debug("Transcribing audio", {
+    this.log.debug('Transcribing audio', {
       format,
       model,
       language,
@@ -133,20 +133,20 @@ export class STTProvider {
       const formData = new FormData();
 
       const blob = new Blob([audioBuffer], { type: SUPPORTED_FORMATS[format] });
-      formData.append("file", blob, `audio.${format}`);
-      formData.append("model", model);
-      formData.append("response_format", "verbose_json");
-      formData.append("temperature", String(temperature));
+      formData.append('file', blob, `audio.${format}`);
+      formData.append('model', model);
+      formData.append('response_format', 'verbose_json');
+      formData.append('temperature', String(temperature));
 
       if (language) {
-        formData.append("language", language);
+        formData.append('language', language);
       }
       if (opts.prompt) {
-        formData.append("prompt", opts.prompt);
+        formData.append('prompt', opts.prompt);
       }
 
       const res = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
-        method: "POST",
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
         },
@@ -154,8 +154,8 @@ export class STTProvider {
       });
 
       if (!res.ok) {
-        const errBody = await res.text().catch(() => "Unknown error");
-        this.log.error("OpenAI Whisper API error", {
+        const errBody = await res.text().catch(() => 'Unknown error');
+        this.log.error('OpenAI Whisper API error', {
           status: res.status,
           statusText: res.statusText,
           body: errBody.slice(0, 500),
@@ -166,12 +166,12 @@ export class STTProvider {
       const data = await res.json();
 
       const result = {
-        text: data.text || "",
+        text: data.text || '',
         language: data.language || language || null,
-        duration: data.duration != null ? data.duration : null,
+        duration: data.duration ?? null,
       };
 
-      this.log.info("Audio transcribed", {
+      this.log.info('Audio transcribed', {
         textLength: result.text.length,
         language: result.language,
         duration: result.duration,
@@ -180,10 +180,10 @@ export class STTProvider {
 
       return result;
     } catch (err) {
-      if (err.message.startsWith("OpenAI Whisper API error")) {
+      if (err.message.startsWith('OpenAI Whisper API error')) {
         throw err;
       }
-      this.log.error("STT transcription failed", { error: err.message });
+      this.log.error('STT transcription failed', { error: err.message });
       throw new Error(`STT transcription failed: ${err.message}`);
     }
   }

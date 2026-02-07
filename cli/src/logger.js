@@ -12,7 +12,7 @@ export const LOG_LEVELS = {
   warn: 1,
   info: 2,
   debug: 3,
-  trace: 4
+  trace: 4,
 };
 
 // ANSI color codes
@@ -22,7 +22,7 @@ const COLORS = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
   gray: '\x1b[90m',
-  cyan: '\x1b[36m'
+  cyan: '\x1b[36m',
 };
 
 const LEVEL_COLORS = {
@@ -30,7 +30,7 @@ const LEVEL_COLORS = {
   warn: COLORS.yellow,
   info: COLORS.blue,
   debug: COLORS.gray,
-  trace: COLORS.cyan
+  trace: COLORS.cyan,
 };
 
 /**
@@ -56,11 +56,11 @@ export class Logger {
    */
   child(context) {
     return new Logger({
-      level: Object.keys(LOG_LEVELS).find(k => LOG_LEVELS[k] === this.level),
+      level: Object.keys(LOG_LEVELS).find((k) => LOG_LEVELS[k] === this.level),
       json: this.json,
       color: this.color,
       context: { ...this.context, ...context },
-      output: this.output
+      output: this.output,
     });
   }
 
@@ -131,7 +131,7 @@ export class Logger {
       level,
       message,
       ...this.context,
-      ...meta
+      ...meta,
     };
 
     if (this.json) {
@@ -141,9 +141,10 @@ export class Logger {
       const timestamp = this.color
         ? `${COLORS.gray}${entry.timestamp}${COLORS.reset}`
         : entry.timestamp;
-      const metaStr = Object.keys(meta).length > 0
-        ? ` ${this.color ? COLORS.gray : ''}${JSON.stringify(meta)}${this.color ? COLORS.reset : ''}`
-        : '';
+      const metaStr =
+        Object.keys(meta).length > 0
+          ? ` ${this.color ? COLORS.gray : ''}${JSON.stringify(meta)}${this.color ? COLORS.reset : ''}`
+          : '';
 
       this.output.log(`${timestamp} ${levelStr} ${message}${metaStr}`);
     }
@@ -181,7 +182,7 @@ export const logger = createLogger();
 export function createRequestLogger(requestId, operation) {
   return logger.child({
     requestId,
-    operation
+    operation,
   });
 }
 
@@ -198,7 +199,7 @@ export class ToolCallLogger {
     this.logger.info('Tool call started', {
       tool: toolName,
       input: this._sanitize(input),
-      requestId
+      requestId,
     });
   }
 
@@ -211,7 +212,7 @@ export class ToolCallLogger {
       success,
       duration_ms: duration,
       requestId,
-      ...(result.error ? { error: result.error } : {})
+      ...(result.error ? { error: result.error } : {}),
     });
   }
 

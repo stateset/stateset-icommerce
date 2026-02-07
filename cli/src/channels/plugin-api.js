@@ -26,31 +26,31 @@ import { getCommandRegistry } from './command-registry.js';
  * Hooks that run in parallel (fire-and-forget, errors logged but don't block).
  */
 const PARALLEL_HOOKS = new Set([
-  'message_received',       // Inbound message processing
-  'message_sent',           // Post-delivery hooks
-  'agent_end',              // After agent completes
-  'after_tool_call',        // Post-execution analysis
-  'after_command',          // After command executed
-  'session_start',          // Session initialization
-  'session_end',            // Session cleanup
-  'gateway_start',          // Gateway startup
-  'gateway_stop',           // Gateway shutdown
-  'after_compaction',       // Post-compression analysis
-  'plugin_loaded',          // After plugin is loaded
-  'plugin_unloaded',        // After plugin is unloaded
+  'message_received', // Inbound message processing
+  'message_sent', // Post-delivery hooks
+  'agent_end', // After agent completes
+  'after_tool_call', // Post-execution analysis
+  'after_command', // After command executed
+  'session_start', // Session initialization
+  'session_end', // Session cleanup
+  'gateway_start', // Gateway startup
+  'gateway_stop', // Gateway shutdown
+  'after_compaction', // Post-compression analysis
+  'plugin_loaded', // After plugin is loaded
+  'plugin_unloaded', // After plugin is unloaded
 ]);
 
 /**
  * Hooks that run sequentially (can modify data, priority-ordered).
  */
 const SEQUENTIAL_HOOKS = new Set([
-  'message_sending',        // Outbound message filtering/modification
-  'before_agent_start',     // Inject system prompt context
-  'before_tool_call',       // Intercept/block tool calls
-  'before_command',         // Before command executed (can block)
-  'before_compaction',      // Pre-compression cleanup
-  'tool_result_persist',    // Sync hook for result message modification
-  'before_send',            // Final modification before send
+  'message_sending', // Outbound message filtering/modification
+  'before_agent_start', // Inject system prompt context
+  'before_tool_call', // Intercept/block tool calls
+  'before_command', // Before command executed (can block)
+  'before_compaction', // Pre-compression cleanup
+  'tool_result_persist', // Sync hook for result message modification
+  'before_send', // Final modification before send
 ]);
 
 /**
@@ -104,7 +104,7 @@ export class HookRunner {
     for (const [hookName, handlers] of this._hooks) {
       this._hooks.set(
         hookName,
-        handlers.filter((h) => h.pluginId !== pluginId)
+        handlers.filter((h) => h.pluginId !== pluginId),
       );
     }
   }
@@ -139,7 +139,10 @@ export class HookRunner {
       try {
         await handler(data);
       } catch (err) {
-        console.error(`[HookRunner] Error in parallel hook ${hookName} (plugin: ${pluginId}):`, err.message);
+        console.error(
+          `[HookRunner] Error in parallel hook ${hookName} (plugin: ${pluginId}):`,
+          err.message,
+        );
       }
     });
 
@@ -160,7 +163,10 @@ export class HookRunner {
           result = { ...result, ...modification };
         }
       } catch (err) {
-        console.error(`[HookRunner] Error in sequential hook ${hookName} (plugin: ${pluginId}):`, err.message);
+        console.error(
+          `[HookRunner] Error in sequential hook ${hookName} (plugin: ${pluginId}):`,
+          err.message,
+        );
       }
     }
 
@@ -214,7 +220,8 @@ export class HookRunner {
  * @typedef {Object} HttpRouteDefinition
  * @property {string} method - HTTP method (GET, POST, etc.)
  * @property {string} path - Route path
- * @property {Function} handler - (req, res) => Promise<void>
+ * @property {string} [level] - Permission level required to access the route (none, read, preview, write, delete, admin)
+ * @property {Function} handler - ({ method, pathname, params, body, query, headers, identity }) => Promise<any>
  */
 
 /**
@@ -271,7 +278,11 @@ export class PluginAPI {
    * @param {ServiceDefinition} service
    */
   registerService(service) {
-    if (!service.name || typeof service.start !== 'function' || typeof service.stop !== 'function') {
+    if (
+      !service.name ||
+      typeof service.start !== 'function' ||
+      typeof service.stop !== 'function'
+    ) {
       throw new Error('Service must have name, start, and stop functions');
     }
 
@@ -292,8 +303,17 @@ export class PluginAPI {
       throw new Error('Route must have method, path, and handler');
     }
 
+    const VALID_LEVELS = new Set(['none', 'read', 'preview', 'write', 'delete', 'admin']);
+    const level = route.level ? String(route.level).toLowerCase() : null;
+    if (level && !VALID_LEVELS.has(level)) {
+      throw new Error(
+        `Invalid route level "${route.level}" (expected one of: ${[...VALID_LEVELS].join(', ')})`,
+      );
+    }
+
     this._routes.push({
       ...route,
+      ...(level ? { level } : {}),
       pluginId: this._pluginId,
     });
     this._registry._routes.push(this._routes[this._routes.length - 1]);

@@ -5,17 +5,9 @@
 import fs from 'node:fs';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import {
-  X402SequencerClient,
-  createX402Agent,
-  BudgetExceededError,
-} from './x402/index.js';
+import { X402SequencerClient, createX402Agent, BudgetExceededError } from './x402/index.js';
 import { createBudgetState, getDefaultBudgetStateFile } from './x402/budget.js';
-import {
-  loadX402Config,
-  resolveX402ConfigPath,
-  pickConfigValue,
-} from './x402/config.js';
+import { loadX402Config, resolveX402ConfigPath, pickConfigValue } from './x402/config.js';
 import { getKeyManager } from './sync/keys.js';
 
 const MAX_RESPONSE_CHARS = 12000;
@@ -38,11 +30,11 @@ function parseNumber(value) {
 function parseList(value) {
   if (!value) return [];
   if (Array.isArray(value)) {
-    return value.map(item => String(item).trim()).filter(Boolean);
+    return value.map((item) => String(item).trim()).filter(Boolean);
   }
   return String(value)
     .split(',')
-    .map(item => item.trim())
+    .map((item) => item.trim())
     .filter(Boolean);
 }
 
@@ -104,37 +96,93 @@ function errorResult(error) {
   };
 }
 
-export function createX402McpServer({
-  env = process.env,
-  configDir = '.stateset',
-} = {}) {
+export function createX402McpServer({ env = process.env, configDir = '.stateset' } = {}) {
   const configPath = resolveX402ConfigPath({ env, configDir });
   const fileConfig = loadX402Config(configPath);
 
-  const sequencerUrl = pickConfigValue(env, fileConfig, 'X402_SEQUENCER_URL', 'sequencerUrl', 'sequencer_url')
-    || pickConfigValue(env, fileConfig, 'X402_SEQUENCER', 'sequencer');
+  const sequencerUrl =
+    pickConfigValue(env, fileConfig, 'X402_SEQUENCER_URL', 'sequencerUrl', 'sequencer_url') ||
+    pickConfigValue(env, fileConfig, 'X402_SEQUENCER', 'sequencer');
   const tenantId = pickConfigValue(env, fileConfig, 'X402_TENANT_ID', 'tenantId', 'tenant_id');
   const storeId = pickConfigValue(env, fileConfig, 'X402_STORE_ID', 'storeId', 'store_id');
   const agentId = pickConfigValue(env, fileConfig, 'X402_AGENT_ID', 'agentId', 'agent_id');
-  const payerAddress = pickConfigValue(env, fileConfig, 'X402_PAYER_ADDRESS', 'payerAddress', 'payer_address')
-    || pickConfigValue(env, fileConfig, 'X402_WALLET_ADDRESS', 'walletAddress', 'wallet_address');
-  const agentKeyId = parseNumber(pickConfigValue(env, fileConfig, 'X402_AGENT_KEY_ID', 'agentKeyId', 'agent_key_id'));
-  const preferredNetworks = parseList(pickConfigValue(env, fileConfig, 'X402_PREFERRED_NETWORKS', 'preferredNetworks', 'preferred_networks'));
-  const requireReceipt = parseBool(pickConfigValue(env, fileConfig, 'X402_REQUIRE_RECEIPT', 'requireReceipt', 'require_receipt'), false);
-  const receiptTimeoutMs = parseNumber(pickConfigValue(env, fileConfig, 'X402_RECEIPT_TIMEOUT_MS', 'receiptTimeoutMs', 'receipt_timeout_ms'));
-  const receiptPollMs = parseNumber(pickConfigValue(env, fileConfig, 'X402_RECEIPT_POLL_MS', 'receiptPollMs', 'receipt_poll_ms'));
-  const maxAmount = parseNumber(pickConfigValue(env, fileConfig, 'X402_MAX_AMOUNT', 'maxAmount', 'max_amount'));
-  const maxAmountPerCall = parseNumber(pickConfigValue(env, fileConfig, 'X402_BUDGET_PER_CALL', 'maxAmountPerCall', 'budgetPerCall', 'budget_per_call'));
-  const dailyBudget = parseNumber(pickConfigValue(env, fileConfig, 'X402_BUDGET_DAILY', 'dailyBudget', 'budgetDaily', 'budget_daily'));
-  const startingBalance = parseNumber(pickConfigValue(env, fileConfig, 'X402_STARTING_BALANCE', 'startingBalance', 'starting_balance'));
-  const budgetStateFile = pickConfigValue(env, fileConfig, 'X402_BUDGET_STATE_FILE', 'budgetStateFile', 'budget_state_file')
-    || getDefaultBudgetStateFile();
+  const payerAddress =
+    pickConfigValue(env, fileConfig, 'X402_PAYER_ADDRESS', 'payerAddress', 'payer_address') ||
+    pickConfigValue(env, fileConfig, 'X402_WALLET_ADDRESS', 'walletAddress', 'wallet_address');
+  const agentKeyId = parseNumber(
+    pickConfigValue(env, fileConfig, 'X402_AGENT_KEY_ID', 'agentKeyId', 'agent_key_id'),
+  );
+  const preferredNetworks = parseList(
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_PREFERRED_NETWORKS',
+      'preferredNetworks',
+      'preferred_networks',
+    ),
+  );
+  const requireReceipt = parseBool(
+    pickConfigValue(env, fileConfig, 'X402_REQUIRE_RECEIPT', 'requireReceipt', 'require_receipt'),
+    false,
+  );
+  const receiptTimeoutMs = parseNumber(
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_RECEIPT_TIMEOUT_MS',
+      'receiptTimeoutMs',
+      'receipt_timeout_ms',
+    ),
+  );
+  const receiptPollMs = parseNumber(
+    pickConfigValue(env, fileConfig, 'X402_RECEIPT_POLL_MS', 'receiptPollMs', 'receipt_poll_ms'),
+  );
+  const maxAmount = parseNumber(
+    pickConfigValue(env, fileConfig, 'X402_MAX_AMOUNT', 'maxAmount', 'max_amount'),
+  );
+  const maxAmountPerCall = parseNumber(
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_BUDGET_PER_CALL',
+      'maxAmountPerCall',
+      'budgetPerCall',
+      'budget_per_call',
+    ),
+  );
+  const dailyBudget = parseNumber(
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_BUDGET_DAILY',
+      'dailyBudget',
+      'budgetDaily',
+      'budget_daily',
+    ),
+  );
+  const startingBalance = parseNumber(
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_STARTING_BALANCE',
+      'startingBalance',
+      'starting_balance',
+    ),
+  );
+  const budgetStateFile =
+    pickConfigValue(
+      env,
+      fileConfig,
+      'X402_BUDGET_STATE_FILE',
+      'budgetStateFile',
+      'budget_state_file',
+    ) || getDefaultBudgetStateFile();
 
   const shouldTrackBudget = Boolean(
     maxAmountPerCall !== undefined ||
     dailyBudget !== undefined ||
     startingBalance !== undefined ||
-    budgetStateFile
+    budgetStateFile,
   );
 
   const budgetState = shouldTrackBudget
@@ -143,19 +191,31 @@ export function createX402McpServer({
 
   const sequencerClient = sequencerUrl
     ? new X402SequencerClient({
-      sequencerUrl,
-      auth: {
-        apiKey: pickConfigValue(env, fileConfig, 'X402_API_KEY', 'apiKey', 'api_key'),
-        jwt: pickConfigValue(env, fileConfig, 'X402_JWT', 'jwt'),
-      },
-    })
+        sequencerUrl,
+        auth: {
+          apiKey: pickConfigValue(env, fileConfig, 'X402_API_KEY', 'apiKey', 'api_key'),
+          jwt: pickConfigValue(env, fileConfig, 'X402_JWT', 'jwt'),
+        },
+      })
     : null;
 
   let cachedSigningKey = null;
   const resolveKeyOnce = async () => {
     if (cachedSigningKey) return cachedSigningKey;
-    const keyPath = pickConfigValue(env, fileConfig, 'X402_SIGNING_KEY_PATH', 'signingKeyPath', 'signing_key_path');
-    const rawKey = pickConfigValue(env, fileConfig, 'X402_SIGNING_KEY', 'signingKey', 'signing_key');
+    const keyPath = pickConfigValue(
+      env,
+      fileConfig,
+      'X402_SIGNING_KEY_PATH',
+      'signingKeyPath',
+      'signing_key_path',
+    );
+    const rawKey = pickConfigValue(
+      env,
+      fileConfig,
+      'X402_SIGNING_KEY',
+      'signingKey',
+      'signing_key',
+    );
     const keyJson = rawKey ? (typeof rawKey === 'string' ? JSON.parse(rawKey) : rawKey) : null;
     cachedSigningKey = await resolveSigningKey({
       agentId,
@@ -210,7 +270,14 @@ export function createX402McpServer({
           maxAmount: z.number().optional().describe('Override max amount for this call'),
           requireReceipt: z.boolean().optional().describe('Wait for payment receipt'),
         },
-        async ({ url, method = 'GET', headers = {}, body, maxAmount: perCallMax, requireReceipt: perCallReceipt }) => {
+        async ({
+          url,
+          method = 'GET',
+          headers = {},
+          body,
+          maxAmount: perCallMax,
+          requireReceipt: perCallReceipt,
+        }) => {
           try {
             const config = await ensureConfig();
             const agent = createX402Agent({
@@ -252,19 +319,20 @@ export function createX402McpServer({
               body: truncateBody(parsedBody),
               budget: agent.budget
                 ? {
-                  spentToday: agent.budget.getSpentToday(),
-                  dailyBudget,
-                  balance: agent.budget.getBalance(),
-                }
+                    spentToday: agent.budget.getSpentToday(),
+                    dailyBudget,
+                    balance: agent.budget.getBalance(),
+                  }
                 : null,
             });
           } catch (error) {
-            const message = error instanceof BudgetExceededError
-              ? `Budget exceeded: ${error.message}`
-              : error.message;
+            const message =
+              error instanceof BudgetExceededError
+                ? `Budget exceeded: ${error.message}`
+                : error.message;
             return errorResult(message);
           }
-        }
+        },
       ),
 
       tool(
@@ -273,7 +341,11 @@ export function createX402McpServer({
         {},
         async () => {
           if (!budgetState) {
-            return result({ success: true, budget: null, message: 'No budget tracking configured.' });
+            return result({
+              success: true,
+              budget: null,
+              message: 'No budget tracking configured.',
+            });
           }
           return result({
             success: true,
@@ -285,7 +357,7 @@ export function createX402McpServer({
               stateFile: budgetState.filePath,
             },
           });
-        }
+        },
       ),
 
       tool(
@@ -296,14 +368,18 @@ export function createX402McpServer({
         },
         async ({ limit = 50 }) => {
           if (!budgetState) {
-            return result({ success: true, history: [], message: 'No budget tracking configured.' });
+            return result({
+              success: true,
+              history: [],
+              message: 'No budget tracking configured.',
+            });
           }
           return result({
             success: true,
             count: budgetState.listHistory(limit).length,
             history: budgetState.listHistory(limit),
           });
-        }
+        },
       ),
 
       tool(
@@ -320,16 +396,22 @@ export function createX402McpServer({
           } catch (error) {
             return errorResult(error.message);
           }
-        }
+        },
       ),
 
       tool(
         'x402_balance',
         'Check wallet balance for the payer address on a chain (optional).',
         {
-          chain: z.string().optional().describe('Blockchain: solana, set_chain, base, ethereum, arbitrum'),
+          chain: z
+            .string()
+            .optional()
+            .describe('Blockchain: solana, set_chain, base, ethereum, arbitrum'),
           token: z.string().optional().describe('Token symbol (optional)'),
-          address: z.string().optional().describe('Wallet address (defaults to X402_PAYER_ADDRESS)'),
+          address: z
+            .string()
+            .optional()
+            .describe('Wallet address (defaults to X402_PAYER_ADDRESS)'),
         },
         async ({ chain, token, address }) => {
           if (!chain) {
@@ -343,7 +425,9 @@ export function createX402McpServer({
             const { getBalance } = await import('./chains/index.js');
             const walletAddress = address || payerAddress;
             if (!walletAddress) {
-              throw new Error('Wallet address is required (set X402_PAYER_ADDRESS or pass address)');
+              throw new Error(
+                'Wallet address is required (set X402_PAYER_ADDRESS or pass address)',
+              );
             }
             const balance = await getBalance(walletAddress, chain, token);
             return result({
@@ -356,7 +440,7 @@ export function createX402McpServer({
           } catch (error) {
             return errorResult(error.message);
           }
-        }
+        },
       ),
     ],
   });

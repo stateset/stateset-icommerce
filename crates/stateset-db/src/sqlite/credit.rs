@@ -5,13 +5,13 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreditAccount, CreditAccountFilter, CreditAccountStatus, CreditAgingBucket,
-    CreditApplication, CreditApplicationFilter, CreditApplicationStatus, CreditCheckResult,
-    CreditHold, CreditHoldFilter, CreditHoldStatus, CreditRepository, CreditTransaction,
-    CreditTransactionFilter, CreditTransactionType, CreateCreditAccount, CustomerCreditSummary,
-    PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold, Result,
-    ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
-    generate_credit_application_number,
+    generate_credit_application_number, CommerceError, CreateCreditAccount, CreditAccount,
+    CreditAccountFilter, CreditAccountStatus, CreditAgingBucket, CreditApplication,
+    CreditApplicationFilter, CreditApplicationStatus, CreditCheckResult, CreditHold,
+    CreditHoldFilter, CreditHoldStatus, CreditRepository, CreditTransaction,
+    CreditTransactionFilter, CreditTransactionType, CustomerCreditSummary, PlaceCreditHold,
+    RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
+    SubmitCreditApplication, UpdateCreditAccount,
 };
 use uuid::Uuid;
 
@@ -32,8 +32,16 @@ impl SqliteCreditRepository {
     fn row_to_credit_account(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditAccount> {
         Ok(CreditAccount {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_account", "id")?,
-            customer_id: parse_uuid_row(&row.get::<_, String>(1)?, "credit_account", "customer_id")?,
-            credit_limit: parse_decimal_row(&row.get::<_, String>(2)?, "credit_account", "credit_limit")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "credit_account",
+                "customer_id",
+            )?,
+            credit_limit: parse_decimal_row(
+                &row.get::<_, String>(2)?,
+                "credit_account",
+                "credit_limit",
+            )?,
             available_credit: parse_decimal_row(
                 &row.get::<_, String>(3)?,
                 "credit_account",
@@ -44,16 +52,18 @@ impl SqliteCreditRepository {
                 "credit_account",
                 "current_balance",
             )?,
-            hold_amount: parse_decimal_row(&row.get::<_, String>(5)?, "credit_account", "hold_amount")?,
+            hold_amount: parse_decimal_row(
+                &row.get::<_, String>(5)?,
+                "credit_account",
+                "hold_amount",
+            )?,
             currency: row.get(6)?,
             status: parse_enum_row(&row.get::<_, String>(7)?, "credit_account", "status")?,
             payment_terms: row.get(8)?,
             risk_rating: match row.get::<_, Option<String>>(9)? {
-                Some(value) if !value.is_empty() => Some(parse_enum_row(
-                    &value,
-                    "credit_account",
-                    "risk_rating",
-                )?),
+                Some(value) if !value.is_empty() => {
+                    Some(parse_enum_row(&value, "credit_account", "risk_rating")?)
+                }
                 _ => None,
             },
             last_review_date: parse_datetime_opt_row(
@@ -90,7 +100,11 @@ impl SqliteCreditRepository {
                 "order_id",
             )?,
             hold_type: parse_enum_row(&row.get::<_, String>(3)?, "credit_hold", "hold_type")?,
-            hold_amount: parse_decimal_row(&row.get::<_, String>(4)?, "credit_hold", "hold_amount")?,
+            hold_amount: parse_decimal_row(
+                &row.get::<_, String>(4)?,
+                "credit_hold",
+                "hold_amount",
+            )?,
             reason: row.get(5)?,
             status: parse_enum_row(&row.get::<_, String>(6)?, "credit_hold", "status")?,
             placed_by: row.get(7)?,
@@ -102,15 +116,26 @@ impl SqliteCreditRepository {
                 "released_at",
             )?,
             release_notes: row.get(11)?,
-            created_at: parse_datetime_row(&row.get::<_, String>(12)?, "credit_hold", "created_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(12)?,
+                "credit_hold",
+                "created_at",
+            )?,
         })
     }
 
-    fn row_to_credit_application(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditApplication> {
+    fn row_to_credit_application(
+        &self,
+        row: &rusqlite::Row,
+    ) -> rusqlite::Result<CreditApplication> {
         Ok(CreditApplication {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_application", "id")?,
             application_number: row.get(1)?,
-            customer_id: parse_uuid_row(&row.get::<_, String>(2)?, "credit_application", "customer_id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>(2)?,
+                "credit_application",
+                "customer_id",
+            )?,
             requested_limit: parse_decimal_row(
                 &row.get::<_, String>(3)?,
                 "credit_application",
@@ -157,7 +182,10 @@ impl SqliteCreditRepository {
         })
     }
 
-    fn row_to_credit_transaction(&self, row: &rusqlite::Row) -> rusqlite::Result<CreditTransaction> {
+    fn row_to_credit_transaction(
+        &self,
+        row: &rusqlite::Row,
+    ) -> rusqlite::Result<CreditTransaction> {
         Ok(CreditTransaction {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "credit_transaction", "id")?,
             customer_id: parse_uuid_row(
@@ -192,7 +220,10 @@ impl SqliteCreditRepository {
     }
 
     fn recalculate_available_credit(&self, customer_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // available = limit - balance - holds
         conn.execute(
@@ -200,7 +231,8 @@ impl SqliteCreditRepository {
              CAST(credit_limit AS REAL) - CAST(current_balance AS REAL) - CAST(hold_amount AS REAL)
              WHERE customer_id = ?",
             [customer_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -213,7 +245,10 @@ impl CreditRepository for SqliteCreditRepository {
         let currency = input.currency.unwrap_or_else(|| "USD".to_string());
 
         {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO credit_accounts (id, customer_id, credit_limit, available_credit, current_balance,
                     hold_amount, currency, status, payment_terms, risk_rating, notes, created_at, updated_at)
@@ -240,7 +275,10 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn get_credit_account(&self, id: Uuid) -> Result<Option<CreditAccount>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, customer_id, credit_limit, available_credit, current_balance, hold_amount,
                     currency, status, payment_terms, risk_rating, last_review_date, next_review_date,
@@ -258,7 +296,10 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn get_credit_account_by_customer(&self, customer_id: Uuid) -> Result<Option<CreditAccount>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, customer_id, credit_limit, available_credit, current_balance, hold_amount,
                     currency, status, payment_terms, risk_rating, last_review_date, next_review_date,
@@ -278,10 +319,15 @@ impl CreditRepository for SqliteCreditRepository {
     fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount> {
         let now = Utc::now();
 
-        let account = self.get_credit_account(id)?.ok_or(CommerceError::NotFound)?;
+        let account = self
+            .get_credit_account(id)?
+            .ok_or(CommerceError::NotFound)?;
 
         {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "UPDATE credit_accounts SET
                     credit_limit = COALESCE(?, credit_limit),
@@ -300,7 +346,8 @@ impl CreditRepository for SqliteCreditRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
         }
 
         self.recalculate_available_credit(account.customer_id)?;
@@ -308,7 +355,10 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, customer_id, credit_limit, available_credit, current_balance, hold_amount,
                     currency, status, payment_terms, risk_rating, last_review_date, next_review_date,
@@ -337,7 +387,8 @@ impl CreditRepository for SqliteCreditRepository {
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| self.row_to_credit_account(row))
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| self.row_to_credit_account(row))
             .map_err(map_db_error)?;
 
         let mut accounts = Vec::new();
@@ -347,17 +398,32 @@ impl CreditRepository for SqliteCreditRepository {
         Ok(accounts)
     }
 
-    fn adjust_credit_limit(&self, customer_id: Uuid, new_limit: Decimal, reason: &str) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn adjust_credit_limit(
+        &self,
+        customer_id: Uuid,
+        new_limit: Decimal,
+        reason: &str,
+    ) -> Result<CreditAccount> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        let account = self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)?;
+        let account = self
+            .get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)?;
         let old_limit = account.credit_limit;
 
         conn.execute(
             "UPDATE credit_accounts SET credit_limit = ?, updated_at = ? WHERE customer_id = ?",
-            [&new_limit.to_string(), &now.to_rfc3339(), &customer_id.to_string()],
-        ).map_err(map_db_error)?;
+            [
+                &new_limit.to_string(),
+                &now.to_rfc3339(),
+                &customer_id.to_string(),
+            ],
+        )
+        .map_err(map_db_error)?;
 
         // Record the change
         self.record_transaction(RecordCreditTransaction {
@@ -370,11 +436,15 @@ impl CreditRepository for SqliteCreditRepository {
         })?;
 
         self.recalculate_available_credit(customer_id)?;
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
@@ -388,19 +458,29 @@ impl CreditRepository for SqliteCreditRepository {
             ],
         ).map_err(map_db_error)?;
 
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
             "UPDATE credit_accounts SET status = ?, updated_at = ? WHERE customer_id = ?",
-            [CreditAccountStatus::Active.to_string(), now.to_rfc3339(), customer_id.to_string()],
-        ).map_err(map_db_error)?;
+            [
+                CreditAccountStatus::Active.to_string(),
+                now.to_rfc3339(),
+                customer_id.to_string(),
+            ],
+        )
+        .map_err(map_db_error)?;
 
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn check_credit(&self, customer_id: Uuid, order_amount: Decimal) -> Result<CreditCheckResult> {
@@ -415,8 +495,10 @@ impl CreditRepository for SqliteCreditRepository {
                     if acc.status != CreditAccountStatus::Active {
                         Some(format!("Account status: {}", acc.status))
                     } else {
-                        Some(format!("Insufficient credit: available ${}, required ${}",
-                                   acc.available_credit, order_amount))
+                        Some(format!(
+                            "Insufficient credit: available ${}, required ${}",
+                            acc.available_credit, order_amount
+                        ))
                     }
                 } else {
                     None
@@ -448,8 +530,16 @@ impl CreditRepository for SqliteCreditRepository {
         }
     }
 
-    fn reserve_credit(&self, customer_id: Uuid, order_id: Uuid, amount: Decimal) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn reserve_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: Decimal,
+    ) -> Result<CreditAccount> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
         let id = Uuid::new_v4();
 
@@ -473,11 +563,19 @@ impl CreditRepository for SqliteCreditRepository {
         ).map_err(map_db_error)?;
 
         self.recalculate_available_credit(customer_id)?;
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
-    fn release_credit_reservation(&self, customer_id: Uuid, order_id: Uuid) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn release_credit_reservation(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+    ) -> Result<CreditAccount> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         // Get reservation amount
@@ -500,8 +598,13 @@ impl CreditRepository for SqliteCreditRepository {
         conn.execute(
             "UPDATE credit_reservations SET status = 'released', released_at = ?
              WHERE customer_id = ? AND order_id = ? AND status = 'active'",
-            [now.to_rfc3339(), customer_id.to_string(), order_id.to_string()],
-        ).map_err(map_db_error)?;
+            [
+                now.to_rfc3339(),
+                customer_id.to_string(),
+                order_id.to_string(),
+            ],
+        )
+        .map_err(map_db_error)?;
 
         // Update hold amount
         conn.execute(
@@ -510,11 +613,20 @@ impl CreditRepository for SqliteCreditRepository {
         ).map_err(map_db_error)?;
 
         self.recalculate_available_credit(customer_id)?;
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
-    fn charge_credit(&self, customer_id: Uuid, order_id: Uuid, amount: Decimal) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn charge_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: Decimal,
+    ) -> Result<CreditAccount> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Release the reservation first
         self.release_credit_reservation(customer_id, order_id)?;
@@ -536,11 +648,15 @@ impl CreditRepository for SqliteCreditRepository {
         })?;
 
         self.recalculate_available_credit(customer_id)?;
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -559,13 +675,17 @@ impl CreditRepository for SqliteCreditRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         self.get_hold(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_hold(&self, id: Uuid) -> Result<Option<CreditHold>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, customer_id, order_id, hold_type, hold_amount, reason, status,
                     placed_by, placed_at, released_by, released_at, release_notes, created_at
@@ -582,11 +702,14 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn list_holds(&self, filter: CreditHoldFilter) -> Result<Vec<CreditHold>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, customer_id, order_id, hold_type, hold_amount, reason, status,
                     placed_by, placed_at, released_by, released_at, release_notes, created_at
-             FROM credit_holds WHERE 1=1"
+             FROM credit_holds WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -611,7 +734,8 @@ impl CreditRepository for SqliteCreditRepository {
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| self.row_to_credit_hold(row))
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| self.row_to_credit_hold(row))
             .map_err(map_db_error)?;
 
         let mut holds = Vec::new();
@@ -622,7 +746,10 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn release_hold(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
@@ -655,7 +782,10 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn submit_application(&self, input: SubmitCreditApplication) -> Result<CreditApplication> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let app_number = generate_credit_application_number();
@@ -680,13 +810,17 @@ impl CreditRepository for SqliteCreditRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         self.get_application(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_application(&self, id: Uuid) -> Result<Option<CreditApplication>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, application_number, customer_id, requested_limit, approved_limit, status,
                     business_name, tax_id, years_in_business, annual_revenue, bank_reference,
@@ -705,13 +839,16 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn list_applications(&self, filter: CreditApplicationFilter) -> Result<Vec<CreditApplication>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, application_number, customer_id, requested_limit, approved_limit, status,
                     business_name, tax_id, years_in_business, annual_revenue, bank_reference,
                     trade_references, submitted_at, reviewed_by, reviewed_at, decision_notes,
                     created_at, updated_at
-             FROM credit_applications WHERE 1=1"
+             FROM credit_applications WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -732,7 +869,10 @@ impl CreditRepository for SqliteCreditRepository {
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| self.row_to_credit_application(row))
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                self.row_to_credit_application(row)
+            })
             .map_err(map_db_error)?;
 
         let mut apps = Vec::new();
@@ -743,10 +883,15 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn review_application(&self, input: ReviewCreditApplication) -> Result<CreditApplication> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
-        let app = self.get_application(input.application_id)?.ok_or(CommerceError::NotFound)?;
+        let app = self
+            .get_application(input.application_id)?
+            .ok_or(CommerceError::NotFound)?;
 
         conn.execute(
             "UPDATE credit_applications SET approved_limit = ?, status = ?, reviewed_by = ?,
@@ -761,14 +906,19 @@ impl CreditRepository for SqliteCreditRepository {
                 now.to_rfc3339(),
                 input.application_id.to_string(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         // If approved, create or update credit account
         if input.status == CreditApplicationStatus::Approved {
             if let Some(limit) = input.approved_limit {
                 let existing = self.get_credit_account_by_customer(app.customer_id)?;
                 if existing.is_some() {
-                    self.adjust_credit_limit(app.customer_id, limit, "Credit application approved")?;
+                    self.adjust_credit_limit(
+                        app.customer_id,
+                        limit,
+                        "Credit application approved",
+                    )?;
                 } else {
                     self.create_credit_account(CreateCreditAccount {
                         customer_id: app.customer_id,
@@ -779,35 +929,44 @@ impl CreditRepository for SqliteCreditRepository {
             }
         }
 
-        self.get_application(input.application_id)?.ok_or(CommerceError::NotFound)
+        self.get_application(input.application_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn withdraw_application(&self, id: Uuid) -> Result<CreditApplication> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
             "UPDATE credit_applications SET status = 'withdrawn', updated_at = ? WHERE id = ?",
             [now.to_rfc3339(), id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         self.get_application(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn record_transaction(&self, input: RecordCreditTransaction) -> Result<CreditTransaction> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
         // Get current balance
-        let balance: String = conn.query_row(
-            "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
-            [input.customer_id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let balance: String = conn
+            .query_row(
+                "SELECT current_balance FROM credit_accounts WHERE customer_id = ?",
+                [input.customer_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
 
-        let current_balance =
-            parse_decimal_strict(&balance, "credit_account", "current_balance")?;
+        let current_balance = parse_decimal_strict(&balance, "credit_account", "current_balance")?;
         let running_balance = match input.transaction_type {
             CreditTransactionType::Payment | CreditTransactionType::CreditMemo => {
                 current_balance - input.amount
@@ -830,7 +989,8 @@ impl CreditRepository for SqliteCreditRepository {
                 input.notes,
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(CreditTransaction {
             id,
@@ -846,11 +1006,14 @@ impl CreditRepository for SqliteCreditRepository {
     }
 
     fn list_transactions(&self, filter: CreditTransactionFilter) -> Result<Vec<CreditTransaction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut sql = String::from(
             "SELECT id, customer_id, transaction_type, amount, running_balance,
                     reference_type, reference_id, notes, created_at
-             FROM credit_transactions WHERE 1=1"
+             FROM credit_transactions WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -871,7 +1034,10 @@ impl CreditRepository for SqliteCreditRepository {
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(param_refs.as_slice(), |row| self.row_to_credit_transaction(row))
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                self.row_to_credit_transaction(row)
+            })
             .map_err(map_db_error)?;
 
         let mut txns = Vec::new();
@@ -881,15 +1047,24 @@ impl CreditRepository for SqliteCreditRepository {
         Ok(txns)
     }
 
-    fn apply_payment(&self, customer_id: Uuid, amount: Decimal, reference_id: Option<Uuid>) -> Result<CreditAccount> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    fn apply_payment(
+        &self,
+        customer_id: Uuid,
+        amount: Decimal,
+        reference_id: Option<Uuid>,
+    ) -> Result<CreditAccount> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Reduce balance
         conn.execute(
             "UPDATE credit_accounts SET current_balance = MAX(0, CAST(current_balance AS REAL) - ?)
              WHERE customer_id = ?",
             [&amount.to_string(), &customer_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         // Record transaction
         self.record_transaction(RecordCreditTransaction {
@@ -902,7 +1077,8 @@ impl CreditRepository for SqliteCreditRepository {
         })?;
 
         self.recalculate_available_credit(customer_id)?;
-        self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
+        self.get_credit_account_by_customer(customer_id)?
+            .ok_or(CommerceError::NotFound)
     }
 
     fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>> {
@@ -932,14 +1108,17 @@ impl CreditRepository for SqliteCreditRepository {
         let mut report = Vec::new();
 
         for acc in accounts {
-            report.push((acc.customer_id, CreditAgingBucket {
-                current: acc.current_balance,
-                days_1_30: Decimal::ZERO,
-                days_31_60: Decimal::ZERO,
-                days_61_90: Decimal::ZERO,
-                days_over_90: Decimal::ZERO,
-                total: acc.current_balance,
-            }));
+            report.push((
+                acc.customer_id,
+                CreditAgingBucket {
+                    current: acc.current_balance,
+                    days_1_30: Decimal::ZERO,
+                    days_31_60: Decimal::ZERO,
+                    days_61_90: Decimal::ZERO,
+                    days_over_90: Decimal::ZERO,
+                    total: acc.current_balance,
+                },
+            ));
         }
 
         Ok(report)

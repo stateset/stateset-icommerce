@@ -5,13 +5,8 @@
  * Each Discord user gets their own agent session for multi-turn conversations.
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
-import { richMessageToPlainText } from '../channels/rich-messages.js';
 
 /**
  * Start the Discord gateway.
@@ -44,18 +39,17 @@ export async function startDiscordGateway({
   // Dynamic import — clear error if not installed
   let Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle;
   try {
-    ({ Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js'));
+    ({ Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } =
+      await import('discord.js'));
   } catch {
-    throw new Error(
-      'discord.js is not installed. Install it with: npm install discord.js'
-    );
+    throw new Error('discord.js is not installed. Install it with: npm install discord.js');
   }
 
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error(
       'DISCORD_BOT_TOKEN environment variable is required.\n' +
-      'Get one from the Discord Developer Portal: https://discord.com/developers/applications'
+        'Get one from the Discord Developer Portal: https://discord.com/developers/applications',
     );
   }
 
@@ -109,8 +103,7 @@ export async function startDiscordGateway({
       const channel = await client.channels.fetch(channelId);
       if (!channel) return;
 
-      const embed = new EmbedBuilder()
-        .setTitle(richMsg.title);
+      const embed = new EmbedBuilder().setTitle(richMsg.title);
 
       if (richMsg.description) embed.setDescription(richMsg.description);
       if (richMsg.color) embed.setColor(parseInt(richMsg.color.replace('#', ''), 16));
@@ -199,7 +192,9 @@ export async function startDiscordGateway({
         if (interaction.deferred) {
           await interaction.editReply('Sorry, I encountered an error processing that action.');
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('[discord] Failed to send error reply:', err.message);
+      }
     }
   });
 

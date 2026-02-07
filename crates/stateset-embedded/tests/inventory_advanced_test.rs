@@ -2,7 +2,8 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    Commerce, CommerceError, CreateInventoryItem, InventoryFilter, ReservationStatus, TransactionType,
+    Commerce, CommerceError, CreateInventoryItem, InventoryFilter, ReservationStatus,
+    TransactionType,
 };
 use uuid::Uuid;
 
@@ -28,10 +29,13 @@ fn create_test_inventory_item(commerce: &Commerce, sku: &str) -> i64 {
         .id
 }
 
-
 /// Helper to generate a unique SKU
 fn unique_sku(prefix: &str) -> String {
-    format!("{}-{}", prefix, Uuid::new_v4().to_string().split('-').next().unwrap())
+    format!(
+        "{}-{}",
+        prefix,
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    )
 }
 
 // ============================================================================
@@ -371,7 +375,10 @@ fn test_adjust_below_allocated_fails() {
         .inventory()
         .adjust(&sku, dec!(-30), "test adjustment");
 
-    assert!(matches!(result, Err(CommerceError::InsufficientStock { .. })));
+    assert!(matches!(
+        result,
+        Err(CommerceError::InsufficientStock { .. })
+    ));
 }
 
 #[test]
@@ -683,13 +690,22 @@ fn test_has_stock() {
     create_test_inventory_item(&commerce, &sku);
 
     // Should have stock for 50 units
-    assert!(commerce.inventory().has_stock(&sku, dec!(50)).expect("Failed to check stock"));
+    assert!(commerce
+        .inventory()
+        .has_stock(&sku, dec!(50))
+        .expect("Failed to check stock"));
 
     // Should have stock for exactly 100 units
-    assert!(commerce.inventory().has_stock(&sku, dec!(100)).expect("Failed to check stock"));
+    assert!(commerce
+        .inventory()
+        .has_stock(&sku, dec!(100))
+        .expect("Failed to check stock"));
 
     // Should NOT have stock for 150 units
-    assert!(!commerce.inventory().has_stock(&sku, dec!(150)).expect("Failed to check stock"));
+    assert!(!commerce
+        .inventory()
+        .has_stock(&sku, dec!(150))
+        .expect("Failed to check stock"));
 
     // Reserve some
     commerce
@@ -698,10 +714,16 @@ fn test_has_stock() {
         .expect("Failed to reserve");
 
     // Now should NOT have stock for 50 (only 40 available)
-    assert!(!commerce.inventory().has_stock(&sku, dec!(50)).expect("Failed to check stock"));
+    assert!(!commerce
+        .inventory()
+        .has_stock(&sku, dec!(50))
+        .expect("Failed to check stock"));
 
     // But should have stock for 40
-    assert!(commerce.inventory().has_stock(&sku, dec!(40)).expect("Failed to check stock"));
+    assert!(commerce
+        .inventory()
+        .has_stock(&sku, dec!(40))
+        .expect("Failed to check stock"));
 }
 
 // ============================================================================
@@ -1397,7 +1419,9 @@ fn test_insufficient_stock_for_reservation() {
         .expect("Failed to create item");
 
     // Try to reserve 50 units - should fail
-    let result = commerce.inventory().reserve(&sku, dec!(50), "order", "ORD-001", None);
+    let result = commerce
+        .inventory()
+        .reserve(&sku, dec!(50), "order", "ORD-001", None);
 
     assert!(result.is_err());
 }
@@ -1419,7 +1443,9 @@ fn test_prevent_negative_adjustment() {
         .expect("Failed to create item");
 
     // Try to remove 50 units - depends on implementation whether this is allowed
-    let _result = commerce.inventory().adjust(&sku, dec!(-50), "Excessive removal");
+    let _result = commerce
+        .inventory()
+        .adjust(&sku, dec!(-50), "Excessive removal");
 
     // This test documents the behavior - some systems allow negative inventory, some don't
     // If it fails, negative inventory is prevented

@@ -5,6 +5,9 @@
  * rate limiting, and audit logging for agent operations.
  */
 
+import { getAuditStore } from './audit-store.js';
+import { z } from 'zod';
+
 // ============================================================================
 // Permission Levels
 // ============================================================================
@@ -13,12 +16,12 @@
  * Permission levels from lowest to highest privilege
  */
 export const PERMISSION_LEVELS = {
-  none: 0,      // No operations allowed
-  read: 1,      // List, get, query operations
-  preview: 2,   // Read + show what would happen
-  write: 3,     // Create, update operations
-  delete: 4,    // Cancel, void, delete operations
-  admin: 5      // Bulk operations, settings, full access
+  none: 0, // No operations allowed
+  read: 1, // List, get, query operations
+  preview: 2, // Read + show what would happen
+  write: 3, // Create, update operations
+  delete: 4, // Cancel, void, delete operations
+  admin: 5, // Bulk operations, settings, full access
 };
 
 /**
@@ -123,7 +126,139 @@ export const TOOL_PERMISSIONS = {
   get_us_state_tax_info: 'read',
   get_customer_tax_exemptions: 'read',
   create_tax_exemption: 'write',
-  calculate_cart_tax: 'read'
+  calculate_cart_tax: 'read',
+
+  // Promotions & Coupons
+  list_promotions: 'read',
+  get_promotion: 'read',
+  get_active_promotions: 'read',
+  create_promotion: 'write',
+  activate_promotion: 'write',
+  deactivate_promotion: 'write',
+  create_coupon: 'write',
+  validate_coupon: 'read',
+  list_coupons: 'read',
+  apply_cart_promotions: 'write',
+
+  // Subscriptions
+  list_subscription_plans: 'read',
+  get_subscription_plan: 'read',
+  create_subscription_plan: 'write',
+  activate_subscription_plan: 'write',
+  archive_subscription_plan: 'delete',
+  list_subscriptions: 'read',
+  get_subscription: 'read',
+  create_subscription: 'write',
+  pause_subscription: 'write',
+  resume_subscription: 'write',
+  cancel_subscription: 'delete',
+  skip_billing_cycle: 'write',
+  list_billing_cycles: 'read',
+  get_billing_cycle: 'read',
+  get_subscription_events: 'read',
+
+  // Manufacturing / BOM
+  list_boms: 'read',
+  get_bom: 'read',
+  create_bom: 'write',
+  add_bom_component: 'write',
+  activate_bom: 'write',
+  list_work_orders: 'read',
+  get_work_order: 'read',
+  create_work_order: 'write',
+  start_work_order: 'write',
+  complete_work_order: 'write',
+  cancel_work_order: 'delete',
+
+  // Payments & Refunds
+  list_payments: 'read',
+  get_payment: 'read',
+  create_payment: 'write',
+  complete_payment: 'write',
+  create_refund: 'write',
+
+  // Shipments
+  list_shipments: 'read',
+  create_shipment: 'write',
+  deliver_shipment: 'write',
+
+  // Suppliers & Purchase Orders
+  list_suppliers: 'read',
+  create_supplier: 'write',
+  list_purchase_orders: 'read',
+  create_purchase_order: 'write',
+  approve_purchase_order: 'write',
+  send_purchase_order: 'write',
+
+  // Invoices
+  list_invoices: 'read',
+  create_invoice: 'write',
+  send_invoice: 'write',
+  record_invoice_payment: 'write',
+  get_overdue_invoices: 'read',
+
+  // Warranties
+  list_warranties: 'read',
+  create_warranty: 'write',
+  create_warranty_claim: 'write',
+  approve_warranty_claim: 'write',
+
+  // Sync / VES
+  sync_status: 'read',
+  sync_pull: 'write',
+  sync_push: 'write',
+  sync_outbox: 'read',
+  sync_conflicts: 'read',
+  sync_entity_history: 'read',
+  sync_full: 'admin',
+  sync_rebase: 'admin',
+  sync_resolve: 'admin',
+  sync_retry_failed: 'admin',
+
+  // Treasury / Stablecoin Billing
+  treasury_balance: 'read',
+  treasury_ledger: 'read',
+  treasury_list_tokens: 'read',
+  treasury_buy: 'write',
+  treasury_deposit: 'write',
+  treasury_register_token: 'admin',
+
+  // ERC-8004 Identity Registry
+  erc8004_get_identity: 'read',
+  erc8004_get_by_wallet: 'read',
+  erc8004_list_identities: 'read',
+  erc8004_register_identity: 'admin',
+  erc8004_link_wallet: 'write',
+
+  // Agent Cards / A2A
+  discover_agents: 'read',
+  get_agent_card: 'read',
+  list_agent_cards: 'read',
+  register_agent_card: 'write',
+  verify_agent: 'admin',
+
+  // Stablecoin Payments
+  get_agent_wallet: 'read',
+  get_wallet_balance: 'read',
+  create_stablecoin_payment: 'write',
+  list_supported_chains: 'read',
+
+  // x402 Protocol (AI Agent Commerce)
+  x402_create_payment_intent: 'write',
+  x402_sign_intent: 'write',
+  x402_get_intent: 'read',
+  x402_list_intents: 'read',
+  x402_mark_settled: 'write',
+  x402_get_next_nonce: 'read',
+  x402_credit_balance: 'read',
+  x402_credit_debit: 'write',
+  x402_credit_deposit: 'write',
+  x402_credit_transactions: 'read',
+  x402_balance: 'read',
+  x402_budget_status: 'read',
+  x402_call: 'write',
+  x402_history: 'read',
+  x402_receipt: 'read',
 };
 
 // ============================================================================
@@ -131,39 +266,69 @@ export const TOOL_PERMISSIONS = {
 // ============================================================================
 
 /**
+ * Zod schema for guardrail configuration — validates at construction time.
+ */
+export const GuardrailsSchema = z
+  .object({
+    maxOrderValue: z.number().nonnegative().default(10000),
+    maxDailyOrderTotal: z.number().nonnegative().default(100000),
+    maxDailyOrderCount: z.number().int().nonnegative().default(500),
+    maxInventoryAdjustment: z.number().int().nonnegative().default(1000),
+    maxToolCallsPerMinute: z.number().int().positive().default(120),
+    maxWriteOpsPerMinute: z.number().int().positive().default(30),
+    confirmOrdersAbove: z.number().nonnegative().default(1000),
+    confirmBulkOperations: z.boolean().default(true),
+    blockedTools: z.array(z.string()).default([]),
+    requireApprovalFor: z.array(z.string()).default([]),
+  })
+  .passthrough();
+
+/**
  * Default guardrail configuration
  */
 export const DEFAULT_GUARDRAILS = {
   // Spending limits
-  maxOrderValue: 10000,           // Maximum single order value
-  maxDailyOrderTotal: 100000,     // Maximum daily order total
-  maxDailyOrderCount: 500,        // Maximum orders per day
+  maxOrderValue: 10000, // Maximum single order value
+  maxDailyOrderTotal: 100000, // Maximum daily order total
+  maxDailyOrderCount: 500, // Maximum orders per day
 
   // Inventory limits
-  maxInventoryAdjustment: 1000,   // Maximum single adjustment quantity
+  maxInventoryAdjustment: 1000, // Maximum single adjustment quantity
 
   // Rate limits (per minute)
   maxToolCallsPerMinute: 120,
   maxWriteOpsPerMinute: 30,
 
   // Confirmation thresholds
-  confirmOrdersAbove: 1000,       // Ask for confirmation on orders > $1000
-  confirmBulkOperations: true,    // Confirm bulk operations
+  confirmOrdersAbove: 1000, // Ask for confirmation on orders > $1000
+  confirmBulkOperations: true, // Confirm bulk operations
 
   // Blocked operations
-  blockedTools: [],               // Tools to completely disable
+  blockedTools: [], // Tools to completely disable
 
   // Require explicit approval for these tools
   requireApprovalFor: [
     'cancel_order',
     'complete_checkout',
+    'cancel_subscription',
+    'create_refund',
+    'cancel_work_order',
+    'sync_full',
+    'sync_rebase',
+    'sync_resolve',
+    'treasury_buy',
+    'create_stablecoin_payment',
+    'x402_sign_intent',
+    'x402_mark_settled',
+    'x402_credit_debit',
+    'erc8004_register_identity',
     'vector_index_all_products',
     'vector_index_all_customers',
     'vector_index_all_orders',
     'vector_index_all_inventory',
     'vector_clear',
-    'vector_clear_all'
-  ]
+    'vector_clear_all',
+  ],
 };
 
 // ============================================================================
@@ -185,21 +350,35 @@ export class PermissionGate {
     this.level = PERMISSION_LEVELS[levelName] ?? PERMISSION_LEVELS.preview;
     this.levelName = levelName;
 
-    // Guardrails
-    this.guardrails = { ...DEFAULT_GUARDRAILS, ...options.guardrails };
+    // Guardrails — validate with schema
+    const merged = { ...DEFAULT_GUARDRAILS, ...options.guardrails };
+    const parsed = GuardrailsSchema.safeParse(merged);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      console.warn(`[PermissionGate] Invalid guardrails config (${issues}), using defaults`);
+      this.guardrails = { ...DEFAULT_GUARDRAILS };
+    } else {
+      this.guardrails = parsed.data;
+    }
 
     // Callbacks
     this.onConfirmRequired = options.onConfirmRequired || null;
     this.onPermissionDenied = options.onPermissionDenied || null;
 
-    // Audit log
+    // Audit log — persistent SQLite store + in-memory buffer
     this.auditLog = [];
+    try {
+      this.auditStore = getAuditStore();
+    } catch (err) {
+      console.warn('[permissions] Audit store unavailable, using in-memory:', err.message);
+      this.auditStore = null;
+    }
 
     // Rate limiting state
     this.rateLimitState = {
       toolCalls: [],
       writeOps: [],
-      dailyOrders: { count: 0, total: 0, date: this._getDateKey() }
+      dailyOrders: { count: 0, total: 0, date: this._getDateKey() },
     };
   }
 
@@ -220,7 +399,7 @@ export class PermissionGate {
 
     // Check blocked tools
     if (this.guardrails.blockedTools.includes(normalizedName)) {
-      return this._deny(`Tool '${normalizedName}' is blocked by policy`);
+      return this._deny(`Tool '${normalizedName}' is blocked by policy`, normalizedName);
     }
 
     // Check permission level
@@ -234,12 +413,13 @@ export class PermissionGate {
           allowed: false,
           preview: true,
           reason: `Preview mode: would execute '${normalizedName}' if --apply flag is set`,
-          wouldDo: { tool: normalizedName, params }
+          wouldDo: { tool: normalizedName, params },
         };
       }
 
       return this._deny(
-        `Operation requires '${requiredLevel}' permission (current: '${this.levelName}')`
+        `Operation requires '${requiredLevel}' permission (current: '${this.levelName}')`,
+        normalizedName,
       );
     }
 
@@ -261,10 +441,10 @@ export class PermissionGate {
         const confirmed = await this.onConfirmRequired({
           tool: normalizedName,
           params,
-          message: `Confirm execution of '${normalizedName}'?`
+          message: `Confirm execution of '${normalizedName}'?`,
         });
         if (!confirmed) {
-          return this._deny('User declined confirmation');
+          return this._deny('User declined confirmation', normalizedName);
         }
       }
     }
@@ -284,18 +464,24 @@ export class PermissionGate {
     const oneMinuteAgo = now - 60000;
 
     // Clean old entries
-    this.rateLimitState.toolCalls = this.rateLimitState.toolCalls.filter(t => t > oneMinuteAgo);
-    this.rateLimitState.writeOps = this.rateLimitState.writeOps.filter(t => t > oneMinuteAgo);
+    this.rateLimitState.toolCalls = this.rateLimitState.toolCalls.filter((t) => t > oneMinuteAgo);
+    this.rateLimitState.writeOps = this.rateLimitState.writeOps.filter((t) => t > oneMinuteAgo);
 
     // Check total tool calls
     if (this.rateLimitState.toolCalls.length >= this.guardrails.maxToolCallsPerMinute) {
-      return this._deny(`Rate limit exceeded: ${this.guardrails.maxToolCallsPerMinute} tool calls per minute`);
+      return this._deny(
+        `Rate limit exceeded: ${this.guardrails.maxToolCallsPerMinute} tool calls per minute`,
+        toolName,
+      );
     }
 
     // Check write operations
     const isWriteOp = ['write', 'delete', 'admin'].includes(TOOL_PERMISSIONS[toolName]);
     if (isWriteOp && this.rateLimitState.writeOps.length >= this.guardrails.maxWriteOpsPerMinute) {
-      return this._deny(`Rate limit exceeded: ${this.guardrails.maxWriteOpsPerMinute} write operations per minute`);
+      return this._deny(
+        `Rate limit exceeded: ${this.guardrails.maxWriteOpsPerMinute} write operations per minute`,
+        toolName,
+      );
     }
 
     // Record this call
@@ -316,16 +502,25 @@ export class PermissionGate {
     if (toolName === 'create_order') {
       const total = this._calculateOrderTotal(params);
       if (total > this.guardrails.maxOrderValue) {
-        return this._deny(`Order value $${total} exceeds maximum $${this.guardrails.maxOrderValue}`);
+        return this._deny(
+          `Order value $${total} exceeds maximum $${this.guardrails.maxOrderValue}`,
+          toolName,
+        );
       }
 
       // Check daily limits
       this._resetDailyCountersIfNeeded();
       if (this.rateLimitState.dailyOrders.count >= this.guardrails.maxDailyOrderCount) {
-        return this._deny(`Daily order limit (${this.guardrails.maxDailyOrderCount}) exceeded`);
+        return this._deny(
+          `Daily order limit (${this.guardrails.maxDailyOrderCount}) exceeded`,
+          toolName,
+        );
       }
       if (this.rateLimitState.dailyOrders.total + total > this.guardrails.maxDailyOrderTotal) {
-        return this._deny(`Daily order total would exceed $${this.guardrails.maxDailyOrderTotal}`);
+        return this._deny(
+          `Daily order total would exceed $${this.guardrails.maxDailyOrderTotal}`,
+          toolName,
+        );
       }
 
       // Confirmation for large orders
@@ -334,10 +529,10 @@ export class PermissionGate {
           tool: toolName,
           params,
           amount: total,
-          message: `Create order for $${total.toFixed(2)}?`
+          message: `Create order for $${total.toFixed(2)}?`,
         });
         if (!confirmed) {
-          return this._deny('User declined confirmation for large order');
+          return this._deny('User declined confirmation for large order', toolName);
         }
       }
     }
@@ -352,7 +547,10 @@ export class PermissionGate {
     if (toolName === 'adjust_inventory') {
       const qty = Math.abs(params.quantity || 0);
       if (qty > this.guardrails.maxInventoryAdjustment) {
-        return this._deny(`Adjustment quantity ${qty} exceeds maximum ${this.guardrails.maxInventoryAdjustment}`);
+        return this._deny(
+          `Adjustment quantity ${qty} exceeds maximum ${this.guardrails.maxInventoryAdjustment}`,
+          toolName,
+        );
       }
     }
 
@@ -391,14 +589,22 @@ export class PermissionGate {
       params: this._sanitizeParams(params),
       result,
       reason,
-      level: this.levelName
+      level: this.levelName,
     };
 
+    // In-memory buffer (keep last 1000 for fast access)
     this.auditLog.push(entry);
-
-    // Keep last 1000 entries
     if (this.auditLog.length > 1000) {
       this.auditLog = this.auditLog.slice(-1000);
+    }
+
+    // Persist to SQLite
+    if (this.auditStore) {
+      try {
+        this.auditStore.log(entry);
+      } catch (err) {
+        console.warn('[permissions] Audit log write error:', err.message);
+      }
     }
   }
 
@@ -415,36 +621,75 @@ export class PermissionGate {
   }
 
   /**
-   * Get audit log
+   * Get audit log — queries persistent store when available, falls back to in-memory.
+   * @param {object} [options]
+   * @param {string} [options.tool] - Filter by tool name
+   * @param {string} [options.result] - Filter by result ('allowed', 'denied', 'executed')
+   * @param {string} [options.since] - ISO timestamp to filter from
+   * @param {number} [options.limit] - Max entries to return (default: 100)
+   * @returns {Array<object>}
    */
   getAuditLog(options = {}) {
-    let log = this.auditLog;
+    // Prefer persistent store
+    if (this.auditStore) {
+      try {
+        return this.auditStore.query({
+          tool: options.tool || null,
+          result: options.result || null,
+          since: options.since || null,
+          limit: options.limit || 100,
+        });
+      } catch (err) {
+        console.warn('[permissions] Audit store query error:', err.message);
+      }
+    }
 
+    // In-memory fallback
+    let log = this.auditLog;
     if (options.tool) {
-      log = log.filter(e => e.tool === options.tool);
+      log = log.filter((e) => e.tool === options.tool);
     }
     if (options.result) {
-      log = log.filter(e => e.result === options.result);
+      log = log.filter((e) => e.result === options.result);
     }
     if (options.since) {
-      log = log.filter(e => new Date(e.timestamp) >= new Date(options.since));
+      log = log.filter((e) => new Date(e.timestamp) >= new Date(options.since));
     }
     if (options.limit) {
       log = log.slice(-options.limit);
     }
-
     return log;
   }
 
   /**
-   * Export audit log for compliance
+   * Export audit log for compliance — uses persistent store when available.
+   * @param {object} [options]
+   * @param {string} [options.since] - ISO timestamp
+   * @param {number} [options.limit] - Max entries (default: 10000)
+   * @returns {object}
    */
-  exportAuditLog() {
+  exportAuditLog(options = {}) {
+    if (this.auditStore) {
+      try {
+        const exported = this.auditStore.export({
+          since: options.since || null,
+          limit: options.limit || 10000,
+        });
+        return {
+          ...exported,
+          permissionLevel: this.levelName,
+          guardrails: this.guardrails,
+        };
+      } catch (err) {
+        console.warn('[permissions] Audit store export error:', err.message);
+      }
+    }
+
     return {
       exportedAt: new Date().toISOString(),
       permissionLevel: this.levelName,
       guardrails: this.guardrails,
-      entries: this.auditLog
+      entries: this.auditLog,
     };
   }
 
@@ -452,7 +697,8 @@ export class PermissionGate {
   // Helpers
   // --------------------------------------------------------------------------
 
-  _deny(reason) {
+  _deny(reason, toolName = 'unknown') {
+    this._logAudit(toolName, {}, 'denied', reason);
     if (this.onPermissionDenied) {
       this.onPermissionDenied({ reason });
     }
@@ -497,18 +743,18 @@ export class PermissionGate {
     return {
       level: this.levelName,
       rateLimits: {
-        toolCallsLastMinute: this.rateLimitState.toolCalls.filter(t => t > oneMinuteAgo).length,
+        toolCallsLastMinute: this.rateLimitState.toolCalls.filter((t) => t > oneMinuteAgo).length,
         maxToolCallsPerMinute: this.guardrails.maxToolCallsPerMinute,
-        writeOpsLastMinute: this.rateLimitState.writeOps.filter(t => t > oneMinuteAgo).length,
-        maxWriteOpsPerMinute: this.guardrails.maxWriteOpsPerMinute
+        writeOpsLastMinute: this.rateLimitState.writeOps.filter((t) => t > oneMinuteAgo).length,
+        maxWriteOpsPerMinute: this.guardrails.maxWriteOpsPerMinute,
       },
       dailyLimits: {
         ordersToday: this.rateLimitState.dailyOrders.count,
         maxDailyOrders: this.guardrails.maxDailyOrderCount,
         totalToday: this.rateLimitState.dailyOrders.total,
-        maxDailyTotal: this.guardrails.maxDailyOrderTotal
+        maxDailyTotal: this.guardrails.maxDailyOrderTotal,
       },
-      auditLogSize: this.auditLog.length
+      auditLogSize: this.auditStore ? this.auditStore.count() : this.auditLog.length,
     };
   }
 }
@@ -537,7 +783,7 @@ export function createPermissionGate(options = {}) {
     level,
     guardrails: options.guardrails,
     onConfirmRequired: options.onConfirmRequired,
-    onPermissionDenied: options.onPermissionDenied
+    onPermissionDenied: options.onPermissionDenied,
   });
 }
 

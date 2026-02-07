@@ -180,9 +180,7 @@ class VectorStore {
       maxMemories: this._maxMemories,
       maxAgeMs: this._maxAgeMs,
       topK: this._topK,
-      oldestMs: this._memories.length > 0
-        ? Date.now() - this._memories[0].timestamp
-        : 0,
+      oldestMs: this._memories.length > 0 ? Date.now() - this._memories[0].timestamp : 0,
     };
   }
 }
@@ -210,25 +208,33 @@ export default function init(api, { config }) {
   // --- Hooks ---
 
   // Store incoming messages as memories
-  api.on('message_received', async ({ text, senderId }) => {
-    if (!text || text.startsWith('/')) return;
-    store.add(text, senderId);
-  }, { priority: 200 });
+  api.on(
+    'message_received',
+    async ({ text, senderId }) => {
+      if (!text || text.startsWith('/')) return;
+      store.add(text, senderId);
+    },
+    { priority: 200 },
+  );
 
   // Inject relevant memories before agent processing
-  api.on('before_agent_start', async ({ text, session }) => {
-    if (!text || text.startsWith('/')) return {};
+  api.on(
+    'before_agent_start',
+    async ({ text }) => {
+      if (!text || text.startsWith('/')) return {};
 
-    const results = store.search(text);
-    if (results.length === 0) return {};
+      const results = store.search(text);
+      if (results.length === 0) return {};
 
-    const memoryContext = results
-      .map((r) => `[${new Date(r.timestamp).toISOString().slice(0, 16)}] ${r.text}`)
-      .join('\n');
+      const memoryContext = results
+        .map((r) => `[${new Date(r.timestamp).toISOString().slice(0, 16)}] ${r.text}`)
+        .join('\n');
 
-    const augmented = `${text}\n\n[Relevant memories]\n${memoryContext}`;
-    return { text: augmented };
-  }, { priority: 50 });
+      const augmented = `${text}\n\n[Relevant memories]\n${memoryContext}`;
+      return { text: augmented };
+    },
+    { priority: 50 },
+  );
 
   // --- Commands ---
 
@@ -260,8 +266,8 @@ export default function init(api, { config }) {
       if (results.length === 0) {
         return { response: 'No relevant memories found.' };
       }
-      const lines = results.map((r, i) =>
-        `${i + 1}. [${(r.score * 100).toFixed(0)}%] ${r.text.slice(0, 120)}`
+      const lines = results.map(
+        (r, i) => `${i + 1}. [${(r.score * 100).toFixed(0)}%] ${r.text.slice(0, 120)}`,
       );
       return { response: `Found ${results.length} memories:\n${lines.join('\n')}` };
     },
@@ -302,7 +308,9 @@ export default function init(api, { config }) {
       pruneTimer = setInterval(() => {
         const pruned = store.prune();
         if (pruned > 0) {
-          console.log(`[memory-vector] Pruned ${pruned} expired memories. Remaining: ${store.size}`);
+          console.log(
+            `[memory-vector] Pruned ${pruned} expired memories. Remaining: ${store.size}`,
+          );
         }
       }, interval);
       console.log(`[memory-vector] Pruner started (interval: ${interval}ms)`);

@@ -72,13 +72,18 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
     .fetch_one(&pool)
     .await
     .expect("query orders.currency");
-    assert_eq!(currency_cols, 1, "`orders.currency` should exist exactly once");
+    assert_eq!(
+        currency_cols, 1,
+        "`orders.currency` should exist exactly once"
+    );
 
-    let defaults: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM store_currency_settings WHERE id = 'default'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("query store_currency_settings default row");
-    assert_eq!(defaults, 1, "expected a default store_currency_settings row");
+    let defaults: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM store_currency_settings WHERE id = 'default'")
+            .fetch_one(&pool)
+            .await
+            .expect("query store_currency_settings default row");
+    assert_eq!(
+        defaults, 1,
+        "expected a default store_currency_settings row"
+    );
 }

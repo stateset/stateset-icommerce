@@ -21,12 +21,54 @@ import { BUILTIN_CHECKERS } from './checkers.js';
 // ============================================================================
 
 const DEFAULT_CHECKS = [
-  { id: 'low-stock',          name: 'Low Stock',           checker: 'low-stock',          intervalMs: 3_600_000,  enabled: false, config: { threshold: 10 } },
-  { id: 'abandoned-carts',    name: 'Abandoned Carts',     checker: 'abandoned-carts',    intervalMs: 86_400_000, enabled: false, config: { minAgeHours: 24 } },
-  { id: 'revenue-milestone',  name: 'Revenue Milestone',   checker: 'revenue-milestone',  intervalMs: 3_600_000,  enabled: false, config: { target: 10000, period: 'month' } },
-  { id: 'pending-returns',    name: 'Pending Returns',     checker: 'pending-returns',    intervalMs: 43_200_000, enabled: false, config: { maxAgeDays: 7 } },
-  { id: 'overdue-invoices',   name: 'Overdue Invoices',    checker: 'overdue-invoices',   intervalMs: 86_400_000, enabled: false, config: {} },
-  { id: 'subscription-churn', name: 'Subscription Churn',  checker: 'subscription-churn', intervalMs: 86_400_000, enabled: false, config: {} },
+  {
+    id: 'low-stock',
+    name: 'Low Stock',
+    checker: 'low-stock',
+    intervalMs: 3_600_000,
+    enabled: false,
+    config: { threshold: 10 },
+  },
+  {
+    id: 'abandoned-carts',
+    name: 'Abandoned Carts',
+    checker: 'abandoned-carts',
+    intervalMs: 86_400_000,
+    enabled: false,
+    config: { minAgeHours: 24 },
+  },
+  {
+    id: 'revenue-milestone',
+    name: 'Revenue Milestone',
+    checker: 'revenue-milestone',
+    intervalMs: 3_600_000,
+    enabled: false,
+    config: { target: 10000, period: 'month' },
+  },
+  {
+    id: 'pending-returns',
+    name: 'Pending Returns',
+    checker: 'pending-returns',
+    intervalMs: 43_200_000,
+    enabled: false,
+    config: { maxAgeDays: 7 },
+  },
+  {
+    id: 'overdue-invoices',
+    name: 'Overdue Invoices',
+    checker: 'overdue-invoices',
+    intervalMs: 86_400_000,
+    enabled: false,
+    config: {},
+  },
+  {
+    id: 'subscription-churn',
+    name: 'Subscription Churn',
+    checker: 'subscription-churn',
+    intervalMs: 86_400_000,
+    enabled: false,
+    config: {},
+  },
 ];
 
 // ============================================================================
@@ -102,7 +144,7 @@ export class HeartbeatMonitor extends EventEmitter {
   stop() {
     if (!this._running) return;
 
-    for (const [id, timer] of this._timers) {
+    for (const timer of this._timers.values()) {
       clearInterval(timer);
     }
     this._timers.clear();

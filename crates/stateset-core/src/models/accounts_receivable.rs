@@ -501,9 +501,9 @@ pub struct CreditMemo {
 impl CreditMemo {
     /// Returns true if the credit memo can be applied to invoices
     pub fn can_apply(&self) -> bool {
-        self.status != CreditMemoStatus::Voided &&
-        self.status != CreditMemoStatus::FullyApplied &&
-        self.unapplied_amount > Decimal::ZERO
+        self.status != CreditMemoStatus::Voided
+            && self.status != CreditMemoStatus::FullyApplied
+            && self.unapplied_amount > Decimal::ZERO
     }
 }
 

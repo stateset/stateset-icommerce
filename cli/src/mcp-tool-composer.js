@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
+import crypto from 'node:crypto';
 
 export class ToolComposer extends EventEmitter {
   constructor(commerce) {
@@ -20,7 +21,7 @@ export class ToolComposer extends EventEmitter {
    * @returns {Promise<Object>} - Orchestration result with rollbacks on failure
    */
   async orchestrate(name, steps) {
-    const orchestrationId = `orch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const orchestrationId = `orch-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`;
     const results = [];
     const rollbackStack = [];
 
@@ -31,7 +32,13 @@ export class ToolComposer extends EventEmitter {
         const step = steps[i];
         const stepId = `${orchestrationId}-step-${i}`;
 
-        this.emit('step:started', { orchestrationId, stepId, step: i + 1, total: steps.length, tool: step.tool });
+        this.emit('step:started', {
+          orchestrationId,
+          stepId,
+          step: i + 1,
+          total: steps.length,
+          tool: step.tool,
+        });
 
         const result = await this.executeTool(step.tool, step.params);
         results.push({ step: i, tool: step.tool, result });
@@ -49,7 +56,7 @@ export class ToolComposer extends EventEmitter {
           rollbackStack.unshift({
             step: i,
             tool: step.tool,
-            rollbackFn: () => step.rollback(result)
+            rollbackFn: () => step.rollback(result),
           });
         }
 
@@ -62,9 +69,8 @@ export class ToolComposer extends EventEmitter {
         orchestrationId,
         name,
         results,
-        completedAt: new Date().toISOString()
+        completedAt: new Date().toISOString(),
       };
-
     } catch (error) {
       this.emit('orchestration:failed', { orchestrationId, name, error, progress: results.length });
 
@@ -77,7 +83,7 @@ export class ToolComposer extends EventEmitter {
             step: rollback.step,
             tool: rollback.tool,
             status: 'success',
-            result
+            result,
           });
           this.emit('rollback:success', { orchestrationId, step: rollback.step });
         } catch (rollbackError) {
@@ -85,9 +91,13 @@ export class ToolComposer extends EventEmitter {
             step: rollback.step,
             tool: rollback.tool,
             status: 'failed',
-            error: rollbackError.message
+            error: rollbackError.message,
           });
-          this.emit('rollback:failed', { orchestrationId, step: rollback.step, error: rollbackError });
+          this.emit('rollback:failed', {
+            orchestrationId,
+            step: rollback.step,
+            error: rollbackError,
+          });
         }
       }
 
@@ -99,7 +109,7 @@ export class ToolComposer extends EventEmitter {
         progress: results.length,
         totalSteps: steps.length,
         completedSteps: results,
-        rollbacks: rollbackResults
+        rollbacks: rollbackResults,
       };
     }
   }
@@ -113,7 +123,7 @@ export class ToolComposer extends EventEmitter {
     return {
       tool: toolName,
       params,
-      executedAt: new Date().toISOString()
+      executedAt: new Date().toISOString(),
     };
   }
 
@@ -130,13 +140,13 @@ export class ToolComposer extends EventEmitter {
           quantity: params.items[0].quantity,
           referenceType: 'order',
           referenceId: params.orderId || `pending-${Date.now()}`,
-          expiresInSeconds: 3600
+          expiresInSeconds: 3600,
         },
         validate: (result) => ({ valid: !!result.reservation?.id }),
         rollback: async (result) => ({
           tool: 'release_reservation',
-          params: { reservationId: result.reservation.id }
-        })
+          params: { reservationId: result.reservation.id },
+        }),
       },
       {
         tool: 'create_order',
@@ -144,21 +154,21 @@ export class ToolComposer extends EventEmitter {
           customerId: params.customerId,
           items: params.items,
           currency: params.currency || 'USD',
-          notes: params.notes
+          notes: params.notes,
         },
         validate: (result) => ({ valid: !!result.order?.id }),
         rollback: async (result) => ({
           tool: 'cancel_order',
-          params: { orderId: result.order.id }
-        })
+          params: { orderId: result.order.id },
+        }),
       },
       {
         tool: 'confirm_reservation',
         params: (previousResults) => ({
-          reservationId: previousResults[0].result.reservation.id
+          reservationId: previousResults[0].result.reservation.id,
         }),
-        validate: (result) => ({ valid: true })
-      }
+        validate: () => ({ valid: true }),
+      },
     ]);
   }
 
@@ -172,30 +182,30 @@ export class ToolComposer extends EventEmitter {
         tool: 'approve_return',
         params: { returnId: params.returnId },
         validate: (result) => ({ valid: result.return?.status === 'approved' }),
-        rollback: async (result) => ({
-          tool: void 0 // No rollback for approve
-        })
+        rollback: async () => ({
+          tool: void 0, // No rollback for approve
+        }),
       },
       {
         tool: 'adjust_inventory',
         params: {
           sku: params.sku,
           quantity: Math.abs(params.quantity), // Positive for restock
-          reason: 'Return processed'
+          reason: 'Return processed',
         },
-        validate: (result) => ({ valid: !!result.stock })
+        validate: (result) => ({ valid: !!result.stock }),
       },
       {
         tool: 'refund_payment',
         params: {
           orderId: params.orderId,
-          amount: params.amount
+          amount: params.amount,
         },
         rollback: async (result) => ({
           tool: 'capture_payment', // Capture if refund fails
-          params: { paymentId: result.paymentId }
-        })
-      }
+          params: { paymentId: result.paymentId },
+        }),
+      },
     ]);
   }
 
@@ -208,14 +218,14 @@ export class ToolComposer extends EventEmitter {
       {
         tool: 'get_cart',
         params: { cartId: params.cartId },
-        validate: (result) => ({ valid: result.cart?.itemCount > 0 })
+        validate: (result) => ({ valid: result.cart?.itemCount > 0 }),
       },
       {
         tool: 'calculate_tax',
         params: (previousResults) => ({
           items: previousResults[0].result.cart.items,
-          shippingAddress: previousResults[0].result.cart.shippingAddress
-        })
+          shippingAddress: previousResults[0].result.cart.shippingAddress,
+        }),
       },
       {
         tool: 'reserve_inventory',
@@ -224,53 +234,53 @@ export class ToolComposer extends EventEmitter {
           quantity: previousResults[0].result.cart.items[0].quantity,
           referenceType: 'order',
           referenceId: `pending-${Date.now()}`,
-          expiresInSeconds: 3600
+          expiresInSeconds: 3600,
         }),
         validate: (result) => ({ valid: !!result.reservation?.id }),
         rollback: async (result) => ({
           tool: 'release_reservation',
-          params: { reservationId: result.reservation.id }
-        })
+          params: { reservationId: result.reservation.id },
+        }),
       },
       {
         tool: 'create_order',
         params: (previousResults) => ({
           customerId: previousResults[0].result.cart.customerId,
           items: previousResults[0].result.cart.items,
-          currency: previousResults[0].result.cart.currency
+          currency: previousResults[0].result.cart.currency,
         }),
         validate: (result) => ({ valid: !!result.order?.id }),
         rollback: async (result) => ({
           tool: 'cancel_order',
-          params: { orderId: result.order.id }
-        })
+          params: { orderId: result.order.id },
+        }),
       },
       {
         tool: 'process_payment',
         params: (previousResults) => ({
           orderId: previousResults[4].result.order.id,
           amount: previousResults[4].result.order.totalAmount,
-          method: params.paymentMethod
+          method: params.paymentMethod,
         }),
         validate: (result) => ({ valid: result.payment?.status === 'paid' }),
         rollback: async (result) => ({
           tool: 'refund_payment',
-          params: { paymentId: result.payment.id }
-        })
+          params: { paymentId: result.payment.id },
+        }),
       },
       {
         tool: 'update_order_status',
         params: (previousResults) => ({
           orderId: previousResults[4].result.order.id,
-          status: 'confirmed'
-        })
+          status: 'confirmed',
+        }),
       },
       {
         tool: 'confirm_reservation',
         params: (previousResults) => ({
-          reservationId: previousResults[3].result.reservation.id
-        })
-      }
+          reservationId: previousResults[3].result.reservation.id,
+        }),
+      },
     ]);
   }
 
@@ -313,7 +323,7 @@ export class ToolComposer extends EventEmitter {
  * Pre-defined orchestration templates for common workflows
  */
 export const ORCHESTRATION_TEMPLATES = {
-  'checkout': {
+  checkout: {
     name: 'Complete Checkout',
     steps: [
       { tool: 'get_cart', validate: (r) => r.cart?.itemCount > 0 },
@@ -322,25 +332,25 @@ export const ORCHESTRATION_TEMPLATES = {
       { tool: 'create_order', rollback: 'cancel_order' },
       { tool: 'process_payment', rollback: 'refund_payment' },
       { tool: 'update_order_status', params: { status: 'confirmed' } },
-      { tool: 'confirm_reservation' }
-    ]
+      { tool: 'confirm_reservation' },
+    ],
   },
 
-  'return': {
+  return: {
     name: 'Process Return',
     steps: [
       { tool: 'approve_return' },
       { tool: 'adjust_inventory', params: { reason: 'Return processed' } },
-      { tool: 'refund_payment', rollback: 'capture_payment' }
-    ]
+      { tool: 'refund_payment', rollback: 'capture_payment' },
+    ],
   },
 
-  'fulfillment': {
+  fulfillment: {
     name: 'Order Fulfillment',
     steps: [
       { tool: 'get_order', validate: (r) => r.order?.status === 'confirmed' },
       { tool: 'pack_order' },
-      { tool: 'ship_order', rollback: 'unship_order' }
-    ]
-  }
+      { tool: 'ship_order', rollback: 'unship_order' },
+    ],
+  },
 };

@@ -238,5 +238,4 @@ impl Commerce {
     pub fn builder() -> CommerceBuilder {
         CommerceBuilder::default()
     }
-
 }

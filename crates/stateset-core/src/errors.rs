@@ -114,7 +114,11 @@ pub enum DbError {
 
 impl DbError {
     /// Create a query failed error
-    pub fn query_failed(table: &'static str, operation: &'static str, message: impl Into<String>) -> Self {
+    pub fn query_failed(
+        table: &'static str,
+        operation: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
         Self::QueryFailed {
             table,
             operation,
@@ -123,7 +127,11 @@ impl DbError {
     }
 
     /// Create a constraint violation error
-    pub fn constraint_violation(table: &'static str, constraint: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn constraint_violation(
+        table: &'static str,
+        constraint: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self::ConstraintViolation {
             table,
             constraint: constraint.into(),
@@ -165,7 +173,6 @@ pub enum CommerceError {
     // ========================================================================
     // Order errors
     // ========================================================================
-
     /// Order with given ID was not found
     #[error("Order not found: {0}")]
     OrderNotFound(Uuid),
@@ -190,7 +197,6 @@ pub enum CommerceError {
     // ========================================================================
     // Inventory errors
     // ========================================================================
-
     /// Inventory item not found by SKU or ID
     #[error("Inventory item not found: {0}")]
     InventoryItemNotFound(String),
@@ -221,7 +227,6 @@ pub enum CommerceError {
     // ========================================================================
     // Customer errors
     // ========================================================================
-
     /// Customer with given ID was not found
     #[error("Customer not found: {0}")]
     CustomerNotFound(Uuid),
@@ -237,7 +242,6 @@ pub enum CommerceError {
     // ========================================================================
     // Product errors
     // ========================================================================
-
     /// Product with given ID was not found
     #[error("Product not found: {0}")]
     ProductNotFound(Uuid),
@@ -257,7 +261,6 @@ pub enum CommerceError {
     // ========================================================================
     // Return errors
     // ========================================================================
-
     /// Return with given ID was not found
     #[error("Return not found: {0}")]
     ReturnNotFound(Uuid),
@@ -277,7 +280,6 @@ pub enum CommerceError {
     // ========================================================================
     // Validation errors
     // ========================================================================
-
     /// General validation error
     #[error("Validation error: {0}")]
     ValidationError(String),
@@ -294,7 +296,6 @@ pub enum CommerceError {
     // ========================================================================
     // Database/storage errors (Enhanced)
     // ========================================================================
-
     /// Legacy database error (for backwards compatibility)
     #[error("Database error: {0}")]
     DatabaseError(String),
@@ -329,7 +330,6 @@ pub enum CommerceError {
     // ========================================================================
     // External service errors
     // ========================================================================
-
     /// External service (payment, shipping, etc.) failed
     #[error("External service error: {0}")]
     ExternalServiceError(String),
@@ -337,7 +337,6 @@ pub enum CommerceError {
     // ========================================================================
     // General errors
     // ========================================================================
-
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -428,12 +427,20 @@ impl CommerceError {
     }
 
     /// Create a query failed error with context
-    pub fn query_failed(table: &'static str, operation: &'static str, message: impl Into<String>) -> Self {
+    pub fn query_failed(
+        table: &'static str,
+        operation: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
         Self::Database(DbError::query_failed(table, operation, message))
     }
 
     /// Create a constraint violation error
-    pub fn constraint_violation(table: &'static str, constraint: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn constraint_violation(
+        table: &'static str,
+        constraint: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self::Database(DbError::constraint_violation(table, constraint, message))
     }
 
@@ -489,13 +496,17 @@ impl From<&CommerceError> for BatchErrorCode {
             | CommerceError::EmailAlreadyExists(_) => BatchErrorCode::DuplicateKey,
 
             // Also catch constraint violations from DbError as duplicate key
-            CommerceError::Database(DbError::ConstraintViolation { .. }) => BatchErrorCode::DuplicateKey,
+            CommerceError::Database(DbError::ConstraintViolation { .. }) => {
+                BatchErrorCode::DuplicateKey
+            }
 
             CommerceError::VersionConflict { .. } | CommerceError::OptimisticLockFailure => {
                 BatchErrorCode::VersionConflict
             }
 
-            CommerceError::DatabaseError(_) | CommerceError::Database(_) => BatchErrorCode::DatabaseError,
+            CommerceError::DatabaseError(_) | CommerceError::Database(_) => {
+                BatchErrorCode::DatabaseError
+            }
 
             _ => BatchErrorCode::InternalError,
         }
@@ -672,17 +683,21 @@ pub fn validate_email(email: &str) -> Result<()> {
     let email = email.trim();
 
     if email.is_empty() {
-        return Err(CommerceError::ValidationError("Email cannot be empty".into()));
+        return Err(CommerceError::ValidationError(
+            "Email cannot be empty".into(),
+        ));
     }
 
     if email.contains(char::is_whitespace) {
-        return Err(CommerceError::ValidationError("Email cannot contain whitespace".into()));
+        return Err(CommerceError::ValidationError(
+            "Email cannot contain whitespace".into(),
+        ));
     }
 
     let parts: Vec<&str> = email.split('@').collect();
     if parts.len() != 2 {
         return Err(CommerceError::ValidationError(
-            "Email must contain exactly one @ symbol".into()
+            "Email must contain exactly one @ symbol".into(),
         ));
     }
 
@@ -690,26 +705,26 @@ pub fn validate_email(email: &str) -> Result<()> {
 
     if local.is_empty() {
         return Err(CommerceError::ValidationError(
-            "Email local part (before @) cannot be empty".into()
+            "Email local part (before @) cannot be empty".into(),
         ));
     }
 
     if domain.is_empty() {
         return Err(CommerceError::ValidationError(
-            "Email domain (after @) cannot be empty".into()
+            "Email domain (after @) cannot be empty".into(),
         ));
     }
 
     if !domain.contains('.') {
         return Err(CommerceError::ValidationError(
-            "Email domain must contain at least one dot".into()
+            "Email domain must contain at least one dot".into(),
         ));
     }
 
     // Check domain doesn't start or end with a dot
     if domain.starts_with('.') || domain.ends_with('.') {
         return Err(CommerceError::ValidationError(
-            "Email domain cannot start or end with a dot".into()
+            "Email domain cannot start or end with a dot".into(),
         ));
     }
 
@@ -742,13 +757,16 @@ pub fn validate_sku(sku: &str) -> Result<()> {
 
     if sku.len() > 100 {
         return Err(CommerceError::ValidationError(
-            "SKU cannot exceed 100 characters".into()
+            "SKU cannot exceed 100 characters".into(),
         ));
     }
 
-    if !sku.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !sku
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(CommerceError::ValidationError(
-            "SKU can only contain alphanumeric characters, hyphens, and underscores".into()
+            "SKU can only contain alphanumeric characters, hyphens, and underscores".into(),
         ));
     }
 
@@ -777,13 +795,18 @@ pub fn validate_phone(phone: &str) -> Result<()> {
     let phone = phone.trim();
 
     if phone.is_empty() {
-        return Err(CommerceError::ValidationError("Phone number cannot be empty".into()));
+        return Err(CommerceError::ValidationError(
+            "Phone number cannot be empty".into(),
+        ));
     }
 
     // Check for valid characters
-    if !phone.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '-' || c == '(' || c == ')' || c == '+') {
+    if !phone
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == ' ' || c == '-' || c == '(' || c == ')' || c == '+')
+    {
         return Err(CommerceError::ValidationError(
-            "Phone number contains invalid characters".into()
+            "Phone number contains invalid characters".into(),
         ));
     }
 
@@ -792,13 +815,13 @@ pub fn validate_phone(phone: &str) -> Result<()> {
 
     if digit_count < 7 {
         return Err(CommerceError::ValidationError(
-            "Phone number must have at least 7 digits".into()
+            "Phone number must have at least 7 digits".into(),
         ));
     }
 
     if digit_count > 15 {
         return Err(CommerceError::ValidationError(
-            "Phone number cannot exceed 15 digits".into()
+            "Phone number cannot exceed 15 digits".into(),
         ));
     }
 
@@ -823,13 +846,13 @@ pub fn validate_phone(phone: &str) -> Result<()> {
 pub fn validate_currency_code(code: &str) -> Result<()> {
     if code.len() != 3 {
         return Err(CommerceError::ValidationError(
-            "Currency code must be exactly 3 characters".into()
+            "Currency code must be exactly 3 characters".into(),
         ));
     }
 
     if !code.chars().all(|c| c.is_ascii_uppercase()) {
         return Err(CommerceError::ValidationError(
-            "Currency code must be uppercase letters only".into()
+            "Currency code must be uppercase letters only".into(),
         ));
     }
 
@@ -860,24 +883,29 @@ pub fn validate_postal_code(code: &str) -> Result<()> {
     let code = code.trim();
 
     if code.is_empty() {
-        return Err(CommerceError::ValidationError("Postal code cannot be empty".into()));
+        return Err(CommerceError::ValidationError(
+            "Postal code cannot be empty".into(),
+        ));
     }
 
     if code.len() < 3 {
         return Err(CommerceError::ValidationError(
-            "Postal code must be at least 3 characters".into()
+            "Postal code must be at least 3 characters".into(),
         ));
     }
 
     if code.len() > 10 {
         return Err(CommerceError::ValidationError(
-            "Postal code cannot exceed 10 characters".into()
+            "Postal code cannot exceed 10 characters".into(),
         ));
     }
 
-    if !code.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') {
+    if !code
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == ' ' || c == '-')
+    {
         return Err(CommerceError::ValidationError(
-            "Postal code contains invalid characters".into()
+            "Postal code contains invalid characters".into(),
         ));
     }
 
@@ -902,7 +930,7 @@ pub fn validate_postal_code(code: &str) -> Result<()> {
 pub fn validate_quantity(qty: rust_decimal::Decimal) -> Result<()> {
     if qty <= rust_decimal::Decimal::ZERO {
         return Err(CommerceError::ValidationError(
-            "Quantity must be greater than zero".into()
+            "Quantity must be greater than zero".into(),
         ));
     }
     Ok(())
@@ -925,7 +953,7 @@ pub fn validate_quantity(qty: rust_decimal::Decimal) -> Result<()> {
 pub fn validate_price(price: rust_decimal::Decimal) -> Result<()> {
     if price < rust_decimal::Decimal::ZERO {
         return Err(CommerceError::ValidationError(
-            "Price cannot be negative".into()
+            "Price cannot be negative".into(),
         ));
     }
     Ok(())

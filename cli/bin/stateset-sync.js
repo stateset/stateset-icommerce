@@ -29,7 +29,6 @@ import ora from 'ora';
 import fs from 'node:fs';
 import {
   loadSyncConfig,
-  saveSyncConfig,
   createSyncConfig,
   isSyncConfigured,
   validateSyncConfig,
@@ -44,6 +43,8 @@ import { getRotationPolicyManager } from '../src/sync/rotation-policy.js';
 import { getGroupManager } from '../src/sync/groups.js';
 import { bufferToHex } from '../src/sync/crypto.js';
 import { CLI_VERSION } from '../src/config.js';
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-sync');
 
 const program = new Command();
 
@@ -105,7 +106,7 @@ program
       if (!validation.valid) {
         spinner.fail('Invalid configuration');
         console.error(chalk.red('Errors:'));
-        validation.errors.forEach(e => console.error(chalk.red(`  - ${e}`)));
+        validation.errors.forEach((e) => console.error(chalk.red(`  - ${e}`)));
         process.exit(1);
       }
 
@@ -203,7 +204,9 @@ program
             console.log();
             console.log(chalk.bold('Receipt:'));
             console.log(`  Batch ID:  ${result.receipt.batchId}`);
-            console.log(`  Sequence:  ${result.receipt.sequenceStart} - ${result.receipt.sequenceEnd}`);
+            console.log(
+              `  Sequence:  ${result.receipt.sequenceStart} - ${result.receipt.sequenceEnd}`,
+            );
           }
         }
       } else {
@@ -315,14 +318,18 @@ program
 
         // Connection
         const connIcon = status.connected ? chalk.green('✓') : chalk.red('✗');
-        console.log(`  Connection:     ${connIcon} ${status.connected ? 'Connected' : 'Disconnected'}`);
+        console.log(
+          `  Connection:     ${connIcon} ${status.connected ? 'Connected' : 'Disconnected'}`,
+        );
         console.log(`  Sequencer:      ${config.sequencer.url}`);
         console.log();
 
         // Local state
         console.log(chalk.bold('  Local State:'));
         console.log(`    Database:     ${options.db || config.local.dbPath}`);
-        console.log(`    Outbox:       ${stats.pending} pending, ${stats.synced} synced, ${stats.failed} failed`);
+        console.log(
+          `    Outbox:       ${stats.pending} pending, ${stats.synced} synced, ${stats.failed} failed`,
+        );
         console.log(`    Local head:   ${status.localHead}`);
         console.log();
 
@@ -332,7 +339,8 @@ program
         console.log();
 
         // Sync gap
-        const lagColor = status.lag > 100 ? chalk.red : status.lag > 10 ? chalk.yellow : chalk.green;
+        const lagColor =
+          status.lag > 100 ? chalk.red : status.lag > 10 ? chalk.yellow : chalk.green;
         console.log(`  Sync Gap:       ${lagColor(status.lag + ' events')}`);
         console.log();
 
@@ -379,7 +387,7 @@ program
   .option('--batch-id <id>', 'Verify against specific batch')
   .option('--db <path>', 'Database path', './store.db')
   .option('--verbose', 'Show proof details')
-  .action(async (eventId, options) => {
+  .action(async (eventId, _options) => {
     const config = loadSyncConfig();
     if (!config) {
       console.error(chalk.red('Sync not configured. Run "stateset-sync init" first.'));
@@ -451,19 +459,24 @@ program
       console.log();
 
       for (const conflict of conflicts) {
-        const typeIcon = {
-          version: chalk.yellow('V'),
-          concurrent: chalk.magenta('C'),
-          invariant: chalk.red('I'),
-        }[conflict.type] || '?';
+        const typeIcon =
+          {
+            version: chalk.yellow('V'),
+            concurrent: chalk.magenta('C'),
+            invariant: chalk.red('I'),
+          }[conflict.type] || '?';
 
-        console.log(`${typeIcon} ${chalk.bold(conflict.id.substring(0, 8))}  ${conflict.entityType}/${conflict.entityId}`);
+        console.log(
+          `${typeIcon} ${chalk.bold(conflict.id.substring(0, 8))}  ${conflict.entityType}/${conflict.entityId}`,
+        );
         console.log(`    ${chalk.dim('Type:')} ${conflict.type}`);
         console.log(`    ${chalk.dim('Description:')} ${conflict.description}`);
         console.log(`    ${chalk.dim('Suggested:')} ${chalk.cyan(conflict.suggestedStrategy)}`);
         console.log(`    ${chalk.dim('Detected:')} ${conflict.detectedAt.toISOString()}`);
         if (conflict.localEvent) {
-          console.log(`    ${chalk.dim('Local Event:')} ${conflict.localEvent.eventType} (seq ${conflict.localEvent.localSeq})`);
+          console.log(
+            `    ${chalk.dim('Local Event:')} ${conflict.localEvent.eventType} (seq ${conflict.localEvent.localSeq})`,
+          );
         }
         console.log();
       }
@@ -486,7 +499,11 @@ program
 program
   .command('resolve <conflict-id>')
   .description('Resolve a specific conflict')
-  .option('--strategy <strategy>', 'Resolution strategy (remote-wins, local-wins, merge)', 'remote-wins')
+  .option(
+    '--strategy <strategy>',
+    'Resolution strategy (remote-wins, local-wins, merge)',
+    'remote-wins',
+  )
   .option('--skip', 'Skip this conflict without resolving')
   .option('--db <path>', 'Database path', './store.db')
   .option('--verbose', 'Show resolution details')
@@ -555,7 +572,11 @@ program
 program
   .command('rebase')
   .description('Resolve all conflicts with a strategy')
-  .option('--strategy <strategy>', 'Resolution strategy (remote-wins, local-wins, merge)', 'remote-wins')
+  .option(
+    '--strategy <strategy>',
+    'Resolution strategy (remote-wins, local-wins, merge)',
+    'remote-wins',
+  )
   .option('--force', 'Alias for --strategy=remote-wins')
   .option('--dry-run', 'Show what would happen without applying')
   .option('--db <path>', 'Database path', './store.db')
@@ -587,10 +608,14 @@ program
       spinner.text = `Rebasing ${conflicts.length} conflicts with ${strategy} strategy...`;
 
       if (options.dryRun) {
-        spinner.info(`Would resolve ${conflicts.length} conflicts using ${chalk.cyan(strategy)} strategy (dry run)`);
+        spinner.info(
+          `Would resolve ${conflicts.length} conflicts using ${chalk.cyan(strategy)} strategy (dry run)`,
+        );
         console.log();
         for (const conflict of conflicts) {
-          console.log(`  - ${conflict.id.substring(0, 8)}: ${conflict.entityType}/${conflict.entityId} (${conflict.type})`);
+          console.log(
+            `  - ${conflict.id.substring(0, 8)}: ${conflict.entityType}/${conflict.entityId} (${conflict.type})`,
+          );
         }
         await engine.shutdown();
         db.close();
@@ -602,7 +627,9 @@ program
       if (result.success) {
         spinner.succeed(`Rebase complete: ${result.rebased} conflicts resolved`);
       } else {
-        spinner.warn(`Rebase partially complete: ${result.rebased} resolved, ${result.failed} failed`);
+        spinner.warn(
+          `Rebase partially complete: ${result.rebased} resolved, ${result.failed} failed`,
+        );
         if (options.verbose && result.errors.length > 0) {
           console.log();
           console.log(chalk.bold('Errors:'));
@@ -661,14 +688,17 @@ program
       console.log();
 
       for (const event of events) {
-        const statusIcon = {
-          pending: chalk.yellow('○'),
-          synced: chalk.green('✓'),
-          failed: chalk.red('✗'),
-          rejected: chalk.red('⊘'),
-        }[event.sync_status] || '?';
+        const statusIcon =
+          {
+            pending: chalk.yellow('○'),
+            synced: chalk.green('✓'),
+            failed: chalk.red('✗'),
+            rejected: chalk.red('⊘'),
+          }[event.sync_status] || '?';
 
-        console.log(`${statusIcon} ${chalk.dim(event.local_seq.toString().padStart(6))} ${event.event_type}`);
+        console.log(
+          `${statusIcon} ${chalk.dim(event.local_seq.toString().padStart(6))} ${event.event_type}`,
+        );
         console.log(`    ${chalk.dim('Entity:')} ${event.entity_type}/${event.entity_id}`);
         console.log(`    ${chalk.dim('ID:')} ${event.event_id.substring(0, 8)}...`);
         if (event.remote_sequence) {
@@ -801,14 +831,15 @@ program
       const signingKeys = await keyManager.listSigningKeys(agentId);
       const encryptionKeys = await keyManager.listEncryptionKeys(agentId);
 
-      const formatKeys = (keys) => keys
-        .filter(k => options.includeRevoked || !k.revokedAt)
-        .map(k => ({
-          keyId: k.keyId,
-          publicKey: bufferToHex(k.publicKey),
-          createdAt: k.createdAt,
-          revokedAt: k.revokedAt || null,
-        }));
+      const formatKeys = (keys) =>
+        keys
+          .filter((k) => options.includeRevoked || !k.revokedAt)
+          .map((k) => ({
+            keyId: k.keyId,
+            publicKey: bufferToHex(k.publicKey),
+            createdAt: k.createdAt,
+            revokedAt: k.revokedAt || null,
+          }));
 
       const result = {
         agentId,
@@ -1095,28 +1126,29 @@ program
         agentId,
         tenantId: config.identity.tenantId,
         storeId: config.identity.storeId,
-        signingKey: signingKey ? {
-          keyId: signingKey.keyId,
-          algorithm: 'Ed25519',
-          publicKey: bufferToHex(signingKey.publicKey),
-          createdAt: signingKey.createdAt,
-        } : null,
-        encryptionKey: encryptionKey ? {
-          keyId: encryptionKey.keyId,
-          algorithm: 'X25519',
-          publicKey: bufferToHex(encryptionKey.publicKey),
-          createdAt: encryptionKey.createdAt,
-        } : null,
+        signingKey: signingKey
+          ? {
+              keyId: signingKey.keyId,
+              algorithm: 'Ed25519',
+              publicKey: bufferToHex(signingKey.publicKey),
+              createdAt: signingKey.createdAt,
+            }
+          : null,
+        encryptionKey: encryptionKey
+          ? {
+              keyId: encryptionKey.keyId,
+              algorithm: 'X25519',
+              publicKey: bufferToHex(encryptionKey.publicKey),
+              createdAt: encryptionKey.createdAt,
+            }
+          : null,
         exportedAt: new Date().toISOString(),
       };
 
       if (options.format === 'json') {
         writeJsonOutput(options, exported);
       } else if (options.format === 'hex') {
-        const lines = [
-          '# Agent Public Keys',
-          `agent_id=${agentId}`,
-        ];
+        const lines = ['# Agent Public Keys', `agent_id=${agentId}`];
         if (signingKey) {
           lines.push(`signing_key_id=${signingKey.keyId}`);
           lines.push(`signing_public_key=${bufferToHex(signingKey.publicKey)}`);
@@ -1177,7 +1209,9 @@ program
 
     const validKeyTypes = ['signing', 'encryption'];
     if (!validKeyTypes.includes(options.keyType)) {
-      console.error(chalk.red(`Invalid key type: ${options.keyType}. Use 'signing' or 'encryption'.`));
+      console.error(
+        chalk.red(`Invalid key type: ${options.keyType}. Use 'signing' or 'encryption'.`),
+      );
       process.exit(1);
     }
 
@@ -1195,12 +1229,20 @@ program
           console.log(chalk.bold(`Rotation Policy for ${agentId}`));
           console.log(`  Key Type: ${options.keyType}`);
           console.log();
-          console.log(`  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`);
-          console.log(`  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`);
+          console.log(
+            `  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`,
+          );
+          console.log(
+            `  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`,
+          );
           console.log(`  Grace Period:      ${policy.gracePeriodHours} hours`);
           console.log(`  Warning Threshold: ${policy.warningThresholdHours} hours`);
-          console.log(`  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
-          console.log(`  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
+          console.log(
+            `  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`,
+          );
+          console.log(
+            `  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`,
+          );
         }
         return;
       }
@@ -1208,7 +1250,9 @@ program
       // Reset to defaults
       if (options.reset) {
         await policyManager.removePolicy(agentId, options.keyType);
-        console.log(chalk.green(`Policy for ${agentId} ${options.keyType} keys reset to defaults.`));
+        console.log(
+          chalk.green(`Policy for ${agentId} ${options.keyType} keys reset to defaults.`),
+        );
         return;
       }
 
@@ -1235,7 +1279,9 @@ program
       }
 
       if (Object.keys(updates).length === 0) {
-        console.error(chalk.yellow('No policy updates specified. Use --show to view current policy.'));
+        console.error(
+          chalk.yellow('No policy updates specified. Use --show to view current policy.'),
+        );
         process.exit(1);
       }
 
@@ -1244,13 +1290,20 @@ program
       console.log(chalk.green(`Policy updated for ${agentId} ${options.keyType} keys.`));
       console.log();
       console.log(chalk.bold('Updated Policy:'));
-      console.log(`  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`);
-      console.log(`  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`);
+      console.log(
+        `  Max Age:           ${policy.maxAgeHours ? `${policy.maxAgeHours} hours` : chalk.dim('Not set')}`,
+      );
+      console.log(
+        `  Max Usage:         ${policy.maxUsageCount ? `${policy.maxUsageCount} uses` : chalk.dim('Not set')}`,
+      );
       console.log(`  Grace Period:      ${policy.gracePeriodHours} hours`);
       console.log(`  Warning Threshold: ${policy.warningThresholdHours} hours`);
-      console.log(`  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
-      console.log(`  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`);
-
+      console.log(
+        `  Auto-Rotate:       ${policy.autoRotate ? chalk.green('Enabled') : chalk.dim('Disabled')}`,
+      );
+      console.log(
+        `  Enforce Expiry:    ${policy.enforceExpiry ? chalk.green('Enabled') : chalk.dim('Disabled')}`,
+      );
     } catch (error) {
       console.error(chalk.red(`Policy management failed: ${error.message}`));
       process.exit(1);
@@ -1297,27 +1350,31 @@ program
       console.log();
 
       for (const warning of warnings) {
-        const severityIcon = {
-          info: chalk.blue('i'),
-          warning: chalk.yellow('!'),
-          critical: chalk.red('!!'),
-        }[warning.severity] || '?';
+        const severityIcon =
+          {
+            info: chalk.blue('i'),
+            warning: chalk.yellow('!'),
+            critical: chalk.red('!!'),
+          }[warning.severity] || '?';
 
-        const hoursText = warning.hoursRemaining <= 0
-          ? chalk.red('EXPIRED')
-          : warning.hoursRemaining < 1
-            ? chalk.red(`${Math.round(warning.hoursRemaining * 60)} minutes`)
-            : `${Math.round(warning.hoursRemaining)} hours`;
+        const hoursText =
+          warning.hoursRemaining <= 0
+            ? chalk.red('EXPIRED')
+            : warning.hoursRemaining < 1
+              ? chalk.red(`${Math.round(warning.hoursRemaining * 60)} minutes`)
+              : `${Math.round(warning.hoursRemaining)} hours`;
 
-        console.log(`${severityIcon} ${warning.keyType} key ${warning.keyId} for agent ${warning.agentId.substring(0, 8)}...`);
+        console.log(
+          `${severityIcon} ${warning.keyType} key ${warning.keyId} for agent ${warning.agentId.substring(0, 8)}...`,
+        );
         console.log(`    Expires: ${warning.expiresAt}`);
         console.log(`    Time remaining: ${hoursText}`);
         console.log();
       }
 
       // Summary
-      const critical = warnings.filter(w => w.severity === 'critical').length;
-      const warningCount = warnings.filter(w => w.severity === 'warning').length;
+      const critical = warnings.filter((w) => w.severity === 'critical').length;
+      const warningCount = warnings.filter((w) => w.severity === 'warning').length;
 
       if (critical > 0) {
         console.log(chalk.red(`${critical} key(s) need immediate rotation!`));
@@ -1327,7 +1384,6 @@ program
       }
       console.log();
       console.log(chalk.dim('Run "stateset-sync keys:rotate --<type>" to rotate keys.'));
-
     } catch (error) {
       console.error(chalk.red(`Expiry check failed: ${error.message}`));
       process.exit(1);
@@ -1340,8 +1396,14 @@ program
 program
   .command('keys:batch-rotate')
   .description('Batch rotate keys for multiple agents')
-  .option('--agents <file>', 'JSON file with agent list [{ "agentId": "...", "keyType": "signing" }]')
-  .option('--key-type <type>', 'Key type to rotate for all configured agents (signing, encryption, all)')
+  .option(
+    '--agents <file>',
+    'JSON file with agent list [{ "agentId": "...", "keyType": "signing" }]',
+  )
+  .option(
+    '--key-type <type>',
+    'Key type to rotate for all configured agents (signing, encryption, all)',
+  )
   .option('--register', 'Auto-register new signing keys with sequencer')
   .option('--json', 'Output as JSON')
   .option('--output <file>', 'Write JSON output to file (implies --json)')
@@ -1421,7 +1483,7 @@ program
 
       // Auto-register signing keys if requested
       if (options.register) {
-        const signingResults = results.filter(r => r.success && r.keyType === 'signing');
+        const signingResults = results.filter((r) => r.success && r.keyType === 'signing');
         if (signingResults.length > 0) {
           spinner.start('Registering new signing keys with sequencer...');
           const client = createSequencerClient(new SyncConfig(config));
@@ -1436,7 +1498,11 @@ program
                 publicKey: bufferToHex(key.publicKey),
               });
             } catch (error) {
-              console.log(chalk.yellow(`  Warning: Failed to register key for ${result.agentId.substring(0, 8)}: ${error.message}`));
+              console.log(
+                chalk.yellow(
+                  `  Warning: Failed to register key for ${result.agentId.substring(0, 8)}: ${error.message}`,
+                ),
+              );
             }
           }
           spinner.succeed(`Registered ${signingResults.length} signing key(s) with sequencer.`);
@@ -1444,8 +1510,9 @@ program
       }
 
       console.log(chalk.bold('Summary:'));
-      console.log(`  ${chalk.green(successCount + ' succeeded')}, ${chalk.red(failCount + ' failed')}`);
-
+      console.log(
+        `  ${chalk.green(successCount + ' succeeded')}, ${chalk.red(failCount + ' failed')}`,
+      );
     } catch (error) {
       spinner.fail(`Batch rotation failed: ${error.message}`);
       process.exit(1);
@@ -1497,7 +1564,13 @@ program
           console.log(`  Description: ${group.description}`);
         }
         console.log();
-        console.log(chalk.dim('Use "stateset-sync groups:add-member --group-id ' + group.groupId.substring(0, 8) + '... --agent-id <id>" to add members.'));
+        console.log(
+          chalk.dim(
+            'Use "stateset-sync groups:add-member --group-id ' +
+              group.groupId.substring(0, 8) +
+              '... --agent-id <id>" to add members.',
+          ),
+        );
       }
     } catch (error) {
       spinner.fail(`Failed to create group: ${error.message}`);
@@ -1543,7 +1616,7 @@ program
       console.log();
 
       for (const group of groups) {
-        const myMembership = group.members.find(m => m.agentId === config.identity.agentId);
+        const myMembership = group.members.find((m) => m.agentId === config.identity.agentId);
         const roleIcon = myMembership?.role === 'admin' ? chalk.yellow('*') : ' ';
 
         console.log(`${roleIcon} ${chalk.bold(group.name)}`);
@@ -1556,7 +1629,6 @@ program
       }
 
       console.log(chalk.dim('* = You are admin'));
-
     } catch (error) {
       console.error(chalk.red(`Failed to list groups: ${error.message}`));
       process.exit(1);
@@ -1617,7 +1689,6 @@ program
         console.log(`       Added:  ${member.addedAt}`);
         console.log();
       }
-
     } catch (error) {
       console.error(chalk.red(`Failed to show group: ${error.message}`));
       process.exit(1);
@@ -1649,12 +1720,9 @@ program
       const groupManager = getGroupManager(getConfigDir());
       const myAgentId = config.identity.agentId;
 
-      const group = await groupManager.addMember(
-        options.groupId,
-        options.agentId,
-        myAgentId,
-        { role: options.role }
-      );
+      const group = await groupManager.addMember(options.groupId, options.agentId, myAgentId, {
+        role: options.role,
+      });
 
       spinner.succeed(`Agent ${options.agentId.substring(0, 8)}... added to group`);
 
@@ -1694,11 +1762,7 @@ program
       const groupManager = getGroupManager(getConfigDir());
       const myAgentId = config.identity.agentId;
 
-      const group = await groupManager.removeMember(
-        options.groupId,
-        options.agentId,
-        myAgentId
-      );
+      const group = await groupManager.removeMember(options.groupId, options.agentId, myAgentId);
 
       spinner.succeed(`Agent ${options.agentId.substring(0, 8)}... removed from group`);
       console.log(`  Group now has ${group.members.length} member(s)`);
@@ -1735,7 +1799,11 @@ program
 
       if (!options.force) {
         console.log();
-        console.log(chalk.yellow(`Warning: This will delete group '${group.name}' with ${group.members.length} member(s).`));
+        console.log(
+          chalk.yellow(
+            `Warning: This will delete group '${group.name}' with ${group.members.length} member(s).`,
+          ),
+        );
         console.log(chalk.yellow('Existing encrypted data will still be decryptable by members.'));
         console.log();
         console.log(chalk.dim('Use --force to skip this confirmation.'));
@@ -1821,7 +1889,7 @@ program
       console.log();
 
       for (const group of groups) {
-        const myMembership = group.members.find(m => m.agentId === myAgentId);
+        const myMembership = group.members.find((m) => m.agentId === myAgentId);
         const roleText = myMembership?.role === 'admin' ? chalk.yellow('admin') : 'member';
 
         console.log(`  ${chalk.bold(group.name)}`);
@@ -1830,7 +1898,6 @@ program
         console.log(`    Members: ${group.members.length}`);
         console.log();
       }
-
     } catch (error) {
       console.error(chalk.red(`Failed to list groups: ${error.message}`));
       process.exit(1);

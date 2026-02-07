@@ -79,7 +79,9 @@ async function main() {
         await instance.close();
       }
     } catch (error) {
-      console.error(`[x402-mcp] shutdown error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `[x402-mcp] shutdown error: ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       process.exit(0);
     }
@@ -94,9 +96,12 @@ async function main() {
     }
     await instance.connect(transport);
   } catch (error) {
-    console.error(`[x402-mcp] failed to start: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[x402-mcp] failed to start: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exit(1);
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-x402-mcp', main);

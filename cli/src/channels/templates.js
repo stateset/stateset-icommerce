@@ -19,7 +19,7 @@ export function orderConfirmation(order) {
   const orderNum = order.orderNumber || order.order_number || order.id;
   return {
     title: `Order Confirmed: ${orderNum}`,
-    description: 'Thank you for your order! We\'re processing it now.',
+    description: "Thank you for your order! We're processing it now.",
     color: '#4CAF50',
     fields: [
       { name: 'Order', value: orderNum, inline: true },
@@ -96,7 +96,7 @@ export function deliveryConfirmation(order) {
 export function returnReceived(returnReq) {
   return {
     title: `Return Request: ${returnReq.id}`,
-    description: 'We\'ve received your return request and will review it shortly.',
+    description: "We've received your return request and will review it shortly.",
     color: '#FF9800',
     fields: [
       { name: 'Status', value: 'PENDING REVIEW', inline: true },
@@ -115,11 +115,16 @@ export function returnReceived(returnReq) {
 export function returnApproved(returnReq) {
   return {
     title: `Return Approved: ${returnReq.id}`,
-    description: 'Your return has been approved. Please ship the item back using the provided label.',
+    description:
+      'Your return has been approved. Please ship the item back using the provided label.',
     color: '#4CAF50',
     fields: [
       { name: 'Status', value: 'APPROVED', inline: true },
-      { name: 'Refund', value: returnReq.refundAmount ? `$${returnReq.refundAmount.toFixed(2)}` : 'Pending', inline: true },
+      {
+        name: 'Refund',
+        value: returnReq.refundAmount ? `$${returnReq.refundAmount.toFixed(2)}` : 'Pending',
+        inline: true,
+      },
     ],
     footer: 'StateSet Commerce',
   };
@@ -138,22 +143,23 @@ export function returnApproved(returnReq) {
 export function abandonedCartReminder(cart) {
   const cartNum = cart.cartNumber || cart.cart_number || cart.id;
   const itemCount = cart.items?.length || 0;
-  const itemList = (cart.items || []).slice(0, 3)
+  const itemList = (cart.items || [])
+    .slice(0, 3)
     .map((i) => `${i.quantity || 1}x ${i.name || i.sku}`)
     .join(', ');
 
   return {
     title: 'You left something in your cart!',
-    description: itemList ? `Your items: ${itemList}${itemCount > 3 ? ` and ${itemCount - 3} more` : ''}` : 'You have items waiting in your cart.',
+    description: itemList
+      ? `Your items: ${itemList}${itemCount > 3 ? ` and ${itemCount - 3} more` : ''}`
+      : 'You have items waiting in your cart.',
     color: '#9C27B0',
     fields: [
       { name: 'Cart', value: cartNum, inline: true },
       { name: 'Items', value: String(itemCount), inline: true },
       { name: 'Subtotal', value: `$${(cart.subtotal || 0).toFixed(2)}`, inline: true },
     ],
-    buttons: [
-      { label: 'View Cart', action: `view_cart:${cart.id}` },
-    ],
+    buttons: [{ label: 'View Cart', action: `view_cart:${cart.id}` }],
     footer: 'StateSet Commerce',
   };
 }
@@ -213,14 +219,11 @@ export function backInStock(data) {
 export function welcomeMessage(name) {
   return {
     title: `Welcome${name ? `, ${name}` : ''}!`,
-    description: 'I\'m your StateSet Commerce assistant. I can help with orders, inventory, carts, returns, and more.',
+    description:
+      "I'm your StateSet Commerce assistant. I can help with orders, inventory, carts, returns, and more.",
     color: '#673AB7',
-    fields: [
-      { name: 'Get Started', value: 'Just ask me anything, or try /help for commands.' },
-    ],
-    buttons: [
-      { label: 'Help', action: '/help' },
-    ],
+    fields: [{ name: 'Get Started', value: 'Just ask me anything, or try /help for commands.' }],
+    buttons: [{ label: 'Help', action: '/help' }],
     footer: 'StateSet Commerce Agent',
   };
 }
@@ -236,9 +239,7 @@ export function welcomeMessage(name) {
  * @returns {import('./rich-messages.js').RichMessage}
  */
 export function approvalRequest(request) {
-  const fields = [
-    { name: 'Type', value: request.domain || 'general', inline: true },
-  ];
+  const fields = [{ name: 'Type', value: request.domain || 'general', inline: true }];
 
   if (request.amount !== undefined) {
     fields.push({ name: 'Amount', value: `$${Number(request.amount).toFixed(2)}`, inline: true });

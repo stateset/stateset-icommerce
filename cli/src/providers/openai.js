@@ -40,7 +40,7 @@ export class OpenAIProvider extends ModelProvider {
 
     const body = {
       model,
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
       max_tokens: maxTokens,
       temperature,
       stream,
@@ -48,7 +48,7 @@ export class OpenAIProvider extends ModelProvider {
 
     // o1 models don't support system messages or temperature
     if (model.startsWith('o1')) {
-      body.messages = body.messages.filter(m => m.role !== 'system');
+      body.messages = body.messages.filter((m) => m.role !== 'system');
       delete body.temperature;
     }
 
@@ -56,7 +56,7 @@ export class OpenAIProvider extends ModelProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
       signal: options.signal,
@@ -120,8 +120,8 @@ export class OpenAIProvider extends ModelProvider {
                 onPartialMessage({ content: delta, text: delta });
               }
             }
-          } catch {
-            // Skip malformed SSE lines
+          } catch (err) {
+            console.debug('[openai] Malformed SSE line:', err.message);
           }
         }
       }
@@ -147,7 +147,7 @@ export class OpenAIProvider extends ModelProvider {
     const prices = {
       'gpt-4o': { input: 2.5, output: 10 },
       'gpt-4': { input: 30, output: 60 },
-      'o1': { input: 15, output: 60 },
+      o1: { input: 15, output: 60 },
       'o1-mini': { input: 3, output: 12 },
     };
 

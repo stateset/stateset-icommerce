@@ -72,7 +72,7 @@ impl std::str::FromStr for PromotionType {
             "first_order_discount" => Ok(Self::FirstOrderDiscount),
             "gift_with_purchase" => Ok(Self::GiftWithPurchase),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "percentageoff" => Ok(Self::PercentageOff),
                     "fixedamountoff" => Ok(Self::FixedAmountOff),
@@ -174,7 +174,7 @@ impl std::str::FromStr for PromotionTrigger {
             "coupon_code" => Ok(Self::CouponCode),
             "both" => Ok(Self::Both),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "couponcode" => Ok(Self::CouponCode),
                     _ => Err(format!("Unknown promotion trigger: {}", s)),
@@ -225,7 +225,7 @@ impl std::str::FromStr for PromotionTarget {
             "shipping" => Ok(Self::Shipping),
             "line_item" => Ok(Self::LineItem),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "lineitem" => Ok(Self::LineItem),
                     _ => Err(format!("Unknown promotion target: {}", s)),
@@ -268,7 +268,7 @@ impl std::str::FromStr for StackingBehavior {
             "exclusive" => Ok(Self::Exclusive),
             "selective_stack" => Ok(Self::SelectiveStack),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "selectivestack" => Ok(Self::SelectiveStack),
                     _ => Err(format!("Unknown stacking behavior: {}", s)),
@@ -329,7 +329,7 @@ impl std::str::FromStr for ConditionOperator {
             "in" => Ok(Self::In),
             "not_in" => Ok(Self::NotIn),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "notequals" => Ok(Self::NotEquals),
                     "greaterthan" => Ok(Self::GreaterThan),
@@ -418,7 +418,7 @@ impl std::str::FromStr for ConditionType {
             "cart_item_count" => Ok(Self::CartItemCount),
             "customer_id" => Ok(Self::CustomerId),
             _ => {
-                let compact = value.replace('_', "").replace('-', "");
+                let compact = value.replace(['_', '-'], "");
                 match compact.as_str() {
                     "minimumsubtotal" => Ok(Self::MinimumSubtotal),
                     "minimumquantity" => Ok(Self::MinimumQuantity),
@@ -964,7 +964,12 @@ impl Promotion {
                 if discount == Decimal::ONE {
                     format!("Buy {} get {} free", buy, get)
                 } else {
-                    format!("Buy {} get {} at {}% off", buy, get, (discount * Decimal::from(100)).round())
+                    format!(
+                        "Buy {} get {} at {}% off",
+                        buy,
+                        get,
+                        (discount * Decimal::from(100)).round()
+                    )
                 }
             }
             PromotionType::FreeShipping => "Free shipping".to_string(),
@@ -1056,7 +1061,10 @@ mod tests {
 
     #[test]
     fn test_coupon_status_from_str() {
-        assert_eq!(CouponStatus::from_str("active").unwrap(), CouponStatus::Active);
+        assert_eq!(
+            CouponStatus::from_str("active").unwrap(),
+            CouponStatus::Active
+        );
         assert_eq!(
             CouponStatus::from_str("exhausted").unwrap(),
             CouponStatus::Exhausted

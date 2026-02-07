@@ -29,7 +29,7 @@ export {
   getMarkdownMemoryStore,
   resetMarkdownMemoryStore,
   parseMemoryFile,
-  formatEntry
+  formatEntry,
 } from './markdown-store.js';
 
 // Vector/semantic memory
@@ -99,14 +99,16 @@ export class UnifiedMemory {
 
     if (this.useSqlite && this.sqliteStore) {
       promises.push(
-        Promise.resolve(this.sqliteStore.save({
-          channel: entry.channel || 'cli',
-          senderId: entry.senderId || 'local',
-          sessionId: entry.sessionId,
-          summary: entry.summary,
-          facts: entry.facts || [],
-          agent: entry.agent
-        }))
+        Promise.resolve(
+          this.sqliteStore.save({
+            channel: entry.channel || 'cli',
+            senderId: entry.senderId || 'local',
+            sessionId: entry.sessionId,
+            summary: entry.summary,
+            facts: entry.facts || [],
+            agent: entry.agent,
+          }),
+        ),
       );
     }
 
@@ -133,22 +135,24 @@ export class UnifiedMemory {
 
     if (this.useSqlite && this.sqliteStore) {
       const sqlResults = this.sqliteStore.search('cli', 'local', query, limit);
-      results.push(...sqlResults.map(r => ({ ...r, source: 'sqlite' })));
+      results.push(...sqlResults.map((r) => ({ ...r, source: 'sqlite' })));
     }
 
     if (this.useMarkdown && this.markdownStore) {
       const mdResults = await this.markdownStore.search(query, limit);
-      results.push(...mdResults.map(r => ({ ...r, source: 'markdown' })));
+      results.push(...mdResults.map((r) => ({ ...r, source: 'markdown' })));
     }
 
     // Deduplicate by summary
     const seen = new Set();
-    return results.filter(r => {
-      const key = r.summary?.slice(0, 100);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).slice(0, limit);
+    return results
+      .filter((r) => {
+        const key = r.summary?.slice(0, 100);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit);
   }
 
   /**
@@ -162,12 +166,12 @@ export class UnifiedMemory {
 
     if (this.useSqlite && this.sqliteStore) {
       const sqlResults = this.sqliteStore.getRecent('cli', 'local', limit);
-      results.push(...sqlResults.map(r => ({ ...r, source: 'sqlite' })));
+      results.push(...sqlResults.map((r) => ({ ...r, source: 'sqlite' })));
     }
 
     if (this.useMarkdown && this.markdownStore) {
       const mdResults = await this.markdownStore.getRecent(limit);
-      results.push(...mdResults.map(r => ({ ...r, source: 'markdown' })));
+      results.push(...mdResults.map((r) => ({ ...r, source: 'markdown' })));
     }
 
     // Sort by timestamp and deduplicate
@@ -227,5 +231,5 @@ export default {
 
   // Unified
   UnifiedMemory,
-  getUnifiedMemory
+  getUnifiedMemory,
 };

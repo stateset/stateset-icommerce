@@ -5,13 +5,8 @@
  * Each Telegram user gets their own agent session for multi-turn conversations.
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
-import { richMessageToPlainText } from '../channels/rich-messages.js';
 
 /**
  * Start the Telegram gateway.
@@ -44,16 +39,14 @@ export async function startTelegramGateway({
   try {
     ({ Bot } = await import('grammy'));
   } catch {
-    throw new Error(
-      'grammy is not installed. Install it with: npm install grammy'
-    );
+    throw new Error('grammy is not installed. Install it with: npm install grammy');
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     throw new Error(
       'TELEGRAM_BOT_TOKEN environment variable is required.\n' +
-      'Get one from @BotFather on Telegram: https://t.me/BotFather'
+        'Get one from @BotFather on Telegram: https://t.me/BotFather',
     );
   }
 
@@ -143,7 +136,6 @@ export async function startTelegramGateway({
   bot.on('callback_query:data', async (ctx) => {
     try {
       const action = ctx.callbackQuery.data;
-      const senderId = String(ctx.from.id);
       const chatId = ctx.chat?.id || ctx.callbackQuery.message?.chat?.id;
 
       if (!chatId) {
@@ -199,10 +191,7 @@ export async function startTelegramGateway({
  * Escape HTML special characters for Telegram HTML parse mode.
  */
 function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

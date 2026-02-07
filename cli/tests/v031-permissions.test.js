@@ -77,6 +77,7 @@ describe('v0.6.0 — http-auth module (unit)', () => {
 
   it('ROUTE_PERMISSIONS covers all subsystem prefixes', () => {
     assert.ok(ROUTE_PERMISSIONS['/health']);
+    assert.ok(ROUTE_PERMISSIONS['/ready']);
     assert.ok(ROUTE_PERMISSIONS['/voice']);
     assert.ok(ROUTE_PERMISSIONS['/browser']);
     assert.ok(ROUTE_PERMISSIONS['/memory']);
@@ -85,8 +86,19 @@ describe('v0.6.0 — http-auth module (unit)', () => {
   });
 
   // createApiKeyAuth
-  it('empty apiKeys = auth disabled, returns admin', () => {
+  it('empty apiKeys = auth required by default (secure-by-default)', () => {
     const auth = createApiKeyAuth([]);
+    const mockReq = { headers: {} };
+    const mockUrl = new URL('http://localhost/metrics');
+    const result = auth.authenticate(mockReq, mockUrl);
+    assert.equal(result.authenticated, false);
+  });
+
+  it('allowAnonymous enables insecure open mode when no keys configured', () => {
+    const auth = createApiKeyAuth([], {
+      allowAnonymous: true,
+      anonymousIdentity: { name: 'anonymous', level: 'admin' },
+    });
     const mockReq = { headers: {} };
     const mockUrl = new URL('http://localhost/metrics');
     const result = auth.authenticate(mockReq, mockUrl);
@@ -112,8 +124,19 @@ describe('v0.6.0 — http-auth module (unit)', () => {
     assert.equal(result.identity.level, 'admin');
   });
 
-  it('valid api_key query param authenticates', () => {
+  it('api_key query param is disabled by default', () => {
     const auth = createApiKeyAuth([{ key: 'qp-key-456', name: 'query-key', level: 'read' }]);
+    const mockReq = { headers: {} };
+    const mockUrl = new URL('http://localhost/metrics?api_key=qp-key-456');
+    const result = auth.authenticate(mockReq, mockUrl);
+    assert.equal(result.authenticated, false);
+  });
+
+  it('valid api_key query param authenticates when explicitly enabled', () => {
+    const auth = createApiKeyAuth(
+      [{ key: 'qp-key-456', name: 'query-key', level: 'read' }],
+      { allowQueryParam: true },
+    );
     const mockReq = { headers: {} };
     const mockUrl = new URL('http://localhost/metrics?api_key=qp-key-456');
     const result = auth.authenticate(mockReq, mockUrl);
@@ -181,9 +204,9 @@ describe('v0.6.0 — http-auth module (unit)', () => {
     assert.equal(checkRoutePermission(identity, '/browser/status', 'GET').allowed, true);
   });
 
-  it('unmatched route defaults to read', () => {
+  it('unmatched route is denied (default deny)', () => {
     const identity = { name: 'reader', level: 'read' };
-    assert.equal(checkRoutePermission(identity, '/unknown-route', 'GET').allowed, true);
+    assert.equal(checkRoutePermission(identity, '/unknown-route', 'GET').allowed, false);
   });
 
   // checkSandbox
@@ -259,9 +282,9 @@ describe('v0.6.0 — HTTP Gateway auth integration', () => {
     assert.equal(res.status, 200);
   });
 
-  it('valid api_key query param to /metrics returns 200', async () => {
+  it('api_key query param to /metrics is rejected by default', async () => {
     const res = await request(port, 'GET', `/metrics?api_key=${API_KEY}`);
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 401);
   });
 
   it('invalid Bearer token returns 401', async () => {
@@ -272,9 +295,37 @@ describe('v0.6.0 — HTTP Gateway auth integration', () => {
   });
 
   it('OPTIONS preflight returns 204 without auth', async () => {
-    const res = await request(port, 'OPTIONS', '/metrics');
+    const res = await request(port, 'OPTIONS', '/metrics', null, {
+      Origin: 'http://localhost:3000',
+    });
     assert.equal(res.status, 204);
+    assert.ok(res.headers['access-control-allow-origin']);
     assert.ok(res.headers['access-control-allow-headers'].includes('Authorization'));
+  });
+});
+
+describe('v0.6.0 — HTTP Gateway query param auth (opt-in)', () => {
+  let gw, port;
+  const API_KEY = 'test-admin-key-qp-optin';
+
+  before(async () => {
+    const { createHttpGateway } = await import('../src/channels/http-gateway.js');
+    gw = createHttpGateway({
+      port: 0,
+      apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+      allowQueryParamAuth: true,
+    });
+    const addr = await gw.start();
+    port = addr.port;
+  });
+
+  after(async () => {
+    await gw.stop();
+  });
+
+  it('valid api_key query param to /metrics returns 200 when enabled', async () => {
+    const res = await request(port, 'GET', `/metrics?api_key=${API_KEY}`);
+    assert.equal(res.status, 200);
   });
 });
 
@@ -412,7 +463,31 @@ describe('v0.6.0 — Backwards compat (no apiKeys)', () => {
     await gw.stop();
   });
 
-  it('all routes accessible without token when no apiKeys configured', async () => {
+  it('protected routes require auth when no apiKeys configured', async () => {
+    const res = await request(port, 'GET', '/metrics');
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('v0.6.0 — Explicit open mode (allowAnonymous)', () => {
+  let gw, port;
+
+  before(async () => {
+    const { createHttpGateway } = await import('../src/channels/http-gateway.js');
+    gw = createHttpGateway({
+      port: 0,
+      allowAnonymous: true,
+      anonymousIdentity: { name: 'anonymous', level: 'admin' },
+    });
+    const addr = await gw.start();
+    port = addr.port;
+  });
+
+  after(async () => {
+    await gw.stop();
+  });
+
+  it('admin routes are accessible without token when allowAnonymous is enabled (insecure)', async () => {
     const res = await request(port, 'GET', '/metrics');
     assert.equal(res.status, 200);
   });

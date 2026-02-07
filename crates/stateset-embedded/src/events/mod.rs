@@ -128,16 +128,14 @@ impl EventSystem {
         } else {
             None
         };
-        let event_store = if config.persist_events {
-            Some(
-                config
-                    .event_store
-                    .clone()
-                    .unwrap_or_else(|| Arc::new(InMemoryEventStore::new(config.max_in_memory_events))),
-            )
-        } else {
-            None
-        };
+        let event_store =
+            if config.persist_events {
+                Some(config.event_store.clone().unwrap_or_else(|| {
+                    Arc::new(InMemoryEventStore::new(config.max_in_memory_events))
+                }))
+            } else {
+                None
+            };
 
         Self {
             bus,

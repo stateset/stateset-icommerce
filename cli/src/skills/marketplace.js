@@ -8,10 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { createReadStream, createWriteStream } from 'fs';
-import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
-import { parseSkillMd } from './parser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -125,11 +122,12 @@ export class MarketplaceClient {
     if (!query) return catalog.skills;
 
     const q = query.toLowerCase();
-    return catalog.skills.filter((s) =>
-      s.name.toLowerCase().includes(q) ||
-      s.description.toLowerCase().includes(q) ||
-      s.category.includes(q) ||
-      s.tags.some((t) => t.includes(q))
+    return catalog.skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        s.category.includes(q) ||
+        s.tags.some((t) => t.includes(q)),
     );
   }
 
@@ -184,13 +182,21 @@ export class MarketplaceClient {
 
     // Check if already installed
     if (fs.existsSync(destDir) && !force) {
-      return { installed: false, path: destDir, error: 'Already installed. Use --force to overwrite.' };
+      return {
+        installed: false,
+        path: destDir,
+        error: 'Already installed. Use --force to overwrite.',
+      };
     }
 
     // Look up in catalog
     const entry = this.getCatalogEntry(name);
     if (!entry) {
-      return { installed: false, path: '', error: `Skill "${name}" not found in marketplace catalog.` };
+      return {
+        installed: false,
+        path: '',
+        error: `Skill "${name}" not found in marketplace catalog.`,
+      };
     }
 
     // Try to copy from bundled directory first (offline-friendly)
@@ -276,8 +282,11 @@ export class MarketplaceClient {
     if (!fs.existsSync(this._installDir)) return [];
 
     try {
-      return fs.readdirSync(this._installDir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && fs.existsSync(path.join(this._installDir, e.name, 'SKILL.md')))
+      return fs
+        .readdirSync(this._installDir, { withFileTypes: true })
+        .filter(
+          (e) => e.isDirectory() && fs.existsSync(path.join(this._installDir, e.name, 'SKILL.md')),
+        )
         .map((e) => e.name)
         .sort();
     } catch {
@@ -315,7 +324,11 @@ export class MarketplaceClient {
 
     const contentType = res.headers.get('content-type') || '';
 
-    if (url.endsWith('.md') || contentType.includes('text/markdown') || contentType.includes('text/plain')) {
+    if (
+      url.endsWith('.md') ||
+      contentType.includes('text/markdown') ||
+      contentType.includes('text/plain')
+    ) {
       // Direct SKILL.md download
       const text = await res.text();
       fs.writeFileSync(path.join(destDir, 'SKILL.md'), text);
@@ -327,13 +340,14 @@ export class MarketplaceClient {
 
       try {
         // Try to extract as tar.gz first, then zip
+        const { execFileSync } = await import('child_process');
         if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) {
-          const { execSync } = await import('child_process');
-          execSync(`tar -xzf "${tmpFile}" -C "${destDir}" --strip-components=1`, { stdio: 'pipe' });
+          execFileSync('tar', ['-xzf', tmpFile, '-C', destDir, '--strip-components=1'], {
+            stdio: 'pipe',
+          });
         } else {
           // Assume zip — use unzip command
-          const { execSync } = await import('child_process');
-          execSync(`unzip -o -q "${tmpFile}" -d "${destDir}"`, { stdio: 'pipe' });
+          execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], { stdio: 'pipe' });
         }
       } finally {
         fs.unlinkSync(tmpFile);
@@ -365,7 +379,8 @@ export class MarketplaceClient {
     if (!entry) return { hasUpdate: false, installed: null, latest: null };
 
     const installedDir = path.join(this._installDir, name);
-    if (!fs.existsSync(installedDir)) return { hasUpdate: true, installed: null, latest: entry.version };
+    if (!fs.existsSync(installedDir))
+      return { hasUpdate: true, installed: null, latest: entry.version };
 
     // Read installed version from SKILL.md frontmatter
     try {

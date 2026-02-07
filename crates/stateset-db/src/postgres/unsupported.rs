@@ -371,7 +371,11 @@ impl PurchaseOrderRepository for UnsupportedPostgresRepository {
     fn add_item(&self, _po_id: Uuid, _item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
         self.not_supported()
     }
-    fn update_item(&self, _item_id: Uuid, _item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    fn update_item(
+        &self,
+        _item_id: Uuid,
+        _item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         self.not_supported()
     }
     fn remove_item(&self, _item_id: Uuid) -> Result<()> {
@@ -387,7 +391,10 @@ impl PurchaseOrderRepository for UnsupportedPostgresRepository {
         self.not_supported()
     }
 
-    fn create_batch(&self, _inputs: Vec<CreatePurchaseOrder>) -> Result<BatchResult<PurchaseOrder>> {
+    fn create_batch(
+        &self,
+        _inputs: Vec<CreatePurchaseOrder>,
+    ) -> Result<BatchResult<PurchaseOrder>> {
         self.not_supported()
     }
     fn create_batch_atomic(&self, _inputs: Vec<CreatePurchaseOrder>) -> Result<Vec<PurchaseOrder>> {
@@ -897,7 +904,11 @@ impl SubscriptionRepository for UnsupportedPostgresRepository {
     fn list_billing_cycles(&self, _filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
         self.not_supported()
     }
-    fn update_billing_cycle_status(&self, _id: Uuid, _status: BillingCycleStatus) -> Result<BillingCycle> {
+    fn update_billing_cycle_status(
+        &self,
+        _id: Uuid,
+        _status: BillingCycleStatus,
+    ) -> Result<BillingCycle> {
         self.not_supported()
     }
     fn skip_billing_cycle(&self, _id: Uuid, _input: SkipBillingCycle) -> Result<Subscription> {
@@ -1061,7 +1072,11 @@ impl LotRepository for UnsupportedPostgresRepository {
     fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
         self.not_supported()
     }
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<rust_decimal::Decimal>> {
+    fn get_quantity_at_location(
+        &self,
+        lot_id: Uuid,
+        location_id: i32,
+    ) -> Result<Option<rust_decimal::Decimal>> {
         self.not_supported()
     }
     fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
@@ -1139,7 +1154,12 @@ impl SerialRepository for UnsupportedPostgresRepository {
     fn transfer_ownership(&self, input: TransferSerialOwnership) -> Result<SerialNumber> {
         self.not_supported()
     }
-    fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber> {
+    fn mark_sold(
+        &self,
+        id: Uuid,
+        customer_id: Uuid,
+        order_id: Option<Uuid>,
+    ) -> Result<SerialNumber> {
         self.not_supported()
     }
     fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> Result<SerialNumber> {
@@ -1160,7 +1180,11 @@ impl SerialRepository for UnsupportedPostgresRepository {
     fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber> {
         self.not_supported()
     }
-    fn get_history(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>> {
+    fn get_history(
+        &self,
+        serial_id: Uuid,
+        filter: SerialHistoryFilter,
+    ) -> Result<Vec<SerialHistory>> {
         self.not_supported()
     }
     fn lookup(&self, serial: &str) -> Result<Option<SerialLookupResult>> {
@@ -1262,7 +1286,11 @@ impl WarehouseRepository for UnsupportedPostgresRepository {
     fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>> {
         self.not_supported()
     }
-    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
+    fn get_inventory_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<LocationInventory>> {
         self.not_supported()
     }
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
@@ -1271,7 +1299,10 @@ impl WarehouseRepository for UnsupportedPostgresRepository {
     fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement> {
         self.not_supported()
     }
-    fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
+    fn list_location_inventory(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>> {
         self.not_supported()
     }
     fn get_movements(&self, filter: MovementFilter) -> Result<Vec<LocationMovement>> {
@@ -1409,7 +1440,12 @@ impl FulfillmentRepository for UnsupportedPostgresRepository {
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask> {
         self.not_supported()
     }
-    fn report_short(&self, id: Uuid, short_qty: rust_decimal::Decimal, reason: &str) -> Result<PickTask> {
+    fn report_short(
+        &self,
+        id: Uuid,
+        short_qty: rust_decimal::Decimal,
+        reason: &str,
+    ) -> Result<PickTask> {
         self.not_supported()
     }
     fn cancel_pick(&self, id: Uuid) -> Result<PickTask> {
@@ -1625,7 +1661,12 @@ impl CostAccountingRepository for UnsupportedPostgresRepository {
     fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
         self.not_supported()
     }
-    fn update_average_cost(&self, sku: &str, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal) -> Result<ItemCost> {
+    fn update_average_cost(
+        &self,
+        sku: &str,
+        quantity: rust_decimal::Decimal,
+        unit_cost: rust_decimal::Decimal,
+    ) -> Result<ItemCost> {
         self.not_supported()
     }
     fn update_last_cost(&self, sku: &str, unit_cost: rust_decimal::Decimal) -> Result<ItemCost> {
@@ -1649,10 +1690,23 @@ impl CostAccountingRepository for UnsupportedPostgresRepository {
     fn get_layers_remaining(&self, sku: &str) -> Result<rust_decimal::Decimal> {
         self.not_supported()
     }
-    fn record_cost_transaction(&self, sku: &str, transaction_type: CostTransactionType, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal, layer_id: Option<Uuid>, reference_type: Option<&str>, reference_id: Option<Uuid>, notes: Option<&str>) -> Result<CostTransaction> {
+    fn record_cost_transaction(
+        &self,
+        sku: &str,
+        transaction_type: CostTransactionType,
+        quantity: rust_decimal::Decimal,
+        unit_cost: rust_decimal::Decimal,
+        layer_id: Option<Uuid>,
+        reference_type: Option<&str>,
+        reference_id: Option<Uuid>,
+        notes: Option<&str>,
+    ) -> Result<CostTransaction> {
         self.not_supported()
     }
-    fn list_cost_transactions(&self, filter: CostTransactionFilter) -> Result<Vec<CostTransaction>> {
+    fn list_cost_transactions(
+        &self,
+        filter: CostTransactionFilter,
+    ) -> Result<Vec<CostTransaction>> {
         self.not_supported()
     }
     fn record_variance(&self, input: RecordCostVariance) -> Result<CostVariance> {
@@ -1661,7 +1715,11 @@ impl CostAccountingRepository for UnsupportedPostgresRepository {
     fn list_variances(&self, filter: CostVarianceFilter) -> Result<Vec<CostVariance>> {
         self.not_supported()
     }
-    fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<rust_decimal::Decimal> {
+    fn get_variance_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<rust_decimal::Decimal> {
         self.not_supported()
     }
     fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
@@ -1715,7 +1773,12 @@ impl CreditRepository for UnsupportedPostgresRepository {
     fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>> {
         self.not_supported()
     }
-    fn adjust_credit_limit(&self, customer_id: Uuid, new_limit: rust_decimal::Decimal, reason: &str) -> Result<CreditAccount> {
+    fn adjust_credit_limit(
+        &self,
+        customer_id: Uuid,
+        new_limit: rust_decimal::Decimal,
+        reason: &str,
+    ) -> Result<CreditAccount> {
         self.not_supported()
     }
     fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount> {
@@ -1724,16 +1787,34 @@ impl CreditRepository for UnsupportedPostgresRepository {
     fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
         self.not_supported()
     }
-    fn check_credit(&self, customer_id: Uuid, order_amount: rust_decimal::Decimal) -> Result<CreditCheckResult> {
+    fn check_credit(
+        &self,
+        customer_id: Uuid,
+        order_amount: rust_decimal::Decimal,
+    ) -> Result<CreditCheckResult> {
         self.not_supported()
     }
-    fn reserve_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount> {
+    fn reserve_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: rust_decimal::Decimal,
+    ) -> Result<CreditAccount> {
         self.not_supported()
     }
-    fn release_credit_reservation(&self, customer_id: Uuid, order_id: Uuid) -> Result<CreditAccount> {
+    fn release_credit_reservation(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+    ) -> Result<CreditAccount> {
         self.not_supported()
     }
-    fn charge_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount> {
+    fn charge_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: rust_decimal::Decimal,
+    ) -> Result<CreditAccount> {
         self.not_supported()
     }
     fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold> {
@@ -1775,7 +1856,12 @@ impl CreditRepository for UnsupportedPostgresRepository {
     fn list_transactions(&self, filter: CreditTransactionFilter) -> Result<Vec<CreditTransaction>> {
         self.not_supported()
     }
-    fn apply_payment(&self, customer_id: Uuid, amount: rust_decimal::Decimal, reference_id: Option<Uuid>) -> Result<CreditAccount> {
+    fn apply_payment(
+        &self,
+        customer_id: Uuid,
+        amount: rust_decimal::Decimal,
+        reference_id: Option<Uuid>,
+    ) -> Result<CreditAccount> {
         self.not_supported()
     }
     fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerCreditSummary>> {
@@ -1865,10 +1951,16 @@ impl AccountsReceivableRepository for UnsupportedPostgresRepository {
     fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
         self.not_supported()
     }
-    fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
+    fn log_collection_activity(
+        &self,
+        input: CreateCollectionActivity,
+    ) -> Result<CollectionActivity> {
         self.not_supported()
     }
-    fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>> {
+    fn list_collection_activities(
+        &self,
+        filter: CollectionActivityFilter,
+    ) -> Result<Vec<CollectionActivity>> {
         self.not_supported()
     }
     fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
@@ -1877,7 +1969,12 @@ impl AccountsReceivableRepository for UnsupportedPostgresRepository {
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
         self.not_supported()
     }
-    fn send_dunning_letter(&self, invoice_id: Uuid, letter_type: DunningLetterType, sent_by: Option<&str>) -> Result<CollectionActivity> {
+    fn send_dunning_letter(
+        &self,
+        invoice_id: Uuid,
+        letter_type: DunningLetterType,
+        sent_by: Option<&str>,
+    ) -> Result<CollectionActivity> {
         self.not_supported()
     }
     fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
@@ -1913,7 +2010,10 @@ impl AccountsReceivableRepository for UnsupportedPostgresRepository {
     fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
         self.not_supported()
     }
-    fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>> {
+    fn apply_payment_to_invoices(
+        &self,
+        input: ApplyPaymentToInvoices,
+    ) -> Result<Vec<ArPaymentApplication>> {
         self.not_supported()
     }
     fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>> {
@@ -2048,19 +2148,34 @@ impl GeneralLedgerRepository for UnsupportedPostgresRepository {
     fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
         self.not_supported()
     }
-    fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement> {
+    fn get_income_statement(
+        &self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    ) -> Result<IncomeStatement> {
         self.not_supported()
     }
-    fn get_account_balance(&self, account_id: Uuid, as_of_date: Option<NaiveDate>) -> Result<Option<rust_decimal::Decimal>> {
+    fn get_account_balance(
+        &self,
+        account_id: Uuid,
+        as_of_date: Option<NaiveDate>,
+    ) -> Result<Option<rust_decimal::Decimal>> {
         self.not_supported()
     }
-    fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>> {
+    fn get_account_transactions(
+        &self,
+        account_id: Uuid,
+        filter: JournalEntryFilter,
+    ) -> Result<Vec<JournalEntryLine>> {
         self.not_supported()
     }
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
         self.not_supported()
     }
-    fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>> {
+    fn create_accounts_batch(
+        &self,
+        inputs: Vec<CreateGlAccount>,
+    ) -> Result<BatchResult<GlAccount>> {
         self.not_supported()
     }
     fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
@@ -2081,10 +2196,20 @@ impl X402PaymentIntentRepository for UnsupportedPostgresRepository {
     fn sign(&self, _id: Uuid, _input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.not_supported()
     }
-    fn mark_sequenced(&self, _id: Uuid, _sequence_number: u64, _batch_id: Uuid) -> Result<X402PaymentIntent> {
+    fn mark_sequenced(
+        &self,
+        _id: Uuid,
+        _sequence_number: u64,
+        _batch_id: Uuid,
+    ) -> Result<X402PaymentIntent> {
         self.not_supported()
     }
-    fn mark_settled(&self, _id: Uuid, _tx_hash: &str, _block_number: u64) -> Result<X402PaymentIntent> {
+    fn mark_settled(
+        &self,
+        _id: Uuid,
+        _tx_hash: &str,
+        _block_number: u64,
+    ) -> Result<X402PaymentIntent> {
         self.not_supported()
     }
     fn mark_failed(&self, _id: Uuid, _reason: &str) -> Result<X402PaymentIntent> {
@@ -2114,10 +2239,16 @@ impl X402PaymentIntentRepository for UnsupportedPostgresRepository {
     fn expire_stale_intents(&self) -> Result<u64> {
         self.not_supported()
     }
-    fn create_batch(&self, _inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>> {
+    fn create_batch(
+        &self,
+        _inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<BatchResult<X402PaymentIntent>> {
         self.not_supported()
     }
-    fn create_batch_atomic(&self, _inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>> {
+    fn create_batch_atomic(
+        &self,
+        _inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<Vec<X402PaymentIntent>> {
         self.not_supported()
     }
     fn get_batch(&self, _ids: Vec<Uuid>) -> Result<Vec<X402PaymentIntent>> {
@@ -2126,19 +2257,37 @@ impl X402PaymentIntentRepository for UnsupportedPostgresRepository {
 }
 
 impl X402CreditRepository for UnsupportedPostgresRepository {
-    fn get_account(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<Option<X402CreditAccount>> {
+    fn get_account(
+        &self,
+        _payer_address: &str,
+        _asset: X402Asset,
+        _network: X402Network,
+    ) -> Result<Option<X402CreditAccount>> {
         self.not_supported()
     }
-    fn get_or_create_account(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<X402CreditAccount> {
+    fn get_or_create_account(
+        &self,
+        _payer_address: &str,
+        _asset: X402Asset,
+        _network: X402Network,
+    ) -> Result<X402CreditAccount> {
         self.not_supported()
     }
-    fn get_balance(&self, _payer_address: &str, _asset: X402Asset, _network: X402Network) -> Result<u64> {
+    fn get_balance(
+        &self,
+        _payer_address: &str,
+        _asset: X402Asset,
+        _network: X402Network,
+    ) -> Result<u64> {
         self.not_supported()
     }
     fn adjust_balance(&self, _input: X402CreditAdjustment) -> Result<X402CreditTransaction> {
         self.not_supported()
     }
-    fn list_transactions(&self, _filter: X402CreditTransactionFilter) -> Result<Vec<X402CreditTransaction>> {
+    fn list_transactions(
+        &self,
+        _filter: X402CreditTransactionFilter,
+    ) -> Result<Vec<X402CreditTransaction>> {
         self.not_supported()
     }
 }
@@ -2198,7 +2347,12 @@ impl AgentIdentityRepository for UnsupportedPostgresRepository {
     fn get_by_wallet(&self, _agent_wallet: &str) -> Result<Option<AgentIdentity>> {
         self.not_supported()
     }
-    fn update(&self, _agent_registry: &str, _agent_id: &str, _input: UpdateAgentIdentity) -> Result<AgentIdentity> {
+    fn update(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _input: UpdateAgentIdentity,
+    ) -> Result<AgentIdentity> {
         self.not_supported()
     }
     fn set_agent_wallet(
@@ -2222,13 +2376,28 @@ impl AgentIdentityRepository for UnsupportedPostgresRepository {
     fn count(&self, _filter: AgentIdentityFilter) -> Result<u64> {
         self.not_supported()
     }
-    fn set_metadata(&self, _agent_registry: &str, _agent_id: &str, _entry: AgentMetadataEntry) -> Result<()> {
+    fn set_metadata(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _entry: AgentMetadataEntry,
+    ) -> Result<()> {
         self.not_supported()
     }
-    fn get_metadata(&self, _agent_registry: &str, _agent_id: &str, _metadata_key: &str) -> Result<Option<Vec<u8>>> {
+    fn get_metadata(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _metadata_key: &str,
+    ) -> Result<Option<Vec<u8>>> {
         self.not_supported()
     }
-    fn delete_metadata(&self, _agent_registry: &str, _agent_id: &str, _metadata_key: &str) -> Result<()> {
+    fn delete_metadata(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _metadata_key: &str,
+    ) -> Result<()> {
         self.not_supported()
     }
 }
@@ -2237,43 +2406,90 @@ impl AgentReputationRepository for UnsupportedPostgresRepository {
     fn give_feedback(&self, _input: CreateAgentFeedback) -> Result<AgentFeedback> {
         self.not_supported()
     }
-    fn revoke_feedback(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64) -> Result<AgentFeedback> {
+    fn revoke_feedback(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _client_address: &str,
+        _feedback_index: u64,
+    ) -> Result<AgentFeedback> {
         self.not_supported()
     }
-    fn read_feedback(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64) -> Result<Option<AgentFeedback>> {
+    fn read_feedback(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _client_address: &str,
+        _feedback_index: u64,
+    ) -> Result<Option<AgentFeedback>> {
         self.not_supported()
     }
     fn read_all_feedback(&self, _filter: AgentFeedbackFilter) -> Result<Vec<AgentFeedback>> {
         self.not_supported()
     }
-    fn get_summary(&self, _agent_registry: &str, _agent_id: &str, _client_addresses: Vec<String>, _tag1: Option<String>, _tag2: Option<String>) -> Result<FeedbackSummary> {
+    fn get_summary(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _client_addresses: Vec<String>,
+        _tag1: Option<String>,
+        _tag2: Option<String>,
+    ) -> Result<FeedbackSummary> {
         self.not_supported()
     }
-    fn append_response(&self, _input: CreateAgentFeedbackResponse) -> Result<AgentFeedbackResponse> {
+    fn append_response(
+        &self,
+        _input: CreateAgentFeedbackResponse,
+    ) -> Result<AgentFeedbackResponse> {
         self.not_supported()
     }
-    fn get_response_count(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str, _feedback_index: u64, _responders: Option<Vec<String>>) -> Result<u64> {
+    fn get_response_count(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _client_address: &str,
+        _feedback_index: u64,
+        _responders: Option<Vec<String>>,
+    ) -> Result<u64> {
         self.not_supported()
     }
     fn get_clients(&self, _agent_registry: &str, _agent_id: &str) -> Result<Vec<String>> {
         self.not_supported()
     }
-    fn get_last_index(&self, _agent_registry: &str, _agent_id: &str, _client_address: &str) -> Result<u64> {
+    fn get_last_index(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _client_address: &str,
+    ) -> Result<u64> {
         self.not_supported()
     }
 }
 
 impl AgentValidationRepository for UnsupportedPostgresRepository {
-    fn request_validation(&self, _input: CreateAgentValidationRequest) -> Result<AgentValidationRequest> {
+    fn request_validation(
+        &self,
+        _input: CreateAgentValidationRequest,
+    ) -> Result<AgentValidationRequest> {
         self.not_supported()
     }
-    fn respond_validation(&self, _request_hash: &str, _input: CreateAgentValidationResponse) -> Result<AgentValidationResponse> {
+    fn respond_validation(
+        &self,
+        _request_hash: &str,
+        _input: CreateAgentValidationResponse,
+    ) -> Result<AgentValidationResponse> {
         self.not_supported()
     }
     fn get_validation_status(&self, _request_hash: &str) -> Result<Option<AgentValidationStatus>> {
         self.not_supported()
     }
-    fn get_summary(&self, _agent_registry: &str, _agent_id: &str, _validator_addresses: Option<Vec<String>>, _tag: Option<String>) -> Result<ValidationSummary> {
+    fn get_summary(
+        &self,
+        _agent_registry: &str,
+        _agent_id: &str,
+        _validator_addresses: Option<Vec<String>>,
+        _tag: Option<String>,
+    ) -> Result<ValidationSummary> {
         self.not_supported()
     }
     fn get_agent_validations(&self, _agent_registry: &str, _agent_id: &str) -> Result<Vec<String>> {

@@ -105,14 +105,14 @@ impl PgAgentReputationRepository {
         } else {
             (from_decimals - to_decimals) as u32
         };
-        let factor = 10_i128
-            .checked_pow(diff)
-            .ok_or_else(|| CommerceError::ValidationError("decimal scaling overflow".to_string()))?;
+        let factor = 10_i128.checked_pow(diff).ok_or_else(|| {
+            CommerceError::ValidationError("decimal scaling overflow".to_string())
+        })?;
 
         if to_decimals > from_decimals {
-            value
-                .checked_mul(factor)
-                .ok_or_else(|| CommerceError::ValidationError("decimal scaling overflow".to_string()))
+            value.checked_mul(factor).ok_or_else(|| {
+                CommerceError::ValidationError("decimal scaling overflow".to_string())
+            })
         } else {
             Ok(value / factor)
         }
@@ -133,7 +133,10 @@ impl PgAgentReputationRepository {
         }
         if let Some(clients) = filter.client_addresses {
             if !clients.is_empty() {
-                builder.push(" AND client_address = ANY(").push_bind(clients).push(")");
+                builder
+                    .push(" AND client_address = ANY(")
+                    .push_bind(clients)
+                    .push(")");
             }
         }
         if let Some(tag1) = filter.tag1 {
@@ -148,7 +151,9 @@ impl PgAgentReputationRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
         let rows: Vec<FeedbackRow> = builder
@@ -334,7 +339,10 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             );
             builder.push_bind(&registry);
             builder.push(" AND agent_id = ").push_bind(&agent);
-            builder.push(" AND client_address = ANY(").push_bind(client_addresses).push(")");
+            builder
+                .push(" AND client_address = ANY(")
+                .push_bind(client_addresses)
+                .push(")");
             builder.push(" AND is_revoked = false");
 
             if let Some(tag1) = tag1 {
@@ -358,18 +366,14 @@ impl AgentReputationRepository for PgAgentReputationRepository {
                 });
             }
 
-            let max_decimals = rows
-                .iter()
-                .map(|(_, d)| *d as u8)
-                .max()
-                .unwrap_or(0);
+            let max_decimals = rows.iter().map(|(_, d)| *d as u8).max().unwrap_or(0);
 
             let mut sum: i128 = 0;
             for (value, decimals) in rows.iter() {
                 let scaled = Self::scale_value(*value as i128, *decimals as u8, max_decimals)?;
-                sum = sum
-                    .checked_add(scaled)
-                    .ok_or_else(|| CommerceError::ValidationError("feedback summary overflow".to_string()))?;
+                sum = sum.checked_add(scaled).ok_or_else(|| {
+                    CommerceError::ValidationError("feedback summary overflow".to_string())
+                })?;
             }
 
             Ok(FeedbackSummary {
@@ -452,11 +456,16 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             builder.push_bind(&registry);
             builder.push(" AND agent_id = ").push_bind(&agent);
             builder.push(" AND client_address = ").push_bind(&client);
-            builder.push(" AND feedback_index = ").push_bind(feedback_index as i64);
+            builder
+                .push(" AND feedback_index = ")
+                .push_bind(feedback_index as i64);
 
             if let Some(responders) = responders {
                 if !responders.is_empty() {
-                    builder.push(" AND responder_address = ANY(").push_bind(responders).push(")");
+                    builder
+                        .push(" AND responder_address = ANY(")
+                        .push_bind(responders)
+                        .push(")");
                 }
             }
 
@@ -486,7 +495,12 @@ impl AgentReputationRepository for PgAgentReputationRepository {
         })
     }
 
-    fn get_last_index(&self, agent_registry: &str, agent_id: &str, client_address: &str) -> Result<u64> {
+    fn get_last_index(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+    ) -> Result<u64> {
         let pool = self.pool.clone();
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();

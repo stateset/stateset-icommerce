@@ -245,8 +245,9 @@ export function hasAdapterCapability(adapter, adapterType) {
     case 'streaming':
       return typeof adapter.startStream === 'function';
     case 'threading':
-      return typeof adapter.getThreadId === 'function' &&
-             typeof adapter.sendToThread === 'function';
+      return (
+        typeof adapter.getThreadId === 'function' && typeof adapter.sendToThread === 'function'
+      );
     case 'actions':
       return typeof adapter.getSupportedActions === 'function';
     case 'directory':
@@ -272,9 +273,16 @@ export function hasAdapterCapability(adapter, adapterType) {
  */
 export function getAdapterCapabilities(adapter) {
   const types = [
-    'outbound', 'richMessage', 'streaming', 'threading',
-    'actions', 'directory', 'mentions', 'media',
-    'heartbeat', 'commands',
+    'outbound',
+    'richMessage',
+    'streaming',
+    'threading',
+    'actions',
+    'directory',
+    'mentions',
+    'media',
+    'heartbeat',
+    'commands',
   ];
 
   return types.filter((type) => hasAdapterCapability(adapter, type));

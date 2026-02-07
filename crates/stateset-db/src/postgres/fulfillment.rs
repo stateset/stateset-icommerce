@@ -3,14 +3,14 @@
 use super::{block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CompletePick, CompleteShip,
-    CommerceError, CreatePackTask, CreatePickTask, CreateShipTask, CreateWave,
-    FulfillmentRepository, PackStatus, PackTask, PackTaskFilter, PackageType, PickStatus, PickTask,
-    PickTaskFilter, Result, ShipStatus, ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
-    generate_carton_number, generate_wave_number, validate_batch_size,
+    generate_carton_number, generate_wave_number, validate_batch_size, AddCarton, AddCartonItem,
+    BatchResult, Carton, CartonItem, CommerceError, CompletePick, CompleteShip, CreatePackTask,
+    CreatePickTask, CreateShipTask, CreateWave, FulfillmentRepository, PackStatus, PackTask,
+    PackTaskFilter, PackageType, PickStatus, PickTask, PickTaskFilter, Result, ShipStatus,
+    ShipTask, ShipTaskFilter, Wave, WaveFilter, WaveStatus,
 };
 use uuid::Uuid;
 
@@ -155,7 +155,10 @@ impl PgFulfillmentRepository {
 
     fn row_to_pick(row: PickRow) -> Result<PickTask> {
         let status: PickStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid pick_task.status '{}': {}", row.status, e))
+            CommerceError::DatabaseError(format!(
+                "Invalid pick_task.status '{}': {}",
+                row.status, e
+            ))
         })?;
 
         Ok(PickTask {
@@ -187,7 +190,10 @@ impl PgFulfillmentRepository {
 
     fn row_to_pack(row: PackRow) -> Result<PackTask> {
         let status: PackStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid pack_task.status '{}': {}", row.status, e))
+            CommerceError::DatabaseError(format!(
+                "Invalid pack_task.status '{}': {}",
+                row.status, e
+            ))
         })?;
 
         Ok(PackTask {
@@ -243,7 +249,10 @@ impl PgFulfillmentRepository {
 
     fn row_to_ship(row: ShipRow) -> Result<ShipTask> {
         let status: ShipStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid ship_task.status '{}': {}", row.status, e))
+            CommerceError::DatabaseError(format!(
+                "Invalid ship_task.status '{}': {}",
+                row.status, e
+            ))
         })?;
 
         Ok(ShipTask {
@@ -302,9 +311,9 @@ impl PgFulfillmentRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_wave_async(id).await?.ok_or_else(|| {
-            CommerceError::DatabaseError("Failed to create wave".into())
-        })
+        self.get_wave_async(id)
+            .await?
+            .ok_or_else(|| CommerceError::DatabaseError("Failed to create wave".into()))
     }
 
     pub async fn get_wave_async(&self, id: Uuid) -> Result<Option<Wave>> {
@@ -367,13 +376,15 @@ impl PgFulfillmentRepository {
     pub async fn release_wave_async(&self, id: Uuid) -> Result<Wave> {
         let now = Utc::now();
 
-        sqlx::query("UPDATE waves SET status = $1, started_at = $2 WHERE id = $3 AND status = 'draft'")
-            .bind(WaveStatus::Released.to_string())
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE waves SET status = $1, started_at = $2 WHERE id = $3 AND status = 'draft'",
+        )
+        .bind(WaveStatus::Released.to_string())
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_wave_async(id)
             .await?
@@ -410,11 +421,12 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn get_wave_orders_async(&self, wave_id: Uuid) -> Result<Vec<Uuid>> {
-        let rows = sqlx::query_as::<_, (Uuid,)>("SELECT order_id FROM wave_orders WHERE wave_id = $1")
-            .bind(wave_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, (Uuid,)>("SELECT order_id FROM wave_orders WHERE wave_id = $1")
+                .bind(wave_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(|row| row.0).collect())
     }
@@ -586,13 +598,18 @@ impl PgFulfillmentRepository {
         .await
         .map_err(map_db_error)?;
 
-        let pick = self.get_pick_async(input.pick_id).await?.ok_or(CommerceError::NotFound)?;
+        let pick = self
+            .get_pick_async(input.pick_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         if let Some(wave_id) = pick.wave_id {
-            sqlx::query("UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = $1")
-                .bind(wave_id)
-                .execute(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+            sqlx::query(
+                "UPDATE waves SET completed_pick_count = completed_pick_count + 1 WHERE id = $1",
+            )
+            .bind(wave_id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
         }
 
         self.get_pick_async(input.pick_id)
@@ -600,15 +617,22 @@ impl PgFulfillmentRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to complete pick".into()))
     }
 
-    pub async fn report_short_async(&self, id: Uuid, short_qty: Decimal, reason: &str) -> Result<PickTask> {
-        sqlx::query("UPDATE pick_tasks SET status = $1, quantity_short = $2, notes = $3 WHERE id = $4")
-            .bind(PickStatus::Short.to_string())
-            .bind(short_qty)
-            .bind(reason)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+    pub async fn report_short_async(
+        &self,
+        id: Uuid,
+        short_qty: Decimal,
+        reason: &str,
+    ) -> Result<PickTask> {
+        sqlx::query(
+            "UPDATE pick_tasks SET status = $1, quantity_short = $2, notes = $3 WHERE id = $4",
+        )
+        .bind(PickStatus::Short.to_string())
+        .bind(short_qty)
+        .bind(reason)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_pick_async(id)
             .await?
@@ -629,25 +653,24 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn get_picks_for_order_async(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self
-            .list_picks_async(PickTaskFilter {
-                order_id: Some(order_id),
-                ..Default::default()
-            })
-            .await
+        self.list_picks_async(PickTaskFilter {
+            order_id: Some(order_id),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn get_picks_for_wave_async(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        self
-            .list_picks_async(PickTaskFilter {
-                wave_id: Some(wave_id),
-                ..Default::default()
-            })
-            .await
+        self.list_picks_async(PickTaskFilter {
+            wave_id: Some(wave_id),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn count_picks_async(&self, filter: PickTaskFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pick_tasks WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pick_tasks WHERE 1=1");
 
         if let Some(status) = filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
@@ -869,11 +892,12 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn get_carton_items_async(&self, carton_id: Uuid) -> Result<Vec<CartonItem>> {
-        let rows = sqlx::query_as::<_, CartonItemRow>("SELECT * FROM carton_items WHERE carton_id = $1")
-            .bind(carton_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, CartonItemRow>("SELECT * FROM carton_items WHERE carton_id = $1")
+                .bind(carton_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(Self::row_to_carton_item).collect())
     }
@@ -904,7 +928,8 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn count_packs_async(&self, filter: PackTaskFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pack_tasks WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM pack_tasks WHERE 1=1");
 
         if let Some(order_id) = filter.order_id {
             builder.push(" AND order_id = ").push_bind(order_id);
@@ -1056,7 +1081,8 @@ impl PgFulfillmentRepository {
     }
 
     pub async fn count_ships_async(&self, filter: ShipTaskFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ship_tasks WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ship_tasks WHERE 1=1");
 
         if let Some(order_id) = filter.order_id {
             builder.push(" AND order_id = ").push_bind(order_id);
@@ -1077,7 +1103,11 @@ impl PgFulfillmentRepository {
         Ok(row.0 as u64)
     }
 
-    pub async fn create_picks_for_order_async(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
+    pub async fn create_picks_for_order_async(
+        &self,
+        order_id: Uuid,
+        warehouse_id: i32,
+    ) -> Result<Vec<PickTask>> {
         let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, i32)>(
             "SELECT id, sku, name, quantity FROM order_items WHERE order_id = $1",
         )
@@ -1151,7 +1181,10 @@ impl PgFulfillmentRepository {
         Ok(row.0 > 0)
     }
 
-    pub async fn create_waves_batch_async(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {
+    pub async fn create_waves_batch_async(
+        &self,
+        inputs: Vec<CreateWave>,
+    ) -> Result<BatchResult<Wave>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::new();

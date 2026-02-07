@@ -44,10 +44,7 @@ import path from 'path';
  * @property {Array<{ label: string, value: any }>} [options] - For select/multiselect
  */
 
-const MANIFEST_FILENAMES = [
-  'stateset.plugin.json',
-  'stateset-plugin.json',
-];
+const MANIFEST_FILENAMES = ['stateset.plugin.json', 'stateset-plugin.json'];
 
 const VALID_KINDS = new Set(['general', 'channel', 'memory', 'provider']);
 
@@ -242,15 +239,27 @@ export function validateConfig(config, schema) {
         }
       }
 
-      if (fieldSchema.minLength && typeof value === 'string' && value.length < fieldSchema.minLength) {
+      if (
+        fieldSchema.minLength &&
+        typeof value === 'string' &&
+        value.length < fieldSchema.minLength
+      ) {
         errors.push(`Config field "${field}": minimum length ${fieldSchema.minLength}`);
       }
 
-      if (fieldSchema.minimum !== undefined && typeof value === 'number' && value < fieldSchema.minimum) {
+      if (
+        fieldSchema.minimum !== undefined &&
+        typeof value === 'number' &&
+        value < fieldSchema.minimum
+      ) {
         errors.push(`Config field "${field}": minimum value ${fieldSchema.minimum}`);
       }
 
-      if (fieldSchema.maximum !== undefined && typeof value === 'number' && value > fieldSchema.maximum) {
+      if (
+        fieldSchema.maximum !== undefined &&
+        typeof value === 'number' &&
+        value > fieldSchema.maximum
+      ) {
         errors.push(`Config field "${field}": maximum value ${fieldSchema.maximum}`);
       }
     }

@@ -20,17 +20,17 @@ import { DEFAULT_GUARDRAILS } from './permissions.js';
 
 export const DEFAULT_AGENT_SETTINGS = {
   agent: {
-    default: 'customer-service'
+    default: 'customer-service',
   },
   model: {
     default: DEFAULT_MODEL,
-    preferSession: true
+    preferSession: true,
   },
   thinkLevel: {
-    default: 'off'
+    default: 'off',
   },
   provider: {
-    default: 'claude'
+    default: 'claude',
   },
   guardrails: { ...DEFAULT_GUARDRAILS },
   contextGuard: {
@@ -38,7 +38,7 @@ export const DEFAULT_AGENT_SETTINGS = {
     warningThreshold: 0.7,
     compactThreshold: 0.8,
     abortThreshold: 0.95,
-    reserveTokens: 4096
+    reserveTokens: 4096,
   },
   retry: {
     enabled: true,
@@ -64,29 +64,29 @@ export const DEFAULT_AGENT_SETTINGS = {
       'upstream connect',
       'reset before headers',
       'terminated',
-      'timeout'
-    ]
+      'timeout',
+    ],
   },
   memory: {
     enabled: false,
     useMarkdown: true,
-    maxSummaries: 5
+    maxSummaries: 5,
   },
   plugins: {
     enabled: false,
-    verbose: false
+    verbose: false,
   },
   sessionStore: {
     enabled: true,
     dbPath: null,
-    maxSummaries: 5
+    maxSummaries: 5,
   },
   privacy: {
     redactLogs: true,
     redactMemory: true,
     redactHistory: false,
-    redactResponse: false
-  }
+    redactResponse: false,
+  },
 };
 
 // ============================================================================
@@ -123,7 +123,7 @@ function loadJson(filePath) {
 function getDefaultSettingsPaths() {
   return [
     path.join(os.homedir(), '.stateset', 'settings.json'),
-    path.join(process.cwd(), '.stateset', 'settings.json')
+    path.join(process.cwd(), '.stateset', 'settings.json'),
   ];
 }
 
@@ -147,7 +147,9 @@ export function loadAgentSettings(overrides = {}, opts = {}) {
   }
 
   const settingsPath = process.env.STATESET_SETTINGS;
-  const paths = settingsPath ? [settingsPath, ...getDefaultSettingsPaths()] : getDefaultSettingsPaths();
+  const paths = settingsPath
+    ? [settingsPath, ...getDefaultSettingsPaths()]
+    : getDefaultSettingsPaths();
 
   let merged = { ...DEFAULT_AGENT_SETTINGS };
 

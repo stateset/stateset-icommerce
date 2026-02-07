@@ -116,16 +116,17 @@ fn test_batch_index_products() {
     }
 
     // Batch index
-    let indexed = vector
-        .index_products(&products)
-        .expect("batch index");
+    let indexed = vector.index_products(&products).expect("batch index");
     assert_eq!(indexed, 5, "All 5 products should be indexed");
 
     // Search should find all of them
     let results = vector
         .search_products("footwear shoes", 10)
         .expect("search");
-    assert!(results.len() >= 3, "Should find multiple shoe-related products");
+    assert!(
+        results.len() >= 3,
+        "Should find multiple shoe-related products"
+    );
 }
 
 // ============================================================================
@@ -167,7 +168,10 @@ fn test_cross_entity_search_isolation() {
         .search_products("coffee", 10)
         .expect("search products");
     for r in &product_results {
-        assert_eq!(r.entity.id, product.id, "Product search should only return products");
+        assert_eq!(
+            r.entity.id, product.id,
+            "Product search should only return products"
+        );
     }
 
     // Search customers should only return customers
@@ -175,7 +179,10 @@ fn test_cross_entity_search_isolation() {
         .search_customers("coffee", 10)
         .expect("search customers");
     for r in &customer_results {
-        assert_eq!(r.entity.id, customer.id, "Customer search should only return customers");
+        assert_eq!(
+            r.entity.id, customer.id,
+            "Customer search should only return customers"
+        );
     }
 }
 

@@ -128,7 +128,10 @@ fn test_return_full_approve_complete_lifecycle() {
     assert!(!ret.items.is_empty());
 
     // 2. Approve
-    let ret = commerce.returns().approve(ret.id).expect("Failed to approve");
+    let ret = commerce
+        .returns()
+        .approve(ret.id)
+        .expect("Failed to approve");
     assert_eq!(ret.status, ReturnStatus::Approved);
 
     // 3. Add tracking and mark in-transit
@@ -239,7 +242,10 @@ fn test_return_get_by_id() {
 #[test]
 fn test_return_get_nonexistent() {
     let commerce = Commerce::new(":memory:").expect("init");
-    let result = commerce.returns().get(Uuid::new_v4()).expect("Failed to query");
+    let result = commerce
+        .returns()
+        .get(Uuid::new_v4())
+        .expect("Failed to query");
     assert!(result.is_none());
 }
 
@@ -392,7 +398,7 @@ fn test_return_all_reasons() {
             .returns()
             .create(CreateReturn {
                 order_id: order.id,
-                reason: reason.clone(),
+                reason,
                 items: vec![CreateReturnItem {
                     order_item_id: order.items[0].id,
                     quantity: 1,
@@ -400,7 +406,7 @@ fn test_return_all_reasons() {
                 }],
                 ..Default::default()
             })
-            .expect(&format!("Failed to create return with reason {:?}", reason));
+            .unwrap_or_else(|e| panic!("Failed to create return with reason {:?}: {}", reason, e));
         assert_eq!(ret.reason, reason);
     }
 }
@@ -468,7 +474,10 @@ fn test_return_idempotency_key() {
         })
         .expect("second create");
 
-    assert_eq!(ret1.id, ret2.id, "Idempotent creates should return same return");
+    assert_eq!(
+        ret1.id, ret2.id,
+        "Idempotent creates should return same return"
+    );
 }
 
 // ============================================================================
@@ -516,8 +525,14 @@ fn test_return_version_increments() {
     assert!(ret.version > v0, "Version should increment on approve");
 
     let v1 = ret.version;
-    let ret = commerce.returns().mark_received(ret.id).expect("mark received");
-    assert!(ret.version > v1, "Version should increment on status change");
+    let ret = commerce
+        .returns()
+        .mark_received(ret.id)
+        .expect("mark received");
+    assert!(
+        ret.version > v1,
+        "Version should increment on status change"
+    );
 }
 
 // ============================================================================

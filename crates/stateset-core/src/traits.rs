@@ -107,7 +107,8 @@ pub trait InventoryRepository {
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>>;
 
     /// Record transaction
-    fn record_transaction(&self, transaction: InventoryTransaction) -> Result<InventoryTransaction>;
+    fn record_transaction(&self, transaction: InventoryTransaction)
+        -> Result<InventoryTransaction>;
 
     /// Get transaction history
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>>;
@@ -115,16 +116,28 @@ pub trait InventoryRepository {
     // === Batch Operations ===
 
     /// Create multiple inventory items - partial success allowed
-    fn create_item_batch(&self, inputs: Vec<CreateInventoryItem>) -> Result<BatchResult<InventoryItem>>;
+    fn create_item_batch(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<BatchResult<InventoryItem>>;
 
     /// Create multiple inventory items - atomic (all-or-nothing)
-    fn create_item_batch_atomic(&self, inputs: Vec<CreateInventoryItem>) -> Result<Vec<InventoryItem>>;
+    fn create_item_batch_atomic(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<Vec<InventoryItem>>;
 
     /// Adjust multiple inventory quantities - partial success allowed
-    fn adjust_batch(&self, adjustments: Vec<AdjustInventory>) -> Result<BatchResult<InventoryTransaction>>;
+    fn adjust_batch(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<BatchResult<InventoryTransaction>>;
 
     /// Adjust multiple inventory quantities - atomic (all-or-nothing)
-    fn adjust_batch_atomic(&self, adjustments: Vec<AdjustInventory>) -> Result<Vec<InventoryTransaction>>;
+    fn adjust_batch_atomic(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<Vec<InventoryTransaction>>;
 
     /// Get multiple inventory items by ID
     fn get_item_batch(&self, ids: Vec<i64>) -> Result<Vec<InventoryItem>>;
@@ -160,13 +173,22 @@ pub trait CustomerRepository {
     fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>>;
 
     /// Update address
-    fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress>;
+    fn update_address(
+        &self,
+        address_id: Uuid,
+        input: CreateCustomerAddress,
+    ) -> Result<CustomerAddress>;
 
     /// Delete address
     fn delete_address(&self, address_id: Uuid) -> Result<()>;
 
     /// Set default address
-    fn set_default_address(&self, customer_id: Uuid, address_id: Uuid, address_type: AddressType) -> Result<()>;
+    fn set_default_address(
+        &self,
+        customer_id: Uuid,
+        address_id: Uuid,
+        address_type: AddressType,
+    ) -> Result<()>;
 
     /// Count customers matching filter
     fn count(&self, filter: CustomerFilter) -> Result<u64>;
@@ -216,7 +238,11 @@ pub trait ProductRepository {
     fn delete(&self, id: Uuid) -> Result<()>;
 
     /// Add variant to product
-    fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant>;
+    fn add_variant(
+        &self,
+        product_id: Uuid,
+        variant: CreateProductVariant,
+    ) -> Result<ProductVariant>;
 
     /// Get variant by ID
     fn get_variant(&self, id: Uuid) -> Result<Option<ProductVariant>>;
@@ -343,7 +369,11 @@ pub trait BomRepository {
     fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent>;
 
     /// Update a BOM component
-    fn update_component(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent>;
+    fn update_component(
+        &self,
+        component_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent>;
 
     /// Remove component from BOM
     fn remove_component(&self, component_id: Uuid) -> Result<()>;
@@ -366,7 +396,8 @@ pub trait BomRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateBom>) -> Result<Vec<BillOfMaterials>>;
 
     /// Update multiple BOMs - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<BatchResult<BillOfMaterials>>;
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateBom)>)
+        -> Result<BatchResult<BillOfMaterials>>;
 
     /// Update multiple BOMs - atomic (all-or-nothing)
     fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateBom)>) -> Result<Vec<BillOfMaterials>>;
@@ -433,14 +464,26 @@ pub trait WorkOrderRepository {
     fn start_task(&self, task_id: Uuid) -> Result<WorkOrderTask>;
 
     /// Complete a task
-    fn complete_task(&self, task_id: Uuid, actual_hours: Option<rust_decimal::Decimal>) -> Result<WorkOrderTask>;
+    fn complete_task(
+        &self,
+        task_id: Uuid,
+        actual_hours: Option<rust_decimal::Decimal>,
+    ) -> Result<WorkOrderTask>;
 
     // Material operations
     /// Add material to work order
-    fn add_material(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial>;
+    fn add_material(
+        &self,
+        work_order_id: Uuid,
+        material: AddWorkOrderMaterial,
+    ) -> Result<WorkOrderMaterial>;
 
     /// Consume material
-    fn consume_material(&self, material_id: Uuid, quantity: rust_decimal::Decimal) -> Result<WorkOrderMaterial>;
+    fn consume_material(
+        &self,
+        material_id: Uuid,
+        quantity: rust_decimal::Decimal,
+    ) -> Result<WorkOrderMaterial>;
 
     /// Get materials for work order
     fn get_materials(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderMaterial>>;
@@ -457,7 +500,8 @@ pub trait WorkOrderRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>>;
 
     /// Update multiple work orders - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>>;
+    fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>)
+        -> Result<BatchResult<WorkOrder>>;
 
     /// Update multiple work orders - atomic (all-or-nothing)
     fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>>;
@@ -836,7 +880,11 @@ pub trait PurchaseOrderRepository {
     fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem>;
 
     /// Update a PO item
-    fn update_item(&self, item_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem>;
+    fn update_item(
+        &self,
+        item_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem>;
 
     /// Remove item from purchase order
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
@@ -859,10 +907,16 @@ pub trait PurchaseOrderRepository {
     fn create_batch_atomic(&self, inputs: Vec<CreatePurchaseOrder>) -> Result<Vec<PurchaseOrder>>;
 
     /// Update multiple purchase orders - partial success allowed
-    fn update_batch(&self, updates: Vec<(Uuid, UpdatePurchaseOrder)>) -> Result<BatchResult<PurchaseOrder>>;
+    fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<BatchResult<PurchaseOrder>>;
 
     /// Update multiple purchase orders - atomic (all-or-nothing)
-    fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdatePurchaseOrder)>) -> Result<Vec<PurchaseOrder>>;
+    fn update_batch_atomic(
+        &self,
+        updates: Vec<(Uuid, UpdatePurchaseOrder)>,
+    ) -> Result<Vec<PurchaseOrder>>;
 
     /// Delete multiple purchase orders - partial success allowed
     fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>>;
@@ -1131,7 +1185,10 @@ pub trait AnalyticsRepository {
     fn get_inventory_health(&self) -> Result<InventoryHealth>;
 
     /// Get low stock items
-    fn get_low_stock_items(&self, threshold: Option<rust_decimal::Decimal>) -> Result<Vec<LowStockItem>>;
+    fn get_low_stock_items(
+        &self,
+        threshold: Option<rust_decimal::Decimal>,
+    ) -> Result<Vec<LowStockItem>>;
 
     /// Get inventory movement summary
     fn get_inventory_movement(&self, query: AnalyticsQuery) -> Result<Vec<InventoryMovement>>;
@@ -1149,10 +1206,18 @@ pub trait AnalyticsRepository {
 
     // Forecasting
     /// Get demand forecast for SKUs
-    fn get_demand_forecast(&self, skus: Option<Vec<String>>, days_ahead: u32) -> Result<Vec<DemandForecast>>;
+    fn get_demand_forecast(
+        &self,
+        skus: Option<Vec<String>>,
+        days_ahead: u32,
+    ) -> Result<Vec<DemandForecast>>;
 
     /// Get revenue forecast
-    fn get_revenue_forecast(&self, periods_ahead: u32, granularity: TimeGranularity) -> Result<Vec<RevenueForecast>>;
+    fn get_revenue_forecast(
+        &self,
+        periods_ahead: u32,
+        granularity: TimeGranularity,
+    ) -> Result<Vec<RevenueForecast>>;
 
     // === Batch Operations ===
 
@@ -1287,6 +1352,7 @@ pub trait PromotionRepository {
     /// Apply promotions to a cart or order snapshot
     fn apply_promotions(&self, request: ApplyPromotionsRequest) -> Result<ApplyPromotionsResult>;
     /// Record a promotion usage event
+    #[allow(clippy::too_many_arguments)]
     fn record_usage(
         &self,
         promotion_id: Uuid,
@@ -1340,7 +1406,11 @@ pub trait SubscriptionRepository {
     /// List billing cycles matching a filter
     fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>>;
     /// Update the status of a billing cycle
-    fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle>;
+    fn update_billing_cycle_status(
+        &self,
+        id: Uuid,
+        status: BillingCycleStatus,
+    ) -> Result<BillingCycle>;
     /// Skip a billing cycle
     fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription>;
 
@@ -1615,7 +1685,12 @@ pub trait SerialRepository {
     fn transfer_ownership(&self, input: TransferSerialOwnership) -> Result<SerialNumber>;
 
     /// Mark as sold
-    fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber>;
+    fn mark_sold(
+        &self,
+        id: Uuid,
+        customer_id: Uuid,
+        order_id: Option<Uuid>,
+    ) -> Result<SerialNumber>;
 
     /// Mark as shipped
     fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> Result<SerialNumber>;
@@ -1637,7 +1712,11 @@ pub trait SerialRepository {
 
     // History operations
     /// Get serial history
-    fn get_history(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>>;
+    fn get_history(
+        &self,
+        serial_id: Uuid,
+        filter: SerialHistoryFilter,
+    ) -> Result<Vec<SerialHistory>>;
 
     /// Get full serial lookup with related data
     fn lookup(&self, serial: &str) -> Result<Option<SerialLookupResult>>;
@@ -1749,7 +1828,8 @@ pub trait WarehouseRepository {
     fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>>;
 
     /// Get inventory for SKU across locations
-    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>>;
+    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str)
+        -> Result<Vec<LocationInventory>>;
 
     /// Adjust inventory at location
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory>;
@@ -1758,7 +1838,10 @@ pub trait WarehouseRepository {
     fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement>;
 
     /// Get location inventory by filter
-    fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>>;
+    fn list_location_inventory(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>>;
 
     // Movement operations
     /// Get inventory movements
@@ -1912,7 +1995,12 @@ pub trait FulfillmentRepository {
     fn complete_pick(&self, input: CompletePick) -> Result<PickTask>;
 
     /// Report short pick
-    fn report_short(&self, id: Uuid, short_qty: rust_decimal::Decimal, reason: &str) -> Result<PickTask>;
+    fn report_short(
+        &self,
+        id: Uuid,
+        short_qty: rust_decimal::Decimal,
+        reason: &str,
+    ) -> Result<PickTask>;
 
     /// Cancel a pick
     fn cancel_pick(&self, id: Uuid) -> Result<PickTask>;
@@ -2142,7 +2230,12 @@ pub trait CostAccountingRepository {
     fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>>;
 
     /// Update average cost (called when receiving inventory)
-    fn update_average_cost(&self, sku: &str, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal) -> Result<ItemCost>;
+    fn update_average_cost(
+        &self,
+        sku: &str,
+        quantity: rust_decimal::Decimal,
+        unit_cost: rust_decimal::Decimal,
+    ) -> Result<ItemCost>;
 
     /// Update last cost
     fn update_last_cost(&self, sku: &str, unit_cost: rust_decimal::Decimal) -> Result<ItemCost>;
@@ -2168,10 +2261,22 @@ pub trait CostAccountingRepository {
 
     // Cost transaction operations
     /// Record a cost transaction
-    fn record_cost_transaction(&self, sku: &str, transaction_type: CostTransactionType, quantity: rust_decimal::Decimal, unit_cost: rust_decimal::Decimal, layer_id: Option<Uuid>, reference_type: Option<&str>, reference_id: Option<Uuid>, notes: Option<&str>) -> Result<CostTransaction>;
+    #[allow(clippy::too_many_arguments)]
+    fn record_cost_transaction(
+        &self,
+        sku: &str,
+        transaction_type: CostTransactionType,
+        quantity: rust_decimal::Decimal,
+        unit_cost: rust_decimal::Decimal,
+        layer_id: Option<Uuid>,
+        reference_type: Option<&str>,
+        reference_id: Option<Uuid>,
+        notes: Option<&str>,
+    ) -> Result<CostTransaction>;
 
     /// List cost transactions
-    fn list_cost_transactions(&self, filter: CostTransactionFilter) -> Result<Vec<CostTransaction>>;
+    fn list_cost_transactions(&self, filter: CostTransactionFilter)
+        -> Result<Vec<CostTransaction>>;
 
     // Cost variance operations
     /// Record a cost variance
@@ -2181,7 +2286,11 @@ pub trait CostAccountingRepository {
     fn list_variances(&self, filter: CostVarianceFilter) -> Result<Vec<CostVariance>>;
 
     /// Get variance summary for period
-    fn get_variance_summary(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<rust_decimal::Decimal>;
+    fn get_variance_summary(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<rust_decimal::Decimal>;
 
     // Cost adjustment operations
     /// Create a cost adjustment
@@ -2239,7 +2348,12 @@ pub trait CreditRepository {
     fn list_credit_accounts(&self, filter: CreditAccountFilter) -> Result<Vec<CreditAccount>>;
 
     /// Adjust credit limit
-    fn adjust_credit_limit(&self, customer_id: Uuid, new_limit: rust_decimal::Decimal, reason: &str) -> Result<CreditAccount>;
+    fn adjust_credit_limit(
+        &self,
+        customer_id: Uuid,
+        new_limit: rust_decimal::Decimal,
+        reason: &str,
+    ) -> Result<CreditAccount>;
 
     /// Suspend credit account
     fn suspend_credit_account(&self, customer_id: Uuid, reason: &str) -> Result<CreditAccount>;
@@ -2249,16 +2363,34 @@ pub trait CreditRepository {
 
     // Credit check operations
     /// Check credit for an order
-    fn check_credit(&self, customer_id: Uuid, order_amount: rust_decimal::Decimal) -> Result<CreditCheckResult>;
+    fn check_credit(
+        &self,
+        customer_id: Uuid,
+        order_amount: rust_decimal::Decimal,
+    ) -> Result<CreditCheckResult>;
 
     /// Reserve credit for an order
-    fn reserve_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount>;
+    fn reserve_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: rust_decimal::Decimal,
+    ) -> Result<CreditAccount>;
 
     /// Release credit reservation
-    fn release_credit_reservation(&self, customer_id: Uuid, order_id: Uuid) -> Result<CreditAccount>;
+    fn release_credit_reservation(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+    ) -> Result<CreditAccount>;
 
     /// Charge credit (convert reservation to balance)
-    fn charge_credit(&self, customer_id: Uuid, order_id: Uuid, amount: rust_decimal::Decimal) -> Result<CreditAccount>;
+    fn charge_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: rust_decimal::Decimal,
+    ) -> Result<CreditAccount>;
 
     // Credit hold operations
     /// Place a credit hold
@@ -2303,7 +2435,12 @@ pub trait CreditRepository {
     fn list_transactions(&self, filter: CreditTransactionFilter) -> Result<Vec<CreditTransaction>>;
 
     /// Apply payment to balance
-    fn apply_payment(&self, customer_id: Uuid, amount: rust_decimal::Decimal, reference_id: Option<Uuid>) -> Result<CreditAccount>;
+    fn apply_payment(
+        &self,
+        customer_id: Uuid,
+        amount: rust_decimal::Decimal,
+        reference_id: Option<Uuid>,
+    ) -> Result<CreditAccount>;
 
     // Analytics
     /// Get customer credit summary
@@ -2405,10 +2542,16 @@ pub trait AccountsReceivableRepository {
 
     // Collection management
     /// Log collection activity
-    fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity>;
+    fn log_collection_activity(
+        &self,
+        input: CreateCollectionActivity,
+    ) -> Result<CollectionActivity>;
 
     /// Get collection activities
-    fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>>;
+    fn list_collection_activities(
+        &self,
+        filter: CollectionActivityFilter,
+    ) -> Result<Vec<CollectionActivity>>;
 
     /// Update invoice collection status
     fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()>;
@@ -2417,7 +2560,12 @@ pub trait AccountsReceivableRepository {
     fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>>;
 
     /// Send dunning letter (records activity, updates status)
-    fn send_dunning_letter(&self, invoice_id: Uuid, letter_type: DunningLetterType, sent_by: Option<&str>) -> Result<CollectionActivity>;
+    fn send_dunning_letter(
+        &self,
+        invoice_id: Uuid,
+        letter_type: DunningLetterType,
+        sent_by: Option<&str>,
+    ) -> Result<CollectionActivity>;
 
     // Write-offs
     /// Create a write-off
@@ -2456,7 +2604,10 @@ pub trait AccountsReceivableRepository {
 
     // Payment application
     /// Apply payment to invoices
-    fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>>;
+    fn apply_payment_to_invoices(
+        &self,
+        input: ApplyPaymentToInvoices,
+    ) -> Result<Vec<ArPaymentApplication>>;
 
     /// Get payment applications
     fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>>;
@@ -2604,7 +2755,11 @@ pub trait GeneralLedgerRepository {
     fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet>;
 
     /// Generate income statement
-    fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement>;
+    fn get_income_statement(
+        &self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    ) -> Result<IncomeStatement>;
 
     /// Get account balance (None if account is not found)
     fn get_account_balance(
@@ -2614,14 +2769,19 @@ pub trait GeneralLedgerRepository {
     ) -> Result<Option<rust_decimal::Decimal>>;
 
     /// Get account transaction history
-    fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>>;
+    fn get_account_transactions(
+        &self,
+        account_id: Uuid,
+        filter: JournalEntryFilter,
+    ) -> Result<Vec<JournalEntryLine>>;
 
     // Period close process
     /// Run period close (creates closing entries)
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry>;
 
     // Batch operations
-    fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>>;
+    fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>)
+        -> Result<BatchResult<GlAccount>>;
     fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>>;
 }
 
@@ -2708,10 +2868,16 @@ pub trait X402PaymentIntentRepository {
     fn sign(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent>;
 
     /// Mark intent as sequenced (submitted to sequencer)
-    fn mark_sequenced(&self, id: Uuid, sequence_number: u64, batch_id: Uuid) -> Result<X402PaymentIntent>;
+    fn mark_sequenced(
+        &self,
+        id: Uuid,
+        sequence_number: u64,
+        batch_id: Uuid,
+    ) -> Result<X402PaymentIntent>;
 
     /// Mark intent as settled (confirmed on-chain)
-    fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64) -> Result<X402PaymentIntent>;
+    fn mark_settled(&self, id: Uuid, tx_hash: &str, block_number: u64)
+        -> Result<X402PaymentIntent>;
 
     /// Mark intent as failed
     fn mark_failed(&self, id: Uuid, reason: &str) -> Result<X402PaymentIntent>;
@@ -2743,10 +2909,16 @@ pub trait X402PaymentIntentRepository {
     // === Batch Operations ===
 
     /// Create multiple payment intents - partial success allowed
-    fn create_batch(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<BatchResult<X402PaymentIntent>>;
+    fn create_batch(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<BatchResult<X402PaymentIntent>>;
 
     /// Create multiple payment intents - atomic (all-or-nothing)
-    fn create_batch_atomic(&self, inputs: Vec<CreateX402PaymentIntent>) -> Result<Vec<X402PaymentIntent>>;
+    fn create_batch_atomic(
+        &self,
+        inputs: Vec<CreateX402PaymentIntent>,
+    ) -> Result<Vec<X402PaymentIntent>>;
 
     /// Get multiple payment intents by ID
     fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<X402PaymentIntent>>;
@@ -2759,19 +2931,37 @@ pub trait X402PaymentIntentRepository {
 /// X402 credit ledger repository for prepaid balances and metered usage.
 pub trait X402CreditRepository {
     /// Get a credit account for payer/asset/network
-    fn get_account(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<Option<X402CreditAccount>>;
+    fn get_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<Option<X402CreditAccount>>;
 
     /// Get or create a credit account (balance default = 0)
-    fn get_or_create_account(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<X402CreditAccount>;
+    fn get_or_create_account(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<X402CreditAccount>;
 
     /// Get current balance for payer/asset/network
-    fn get_balance(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<u64>;
+    fn get_balance(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<u64>;
 
     /// Apply a credit or debit adjustment
     fn adjust_balance(&self, input: X402CreditAdjustment) -> Result<X402CreditTransaction>;
 
     /// List credit transactions with optional filter
-    fn list_transactions(&self, filter: X402CreditTransactionFilter) -> Result<Vec<X402CreditTransaction>>;
+    fn list_transactions(
+        &self,
+        filter: X402CreditTransactionFilter,
+    ) -> Result<Vec<X402CreditTransaction>>;
 }
 
 // ============================================================================
@@ -2841,9 +3031,15 @@ pub trait AgentIdentityRepository {
     fn get_by_wallet(&self, agent_wallet: &str) -> Result<Option<AgentIdentity>>;
 
     /// Update agent identity
-    fn update(&self, agent_registry: &str, agent_id: &str, input: UpdateAgentIdentity) -> Result<AgentIdentity>;
+    fn update(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        input: UpdateAgentIdentity,
+    ) -> Result<AgentIdentity>;
 
     /// Set or update agent wallet with proof metadata
+    #[allow(clippy::too_many_arguments)]
     fn set_agent_wallet(
         &self,
         agent_registry: &str,
@@ -2865,13 +3061,28 @@ pub trait AgentIdentityRepository {
     fn count(&self, filter: AgentIdentityFilter) -> Result<u64>;
 
     /// Set identity metadata entry
-    fn set_metadata(&self, agent_registry: &str, agent_id: &str, entry: AgentMetadataEntry) -> Result<()>;
+    fn set_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        entry: AgentMetadataEntry,
+    ) -> Result<()>;
 
     /// Get identity metadata entry
-    fn get_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<Option<Vec<u8>>>;
+    fn get_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        metadata_key: &str,
+    ) -> Result<Option<Vec<u8>>>;
 
     /// Delete identity metadata entry
-    fn delete_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<()>;
+    fn delete_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        metadata_key: &str,
+    ) -> Result<()>;
 }
 
 // ============================================================================
@@ -2946,7 +3157,10 @@ pub trait AgentReputationRepository {
 /// Validation registry repository (ERC-8004)
 pub trait AgentValidationRepository {
     /// Submit a validation request
-    fn request_validation(&self, input: CreateAgentValidationRequest) -> Result<AgentValidationRequest>;
+    fn request_validation(
+        &self,
+        input: CreateAgentValidationRequest,
+    ) -> Result<AgentValidationRequest>;
 
     /// Record a validation response for a request hash
     fn respond_validation(

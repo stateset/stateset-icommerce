@@ -4217,7 +4217,12 @@ pub struct Quality {
 
 #[php_impl]
 impl Quality {
-    pub fn create_inspection(&self, inspection_type: String, reference_type: String, reference_id: String) -> PhpResult<String> {
+    pub fn create_inspection(
+        &self,
+        inspection_type: String,
+        reference_type: String,
+        reference_id: String,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let ref_uuid = parse_uuid!(reference_id, "reference");
 
@@ -4245,7 +4250,13 @@ impl Quality {
         Ok(inspections.into_iter().map(|i| i.id.to_string()).collect())
     }
 
-    pub fn create_hold(&self, sku: String, quantity: i32, reason: String, hold_type: String) -> PhpResult<String> {
+    pub fn create_hold(
+        &self,
+        sku: String,
+        quantity: i32,
+        reason: String,
+        hold_type: String,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
 
         let hold = commerce
@@ -4400,11 +4411,18 @@ impl Serials {
         Ok(serials.into_iter().map(|s| s.serial_number).collect())
     }
 
-    pub fn mark_sold(&self, id: String, customer_id: String, order_id: Option<String>) -> PhpResult<bool> {
+    pub fn mark_sold(
+        &self,
+        id: String,
+        customer_id: String,
+        order_id: Option<String>,
+    ) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "serial");
         let cust_uuid = parse_uuid!(customer_id, "customer");
-        let ord_uuid = order_id.map(|o| o.parse()).transpose()
+        let ord_uuid = order_id
+            .map(|o| o.parse())
+            .transpose()
             .map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
 
         commerce
@@ -4428,7 +4446,12 @@ pub struct WarehouseApi {
 
 #[php_impl]
 impl WarehouseApi {
-    pub fn create_warehouse(&self, code: String, name: String, warehouse_type: String) -> PhpResult<i32> {
+    pub fn create_warehouse(
+        &self,
+        code: String,
+        name: String,
+        warehouse_type: String,
+    ) -> PhpResult<i32> {
         let commerce = lock_commerce!(self.commerce);
 
         let warehouse = commerce
@@ -4466,7 +4489,13 @@ impl WarehouseApi {
         Ok(warehouses.into_iter().map(|w| w.id).collect())
     }
 
-    pub fn create_location(&self, warehouse_id: i32, location_type: String, zone: Option<String>, aisle: Option<String>) -> PhpResult<i32> {
+    pub fn create_location(
+        &self,
+        warehouse_id: i32,
+        location_type: String,
+        zone: Option<String>,
+        aisle: Option<String>,
+    ) -> PhpResult<i32> {
         let commerce = lock_commerce!(self.commerce);
 
         let location = commerce
@@ -4496,9 +4525,16 @@ pub struct Receiving {
 
 #[php_impl]
 impl Receiving {
-    pub fn create_receipt(&self, receipt_type: String, warehouse_id: i32, po_id: Option<String>) -> PhpResult<String> {
+    pub fn create_receipt(
+        &self,
+        receipt_type: String,
+        warehouse_id: i32,
+        po_id: Option<String>,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
-        let po_uuid = po_id.map(|p| p.parse()).transpose()
+        let po_uuid = po_id
+            .map(|p| p.parse())
+            .transpose()
             .map_err(|_| PhpException::default("Invalid PO UUID".to_string()))?;
 
         let receipt = commerce
@@ -4562,7 +4598,12 @@ pub struct Fulfillment {
 
 #[php_impl]
 impl Fulfillment {
-    pub fn create_wave(&self, warehouse_id: i32, order_ids: Vec<String>, priority: i32) -> PhpResult<String> {
+    pub fn create_wave(
+        &self,
+        warehouse_id: i32,
+        order_ids: Vec<String>,
+        priority: i32,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let uuids: Result<Vec<_>, _> = order_ids.iter().map(|id| id.parse()).collect();
         let uuids = uuids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
@@ -4629,7 +4670,12 @@ pub struct AccountsPayable {
 
 #[php_impl]
 impl AccountsPayable {
-    pub fn create_bill(&self, supplier_id: String, due_date: String, payment_terms: Option<String>) -> PhpResult<String> {
+    pub fn create_bill(
+        &self,
+        supplier_id: String,
+        due_date: String,
+        payment_terms: Option<String>,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let supp_uuid = parse_uuid!(supplier_id, "supplier");
 
@@ -4715,7 +4761,12 @@ impl AccountsReceivable {
         Ok(dso)
     }
 
-    pub fn create_credit_memo(&self, customer_id: String, amount: f64, reason: String) -> PhpResult<String> {
+    pub fn create_credit_memo(
+        &self,
+        customer_id: String,
+        amount: f64,
+        reason: String,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let cust_uuid = parse_uuid!(customer_id, "customer");
         let decimal_amount = Decimal::from_f64_retain(amount).unwrap_or_default();
@@ -4757,7 +4808,12 @@ impl CostAccounting {
         Ok(cost.map(|c| to_f64_or_nan(c.current_cost)))
     }
 
-    pub fn set_item_cost(&self, sku: String, standard_cost: f64, current_cost: Option<f64>) -> PhpResult<bool> {
+    pub fn set_item_cost(
+        &self,
+        sku: String,
+        standard_cost: f64,
+        current_cost: Option<f64>,
+    ) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
         let std = Decimal::from_f64_retain(standard_cost).unwrap_or_default();
         let curr = current_cost.map(|c| Decimal::from_f64_retain(c).unwrap_or_default());
@@ -4824,7 +4880,12 @@ impl CreditApi {
         Ok(result.approved)
     }
 
-    pub fn adjust_limit(&self, customer_id: String, new_limit: f64, reason: String) -> PhpResult<bool> {
+    pub fn adjust_limit(
+        &self,
+        customer_id: String,
+        new_limit: f64,
+        reason: String,
+    ) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
         let cust_uuid = parse_uuid!(customer_id, "customer");
         let limit = Decimal::from_f64_retain(new_limit).unwrap_or_default();
@@ -4850,7 +4911,13 @@ pub struct Backorders {
 
 #[php_impl]
 impl Backorders {
-    pub fn create(&self, order_id: String, sku: String, quantity: i32, expected_date: Option<String>) -> PhpResult<String> {
+    pub fn create(
+        &self,
+        order_id: String,
+        sku: String,
+        quantity: i32,
+        expected_date: Option<String>,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
         let ord_uuid = parse_uuid!(order_id, "order");
 
@@ -4927,7 +4994,12 @@ pub struct GeneralLedger {
 
 #[php_impl]
 impl GeneralLedger {
-    pub fn create_account(&self, account_number: String, name: String, account_type: String) -> PhpResult<String> {
+    pub fn create_account(
+        &self,
+        account_number: String,
+        name: String,
+        account_type: String,
+    ) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
 
         let account = commerce
@@ -4966,7 +5038,11 @@ impl GeneralLedger {
         Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
     }
 
-    pub fn get_account_balance(&self, account_id: String, as_of_date: Option<String>) -> PhpResult<f64> {
+    pub fn get_account_balance(
+        &self,
+        account_id: String,
+        as_of_date: Option<String>,
+    ) -> PhpResult<f64> {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(account_id, "account");
 

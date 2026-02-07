@@ -40,22 +40,22 @@ export class CustomerIdentityStore {
     `);
 
     this._get = this.db.prepare(
-      `SELECT customer_id, linked_by FROM channel_identity WHERE channel = ? AND sender_id = ?`
+      `SELECT customer_id, linked_by FROM channel_identity WHERE channel = ? AND sender_id = ?`,
     );
 
     this._link = this.db.prepare(
       `INSERT INTO channel_identity (channel, sender_id, customer_id, linked_at, linked_by)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(channel, sender_id)
-       DO UPDATE SET customer_id = excluded.customer_id, linked_at = excluded.linked_at, linked_by = excluded.linked_by`
+       DO UPDATE SET customer_id = excluded.customer_id, linked_at = excluded.linked_at, linked_by = excluded.linked_by`,
     );
 
     this._unlink = this.db.prepare(
-      `DELETE FROM channel_identity WHERE channel = ? AND sender_id = ?`
+      `DELETE FROM channel_identity WHERE channel = ? AND sender_id = ?`,
     );
 
     this._getByCustomer = this.db.prepare(
-      `SELECT channel, sender_id FROM channel_identity WHERE customer_id = ?`
+      `SELECT channel, sender_id FROM channel_identity WHERE customer_id = ?`,
     );
   }
 
@@ -172,7 +172,9 @@ export async function resolveIdentity({ channel, senderId, identityStore, commer
  */
 export async function buildCustomerContext(customer, commerce) {
   const parts = [];
-  const name = [customer.firstName || customer.first_name, customer.lastName || customer.last_name].filter(Boolean).join(' ');
+  const name = [customer.firstName || customer.first_name, customer.lastName || customer.last_name]
+    .filter(Boolean)
+    .join(' ');
   parts.push(`Customer: ${name || 'Unknown'}`);
 
   if (customer.email) parts.push(`Email: ${customer.email}`);
@@ -181,8 +183,8 @@ export async function buildCustomerContext(customer, commerce) {
   if (commerce) {
     try {
       const orders = await commerce.orders.list();
-      const customerOrders = orders.filter((o) =>
-        o.customerId === customer.id || o.customer_id === customer.id
+      const customerOrders = orders.filter(
+        (o) => o.customerId === customer.id || o.customer_id === customer.id,
       );
 
       if (customerOrders.length > 0) {
@@ -190,11 +192,14 @@ export async function buildCustomerContext(customer, commerce) {
         parts.push(`Orders: ${customerOrders.length}`);
         parts.push(`Lifetime value: $${totalSpend.toFixed(2)}`);
 
-        const lastOrder = customerOrders.sort((a, b) =>
-          new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0)
+        const lastOrder = customerOrders.sort(
+          (a, b) =>
+            new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0),
         )[0];
         if (lastOrder) {
-          parts.push(`Last order: ${lastOrder.orderNumber || lastOrder.order_number || lastOrder.id} (${(lastOrder.status || 'unknown').toUpperCase()})`);
+          parts.push(
+            `Last order: ${lastOrder.orderNumber || lastOrder.order_number || lastOrder.id} (${(lastOrder.status || 'unknown').toUpperCase()})`,
+          );
         }
       }
     } catch {

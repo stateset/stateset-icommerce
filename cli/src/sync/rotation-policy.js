@@ -74,12 +74,12 @@ export class RotationPolicyManager {
    */
   getDefaultPolicy() {
     return {
-      maxAgeHours: 720,           // 30 days
-      maxUsageCount: null,        // No usage limit by default
-      warningThresholdHours: 24,  // Warn 24 hours before expiry
-      gracePeriodHours: 72,       // 3 days grace period
-      enforceExpiry: true,        // Reject expired keys
-      autoRotate: false,          // Manual rotation by default
+      maxAgeHours: 720, // 30 days
+      maxUsageCount: null, // No usage limit by default
+      warningThresholdHours: 24, // Warn 24 hours before expiry
+      gracePeriodHours: 72, // 3 days grace period
+      enforceExpiry: true, // Reject expired keys
+      autoRotate: false, // Manual rotation by default
     };
   }
 
@@ -256,13 +256,15 @@ export class RotationPolicyManager {
     const usage = await this._loadUsage();
     const key = this._usageKey(agentId, keyType, keyId);
 
-    return usage[key] || {
-      agentId,
-      keyId,
-      keyType,
-      usageCount: 0,
-      lastUsedAt: null,
-    };
+    return (
+      usage[key] || {
+        agentId,
+        keyId,
+        keyType,
+        usageCount: 0,
+        lastUsedAt: null,
+      }
+    );
   }
 
   /**
@@ -342,18 +344,19 @@ export class RotationPolicyManager {
     const policies = await this._loadPolicies();
 
     // Get list of agents to check
-    const agentIds = agentId ? [agentId] : [...new Set(
-      Object.keys(policies).map(k => k.split(':')[0])
-    )];
+    const agentIds = agentId
+      ? [agentId]
+      : [...new Set(Object.keys(policies).map((k) => k.split(':')[0]))];
 
     for (const aid of agentIds) {
       for (const keyType of ['signing', 'encryption']) {
         const policy = await this.getPolicy(aid, keyType);
         if (!policy.maxAgeHours) continue;
 
-        const keys = keyType === 'signing'
-          ? await keyManager.listSigningKeys(aid)
-          : await keyManager.listEncryptionKeys(aid);
+        const keys =
+          keyType === 'signing'
+            ? await keyManager.listSigningKeys(aid)
+            : await keyManager.listEncryptionKeys(aid);
 
         for (const key of keys) {
           if (key.revokedAt) continue;
@@ -428,10 +431,8 @@ export class RotationPolicyManager {
     const rotations = await this._loadScheduled();
 
     // Check for existing pending rotation
-    const existing = rotations.find(r =>
-      r.agentId === agentId &&
-      r.keyType === keyType &&
-      r.status === 'pending'
+    const existing = rotations.find(
+      (r) => r.agentId === agentId && r.keyType === keyType && r.status === 'pending',
     );
 
     if (existing) {
@@ -462,7 +463,7 @@ export class RotationPolicyManager {
    */
   async completeRotation(rotationId, newKeyId) {
     const rotations = await this._loadScheduled();
-    const rotation = rotations.find(r => r.id === rotationId);
+    const rotation = rotations.find((r) => r.id === rotationId);
 
     if (!rotation) throw new Error(`Rotation ${rotationId} not found`);
     if (rotation.status !== 'pending') {
@@ -483,7 +484,7 @@ export class RotationPolicyManager {
    */
   async failRotation(rotationId, errorMessage) {
     const rotations = await this._loadScheduled();
-    const rotation = rotations.find(r => r.id === rotationId);
+    const rotation = rotations.find((r) => r.id === rotationId);
 
     if (!rotation) throw new Error(`Rotation ${rotationId} not found`);
 
@@ -500,7 +501,7 @@ export class RotationPolicyManager {
    */
   async cancelRotation(rotationId) {
     const rotations = await this._loadScheduled();
-    const rotation = rotations.find(r => r.id === rotationId);
+    const rotation = rotations.find((r) => r.id === rotationId);
 
     if (!rotation) throw new Error(`Rotation ${rotationId} not found`);
     if (rotation.status !== 'pending') {
@@ -520,10 +521,7 @@ export class RotationPolicyManager {
    */
   async getPendingRotations(agentId = null) {
     const rotations = await this._loadScheduled();
-    return rotations.filter(r =>
-      r.status === 'pending' &&
-      (!agentId || r.agentId === agentId)
-    );
+    return rotations.filter((r) => r.status === 'pending' && (!agentId || r.agentId === agentId));
   }
 
   /**
@@ -534,10 +532,7 @@ export class RotationPolicyManager {
     const rotations = await this._loadScheduled();
     const now = new Date();
 
-    return rotations.filter(r =>
-      r.status === 'pending' &&
-      new Date(r.scheduledAt) <= now
-    );
+    return rotations.filter((r) => r.status === 'pending' && new Date(r.scheduledAt) <= now);
   }
 
   /**
@@ -552,11 +547,11 @@ export class RotationPolicyManager {
     let rotations = await this._loadScheduled();
 
     if (options.agentId) {
-      rotations = rotations.filter(r => r.agentId === options.agentId);
+      rotations = rotations.filter((r) => r.agentId === options.agentId);
     }
 
     if (options.status) {
-      rotations = rotations.filter(r => r.status === options.status);
+      rotations = rotations.filter((r) => r.status === options.status);
     }
 
     // Sort by scheduled date (newest first)
@@ -577,9 +572,8 @@ export class RotationPolicyManager {
     const rotations = await this._loadScheduled();
     const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
 
-    const filtered = rotations.filter(r =>
-      r.status === 'pending' ||
-      new Date(r.completedAt || r.scheduledAt) > cutoff
+    const filtered = rotations.filter(
+      (r) => r.status === 'pending' || new Date(r.completedAt || r.scheduledAt) > cutoff,
     );
 
     await this._saveScheduled(filtered);

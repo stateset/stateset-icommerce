@@ -2,10 +2,10 @@
 
 use super::{
     backorder::{cancel_backorders_for_order_in_tx, create_backorder_in_tx},
+    build_in_clause,
     inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
-    parse_json_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
+    map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
+    parse_json_opt_row, parse_uuid_row, sum_decimal_query, uuid_params, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -14,8 +14,9 @@ use rust_decimal::Decimal;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result, UpdateOrder,
+    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order,
+    OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result,
+    UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -59,13 +60,33 @@ impl SqliteOrderRepository {
         Ok(Order {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "order", "id")?,
             order_number: row.get("order_number")?,
-            customer_id: parse_uuid_row(&row.get::<_, String>("customer_id")?, "order", "customer_id")?,
+            customer_id: parse_uuid_row(
+                &row.get::<_, String>("customer_id")?,
+                "order",
+                "customer_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "order", "status")?,
-            order_date: parse_datetime_row(&row.get::<_, String>("order_date")?, "order", "order_date")?,
-            total_amount: parse_decimal_row(&row.get::<_, String>("total_amount")?, "order", "total_amount")?,
+            order_date: parse_datetime_row(
+                &row.get::<_, String>("order_date")?,
+                "order",
+                "order_date",
+            )?,
+            total_amount: parse_decimal_row(
+                &row.get::<_, String>("total_amount")?,
+                "order",
+                "total_amount",
+            )?,
             currency: row.get("currency")?,
-            payment_status: parse_enum_row(&row.get::<_, String>("payment_status")?, "order", "payment_status")?,
-            fulfillment_status: parse_enum_row(&row.get::<_, String>("fulfillment_status")?, "order", "fulfillment_status")?,
+            payment_status: parse_enum_row(
+                &row.get::<_, String>("payment_status")?,
+                "order",
+                "payment_status",
+            )?,
+            fulfillment_status: parse_enum_row(
+                &row.get::<_, String>("fulfillment_status")?,
+                "order",
+                "fulfillment_status",
+            )?,
             payment_method: row.get("payment_method")?,
             shipping_method: row.get("shipping_method")?,
             tracking_number: row.get("tracking_number")?,
@@ -74,8 +95,16 @@ impl SqliteOrderRepository {
             billing_address: billing_addr,
             items: vec![], // Loaded separately
             version: row.get::<_, Option<i32>>("version")?.unwrap_or(1),
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "order", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "order", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "order",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "order",
+                "updated_at",
+            )?,
         })
     }
 
@@ -180,18 +209,42 @@ impl SqliteOrderRepository {
             .query_map([order_id.to_string()], |row| {
                 Ok(OrderItem {
                     id: parse_uuid_row(&row.get::<_, String>("id")?, "order_item", "id")?,
-                    order_id: parse_uuid_row(&row.get::<_, String>("order_id")?, "order_item", "order_id")?,
-                    product_id: parse_uuid_row(&row.get::<_, String>("product_id")?, "order_item", "product_id")?,
+                    order_id: parse_uuid_row(
+                        &row.get::<_, String>("order_id")?,
+                        "order_item",
+                        "order_id",
+                    )?,
+                    product_id: parse_uuid_row(
+                        &row.get::<_, String>("product_id")?,
+                        "order_item",
+                        "product_id",
+                    )?,
                     variant_id: row
                         .get::<_, Option<String>>("variant_id")?
                         .and_then(|s| s.parse().ok()),
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     quantity: row.get("quantity")?,
-                    unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "order_item", "unit_price")?,
-                    discount: parse_decimal_row(&row.get::<_, String>("discount")?, "order_item", "discount")?,
-                    tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "order_item", "tax_amount")?,
-                    total: parse_decimal_row(&row.get::<_, String>("total")?, "order_item", "total")?,
+                    unit_price: parse_decimal_row(
+                        &row.get::<_, String>("unit_price")?,
+                        "order_item",
+                        "unit_price",
+                    )?,
+                    discount: parse_decimal_row(
+                        &row.get::<_, String>("discount")?,
+                        "order_item",
+                        "discount",
+                    )?,
+                    tax_amount: parse_decimal_row(
+                        &row.get::<_, String>("tax_amount")?,
+                        "order_item",
+                        "tax_amount",
+                    )?,
+                    total: parse_decimal_row(
+                        &row.get::<_, String>("total")?,
+                        "order_item",
+                        "total",
+                    )?,
                 })
             })
             .map_err(map_db_error)?
@@ -350,9 +403,7 @@ impl OrderRepository for SqliteOrderRepository {
                     "inventory_balance",
                     "quantity_available",
                 )
-                .map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?;
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 let requested = Decimal::from(item.quantity);
                 let reserve_qty = if available > Decimal::ZERO {
@@ -507,7 +558,11 @@ impl OrderRepository for SqliteOrderRepository {
 
         let outcome = with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
-            let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = tx
+            let (current_version, current_status_raw, current_payment_status_raw): (
+                i32,
+                String,
+                String,
+            ) = tx
                 .query_row(
                     "SELECT version, status, payment_status FROM orders WHERE id = ?",
                     [id.to_string()],
@@ -515,15 +570,18 @@ impl OrderRepository for SqliteOrderRepository {
                 )
                 .map_err(|e| match e {
                     rusqlite::Error::QueryReturnedNoRows => {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::OrderNotFound(id)))
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(
+                            CommerceError::OrderNotFound(id),
+                        ))
                     }
                     e => e,
                 })?;
 
             let current_status: OrderStatus = parse_enum(&current_status_raw, "order", "status")
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let current_payment_status: PaymentStatus = parse_enum(&current_payment_status_raw, "order", "payment_status")
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let current_payment_status: PaymentStatus =
+                parse_enum(&current_payment_status_raw, "order", "payment_status")
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
             let mut reservation_expired: Option<Uuid> = None;
 
@@ -544,7 +602,8 @@ impl OrderRepository for SqliteOrderRepository {
                 }
 
                 if status == OrderStatus::Refunded {
-                    let effective_payment_status = input.payment_status.unwrap_or(current_payment_status);
+                    let effective_payment_status =
+                        input.payment_status.unwrap_or(current_payment_status);
                     if !matches!(
                         effective_payment_status,
                         PaymentStatus::Paid
@@ -561,20 +620,20 @@ impl OrderRepository for SqliteOrderRepository {
                 }
 
                 if status == OrderStatus::Shipped {
-                    let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
-                        tx,
-                        "order",
-                        &id.to_string(),
-                    )?;
+                    let reservation_ids =
+                        SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+                            tx,
+                            "order",
+                            &id.to_string(),
+                        )?;
                     for reservation_id in &reservation_ids {
                         if SqliteInventoryRepository::expire_reservation_if_needed_in_tx(
                             tx,
                             *reservation_id,
                             now,
-                        )? {
-                            if reservation_expired.is_none() {
-                                reservation_expired = Some(*reservation_id);
-                            }
+                        )? && reservation_expired.is_none()
+                        {
+                            reservation_expired = Some(*reservation_id);
                         }
                     }
                     if reservation_expired.is_none() {
@@ -665,7 +724,8 @@ impl OrderRepository for SqliteOrderRepository {
                 updates.join(", ")
             );
 
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
             let rows_affected = tx.execute(&sql, params_refs.as_slice())?;
             if rows_affected == 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -678,11 +738,12 @@ impl OrderRepository for SqliteOrderRepository {
             }
 
             if matches!(input.status, Some(OrderStatus::Cancelled)) {
-                let reservation_ids = SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
-                    tx,
-                    "order",
-                    &id.to_string(),
-                )?;
+                let reservation_ids =
+                    SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
+                        tx,
+                        "order",
+                        &id.to_string(),
+                    )?;
                 for reservation_id in reservation_ids {
                     SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
                 }
@@ -783,8 +844,11 @@ impl OrderRepository for SqliteOrderRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
-        tx.execute("DELETE FROM order_items WHERE order_id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
+        tx.execute(
+            "DELETE FROM order_items WHERE order_id = ?",
+            [id.to_string()],
+        )
+        .map_err(map_db_error)?;
         tx.execute("DELETE FROM orders WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
@@ -1092,7 +1156,11 @@ impl OrderRepository for SqliteOrderRepository {
 
         for (id, input) in updates {
             let now = Utc::now();
-            let (current_version, current_status_raw, current_payment_status_raw): (i32, String, String) = tx
+            let (current_version, current_status_raw, current_payment_status_raw): (
+                i32,
+                String,
+                String,
+            ) = tx
                 .query_row(
                     "SELECT version, status, payment_status FROM orders WHERE id = ?",
                     [id.to_string()],
@@ -1191,8 +1259,11 @@ impl OrderRepository for SqliteOrderRepository {
                 update_parts.join(", ")
             );
 
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx
+                .execute(&sql, params_refs.as_slice())
+                .map_err(map_db_error)?;
             if rows_affected == 0 {
                 return Err(CommerceError::VersionConflict {
                     entity: "order".to_string(),
@@ -1299,11 +1370,7 @@ impl OrderRepository for SqliteOrderRepository {
 }
 
 impl SqliteOrderRepository {
-    fn update_order_total(
-        &self,
-        conn: &rusqlite::Connection,
-        order_id: Uuid,
-    ) -> Result<()> {
+    fn update_order_total(&self, conn: &rusqlite::Connection, order_id: Uuid) -> Result<()> {
         let current_version: i32 = conn
             .query_row(
                 "SELECT version FROM orders WHERE id = ?",
@@ -1356,8 +1423,14 @@ mod tests {
 
     #[test]
     fn parses_payment_status_snake_case_and_legacy() {
-        assert_eq!(PaymentStatus::from_str("partially_paid").unwrap(), PaymentStatus::PartiallyPaid);
-        assert_eq!(PaymentStatus::from_str("partiallypaid").unwrap(), PaymentStatus::PartiallyPaid);
+        assert_eq!(
+            PaymentStatus::from_str("partially_paid").unwrap(),
+            PaymentStatus::PartiallyPaid
+        );
+        assert_eq!(
+            PaymentStatus::from_str("partiallypaid").unwrap(),
+            PaymentStatus::PartiallyPaid
+        );
         assert_eq!(
             PaymentStatus::from_str("partially_refunded").unwrap(),
             PaymentStatus::PartiallyRefunded

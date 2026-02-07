@@ -108,8 +108,13 @@
     "port": 8080,
     "host": "127.0.0.1",
     "apiKeys": [
-      { "key": "", "name": "default", "level": "admin" }
+      { "key": "sk-admin-change-me", "name": "admin", "level": "admin" },
+      { "key": "sk-read-change-me", "name": "dashboard", "level": "read" }
     ],
+    "allowAnonymous": false,
+    "allowQueryParamAuth": false,
+    "corsOrigins": ["loopback"],
+    "allowRemoteAdminEndpoints": false,
     "sandbox": { "browser": false, "shell": false }
   },
 

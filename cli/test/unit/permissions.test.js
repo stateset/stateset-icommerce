@@ -2,15 +2,18 @@
  * Unit tests for permissions.js
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import {
   PERMISSION_LEVELS,
   TOOL_PERMISSIONS,
+  DEFAULT_GUARDRAILS,
+  GuardrailsSchema,
   PermissionGate,
   createPermissionGate,
-  getLevelFromFlags
+  getLevelFromFlags,
 } from '../../src/permissions.js';
+import { resetAuditStore } from '../../src/audit-store.js';
 
 describe('permissions', () => {
   describe('PERMISSION_LEVELS', () => {
@@ -123,7 +126,10 @@ describe('permissions', () => {
       });
 
       it('should sanitize sensitive params', async () => {
-        await gate.checkPermission('create_customer', { email: 'test@example.com', password: 'secret' });
+        await gate.checkPermission('create_customer', {
+          email: 'test@example.com',
+          password: 'secret',
+        });
         const log = gate.getAuditLog();
         assert.strictEqual(log[0].params.password, '[REDACTED]');
       });
@@ -133,7 +139,7 @@ describe('permissions', () => {
       it('should enforce inventory adjustment limits', async () => {
         gate = new PermissionGate({
           level: 'write',
-          guardrails: { maxInventoryAdjustment: 100 }
+          guardrails: { maxInventoryAdjustment: 100 },
         });
 
         const result = await gate.checkPermission('adjust_inventory', { quantity: 500 });
@@ -180,6 +186,156 @@ describe('permissions', () => {
 
     it('should prioritize admin over apply', () => {
       assert.strictEqual(getLevelFromFlags({ apply: true, admin: true }), 'admin');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // GuardrailsSchema validation
+  // --------------------------------------------------------------------------
+
+  describe('GuardrailsSchema', () => {
+    after(() => resetAuditStore());
+
+    it('should accept valid config', () => {
+      const result = GuardrailsSchema.safeParse({
+        maxOrderValue: 5000,
+        maxToolCallsPerMinute: 60,
+      });
+      assert.strictEqual(result.success, true);
+    });
+
+    it('should reject negative maxOrderValue', () => {
+      const result = GuardrailsSchema.safeParse({ maxOrderValue: -100 });
+      assert.strictEqual(result.success, false);
+    });
+
+    it('should reject non-integer maxToolCallsPerMinute', () => {
+      const result = GuardrailsSchema.safeParse({ maxToolCallsPerMinute: 1.5 });
+      assert.strictEqual(result.success, false);
+    });
+
+    it('should reject zero maxToolCallsPerMinute', () => {
+      const result = GuardrailsSchema.safeParse({ maxToolCallsPerMinute: 0 });
+      assert.strictEqual(result.success, false);
+    });
+
+    it('should apply defaults for missing fields', () => {
+      const result = GuardrailsSchema.parse({});
+      assert.strictEqual(result.maxOrderValue, 10000);
+      assert.strictEqual(result.maxToolCallsPerMinute, 120);
+      assert.strictEqual(result.confirmBulkOperations, true);
+      assert.deepStrictEqual(result.blockedTools, []);
+    });
+
+    it('should fall back to defaults on invalid config in constructor', () => {
+      const gate = new PermissionGate({
+        level: 'read',
+        guardrails: { maxToolCallsPerMinute: -5 },
+      });
+      assert.strictEqual(
+        gate.guardrails.maxToolCallsPerMinute,
+        DEFAULT_GUARDRAILS.maxToolCallsPerMinute,
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Blocked tools
+  // --------------------------------------------------------------------------
+
+  describe('blocked tools', () => {
+    after(() => resetAuditStore());
+
+    it('should deny blocked tools even at admin level', async () => {
+      const gate = new PermissionGate({
+        level: 'admin',
+        guardrails: { blockedTools: ['create_order'] },
+      });
+      const result = await gate.checkPermission('create_order');
+      assert.strictEqual(result.allowed, false);
+      assert.ok(result.reason.includes('blocked by policy'));
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Rate limit enforcement
+  // --------------------------------------------------------------------------
+
+  describe('rate limit enforcement', () => {
+    after(() => resetAuditStore());
+
+    it('should enforce tool calls per minute limit', async () => {
+      const gate = new PermissionGate({
+        level: 'read',
+        guardrails: { maxToolCallsPerMinute: 3 },
+      });
+
+      for (let i = 0; i < 3; i++) {
+        const r = await gate.checkPermission('list_customers');
+        assert.strictEqual(r.allowed, true, `call ${i + 1} should be allowed`);
+      }
+
+      const denied = await gate.checkPermission('list_customers');
+      assert.strictEqual(denied.allowed, false);
+      assert.ok(denied.reason.includes('Rate limit'));
+    });
+
+    it('should enforce write ops per minute limit', async () => {
+      const gate = new PermissionGate({
+        level: 'write',
+        guardrails: { maxWriteOpsPerMinute: 2, maxToolCallsPerMinute: 100 },
+      });
+
+      for (let i = 0; i < 2; i++) {
+        const r = await gate.checkPermission('create_customer');
+        assert.strictEqual(r.allowed, true);
+      }
+
+      const denied = await gate.checkPermission('create_customer');
+      assert.strictEqual(denied.allowed, false);
+      assert.ok(denied.reason.includes('write operations'));
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Approval required
+  // --------------------------------------------------------------------------
+
+  describe('requireApprovalFor', () => {
+    after(() => resetAuditStore());
+
+    it('should deny when user declines confirmation', async () => {
+      const gate = new PermissionGate({
+        level: 'delete',
+        guardrails: { requireApprovalFor: ['cancel_order'] },
+        onConfirmRequired: async () => false,
+      });
+      const result = await gate.checkPermission('cancel_order');
+      assert.strictEqual(result.allowed, false);
+      assert.ok(result.reason.includes('declined'));
+    });
+
+    it('should allow when user confirms', async () => {
+      const gate = new PermissionGate({
+        level: 'delete',
+        guardrails: { requireApprovalFor: ['cancel_order'] },
+        onConfirmRequired: async () => true,
+      });
+      const result = await gate.checkPermission('cancel_order');
+      assert.strictEqual(result.allowed, true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // TOOL_PERMISSIONS completeness
+  // --------------------------------------------------------------------------
+
+  describe('TOOL_PERMISSIONS completeness', () => {
+    it('should map all permission values to known levels', () => {
+      const validLevels = new Set(Object.keys(PERMISSION_LEVELS));
+      for (const [tool, level] of Object.entries(TOOL_PERMISSIONS)) {
+        assert.ok(validLevels.has(level), `Tool '${tool}' has unknown level '${level}'`);
+      }
     });
   });
 });

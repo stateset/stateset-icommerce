@@ -115,9 +115,10 @@ impl InMemoryEventStore {
             }
             CommerceEvent::A2APurchaseInitiated { purchase_id, .. }
             | CommerceEvent::A2APurchasePaid { purchase_id, .. }
-            | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => {
-                (Some("a2a_purchase".to_string()), Some(purchase_id.to_string()))
-            }
+            | CommerceEvent::A2ADeliveryConfirmed { purchase_id, .. } => (
+                Some("a2a_purchase".to_string()),
+                Some(purchase_id.to_string()),
+            ),
         }
     }
 }
@@ -267,10 +268,7 @@ impl EventStore for SqliteEventStore {
 
         let (aggregate_type, aggregate_id) = InMemoryEventStore::extract_aggregate(event);
         let data = event.to_json().map_err(|e| {
-            stateset_core::CommerceError::Internal(format!(
-                "Failed to serialize event: {}",
-                e
-            ))
+            stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
         })?;
 
         conn.execute(
@@ -323,7 +321,10 @@ impl EventStore for SqliteEventStore {
                 Ok((seq as u64, data))
             })
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Failed to query events: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to query events: {}",
+                    e
+                ))
             })?;
 
         let mut events = Vec::new();
@@ -373,7 +374,10 @@ impl EventStore for SqliteEventStore {
                 Ok(data)
             })
             .map_err(|e| {
-                stateset_core::CommerceError::DatabaseError(format!("Failed to query events: {}", e))
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to query events: {}",
+                    e
+                ))
             })?;
 
         let mut events = Vec::new();
@@ -399,11 +403,9 @@ impl EventStore for SqliteEventStore {
         })?;
 
         let sequence: Option<i64> = conn
-            .query_row(
-                "SELECT MAX(sequence) FROM commerce_events",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(sequence) FROM commerce_events", [], |row| {
+                row.get(0)
+            })
             .map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!(
                     "Failed to get latest sequence: {}",
@@ -476,10 +478,7 @@ impl PostgresEventStore {
     pub async fn append_async(&self, event: &CommerceEvent) -> Result<u64> {
         let (aggregate_type, aggregate_id) = InMemoryEventStore::extract_aggregate(event);
         let data = serde_json::to_value(event).map_err(|e| {
-            stateset_core::CommerceError::Internal(format!(
-                "Failed to serialize event: {}",
-                e
-            ))
+            stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
         })?;
 
         let row: (i64,) = sqlx::query_as(

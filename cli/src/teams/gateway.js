@@ -14,13 +14,7 @@
  */
 
 import http from 'node:http';
-import {
-  createSessionManager,
-  createMessageHandler,
-  isAllowed,
-  chunkMessage,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler, BOT_PREFIX } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
 
@@ -28,8 +22,7 @@ import { richMessageToPlainText } from '../channels/rich-messages.js';
 // Bot Framework REST helpers
 // ============================================================================
 
-const TOKEN_ENDPOINT =
-  'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
+const TOKEN_ENDPOINT = 'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token';
 const TOKEN_SCOPE = 'https://api.botframework.com/.default';
 
 /** Cached OAuth token and expiry. */
@@ -174,14 +167,15 @@ function sendJson(res, status, data) {
  * @returns {string}
  */
 function formatForTeams(text) {
-  return text
-    // Convert markdown headers to bold
-    .replace(/^#{1,6}\s+(.+)$/gm, '**$1**')
-    // Convert markdown code blocks to Teams code format (triple backticks work)
-    // Convert markdown horizontal rules
-    .replace(/^---+$/gm, '---')
+  return (
+    text
+      // Convert markdown headers to bold
+      .replace(/^#{1,6}\s+(.+)$/gm, '**$1**')
+      // Convert markdown code blocks to Teams code format (triple backticks work)
+      // Convert markdown horizontal rules
+      .replace(/^---+$/gm, '---')
     // Convert markdown links [text](url) — Teams supports this natively
-    ;
+  );
 }
 
 // ============================================================================
@@ -226,14 +220,14 @@ export async function startTeamsGateway({
   if (!appId) {
     throw new Error(
       'TEAMS_APP_ID environment variable is required.\n' +
-      'Register a bot at https://dev.botframework.com or via Azure Bot Service.\n' +
-      'Set TEAMS_APP_ID to the Microsoft App ID from your bot registration.'
+        'Register a bot at https://dev.botframework.com or via Azure Bot Service.\n' +
+        'Set TEAMS_APP_ID to the Microsoft App ID from your bot registration.',
     );
   }
   if (!appPassword) {
     throw new Error(
       'TEAMS_APP_PASSWORD environment variable is required.\n' +
-      'Set TEAMS_APP_PASSWORD to the client secret from your Azure AD app registration.'
+        'Set TEAMS_APP_PASSWORD to the client secret from your Azure AD app registration.',
     );
   }
 
@@ -542,7 +536,9 @@ export async function startTeamsGateway({
       }
 
       if (verbose) {
-        console.log(`[Teams] Received activity type=${activity.type} from=${activity.from?.name || activity.from?.id || 'unknown'}`);
+        console.log(
+          `[Teams] Received activity type=${activity.type} from=${activity.from?.name || activity.from?.id || 'unknown'}`,
+        );
       }
 
       // Acknowledge receipt immediately (Bot Framework expects 200 within seconds)
@@ -577,8 +573,9 @@ export async function startTeamsGateway({
               if (member.id === activity.recipient?.id) continue;
 
               const ref = getConversationRef(activity);
-              const greeting = BOT_PREFIX +
-                'Hello! I\'m the StateSet Commerce Assistant. ' +
+              const greeting =
+                BOT_PREFIX +
+                "Hello! I'm the StateSet Commerce Assistant. " +
                 'Ask me about orders, products, inventory, returns, and more. ' +
                 'Type /help to see available commands.';
 

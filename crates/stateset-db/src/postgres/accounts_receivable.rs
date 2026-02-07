@@ -2,19 +2,19 @@
 
 use super::{block_on, map_db_error};
 use chrono::{DateTime, NaiveDate, Utc};
-use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter,
-    ArAgingSummary, ArPaymentApplication, CollectionActivity, CollectionActivityFilter,
-    CollectionActivityType, CollectionStatus, CommerceError, CreateCollectionActivity,
-    CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoReason,
-    CreditMemoStatus, CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, InvoiceStatus, InvoiceType, Result, StatementLineItem,
-    StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
-    generate_credit_memo_number, generate_write_off_number,
+    generate_credit_memo_number, generate_write_off_number, AccountsReceivableRepository,
+    ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter, ArAgingSummary, ArPaymentApplication,
+    CollectionActivity, CollectionActivityFilter, CollectionActivityType, CollectionStatus,
+    CommerceError, CreateCollectionActivity, CreateCreditMemo, CreateWriteOff, CreditMemo,
+    CreditMemoFilter, CreditMemoReason, CreditMemoStatus, CustomerArAging, CustomerArSummary,
+    CustomerStatement, DunningLetterType, GenerateStatementRequest, Invoice, InvoiceStatus,
+    InvoiceType, Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter,
+    WriteOffReason,
 };
 use uuid::Uuid;
 
@@ -213,10 +213,7 @@ impl PgAccountsReceivableRepository {
         } = row;
 
         let reason: WriteOffReason = reason.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid write_off.reason '{}': {}",
-                reason, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid write_off.reason '{}': {}", reason, e))
         })?;
 
         Ok(WriteOff {
@@ -255,16 +252,10 @@ impl PgAccountsReceivableRepository {
         } = row;
 
         let reason: CreditMemoReason = reason.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid credit_memo.reason '{}': {}",
-                reason, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid credit_memo.reason '{}': {}", reason, e))
         })?;
         let status: CreditMemoStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid credit_memo.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid credit_memo.status '{}': {}", status, e))
         })?;
 
         Ok(CreditMemo {
@@ -337,10 +328,7 @@ impl PgAccountsReceivableRepository {
         } = row;
 
         let status: InvoiceStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid invoice.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
         })?;
         let invoice_type: InvoiceType = invoice_type.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -391,11 +379,12 @@ impl PgAccountsReceivableRepository {
     }
 
     async fn get_invoice_customer_id_async(&self, invoice_id: Uuid) -> Result<Uuid> {
-        let customer_id: Uuid = sqlx::query_scalar("SELECT customer_id FROM invoices WHERE id = $1")
-            .bind(invoice_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let customer_id: Uuid =
+            sqlx::query_scalar("SELECT customer_id FROM invoices WHERE id = $1")
+                .bind(invoice_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
         Ok(customer_id)
     }
 
@@ -480,14 +469,16 @@ impl PgAccountsReceivableRepository {
         })
     }
 
-    pub async fn get_customer_aging_async(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
-        let customer_row: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT first_name, last_name, email FROM customers WHERE id = $1",
-        )
-        .bind(customer_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+    pub async fn get_customer_aging_async(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Option<CustomerArAging>> {
+        let customer_row: Option<(String, String, String)> =
+            sqlx::query_as("SELECT first_name, last_name, email FROM customers WHERE id = $1")
+                .bind(customer_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         let (first_name, last_name, email) = match customer_row {
             Some(row) => row,
@@ -561,7 +552,9 @@ impl PgAccountsReceivableRepository {
 
         let mut has_having = false;
         if let Some(min_balance) = filter.min_balance {
-            builder.push(" HAVING COALESCE(SUM(i.balance_due), 0) >= ").push_bind(min_balance);
+            builder
+                .push(" HAVING COALESCE(SUM(i.balance_due), 0) >= ")
+                .push_bind(min_balance);
             has_having = true;
         }
         if filter.overdue_only.unwrap_or(false) {
@@ -696,13 +689,17 @@ impl PgAccountsReceivableRepository {
             builder.push(" AND customer_id = ").push_bind(customer_id);
         }
         if let Some(activity_type) = filter.activity_type {
-            builder.push(" AND activity_type = ").push_bind(activity_type.to_string());
+            builder
+                .push(" AND activity_type = ")
+                .push_bind(activity_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND activity_date >= ").push_bind(from_date);
         }
         if let Some(to_date_val) = filter.to_date {
-            builder.push(" AND activity_date <= ").push_bind(to_date_val);
+            builder
+                .push(" AND activity_date <= ")
+                .push_bind(to_date_val);
         }
 
         builder.push(" ORDER BY activity_date DESC");
@@ -760,7 +757,10 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_invoice).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_invoice)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn send_dunning_letter_async(
@@ -787,7 +787,8 @@ impl PgAccountsReceivableRepository {
             }
         };
 
-        self.update_collection_status_async(invoice_id, new_status).await?;
+        self.update_collection_status_async(invoice_id, new_status)
+            .await?;
 
         self.log_collection_activity_async(CreateCollectionActivity {
             invoice_id,
@@ -887,10 +888,14 @@ impl PgAccountsReceivableRepository {
             builder.push(" AND reversed_at IS NULL");
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND write_off_date >= ").push_bind(to_date(from_date));
+            builder
+                .push(" AND write_off_date >= ")
+                .push_bind(to_date(from_date));
         }
         if let Some(to_date_val) = filter.to_date {
-            builder.push(" AND write_off_date <= ").push_bind(to_date(to_date_val));
+            builder
+                .push(" AND write_off_date <= ")
+                .push_bind(to_date(to_date_val));
         }
 
         builder.push(" ORDER BY write_off_date DESC");
@@ -908,15 +913,23 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_write_off).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_write_off)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn reverse_write_off_async(&self, id: Uuid) -> Result<WriteOff> {
         let now = Utc::now();
-        let write_off = self.get_write_off_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let write_off = self
+            .get_write_off_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         if write_off.reversed_at.is_some() {
-            return Err(CommerceError::ValidationError("Write-off already reversed".into()));
+            return Err(CommerceError::ValidationError(
+                "Write-off already reversed".into(),
+            ));
         }
 
         sqlx::query("UPDATE ar_write_offs SET reversed_at = $1 WHERE id = $2")
@@ -1045,10 +1058,14 @@ impl PgAccountsReceivableRepository {
             }
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND issue_date >= ").push_bind(to_date(from_date));
+            builder
+                .push(" AND issue_date >= ")
+                .push_bind(to_date(from_date));
         }
         if let Some(to_date_val) = filter.to_date {
-            builder.push(" AND issue_date <= ").push_bind(to_date(to_date_val));
+            builder
+                .push(" AND issue_date <= ")
+                .push_bind(to_date(to_date_val));
         }
 
         builder.push(" ORDER BY issue_date DESC");
@@ -1066,7 +1083,10 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_credit_memo).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_credit_memo)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn apply_credit_memo_async(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
@@ -1161,10 +1181,7 @@ impl PgAccountsReceivableRepository {
         })
     }
 
-    pub async fn get_unapplied_credits_async(
-        &self,
-        customer_id: Uuid,
-    ) -> Result<Vec<CreditMemo>> {
+    pub async fn get_unapplied_credits_async(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
         self.list_credit_memos_async(CreditMemoFilter {
             customer_id: Some(customer_id),
             has_unapplied: Some(true),
@@ -1233,13 +1250,12 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn unapply_payment_async(&self, application_id: Uuid) -> Result<()> {
-        let invoice_id: Uuid = sqlx::query_scalar(
-            "SELECT invoice_id FROM ar_payment_applications WHERE id = $1",
-        )
-        .bind(application_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let invoice_id: Uuid =
+            sqlx::query_scalar("SELECT invoice_id FROM ar_payment_applications WHERE id = $1")
+                .bind(application_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM ar_payment_applications WHERE id = $1")
             .bind(application_id)
@@ -1251,7 +1267,10 @@ impl PgAccountsReceivableRepository {
         Ok(())
     }
 
-    pub async fn get_customer_summary_async(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
+    pub async fn get_customer_summary_async(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Option<CustomerArSummary>> {
         let aging = match self.get_customer_aging_async(customer_id).await? {
             Some(aging) => aging,
             None => return Ok(None),
@@ -1291,12 +1310,13 @@ impl PgAccountsReceivableRepository {
             .unwrap_or_else(|| now - chrono::Duration::days(30));
         let period_end = request.period_end.unwrap_or(now);
 
-        let (customer_name, customer_email): (String, Option<String>) =
-            sqlx::query_as("SELECT first_name || ' ' || last_name, email FROM customers WHERE id = $1")
-                .bind(request.customer_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let (customer_name, customer_email): (String, Option<String>) = sqlx::query_as(
+            "SELECT first_name || ' ' || last_name, email FROM customers WHERE id = $1",
+        )
+        .bind(request.customer_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         let aging = self
             .get_customer_aging_async(request.customer_id)
@@ -1421,10 +1441,7 @@ impl PgAccountsReceivableRepository {
         Ok((ar_balance / total_sales) * days_decimal)
     }
 
-    pub async fn get_average_days_to_pay_async(
-        &self,
-        customer_id: Uuid,
-    ) -> Result<Option<i32>> {
+    pub async fn get_average_days_to_pay_async(&self, customer_id: Uuid) -> Result<Option<i32>> {
         let avg: Option<f64> = sqlx::query_scalar(
             "SELECT AVG(EXTRACT(DAY FROM (pa.applied_date - i.invoice_date)))
              FROM ar_payment_applications pa
@@ -1466,7 +1483,10 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
         block_on(self.get_aging_report_async(filter))
     }
 
-    fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
+    fn log_collection_activity(
+        &self,
+        input: CreateCollectionActivity,
+    ) -> Result<CollectionActivity> {
         block_on(self.log_collection_activity_async(input))
     }
 
@@ -1538,7 +1558,10 @@ impl AccountsReceivableRepository for PgAccountsReceivableRepository {
         block_on(self.get_unapplied_credits_async(customer_id))
     }
 
-    fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>> {
+    fn apply_payment_to_invoices(
+        &self,
+        input: ApplyPaymentToInvoices,
+    ) -> Result<Vec<ArPaymentApplication>> {
         block_on(self.apply_payment_to_invoices_async(input))
     }
 

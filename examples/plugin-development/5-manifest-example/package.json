@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A complete example plugin with manifest and configuration",
   "main": "index.js",
+  "type": "module",
   "author": "StateSet",
   "license": "MIT",
   "displayName": "Manifest Example Plugin",
@@ -10,9 +11,9 @@
   "motivation": "Demonstrates full plugin capabilities including manifest validation, configuration options, and comprehensive feature set",
   "capabilities": {
     "commands": [
-      "example:greet",
-      "example:status",
-      "example:metrics"
+      "example-greet",
+      "example-status",
+      "example-metrics"
     ],
     "hooks": [
       "agent_start",

@@ -20,12 +20,15 @@ fn stress_test_bulk_order_creation() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a customer first (FK constraint)
-    let customer = commerce.customers().create(CreateCustomer {
-        email: "bulk-test@stress.test".into(),
-        first_name: "Bulk".into(),
-        last_name: "Test".into(),
-        ..Default::default()
-    }).expect("Failed to create customer");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "bulk-test@stress.test".into(),
+            first_name: "Bulk".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
     let customer_id = customer.id;
 
     let order_count = 1000;
@@ -188,12 +191,15 @@ fn stress_test_concurrent_orders() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
     // Create a customer first (FK constraint)
-    let customer = commerce.customers().create(CreateCustomer {
-        email: "concurrent-orders@stress.test".into(),
-        first_name: "Concurrent".into(),
-        last_name: "Test".into(),
-        ..Default::default()
-    }).expect("Failed to create customer");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "concurrent-orders@stress.test".into(),
+            first_name: "Concurrent".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
     let customer_id = customer.id;
 
     // Reduce counts for in-memory SQLite with pool size 1
@@ -258,7 +264,8 @@ fn stress_test_concurrent_orders() {
     assert!(
         total_success as f64 / total_orders as f64 > 0.20,
         "Less than 20% of orders succeeded: {} of {}",
-        total_success, total_orders
+        total_success,
+        total_orders
     );
 }
 
@@ -417,9 +424,11 @@ fn stress_test_mixed_workload() {
                     }],
                     ..Default::default()
                 });
-                let _ = commerce_clone
-                    .inventory()
-                    .adjust("MIXED-001", dec!(-1), &format!("Order t{}i{}", t, i));
+                let _ = commerce_clone.inventory().adjust(
+                    "MIXED-001",
+                    dec!(-1),
+                    &format!("Order t{}i{}", t, i),
+                );
             }
         });
         handles.push(handle);
@@ -499,12 +508,15 @@ fn stress_test_large_batch_insert() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a customer first (FK constraint)
-    let customer = commerce.customers().create(CreateCustomer {
-        email: "batch-insert@stress.test".into(),
-        first_name: "Batch".into(),
-        last_name: "Insert".into(),
-        ..Default::default()
-    }).expect("Failed to create customer");
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "batch-insert@stress.test".into(),
+            first_name: "Batch".into(),
+            last_name: "Insert".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create customer");
     let customer_id = customer.id;
 
     let batch_size = 100;

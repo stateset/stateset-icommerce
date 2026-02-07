@@ -36,8 +36,8 @@
 
 use crate::Database;
 use stateset_core::{
-    ClaimResolution, CreateWarranty, CreateWarrantyClaim, Result, UpdateWarrantyClaim,
-    Warranty, WarrantyClaim, WarrantyClaimFilter, WarrantyFilter,
+    ClaimResolution, CreateWarranty, CreateWarrantyClaim, Result, UpdateWarrantyClaim, Warranty,
+    WarrantyClaim, WarrantyClaimFilter, WarrantyFilter,
 };
 use std::sync::Arc;
 use uuid::Uuid;

@@ -145,7 +145,9 @@ export function discoverSkills(opts = {}) {
     for (const skill of discovered) {
       if (seenNames.has(skill.name)) {
         if (verbose) {
-          console.log(`[SkillLoader] Skipping ${skill.name} from ${origin} (overridden by higher-priority origin)`);
+          console.log(
+            `[SkillLoader] Skipping ${skill.name} from ${origin} (overridden by higher-priority origin)`,
+          );
         }
         continue;
       }
@@ -158,7 +160,9 @@ export function discoverSkills(opts = {}) {
   result.sort((a, b) => a.name.localeCompare(b.name));
 
   if (verbose) {
-    console.log(`[SkillLoader] Discovered ${result.length} skills from ${new Set(result.map(s => s.origin)).size} origin(s)`);
+    console.log(
+      `[SkillLoader] Discovered ${result.length} skills from ${new Set(result.map((s) => s.origin)).size} origin(s)`,
+    );
   }
 
   return result;

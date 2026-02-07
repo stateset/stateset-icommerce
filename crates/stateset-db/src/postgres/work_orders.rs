@@ -104,10 +104,7 @@ impl PgWorkOrderRepository {
         } = row;
 
         let status: WorkOrderStatus = status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid work_order.status '{}': {}",
-                status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid work_order.status '{}': {}", status, e))
         })?;
         let priority: WorkOrderPriority = priority.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -212,7 +209,10 @@ impl PgWorkOrderRepository {
         Ok(tasks)
     }
 
-    async fn get_materials_async_internal(&self, work_order_id: Uuid) -> Result<Vec<WorkOrderMaterial>> {
+    async fn get_materials_async_internal(
+        &self,
+        work_order_id: Uuid,
+    ) -> Result<Vec<WorkOrderMaterial>> {
         let rows = sqlx::query_as::<_, WorkOrderMaterialRow>(
             "SELECT * FROM manufacturing_work_order_materials WHERE work_order_id = $1",
         )
@@ -415,7 +415,9 @@ impl PgWorkOrderRepository {
             builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
         if let Some(work_center_id) = work_center_id {
-            builder.push(" AND work_center_id = ").push_bind(work_center_id);
+            builder
+                .push(" AND work_center_id = ")
+                .push_bind(work_center_id);
         }
         if overdue_only.unwrap_or(false) {
             let now = Utc::now();
@@ -504,30 +506,46 @@ impl PgWorkOrderRepository {
 
     /// Hold work order (async)
     pub async fn hold_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(id, UpdateWorkOrder {
-            status: Some(WorkOrderStatus::OnHold),
-            ..Default::default()
-        }).await
+        self.update_async(
+            id,
+            UpdateWorkOrder {
+                status: Some(WorkOrderStatus::OnHold),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Resume work order (async)
     pub async fn resume_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(id, UpdateWorkOrder {
-            status: Some(WorkOrderStatus::InProgress),
-            ..Default::default()
-        }).await
+        self.update_async(
+            id,
+            UpdateWorkOrder {
+                status: Some(WorkOrderStatus::InProgress),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Cancel work order (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(id, UpdateWorkOrder {
-            status: Some(WorkOrderStatus::Cancelled),
-            ..Default::default()
-        }).await
+        self.update_async(
+            id,
+            UpdateWorkOrder {
+                status: Some(WorkOrderStatus::Cancelled),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Add task (async)
-    pub async fn add_task_async(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
+    pub async fn add_task_async(
+        &self,
+        work_order_id: Uuid,
+        task: CreateWorkOrderTask,
+    ) -> Result<WorkOrderTask> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let sequence = task.sequence.unwrap_or(1);
@@ -569,7 +587,11 @@ impl PgWorkOrderRepository {
     }
 
     /// Update task (async)
-    pub async fn update_task_async(&self, task_id: Uuid, task: UpdateWorkOrderTask) -> Result<WorkOrderTask> {
+    pub async fn update_task_async(
+        &self,
+        task_id: Uuid,
+        task: UpdateWorkOrderTask,
+    ) -> Result<WorkOrderTask> {
         let existing = self.get_task_by_id(task_id).await?;
         let now = Utc::now();
 
@@ -631,7 +653,11 @@ impl PgWorkOrderRepository {
     }
 
     /// Complete task (async)
-    pub async fn complete_task_async(&self, task_id: Uuid, actual_hours: Option<Decimal>) -> Result<WorkOrderTask> {
+    pub async fn complete_task_async(
+        &self,
+        task_id: Uuid,
+        actual_hours: Option<Decimal>,
+    ) -> Result<WorkOrderTask> {
         let now = Utc::now();
 
         sqlx::query("UPDATE manufacturing_work_order_tasks SET status = 'completed', actual_hours = $1, completed_at = $2, updated_at = $3 WHERE id = $4")
@@ -647,7 +673,11 @@ impl PgWorkOrderRepository {
     }
 
     /// Add material (async)
-    pub async fn add_material_async(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial> {
+    pub async fn add_material_async(
+        &self,
+        work_order_id: Uuid,
+        material: AddWorkOrderMaterial,
+    ) -> Result<WorkOrderMaterial> {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -684,7 +714,11 @@ impl PgWorkOrderRepository {
     }
 
     /// Consume material (async)
-    pub async fn consume_material_async(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
+    pub async fn consume_material_async(
+        &self,
+        material_id: Uuid,
+        quantity: Decimal,
+    ) -> Result<WorkOrderMaterial> {
         let existing = self.get_material_by_id(material_id).await?;
         let now = Utc::now();
         let new_consumed = existing.consumed_quantity + quantity;
@@ -714,7 +748,8 @@ impl PgWorkOrderRepository {
             offset: _,
         } = filter;
 
-        let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM manufacturing_work_orders WHERE 1=1");
+        let mut builder =
+            QueryBuilder::new("SELECT COUNT(*) FROM manufacturing_work_orders WHERE 1=1");
 
         if let Some(product_id) = product_id {
             builder.push(" AND product_id = ").push_bind(product_id);
@@ -734,7 +769,9 @@ impl PgWorkOrderRepository {
             builder.push(" AND assigned_to = ").push_bind(assigned_to);
         }
         if let Some(work_center_id) = work_center_id {
-            builder.push(" AND work_center_id = ").push_bind(work_center_id);
+            builder
+                .push(" AND work_center_id = ")
+                .push_bind(work_center_id);
         }
         if overdue_only.unwrap_or(false) {
             let now = Utc::now();
@@ -756,7 +793,10 @@ impl PgWorkOrderRepository {
     // === Batch Operations ===
 
     /// Create multiple work orders in a batch (async, non-atomic)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateWorkOrder>) -> Result<BatchResult<WorkOrder>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateWorkOrder>,
+    ) -> Result<BatchResult<WorkOrder>> {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
@@ -771,7 +811,10 @@ impl PgWorkOrderRepository {
     }
 
     /// Create multiple work orders in a batch atomically (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateWorkOrder>,
+    ) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&inputs)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut work_orders = Vec::with_capacity(inputs.len());
@@ -878,7 +921,10 @@ impl PgWorkOrderRepository {
     }
 
     /// Update multiple work orders in a batch (async, non-atomic)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateWorkOrder)>,
+    ) -> Result<BatchResult<WorkOrder>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -893,7 +939,10 @@ impl PgWorkOrderRepository {
     }
 
     /// Update multiple work orders in a batch atomically (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateWorkOrder)>,
+    ) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut work_orders = Vec::with_capacity(updates.len());
@@ -975,10 +1024,7 @@ impl PgWorkOrderRepository {
             for task in tasks {
                 task_models.push(Self::row_to_task(task)?);
             }
-            let material_models = materials
-                .into_iter()
-                .map(Self::row_to_material)
-                .collect();
+            let material_models = materials.into_iter().map(Self::row_to_material).collect();
             work_orders.push(Self::row_to_work_order(
                 updated_row,
                 task_models,
@@ -1127,7 +1173,11 @@ impl WorkOrderRepository for PgWorkOrderRepository {
         super::block_on(self.complete_task_async(task_id, actual_hours))
     }
 
-    fn add_material(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial> {
+    fn add_material(
+        &self,
+        work_order_id: Uuid,
+        material: AddWorkOrderMaterial,
+    ) -> Result<WorkOrderMaterial> {
         super::block_on(self.add_material_async(work_order_id, material))
     }
 
@@ -1153,7 +1203,10 @@ impl WorkOrderRepository for PgWorkOrderRepository {
         super::block_on(self.create_batch_atomic_async(inputs))
     }
 
-    fn update_batch(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<BatchResult<WorkOrder>> {
+    fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdateWorkOrder)>,
+    ) -> Result<BatchResult<WorkOrder>> {
         super::block_on(self.update_batch_async(updates))
     }
 

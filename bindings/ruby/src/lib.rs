@@ -4301,7 +4301,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     shipment_class.define_method("tracking_number", method!(Shipment::tracking_number, 0))?;
     shipment_class.define_method("shipping_method", method!(Shipment::shipping_method, 0))?;
     shipment_class.define_method("weight", method!(Shipment::weight, 0))?;
-    shipment_class.define_method("estimated_delivery", method!(Shipment::estimated_delivery, 0))?;
+    shipment_class.define_method(
+        "estimated_delivery",
+        method!(Shipment::estimated_delivery, 0),
+    )?;
     shipment_class.define_method("shipped_at", method!(Shipment::shipped_at, 0))?;
     shipment_class.define_method("delivered_at", method!(Shipment::delivered_at, 0))?;
     shipment_class.define_method("inspect", method!(Shipment::inspect, 0))?;

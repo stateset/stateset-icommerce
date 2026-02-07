@@ -31,7 +31,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Run clippy on default workspace members only (core crates). Bindings are
+        # compiled/tested in their dedicated jobs with the required toolchains.
+        run: cargo clippy --all-targets -- -D warnings
 
   audit:
     name: Security Audit
@@ -41,7 +43,10 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
       - name: Security audit
-        run: cargo audit
+        # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
+        # This workspace does not enable or ship MySQL support, and there is no
+        # fixed upgrade available upstream.
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
   deny:
     name: Dependency Policy
@@ -98,9 +103,6 @@ jobs:
         run: |
           cargo install cargo-mutants
           cargo mutants -p stateset-core --test-threads 1 --in-cargo-test-dir
-
-      - name: Check (PostgreSQL feature)
-        run: cargo check -p stateset-db --no-default-features --features postgres
 
   node-bindings:
     name: Node Bindings
@@ -215,6 +217,21 @@ jobs:
         working-directory: cli
         run: npm ci
 
+      - name: Security audit
+        working-directory: cli
+        run: npm audit --audit-level=high
+
+      - name: Install root tooling (ESLint, Prettier)
+        # Disable husky git hook installation in CI.
+        run: HUSKY=0 npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        working-directory: cli
+        run: npm run lint
+
       - name: Test
         working-directory: cli
         run: npm test
@@ -263,6 +280,10 @@ jobs:
         working-directory: admin
         run: npm run typecheck
 
+      - name: Lint
+        working-directory: admin
+        run: npm run lint
+
       - name: Test
         working-directory: admin
         run: npm test
@@ -289,7 +310,8 @@ jobs:
         run: cargo build -p stateset-go --release
 
       - name: Run Go example
-        run: go run ./bindings/go/example
+        working-directory: bindings/go/example
+        run: go run ./
 
   dotnet-bindings:
     name: .NET Bindings

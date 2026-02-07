@@ -13,7 +13,7 @@
 
 import { runAgentLoop, RichOutput, ICONS } from '../src/claude-harness.js';
 import { createConfirmHandler } from '../src/utils/confirm.js';
-import { DEFAULT_MODEL, CLI_VERSION, THINK_LEVELS } from '../src/config.js';
+import { DEFAULT_MODEL, THINK_LEVELS } from '../src/config.js';
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
 
@@ -82,9 +82,9 @@ async function main() {
       treasuryErc8004Db: { type: 'string' },
       verbose: { type: 'boolean', short: 'V', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
-      help: { type: 'boolean', short: 'h', default: false }
+      help: { type: 'boolean', short: 'h', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -98,51 +98,54 @@ async function main() {
   // State
   let dbPath = values.db;
   let allowApply = values.apply;
-  let model = values.model;
+  const model = values.model;
   let verbose = values.verbose;
   let sessionId = null;
   let thinkLevel = values.think || 'off';
   let streaming = values.stream || false;
   let provider = values.provider || 'claude';
   let budget = values.budget || null;
-  let memoryEnabled = values.noMemory ? false : (values.memory ? true : null);
-  let x402Enabled = values.x402 || false;
+  let memoryEnabled = values.noMemory ? false : values.memory ? true : null;
+  const x402Enabled = values.x402 || false;
   const treasuryEnabled = Boolean(
-    values.treasury
-      || values.treasuryChain
-      || values.treasuryToken
-      || values.treasuryAgent
-      || values.treasuryDb
-      || values.treasuryErc8004Registry
-      || values.treasuryErc8004Db
+    values.treasury ||
+    values.treasuryChain ||
+    values.treasuryToken ||
+    values.treasuryAgent ||
+    values.treasuryDb ||
+    values.treasuryErc8004Registry ||
+    values.treasuryErc8004Db,
   );
-  const treasuryConfig = treasuryEnabled ? {
-    enabled: true,
-    chainId: values.treasuryChain,
-    tokenSymbol: values.treasuryToken,
-    agentId: values.treasuryAgent,
-    dbPath: values.treasuryDb,
-    erc8004Registry: values.treasuryErc8004Registry,
-    erc8004DbPath: values.treasuryErc8004Db
-  } : null;
+  const treasuryConfig = treasuryEnabled
+    ? {
+        enabled: true,
+        chainId: values.treasuryChain,
+        tokenSymbol: values.treasuryToken,
+        agentId: values.treasuryAgent,
+        dbPath: values.treasuryDb,
+        erc8004Registry: values.treasuryErc8004Registry,
+        erc8004DbPath: values.treasuryErc8004Db,
+      }
+    : null;
 
   // Create readline interface
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 
-  const confirmPrompt = (message) => new Promise((resolve) => {
-    rl.question(`${message} [y/N] `, (answer) => {
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+  const confirmPrompt = (message) =>
+    new Promise((resolve) => {
+      rl.question(`${message} [y/N] `, (answer) => {
+        resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+      });
     });
-  });
 
   const onConfirmRequired = createConfirmHandler({
     output,
     assumeYes: values.yes,
     nonInteractive: false,
-    confirmPrompt
+    confirmPrompt,
   });
 
   const prompt = () => {
@@ -153,17 +156,20 @@ async function main() {
   const showStatus = () => {
     console.log(`\n${ICONS.analytics} ${output.bold('Current Settings:')}`);
     console.log(`   ${output.dim('Database:')}  ${dbPath}`);
-    console.log(`   ${output.dim('Mode:')}      ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(
+      `   ${output.dim('Mode:')}      ${allowApply ? output.green('Write enabled') : output.yellow('Preview only')}`,
+    );
     console.log(`   ${output.dim('Provider:')}  ${provider}`);
     console.log(`   ${output.dim('Model:')}     ${model}`);
-    console.log(`   ${output.dim('Thinking:')}  ${thinkLevel === 'off' ? 'Off' : output.cyan(thinkLevel)}`);
+    console.log(
+      `   ${output.dim('Thinking:')}  ${thinkLevel === 'off' ? 'Off' : output.cyan(thinkLevel)}`,
+    );
     console.log(`   ${output.dim('Streaming:')} ${streaming ? output.cyan('On') : 'Off'}`);
     if (budget) {
       console.log(`   ${output.dim('Budget:')}    ${output.cyan('$' + budget)}/query`);
     }
-    const memoryLabel = memoryEnabled === null
-      ? output.dim('Default')
-      : (memoryEnabled ? output.cyan('On') : 'Off');
+    const memoryLabel =
+      memoryEnabled === null ? output.dim('Default') : memoryEnabled ? output.cyan('On') : 'Off';
     console.log(`   ${output.dim('Memory:')}    ${memoryLabel}`);
     console.log(`   ${output.dim('x402:')}      ${x402Enabled ? output.cyan('On') : 'Off'}`);
     console.log(`   ${output.dim('Treasury:')}  ${treasuryConfig ? output.cyan('On') : 'Off'}`);
@@ -250,7 +256,12 @@ ${output.bold('Example Queries:')}
           const level = (args[0] || '').toLowerCase();
           if (['off', 'low', 'medium', 'med', 'high'].includes(level)) {
             thinkLevel = level === 'med' ? 'medium' : level;
-            console.log(output.status('success', `Extended thinking: ${thinkLevel}${thinkLevel !== 'off' ? ` (${THINK_LEVELS[thinkLevel]?.toLocaleString()} tokens)` : ''}`));
+            console.log(
+              output.status(
+                'success',
+                `Extended thinking: ${thinkLevel}${thinkLevel !== 'off' ? ` (${THINK_LEVELS[thinkLevel]?.toLocaleString()} tokens)` : ''}`,
+              ),
+            );
           } else {
             console.log(`Thinking: ${thinkLevel}`);
             console.log('Use /think off|low|medium|high');
@@ -270,7 +281,9 @@ ${output.bold('Example Queries:')}
               provider = p;
               console.log(output.status('success', `Provider: ${provider}`));
               if (provider !== 'claude') {
-                console.log(output.dim('   Note: Non-Claude providers run in chat-only mode (no MCP tools)'));
+                console.log(
+                  output.dim('   Note: Non-Claude providers run in chat-only mode (no MCP tools)'),
+                );
               }
             } else {
               console.log(`Unknown provider: ${p}. Available: claude, openai, gemini, ollama`);
@@ -353,26 +366,33 @@ ${output.bold('Example Queries:')}
         provider,
         enableMemory: memoryEnabled === null ? null : memoryEnabled,
         enableX402: x402Enabled,
-        onPartialMessage: streaming ? (event) => {
-          if (event?.content) {
-            process.stdout.write(event.content);
-          } else if (event?.delta?.text) {
-            process.stdout.write(event.delta.text);
-          } else if (typeof event?.text === 'string') {
-            process.stdout.write(event.text);
-          }
-        } : null,
-        onThinkingBlock: thinkLevel !== 'off' ? (block) => {
-          if (verbose) {
-            const preview = (block.thinking || block.text || '').slice(0, 200);
-            console.log(output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`));
-          }
-        } : null,
+        onPartialMessage: streaming
+          ? (event) => {
+              if (event?.content) {
+                process.stdout.write(event.content);
+              } else if (event?.delta?.text) {
+                process.stdout.write(event.delta.text);
+              } else if (typeof event?.text === 'string') {
+                process.stdout.write(event.text);
+              }
+            }
+          : null,
+        onThinkingBlock:
+          thinkLevel !== 'off'
+            ? (block) => {
+                if (verbose) {
+                  const preview = (block.thinking || block.text || '').slice(0, 200);
+                  console.log(
+                    output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`),
+                  );
+                }
+              }
+            : null,
         onToolCall: (toolCall) => {
           if (!verbose) {
             console.log(output.toolCall(toolCall.name, toolCall.input));
           }
-        }
+        },
       });
 
       // Update session ID
@@ -391,14 +411,17 @@ ${output.bold('Example Queries:')}
       if (verbose && result.telemetry) {
         const stats = result.telemetry;
         console.log(`\n${output.dim('─'.repeat(40))}`);
-        console.log(`${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms${result.cost != null ? `, $${result.cost.toFixed(4)}` : ''}`);
+        console.log(
+          `${output.dim('Stats:')} ${stats.toolCalls?.total || 0} tools, ${stats.duration}ms${
+            result.cost !== null && result.cost !== undefined ? `, $${result.cost.toFixed(4)}` : ''
+          }`,
+        );
         if (result.budgetExceeded) {
           console.log(output.yellow('Budget exceeded'));
         }
       }
 
       console.log();
-
     } catch (error) {
       console.error(`\n${output.status('error', error.message)}\n`);
     }
@@ -421,4 +444,5 @@ ${output.bold('Example Queries:')}
   prompt();
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-chat', main);

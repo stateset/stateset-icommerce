@@ -502,28 +502,46 @@ mod tests {
 
     #[test]
     fn test_credit_account_status_from_str() {
-        assert_eq!(CreditAccountStatus::from_str("active").unwrap(), CreditAccountStatus::Active);
-        assert_eq!(CreditAccountStatus::from_str("OnHold").unwrap(), CreditAccountStatus::OnHold);
+        assert_eq!(
+            CreditAccountStatus::from_str("active").unwrap(),
+            CreditAccountStatus::Active
+        );
+        assert_eq!(
+            CreditAccountStatus::from_str("OnHold").unwrap(),
+            CreditAccountStatus::OnHold
+        );
         assert!(CreditAccountStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_risk_rating_from_str() {
         assert_eq!(RiskRating::from_str("low").unwrap(), RiskRating::Low);
-        assert_eq!(RiskRating::from_str("CRITICAL").unwrap(), RiskRating::Critical);
+        assert_eq!(
+            RiskRating::from_str("CRITICAL").unwrap(),
+            RiskRating::Critical
+        );
         assert!(RiskRating::from_str("nope").is_err());
     }
 
     #[test]
     fn test_credit_hold_type_from_str() {
-        assert_eq!(CreditHoldType::from_str("overlimit").unwrap(), CreditHoldType::OverLimit);
-        assert_eq!(CreditHoldType::from_str("past_due").unwrap(), CreditHoldType::PastDue);
+        assert_eq!(
+            CreditHoldType::from_str("overlimit").unwrap(),
+            CreditHoldType::OverLimit
+        );
+        assert_eq!(
+            CreditHoldType::from_str("past_due").unwrap(),
+            CreditHoldType::PastDue
+        );
         assert!(CreditHoldType::from_str("nope").is_err());
     }
 
     #[test]
     fn test_credit_hold_status_from_str() {
-        assert_eq!(CreditHoldStatus::from_str("released").unwrap(), CreditHoldStatus::Released);
+        assert_eq!(
+            CreditHoldStatus::from_str("released").unwrap(),
+            CreditHoldStatus::Released
+        );
         assert!(CreditHoldStatus::from_str("nope").is_err());
     }
 

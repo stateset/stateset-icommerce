@@ -71,7 +71,11 @@ impl Inventory {
     }
 
     #[cfg(feature = "events")]
-    fn emit_reservation_event(&self, reservation_id: Uuid, event: fn(InventoryReservation, String) -> CommerceEvent) {
+    fn emit_reservation_event(
+        &self,
+        reservation_id: Uuid,
+        event: fn(InventoryReservation, String) -> CommerceEvent,
+    ) {
         let reservation = match self.db.inventory().get_reservation(reservation_id) {
             Ok(Some(reservation)) => reservation,
             _ => return,
@@ -163,7 +167,12 @@ impl Inventory {
     /// # Ok::<(), CommerceError>(())
     /// ```
     #[tracing::instrument(skip(self), fields(sku = %sku, quantity = %quantity))]
-    pub fn adjust(&self, sku: &str, quantity: Decimal, reason: &str) -> Result<InventoryTransaction> {
+    pub fn adjust(
+        &self,
+        sku: &str,
+        quantity: Decimal,
+        reason: &str,
+    ) -> Result<InventoryTransaction> {
         tracing::info!("adjusting inventory");
         let transaction = self.db.inventory().adjust(stateset_core::AdjustInventory {
             sku: sku.to_string(),
@@ -230,14 +239,17 @@ impl Inventory {
         expires_in_seconds: Option<i64>,
     ) -> Result<InventoryReservation> {
         tracing::info!("reserving inventory");
-        let reservation = self.db.inventory().reserve(stateset_core::ReserveInventory {
-            sku: sku.to_string(),
-            location_id: None,
-            quantity,
-            reference_type: reference_type.to_string(),
-            reference_id: reference_id.to_string(),
-            expires_in_seconds,
-        })?;
+        let reservation = self
+            .db
+            .inventory()
+            .reserve(stateset_core::ReserveInventory {
+                sku: sku.to_string(),
+                location_id: None,
+                quantity,
+                reference_type: reference_type.to_string(),
+                reference_id: reference_id.to_string(),
+                expires_in_seconds,
+            })?;
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::InventoryReserved {

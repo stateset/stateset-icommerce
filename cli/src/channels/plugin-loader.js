@@ -244,12 +244,7 @@ function scanDirectory(dirPath, origin) {
  * @returns {Promise<PluginLoadResult[]>}
  */
 export async function loadPlugins(plugins, opts = {}) {
-  const {
-    pluginConfigs = {},
-    configState,
-    runtime,
-    verbose = false,
-  } = opts;
+  const { pluginConfigs = {}, configState, runtime, verbose = false } = opts;
 
   const results = [];
   const registry = getPluginRegistry();
@@ -260,9 +255,16 @@ export async function loadPlugins(plugins, opts = {}) {
     // Check if enabled
     if (configState && !configState.isEnabled(id)) {
       if (verbose) {
-        console.log(`[PluginLoader] Skipping disabled plugin: ${id} (${configState.getDisableReason(id)})`);
+        console.log(
+          `[PluginLoader] Skipping disabled plugin: ${id} (${configState.getDisableReason(id)})`,
+        );
       }
-      results.push({ id, origin, loaded: false, error: `disabled: ${configState.getDisableReason(id)}` });
+      results.push({
+        id,
+        origin,
+        loaded: false,
+        error: `disabled: ${configState.getDisableReason(id)}`,
+      });
       continue;
     }
 
@@ -276,7 +278,12 @@ export async function loadPlugins(plugins, opts = {}) {
       const validation = validateConfig(pluginConfig, manifest.configSchema);
       if (!validation.valid) {
         console.error(`[PluginLoader] Config validation failed for "${id}":`, validation.errors);
-        results.push({ id, origin, loaded: false, error: `config validation: ${validation.errors.join(', ')}` });
+        results.push({
+          id,
+          origin,
+          loaded: false,
+          error: `config validation: ${validation.errors.join(', ')}`,
+        });
         continue;
       }
     }
@@ -332,7 +339,9 @@ export async function discoverAndLoadPlugins(opts = {}) {
   const discovered = discoverPlugins(opts);
 
   if (opts.verbose) {
-    console.log(`[PluginLoader] Discovered ${discovered.length} plugins from ${new Set(discovered.map((p) => p.origin)).size} origin(s)`);
+    console.log(
+      `[PluginLoader] Discovered ${discovered.length} plugins from ${new Set(discovered.map((p) => p.origin)).size} origin(s)`,
+    );
     for (const p of discovered) {
       console.log(`  - ${p.id} (${p.origin}) v${p.manifest.version}`);
     }

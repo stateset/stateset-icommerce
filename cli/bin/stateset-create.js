@@ -75,9 +75,9 @@ async function main() {
       stats: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
-      version: { type: 'boolean', short: 'v', default: false }
+      version: { type: 'boolean', short: 'v', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   // Initialize output formatter
@@ -108,7 +108,9 @@ async function main() {
   if (!values.json) {
     console.log(`\n${ICONS.order} StateSet Create - Storefront Generator`);
     console.log(`   ${output.dim('Directory:')} ${workDir}`);
-    console.log(`   ${output.dim('Mode:')}      ${values.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(
+      `   ${output.dim('Mode:')}      ${values.apply ? output.green('Write enabled') : output.yellow('Preview only')}`,
+    );
     if (values.verbose) {
       console.log(`   ${output.dim('Verbose:')}   ${output.cyan('Enabled')}`);
     }
@@ -122,7 +124,7 @@ async function main() {
   // Create scaffold MCP server
   const mcpServer = createScaffoldMcpServer({
     workDir,
-    allowWrite: values.apply
+    allowWrite: values.apply,
   });
 
   // Get agent config
@@ -133,21 +135,21 @@ async function main() {
     const toolResults = [];
 
     // Run the agent
-    const mcpTools = SCAFFOLD_TOOL_NAMES.map(t => `mcp__stateset-scaffold__${t}`);
+    const mcpTools = SCAFFOLD_TOOL_NAMES.map((t) => `mcp__stateset-scaffold__${t}`);
     for await (const message of query({
       prompt: request,
       options: {
         model: values.model,
         systemPrompt: agentConfig.systemPrompt,
         mcpServers: {
-          'stateset-scaffold': mcpServer
+          'stateset-scaffold': mcpServer,
         },
         // Restrict to only MCP scaffold tools
         tools: mcpTools,
         // Auto-allow all MCP tools without permission prompts
         allowedTools: mcpTools,
-        maxTurns: 15
-      }
+        maxTurns: 15,
+      },
     })) {
       // Debug: log all message types
       if (values.verbose) {
@@ -156,7 +158,10 @@ async function main() {
           console.log(`[DEBUG] System message:`, JSON.stringify(message).slice(0, 500));
         }
         if (message.type === 'assistant') {
-          console.log(`[DEBUG] Assistant content:`, JSON.stringify(message.content || message).slice(0, 300));
+          console.log(
+            `[DEBUG] Assistant content:`,
+            JSON.stringify(message.content || message).slice(0, 300),
+          );
         }
       }
       if (message.type === 'assistant') {
@@ -168,7 +173,7 @@ async function main() {
               const toolCall = {
                 name: block.name,
                 input: block.input,
-                startTime: Date.now()
+                startTime: Date.now(),
               };
               toolResults.push({ toolCall, result: null });
 
@@ -184,7 +189,7 @@ async function main() {
           }
         }
       } else if (message.type === 'result') {
-        const pending = toolResults.find(tr => tr.result === null);
+        const pending = toolResults.find((tr) => tr.result === null);
         if (pending) {
           pending.result = message.content;
           pending.duration = Date.now() - pending.toolCall.startTime;
@@ -192,7 +197,7 @@ async function main() {
             pending.toolCall.name,
             pending.toolCall.input,
             pending.result,
-            pending.duration
+            pending.duration,
           );
         }
       }
@@ -202,18 +207,24 @@ async function main() {
 
     // JSON output
     if (values.json) {
-      console.log(JSON.stringify({
-        request,
-        workDir,
-        allowWrite: values.apply,
-        toolResults: toolResults.map(tr => ({
-          tool: tr.toolCall.name,
-          input: tr.toolCall.input,
-          result: tr.result,
-          duration: tr.duration
-        })),
-        telemetry: values.stats ? telemetry.getSummary() : undefined
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            request,
+            workDir,
+            allowWrite: values.apply,
+            toolResults: toolResults.map((tr) => ({
+              tool: tr.toolCall.name,
+              input: tr.toolCall.input,
+              result: tr.result,
+              duration: tr.duration,
+            })),
+            telemetry: values.stats ? telemetry.getSummary() : undefined,
+          },
+          null,
+          2,
+        ),
+      );
     } else {
       // Show stats if requested
       if ((values.stats || values.verbose) && telemetry.getSummary) {
@@ -245,4 +256,5 @@ async function main() {
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-create', main);

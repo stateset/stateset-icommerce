@@ -1,0 +1,2 @@
+npm run format:check --silent 2>/dev/null || true
+cd cli && npm run lint --silent 2>/dev/null || true

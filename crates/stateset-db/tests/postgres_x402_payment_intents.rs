@@ -1,7 +1,7 @@
 #[cfg(feature = "postgres")]
 use stateset_core::{
-    CreateX402PaymentIntent, SignX402PaymentIntent, X402Asset, X402IntentStatus,
-    X402Network, X402PaymentIntentFilter,
+    CreateX402PaymentIntent, SignX402PaymentIntent, X402Asset, X402IntentStatus, X402Network,
+    X402PaymentIntentFilter,
 };
 #[cfg(feature = "postgres")]
 use stateset_db::PostgresDatabase;
@@ -96,10 +96,7 @@ async fn postgres_x402_payment_intent_smoke() {
         .expect("settle intent");
     assert_eq!(settled.status, X402IntentStatus::Settled);
 
-    let for_cart = repo
-        .for_cart_async(cart_id)
-        .await
-        .expect("for_cart");
+    let for_cart = repo.for_cart_async(cart_id).await.expect("for_cart");
     assert!(for_cart.iter().any(|i| i.id == intent.id));
 
     let list = repo

@@ -58,12 +58,12 @@ fn snapshot_customer_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,             // cid
-                row.get::<_, String>(1)?,          // name
-                row.get::<_, String>(2)?,          // type
-                row.get::<_, i32>(3)?,             // notnull
-                row.get::<_, Option<String>>(4)?,  // default value (nullable)
-                row.get::<_, i32>(5)?,             // pk
+                row.get::<_, i32>(0)?,            // cid
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, i32>(3)?,            // notnull
+                row.get::<_, Option<String>>(4)?, // default value (nullable)
+                row.get::<_, i32>(5)?,            // pk
             ))
         })
         .expect("Failed to query customers");
@@ -84,12 +84,12 @@ fn snapshot_orders_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,             // cid
-                row.get::<_, String>(1)?,          // name
-                row.get::<_, String>(2)?,          // type
-                row.get::<_, i32>(3)?,             // notnull
-                row.get::<_, Option<String>>(4)?,  // default value (nullable)
-                row.get::<_, i32>(5)?,             // pk
+                row.get::<_, i32>(0)?,            // cid
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, i32>(3)?,            // notnull
+                row.get::<_, Option<String>>(4)?, // default value (nullable)
+                row.get::<_, i32>(5)?,            // pk
             ))
         })
         .expect("Failed to query orders");
@@ -110,12 +110,12 @@ fn snapshot_inventory_items_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,             // cid
-                row.get::<_, String>(1)?,          // name
-                row.get::<_, String>(2)?,          // type
-                row.get::<_, i32>(3)?,             // notnull
-                row.get::<_, Option<String>>(4)?,  // default value (nullable)
-                row.get::<_, i32>(5)?,             // pk
+                row.get::<_, i32>(0)?,            // cid
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, i32>(3)?,            // notnull
+                row.get::<_, Option<String>>(4)?, // default value (nullable)
+                row.get::<_, i32>(5)?,            // pk
             ))
         })
         .expect("Failed to query inventory_items");
@@ -136,12 +136,12 @@ fn snapshot_subscriptions_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,             // cid
-                row.get::<_, String>(1)?,          // name
-                row.get::<_, String>(2)?,          // type
-                row.get::<_, i32>(3)?,             // notnull
-                row.get::<_, Option<String>>(4)?,  // default value (nullable)
-                row.get::<_, i32>(5)?,             // pk
+                row.get::<_, i32>(0)?,            // cid
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, i32>(3)?,            // notnull
+                row.get::<_, Option<String>>(4)?, // default value (nullable)
+                row.get::<_, i32>(5)?,            // pk
             ))
         })
         .expect("Failed to query subscriptions");
@@ -162,12 +162,12 @@ fn snapshot_payments_table_schema() {
     let columns = stmt
         .query_map([], |row| {
             Ok((
-                row.get::<_, i32>(0)?,             // cid
-                row.get::<_, String>(1)?,          // name
-                row.get::<_, String>(2)?,          // type
-                row.get::<_, i32>(3)?,             // notnull
-                row.get::<_, Option<String>>(4)?,  // default value (nullable)
-                row.get::<_, i32>(5)?,             // pk
+                row.get::<_, i32>(0)?,            // cid
+                row.get::<_, String>(1)?,         // name
+                row.get::<_, String>(2)?,         // type
+                row.get::<_, i32>(3)?,            // notnull
+                row.get::<_, Option<String>>(4)?, // default value (nullable)
+                row.get::<_, i32>(5)?,            // pk
             ))
         })
         .expect("Failed to query payments");

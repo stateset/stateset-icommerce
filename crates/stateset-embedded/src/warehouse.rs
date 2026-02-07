@@ -38,10 +38,10 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AdjustLocationInventory, BatchResult, CreateLocation, CreateWarehouse, CreateZone,
-    Location, LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement,
-    MoveInventory, MovementFilter, Result, UpdateLocation, UpdateWarehouse, UpdateZone,
-    Warehouse, WarehouseFilter, WarehouseRepository, Zone,
+    AdjustLocationInventory, BatchResult, CreateLocation, CreateWarehouse, CreateZone, Location,
+    LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement, MoveInventory,
+    MovementFilter, Result, UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse,
+    WarehouseFilter, Zone,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -253,7 +253,9 @@ impl WarehouseOps {
 
     /// Get all active locations for a warehouse.
     pub fn get_locations_for_warehouse(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self.db.warehouse().get_locations_for_warehouse(warehouse_id)
+        self.db
+            .warehouse()
+            .get_locations_for_warehouse(warehouse_id)
     }
 
     /// Get pickable locations with available inventory for a SKU.
@@ -261,7 +263,9 @@ impl WarehouseOps {
     /// Returns locations that are marked as pickable and have available
     /// (non-reserved) inventory for the specified SKU.
     pub fn get_pickable_locations(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>> {
-        self.db.warehouse().get_pickable_locations(warehouse_id, sku)
+        self.db
+            .warehouse()
+            .get_pickable_locations(warehouse_id, sku)
     }
 
     /// Get receivable locations for a warehouse.
@@ -274,7 +278,10 @@ impl WarehouseOps {
     /// Create multiple locations in a batch.
     ///
     /// Returns a BatchResult with succeeded and failed operations.
-    pub fn create_locations_batch(&self, inputs: Vec<CreateLocation>) -> Result<BatchResult<Location>> {
+    pub fn create_locations_batch(
+        &self,
+        inputs: Vec<CreateLocation>,
+    ) -> Result<BatchResult<Location>> {
         self.db.warehouse().create_locations_batch(inputs)
     }
 
@@ -293,7 +300,11 @@ impl WarehouseOps {
     }
 
     /// Get all locations with inventory for a SKU within a warehouse.
-    pub fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
+    pub fn get_inventory_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<LocationInventory>> {
         self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)
     }
 
@@ -359,7 +370,10 @@ impl WarehouseOps {
     }
 
     /// List location inventory with optional filtering.
-    pub fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
+    pub fn list_location_inventory(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>> {
         self.db.warehouse().list_location_inventory(filter)
     }
 
@@ -367,13 +381,19 @@ impl WarehouseOps {
     ///
     /// Sums available quantity (on_hand - reserved) across all locations.
     pub fn get_total_available(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self
+            .db
+            .warehouse()
+            .get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_available).sum())
     }
 
     /// Get total on-hand quantity for a SKU across a warehouse.
     pub fn get_total_on_hand(&self, warehouse_id: i32, sku: &str) -> Result<Decimal> {
-        let inventory = self.db.warehouse().get_inventory_for_sku(warehouse_id, sku)?;
+        let inventory = self
+            .db
+            .warehouse()
+            .get_inventory_for_sku(warehouse_id, sku)?;
         Ok(inventory.iter().map(|i| i.quantity_on_hand).sum())
     }
 

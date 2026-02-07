@@ -30,7 +30,7 @@ export class ToolDiscoveryEngine {
       alternatives: metadata.alternatives || [],
       examples: metadata.examples || [],
       errorPatterns: metadata.errorPatterns || {},
-      failureRecovery: metadata.failureRecovery || []
+      failureRecovery: metadata.failureRecovery || [],
     });
 
     // Register by category
@@ -55,32 +55,53 @@ export class ToolDiscoveryEngine {
    * Helps agents find the right tool based on what they want to accomplish
    */
   discoverToolsByIntent(intent) {
-    const意图Mapping = {
-      'create_customer': ['create_customer'],
-      'view_customer': ['list_customers', 'get_customer'],
-      'place_order': ['get_customer', 'get_product', 'create_order'],
-      'check_inventory': ['get_stock', 'list_products'],
-      'update_order': ['update_order_status', 'ship_order', 'cancel_order'],
-      'refund_customer': ['create_return', 'approve_return'],
-      'manage_returns': ['list_returns', 'get_return', 'create_return', 'approve_return', 'reject_return'],
-      'checkout_process': ['create_cart', 'add_cart_item', 'set_cart_shipping_address', 'checkout_to_order'],
-      'get_insights': ['get_sales_summary', 'get_top_products', 'get_demand_forecast', 'get_revenue_forecast'],
-      'manage_inventory': ['get_stock', 'adjust_inventory', 'reserve_inventory', 'create_inventory_item'],
-      'handle_payments': ['list_payments', 'get_payment', 'process_payment', 'refund_payment'],
-      'manage_subscriptions': ['list_subscriptions', 'create_subscription', 'cancel_subscription'],
-      'apply_promotions': ['list_promotions', 'validate_coupon', 'apply_discount'],
-      'calculate_taxes': ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'apply_tax_to_cart'],
-      'semantic_search_products': ['vector_search_products'],
-      'semantic_search_customers': ['vector_search_customers'],
-      'semantic_search_orders': ['vector_search_orders'],
-      'semantic_search_inventory': ['vector_search_inventory'],
-      'vector_index_products': ['vector_index_product', 'vector_index_all_products'],
-      'vector_index_customers': ['vector_index_customer', 'vector_index_all_customers'],
-      'vector_index_orders': ['vector_index_order', 'vector_index_all_orders'],
-      'vector_index_inventory': ['vector_index_inventory', 'vector_index_all_inventory']
+    const intentMapping = {
+      create_customer: ['create_customer'],
+      view_customer: ['list_customers', 'get_customer'],
+      place_order: ['get_customer', 'get_product', 'create_order'],
+      check_inventory: ['get_stock', 'list_products'],
+      update_order: ['update_order_status', 'ship_order', 'cancel_order'],
+      refund_customer: ['create_return', 'approve_return'],
+      manage_returns: [
+        'list_returns',
+        'get_return',
+        'create_return',
+        'approve_return',
+        'reject_return',
+      ],
+      checkout_process: [
+        'create_cart',
+        'add_cart_item',
+        'set_cart_shipping_address',
+        'checkout_to_order',
+      ],
+      get_insights: [
+        'get_sales_summary',
+        'get_top_products',
+        'get_demand_forecast',
+        'get_revenue_forecast',
+      ],
+      manage_inventory: [
+        'get_stock',
+        'adjust_inventory',
+        'reserve_inventory',
+        'create_inventory_item',
+      ],
+      handle_payments: ['list_payments', 'get_payment', 'process_payment', 'refund_payment'],
+      manage_subscriptions: ['list_subscriptions', 'create_subscription', 'cancel_subscription'],
+      apply_promotions: ['list_promotions', 'validate_coupon', 'apply_discount'],
+      calculate_taxes: ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'apply_tax_to_cart'],
+      semantic_search_products: ['vector_search_products'],
+      semantic_search_customers: ['vector_search_customers'],
+      semantic_search_orders: ['vector_search_orders'],
+      semantic_search_inventory: ['vector_search_inventory'],
+      vector_index_products: ['vector_index_product', 'vector_index_all_products'],
+      vector_index_customers: ['vector_index_customer', 'vector_index_all_customers'],
+      vector_index_orders: ['vector_index_order', 'vector_index_all_orders'],
+      vector_index_inventory: ['vector_index_inventory', 'vector_index_all_inventory'],
     };
 
-    return 意图Mapping[intent] || [];
+    return intentMapping[intent] || [];
   }
 
   /**
@@ -89,41 +110,41 @@ export class ToolDiscoveryEngine {
    */
   getOrchestrationPlan(operationType) {
     const plans = {
-      'full_checkout': [
-        'create_customer',           // Step 1: Create customer if needed
-        'create_cart',               // Step 2: Create shopping cart
-        'add_cart_item',             // Step 3: Add items (repeatable)
-        'get_stock',                 // Step 4: Verify inventory
+      full_checkout: [
+        'create_customer', // Step 1: Create customer if needed
+        'create_cart', // Step 2: Create shopping cart
+        'add_cart_item', // Step 3: Add items (repeatable)
+        'get_stock', // Step 4: Verify inventory
         'set_cart_shipping_address', // Step 5: Set shipping address
-        'get_shipping_rates',        // Step 6: Get shipping options
-        'calculate_cart_tax',        // Step 7: Calculate taxes
-        'checkout_to_order'          // Step 8: Convert cart to order
+        'get_shipping_rates', // Step 6: Get shipping options
+        'calculate_cart_tax', // Step 7: Calculate taxes
+        'checkout_to_order', // Step 8: Convert cart to order
       ],
-      'order_fulfillment': [
-        'get_order',                 // Step 1: Get order details
-        'get_stock',                 // Step 2: Verify inventory
-        'reserve_inventory',         // Step 3: Reserve items
-        'confirm_reservation',       // Step 4: Deduct stock
-        'update_order_status',       // Step 5: Mark as processing
-        'ship_order',                // Step 6: Ship with tracking
-        'send_order_confirmation'    // Step 7: Notify customer
+      order_fulfillment: [
+        'get_order', // Step 1: Get order details
+        'get_stock', // Step 2: Verify inventory
+        'reserve_inventory', // Step 3: Reserve items
+        'confirm_reservation', // Step 4: Deduct stock
+        'update_order_status', // Step 5: Mark as processing
+        'ship_order', // Step 6: Ship with tracking
+        'send_order_confirmation', // Step 7: Notify customer
       ],
-      'return_process': [
-        'get_order',                 // Step 1: Get order details
-        'get_return',                // Step 2: Check if return exists
-        'create_return',             // Step 3: Create return if needed
-        'approve_return',            // Step 4: Approve return
-        'returns_receive_items',     // Step 5: Mark as received
-        ' refund_payment',           // Step 6: Refund customer
-        'restock_inventory'          // Step 7: Return to stock
+      return_process: [
+        'get_order', // Step 1: Get order details
+        'get_return', // Step 2: Check if return exists
+        'create_return', // Step 3: Create return if needed
+        'approve_return', // Step 4: Approve return
+        'returns_receive_items', // Step 5: Mark as received
+        ' refund_payment', // Step 6: Refund customer
+        'restock_inventory', // Step 7: Return to stock
       ],
-      'inventory_replenishment': [
-        'get_stock',                 // Step 1: Check current levels
-        'get_low_stock_items',       // Step 2: Items below threshold
-        'create_purchase_order',     // Step 3: Order from supplier
-        'receive_shipment',          // Step 4: Receive items
-        'adjust_inventory'           // Step 5: Update inventory
-      ]
+      inventory_replenishment: [
+        'get_stock', // Step 1: Check current levels
+        'get_low_stock_items', // Step 2: Items below threshold
+        'create_purchase_order', // Step 3: Order from supplier
+        'receive_shipment', // Step 4: Receive items
+        'adjust_inventory', // Step 5: Update inventory
+      ],
     };
 
     return plans[operationType] || [];
@@ -143,7 +164,7 @@ export class ToolDiscoveryEngine {
       executionOrder: this.getExecutionOrder(toolName),
       commonErrors: this.getCommonErrors(toolName),
       bestPractices: this.getBestPractices(toolName),
-      performance: this.getPerformanceMetrics(toolName)
+      performance: this.getPerformanceMetrics(toolName),
     };
   }
 
@@ -153,13 +174,16 @@ export class ToolDiscoveryEngine {
    */
   getExecutionOrder(toolName) {
     const orderRules = {
-      'create_order': { mustPrecede: ['update_order_status', 'ship_order', 'cancel_order'] },
-      'create_cart': { mustPrecede: ['add_cart_item', 'checkout_to_order'] },
-      'add_cart_item': { mustFollow: ['create_cart'], mustPrecede: ['checkout_to_order'] },
-      'checkout_to_order': { mustFollow: ['create_cart', 'add_cart_item'], mustPrecede: ['update_order_status'] },
-      'reserve_inventory': { mustPrecede: ['confirm_reservation'] },
-      'approve_return': { mustPrecede: ['refund_payment', 'restock_inventory'] },
-      'create_purchase_order': { mustPrecede: ['receive_shipment'] }
+      create_order: { mustPrecede: ['update_order_status', 'ship_order', 'cancel_order'] },
+      create_cart: { mustPrecede: ['add_cart_item', 'checkout_to_order'] },
+      add_cart_item: { mustFollow: ['create_cart'], mustPrecede: ['checkout_to_order'] },
+      checkout_to_order: {
+        mustFollow: ['create_cart', 'add_cart_item'],
+        mustPrecede: ['update_order_status'],
+      },
+      reserve_inventory: { mustPrecede: ['confirm_reservation'] },
+      approve_return: { mustPrecede: ['refund_payment', 'restock_inventory'] },
+      create_purchase_order: { mustPrecede: ['receive_shipment'] },
     };
 
     return orderRules[toolName] || {};
@@ -178,24 +202,24 @@ export class ToolDiscoveryEngine {
    */
   getBestPractices(toolName) {
     const bestPractices = {
-      'create_order': [
+      create_order: [
         'Always verify customer exists with get_customer first',
         'Check inventory levels with get_stock before ordering',
         'Validate all product SKUs are in stock',
-        'Consider using carts for complex checkouts'
+        'Consider using carts for complex checkouts',
       ],
-      'reserve_inventory': [
+      reserve_inventory: [
         'Set appropriate expiration times (e.g., 30 minutes for checkout)',
         'Always confirm reservations after order completion',
         'Release reservations if order is cancelled',
-        'Handle insufficient stock gracefully'
+        'Handle insufficient stock gracefully',
       ],
-      'create_return': [
+      create_return: [
         'Verify order status is shipped or delivered',
         'Check return eligibility period',
         'Document return reasons for analytics',
-        'Take photos of damaged items if applicable'
-      ]
+        'Take photos of damaged items if applicable',
+      ],
     };
 
     return bestPractices[toolName] || [];
@@ -206,12 +230,12 @@ export class ToolDiscoveryEngine {
    */
   getPerformanceMetrics(toolName) {
     const metrics = {
-      'list_orders': { avgLatency: '50ms', p99: '200ms', recommended: true },
-      'create_order': { avgLatency: '100ms', p99: '500ms', recommended: true },
-      'get_stock': { avgLatency: '20ms', p99: '50ms', recommended: true },
-      'reserve_inventory': { avgLatency: '30ms', p99: '100ms', recommended: true },
-      'checkout_to_order': { avgLatency: '200ms', p99: '1s', recommended: true },
-      'adjust_inventory': { avgLatency: '40ms', p99: '150ms', recommended: true }
+      list_orders: { avgLatency: '50ms', p99: '200ms', recommended: true },
+      create_order: { avgLatency: '100ms', p99: '500ms', recommended: true },
+      get_stock: { avgLatency: '20ms', p99: '50ms', recommended: true },
+      reserve_inventory: { avgLatency: '30ms', p99: '100ms', recommended: true },
+      checkout_to_order: { avgLatency: '200ms', p99: '1s', recommended: true },
+      adjust_inventory: { avgLatency: '40ms', p99: '150ms', recommended: true },
     };
 
     return metrics[toolName];
@@ -256,7 +280,7 @@ export class ToolDiscoveryEngine {
           name,
           category: tool.category,
           description: tool.description,
-          purpose: tool.purpose
+          purpose: tool.purpose,
         });
       }
     }
@@ -271,8 +295,8 @@ export class ToolDiscoveryEngine {
   recommendTools(conversationHistory, currentIntent) {
     const recommendations = [];
     const recentTools = conversationHistory
-      .filter(entry => entry.toolUsed)
-      .map(entry => entry.toolUsed)
+      .filter((entry) => entry.toolUsed)
+      .map((entry) => entry.toolUsed)
       .slice(-5); // Last 5 tools used
 
     // Recommend based on current intent
@@ -304,7 +328,7 @@ export class ToolDiscoveryEngine {
         whenToUse: tool.whenToUse,
         complexity: tool.complexity,
         relatedTools: tool.relatedTools,
-        examples: tool.examples
+        examples: tool.examples,
       };
     }
     return exported;
@@ -331,5 +355,5 @@ export const TOOL_CATEGORIES = {
   MANUFACTURING: 'Manufacturing',
   PURCHASING: 'Purchasing',
   FINANCE: 'Finance',
-  SYNC: 'Sync'
+  SYNC: 'Sync',
 };

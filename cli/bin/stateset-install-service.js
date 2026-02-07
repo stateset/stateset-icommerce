@@ -164,7 +164,10 @@ function installSystemd() {
     log('User "stateset" already exists.');
     recordStep({ action: 'user-check', target: 'stateset', status: 'ok' });
   } catch {
-    run('useradd --system --no-create-home --shell /usr/sbin/nologin stateset', 'Create stateset user');
+    run(
+      'useradd --system --no-create-home --shell /usr/sbin/nologin stateset',
+      'Create stateset user',
+    );
   }
 
   // Create directories
@@ -219,7 +222,9 @@ function uninstallSystemd() {
   run('systemctl daemon-reload', 'Reload systemd');
 
   if (!jsonOutput) {
-    console.log('\n[StateSet] Service uninstalled. Data in /opt/stateset and /etc/stateset left intact.\n');
+    console.log(
+      '\n[StateSet] Service uninstalled. Data in /opt/stateset and /etc/stateset left intact.\n',
+    );
   }
 }
 
@@ -323,4 +328,5 @@ function main() {
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-install-service', main);

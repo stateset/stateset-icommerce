@@ -112,7 +112,6 @@ fn test_create_cart() {
 fn test_create_cart_for_customer() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_id = create_test_customer(&commerce);
-    let product_id = Uuid::new_v4();
 
     let cart = commerce
         .carts()
@@ -644,7 +643,7 @@ fn test_get_shipping_rates() {
         .expect("Failed to get shipping rates");
 
     // Should return available rates (implementation dependent)
-    assert!(rates.len() >= 0);
+    assert!(!rates.is_empty());
 }
 
 // ============================================================================
@@ -1125,7 +1124,7 @@ fn test_get_expired_carts() {
         .get_expired()
         .expect("Failed to get expired carts");
 
-    assert!(expired.len() >= 1);
+    assert!(!expired.is_empty());
     assert!(expired.iter().all(|c| c.status == CartStatus::Expired));
 }
 

@@ -1,149 +1,152 @@
-const { PluginAPI } = require('@stateset/cli/src/channels/plugin-api');
+/**
+ * Manifest Example Plugin
+ *
+ * A complete example plugin that pairs with `stateset.plugin.json`.
+ *
+ * Demonstrates:
+ * - commands: `api.registerCommand()`
+ * - services: `api.registerService()`
+ * - HTTP routes: `api.registerHttpRoute()`
+ */
 
-async function init(api, context) {
-  const { config, manifest, origin, runtime } = context;
-  const { displayName, version } = manifest;
+export default function init(api, context = {}) {
+  const { config = {}, manifest = {}, origin } = context;
 
-  async function log(level, message) {
+  const displayName = manifest.name || 'Manifest Example Plugin';
+  const version = manifest.version || '0.0.0';
+
+  function log(level, message) {
     const allowedLevels = ['debug', 'info', 'warn', 'error'];
     const configLevel = config.logLevel || 'info';
-    
     if (allowedLevels.indexOf(level) >= allowedLevels.indexOf(configLevel)) {
       console.log(`[${displayName}] ${level.toUpperCase()}: ${message}`);
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Commands
+  // -------------------------------------------------------------------------
+
   api.registerCommand({
-    name: 'example:greet',
-    description: 'Greet the user with personalized message',
-    options: [
-      { name: 'name', type: 'String', description: 'Your name', required: false }
-    ]
-  }, async (args, req) => {
-    const name = args.name || 'User';
-    log('info', `Greeting command executed for ${name}`);
-    return { message: `Hello, ${name}! Welcome to ${displayName} v${version}.` };
+    name: 'example-greet',
+    description: 'Greet the user with a personalized message',
+    acceptsArgs: true,
+    handler: async (argText) => {
+      const name = (argText || '').trim() || 'User';
+      log('info', `Greeting command executed for ${name}`);
+      return { response: `Hello, ${name}! Welcome to ${displayName} v${version}.` };
+    },
   });
 
   api.registerCommand({
-    name: 'example:status',
-    description: 'Display plugin status and configuration',
-    options: []
-  }, async (args, req) => {
-    log('info', 'Status command executed');
-    return {
-      plugin: displayName,
-      version,
-      status: config.enabled ? 'enabled' : 'disabled',
-      origin,
-      runtime: {
-        version: runtime.version,
-        environment: runtime.environment
-      },
-      config: {
-        enabled: config.enabled,
-        maxRetries: config.maxRetries ?? 3,
-        logLevel: config.logLevel ?? 'info',
-        hasApiKey: !!config.apiKey
-      }
-    };
-  });
-
-  api.registerCommand({
-    name: 'example:metrics',
-    description: 'Display plugin performance metrics',
-    options: []
-  }, async (args, req) => {
-    log('info', 'Metrics command executed');
-    return {
-      plugin: displayName,
-      metrics: {
-        uptime: process.uptime(),
-        memoryUsage: {
-          rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
-          heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB',
-          heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+    name: 'example-status',
+    description: 'Display plugin status and configuration (demo)',
+    acceptsArgs: false,
+    handler: async () => {
+      const status = {
+        plugin: displayName,
+        version,
+        enabled: !!config.enabled,
+        origin: origin || 'unknown',
+        config: {
+          enabled: !!config.enabled,
+          maxRetries: config.maxRetries ?? 3,
+          logLevel: config.logLevel ?? 'info',
+          hasApiKey: !!config.apiKey,
         },
-        commandsExecuted: 0,
-        eventsProcessed: 0,
-        servicesActive: 1
-      },
-      timestamp: new Date().toISOString()
-    };
+      };
+      return { response: JSON.stringify(status, null, 2) };
+    },
   });
+
+  api.registerCommand({
+    name: 'example-metrics',
+    description: 'Display plugin performance metrics (demo)',
+    acceptsArgs: false,
+    handler: async () => {
+      const metrics = {
+        uptimeS: process.uptime(),
+        memoryUsage: {
+          rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+          heapTotalMB: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+          heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return { response: JSON.stringify(metrics, null, 2) };
+    },
+  });
+
+  // -------------------------------------------------------------------------
+  // HTTP routes
+  // -------------------------------------------------------------------------
 
   api.registerHttpRoute({
     method: 'GET',
     path: '/example/health',
-    description: 'Health check endpoint'
-  }, async (req, res) => {
-    log('info', 'Health check requested');
-    res.json({
-      status: 'healthy',
-      plugin: displayName,
-      version,
-      enabled: config.enabled,
-      timestamp: new Date().toISOString()
-    });
+    level: 'none',
+    handler: async () => {
+      log('info', 'Health check requested');
+      return {
+        status: 200,
+        body: {
+          status: 'healthy',
+          plugin: displayName,
+          version,
+          enabled: !!config.enabled,
+          timestamp: new Date().toISOString(),
+        },
+      };
+    },
   });
 
   api.registerHttpRoute({
     method: 'POST',
     path: '/example/data',
-    description: 'Accept and process data'
-  }, async (req, res) => {
-    try {
-      const { data } = req.body;
-      log('info', `Data received: ${JSON.stringify(data)}`);
+    level: 'write',
+    handler: async ({ body }) => {
+      try {
+        const data = body?.data;
+        log('info', `Data received: ${JSON.stringify(data)}`);
 
-      if (!config.enabled) {
-        return res.status(403).json({ error: 'Plugin is disabled' });
+        if (!config.enabled) {
+          return { status: 403, body: { error: 'Plugin is disabled' } };
+        }
+
+        return {
+          status: 200,
+          body: {
+            success: true,
+            processedAt: new Date().toISOString(),
+            data,
+          },
+        };
+      } catch (error) {
+        log('error', `Error processing data: ${error.message}`);
+        return { status: 500, body: { error: error.message } };
       }
-
-      res.json({
-        success: true,
-        processedAt: new Date().toISOString(),
-        data
-      });
-    } catch (error) {
-      log('error', `Error processing data: ${error.message}`);
-      res.status(500).json({ error: error.message });
-    }
+    },
   });
 
-  api.on('message_sending', async (data, ctx, next) => {
-    log('debug', `Message sending to ${data.channel}`);
-    return next();
+  // -------------------------------------------------------------------------
+  // Background service
+  // -------------------------------------------------------------------------
+
+  let timer = null;
+  api.registerService({
+    name: 'example-background-service',
+    start: async () => {
+      timer = setInterval(() => {
+        log('debug', 'Background service heartbeat');
+      }, 60_000);
+      if (timer.unref) timer.unref();
+    },
+    stop: async () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
   });
 
-  api.on('message_sent', async (result, ctx) => {
-    log('info', `Message sent to ${result.channel} in stream ${ctx.streamId}`);
-  });
-
-  api.on('message_failed', async (error, ctx) => {
-    log('error', `Message failed in stream ${ctx.streamId}: ${error.message}`);
-  });
-
-  api.on('agent_start', async (agent, ctx) => {
-    log('info', `Agent started: ${agent.name} (type: ${agent.type})`);
-  });
-
-  api.on('agent_end', async (result, ctx) => {
-    const status = result.success ? 'completed' : 'failed';
-    log('info', `Agent ${ctx.agentName} ${status} in ${result.duration}ms`);
-  });
-
-  const backgroundService = {
-    name: `${displayName} Monitor`,
-    type: 'monitor',
-    handler: async () => {
-      log('debug', 'Background service heartbeat');
-    }
-  };
-
-  api.registerService(backgroundService);
-
-  log('info', `Plugin initialized successfully (version: ${version}, origin: ${origin})`);
+  log('info', `Loaded v${version}`);
 }
 
-module.exports = { init };

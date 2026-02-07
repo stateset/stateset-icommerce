@@ -39,10 +39,15 @@ export function getDefaultBudgetStateFile() {
   return path.join(os.homedir(), '.stateset', 'x402', 'budget.json');
 }
 
-export function createBudgetState({ filePath = getDefaultBudgetStateFile(), startingBalance } = {}) {
+export function createBudgetState({
+  filePath = getDefaultBudgetStateFile(),
+  startingBalance,
+} = {}) {
   const persisted = readJson(filePath) || {};
   const state = {
     ...DEFAULT_STATE,
+    daily: { ...DEFAULT_STATE.daily },
+    history: [...DEFAULT_STATE.history],
     ...persisted,
   };
 

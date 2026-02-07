@@ -1,8 +1,8 @@
 //! SQLite reputation registry repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, with_immediate_transaction,
-    parse_uuid_row, parse_datetime_row, parse_datetime_opt_row,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_uuid_row, with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -10,7 +10,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
     AgentFeedback, AgentFeedbackFilter, AgentFeedbackResponse, AgentReputationRepository,
-    CreateAgentFeedback, CreateAgentFeedbackResponse, FeedbackSummary, CommerceError, Result,
+    CommerceError, CreateAgentFeedback, CreateAgentFeedbackResponse, FeedbackSummary, Result,
 };
 use uuid::Uuid;
 
@@ -61,7 +61,11 @@ impl SqliteAgentReputationRepository {
 
     fn row_to_response(row: &rusqlite::Row) -> rusqlite::Result<AgentFeedbackResponse> {
         Ok(AgentFeedbackResponse {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "agent_feedback_response", "id")?,
+            id: parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "agent_feedback_response",
+                "id",
+            )?,
             agent_registry: row.get("agent_registry")?,
             agent_id: row.get("agent_id")?,
             client_address: row.get("client_address")?,
@@ -95,14 +99,14 @@ impl SqliteAgentReputationRepository {
         } else {
             (from_decimals - to_decimals) as u32
         };
-        let factor = 10_i128
-            .checked_pow(diff)
-            .ok_or_else(|| CommerceError::ValidationError("decimal scaling overflow".to_string()))?;
+        let factor = 10_i128.checked_pow(diff).ok_or_else(|| {
+            CommerceError::ValidationError("decimal scaling overflow".to_string())
+        })?;
 
         if to_decimals > from_decimals {
-            value
-                .checked_mul(factor)
-                .ok_or_else(|| CommerceError::ValidationError("decimal scaling overflow".to_string()))
+            value.checked_mul(factor).ok_or_else(|| {
+                CommerceError::ValidationError("decimal scaling overflow".to_string())
+            })
         } else {
             Ok(value / factor)
         }
@@ -210,7 +214,12 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             .map_err(map_db_error)?;
 
         stmt.query_row(
-            rusqlite::params![agent_registry, agent_id, client_address, feedback_index as i64],
+            rusqlite::params![
+                agent_registry,
+                agent_id,
+                client_address,
+                feedback_index as i64
+            ],
             Self::row_to_feedback,
         )
         .optional()
@@ -266,7 +275,10 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
         let rows = stmt
-            .query_map(rusqlite::params_from_iter(param_refs), Self::row_to_feedback)
+            .query_map(
+                rusqlite::params_from_iter(param_refs),
+                Self::row_to_feedback,
+            )
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -340,18 +352,14 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             });
         }
 
-        let max_decimals = values
-            .iter()
-            .map(|(_, d)| *d)
-            .max()
-            .unwrap_or(0);
+        let max_decimals = values.iter().map(|(_, d)| *d).max().unwrap_or(0);
 
         let mut sum: i128 = 0;
         for (value, decimals) in values.iter() {
             let scaled = Self::scale_value(*value, *decimals, max_decimals)?;
-            sum = sum
-                .checked_add(scaled)
-                .ok_or_else(|| CommerceError::ValidationError("feedback summary overflow".to_string()))?;
+            sum = sum.checked_add(scaled).ok_or_else(|| {
+                CommerceError::ValidationError("feedback summary overflow".to_string())
+            })?;
         }
 
         Ok(FeedbackSummary {
@@ -451,7 +459,9 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -477,7 +487,12 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
         Ok(results)
     }
 
-    fn get_last_index(&self, agent_registry: &str, agent_id: &str, client_address: &str) -> Result<u64> {
+    fn get_last_index(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        client_address: &str,
+    ) -> Result<u64> {
         let conn = self.conn()?;
         let index: Option<i64> = conn
             .query_row(

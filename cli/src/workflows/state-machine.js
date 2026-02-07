@@ -24,7 +24,7 @@ export class State {
     onExit = null, // Action to execute when exiting state
     timeout = null, // Auto-transition after timeout (ms)
     timeoutTransition = null, // State to transition to on timeout
-    metadata = {}
+    metadata = {},
   }) {
     this.name = name;
     this.description = description;
@@ -47,7 +47,7 @@ export class Transition {
     condition = null, // Guard condition (returns boolean)
     action = null, // Action to execute during transition
     priority = 0, // Higher priority transitions are evaluated first
-    metadata = {}
+    metadata = {},
   }) {
     this.name = name;
     this.from = Array.isArray(from) ? from : [from];
@@ -75,7 +75,7 @@ export class WorkflowInstance {
     updatedAt = new Date().toISOString(),
     completedAt = null,
     error = null,
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.workflowId = workflowId;
@@ -105,7 +105,7 @@ export class WorkflowInstance {
       updatedAt: this.updatedAt,
       completedAt: this.completedAt,
       error: this.error,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -122,7 +122,7 @@ export class StateMachine extends EventEmitter {
     states = [],
     transitions = [],
     finalStates = [], // States that complete the workflow
-    metadata = {}
+    metadata = {},
   }) {
     super();
 
@@ -152,7 +152,7 @@ export class StateMachine extends EventEmitter {
     }
 
     // Sort transitions by priority
-    for (const [state, trans] of this.transitions) {
+    for (const trans of this.transitions.values()) {
       trans.sort((a, b) => b.priority - a.priority);
     }
 
@@ -169,7 +169,7 @@ export class StateMachine extends EventEmitter {
     }
 
     // Check all transition targets exist
-    for (const [from, trans] of this.transitions) {
+    for (const trans of this.transitions.values()) {
       for (const t of trans) {
         if (!this.states.has(t.to)) {
           throw new Error(`Transition '${t.name}' targets unknown state '${t.to}'`);
@@ -188,7 +188,9 @@ export class StateMachine extends EventEmitter {
     for (const [name, state] of this.states) {
       if (state.timeout && state.timeoutTransition) {
         if (!this.states.has(state.timeoutTransition)) {
-          throw new Error(`State '${name}' timeout targets unknown state '${state.timeoutTransition}'`);
+          throw new Error(
+            `State '${name}' timeout targets unknown state '${state.timeoutTransition}'`,
+          );
         }
       }
     }
@@ -221,25 +223,25 @@ export class StateMachine extends EventEmitter {
       name: this.name,
       description: this.description,
       initialState: this.initialState,
-      states: Array.from(this.states.values()).map(s => ({
+      states: Array.from(this.states.values()).map((s) => ({
         name: s.name,
         description: s.description,
         timeout: s.timeout,
         timeoutTransition: s.timeoutTransition,
-        metadata: s.metadata
+        metadata: s.metadata,
       })),
       transitions: Array.from(this.transitions.values())
         .flat()
-        .filter((t, i, arr) => arr.findIndex(x => x.name === t.name) === i)
-        .map(t => ({
+        .filter((t, i, arr) => arr.findIndex((x) => x.name === t.name) === i)
+        .map((t) => ({
           name: t.name,
           from: t.from,
           to: t.to,
           priority: t.priority,
-          metadata: t.metadata
+          metadata: t.metadata,
         })),
       finalStates: this.finalStates,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -251,7 +253,7 @@ export class WorkflowEngine extends EventEmitter {
   constructor({
     storePath = null,
     executor = null, // Function to execute actions
-    conditionEvaluator = null // Function to evaluate conditions
+    conditionEvaluator = null, // Function to evaluate conditions
   }) {
     super();
 
@@ -299,7 +301,7 @@ export class WorkflowEngine extends EventEmitter {
       fs.mkdirSync(this.storePath, { recursive: true });
 
       const instancesFile = path.join(this.storePath, 'workflow-instances.json');
-      const instancesData = Array.from(this.instances.values()).map(i => i.toJSON());
+      const instancesData = Array.from(this.instances.values()).map((i) => i.toJSON());
       fs.writeFileSync(instancesFile, JSON.stringify(instancesData, null, 2));
 
       this.emit('saved', { instanceCount: this.instances.size });
@@ -312,9 +314,7 @@ export class WorkflowEngine extends EventEmitter {
    * Register a workflow definition
    */
   registerWorkflow(definition) {
-    const workflow = definition instanceof StateMachine
-      ? definition
-      : new StateMachine(definition);
+    const workflow = definition instanceof StateMachine ? definition : new StateMachine(definition);
 
     this.workflows.set(workflow.id, workflow);
     this.emit('workflow:registered', { workflow: workflow.toJSON() });
@@ -333,7 +333,7 @@ export class WorkflowEngine extends EventEmitter {
    * List all workflow definitions
    */
   listWorkflows() {
-    return Array.from(this.workflows.values()).map(w => w.toJSON());
+    return Array.from(this.workflows.values()).map((w) => w.toJSON());
   }
 
   /**
@@ -351,12 +351,14 @@ export class WorkflowEngine extends EventEmitter {
       currentState: workflow.initialState,
       context,
       metadata,
-      history: [{
-        timestamp: new Date().toISOString(),
-        event: 'started',
-        state: workflow.initialState,
-        context: { ...context }
-      }]
+      history: [
+        {
+          timestamp: new Date().toISOString(),
+          event: 'started',
+          state: workflow.initialState,
+          context: { ...context },
+        },
+      ],
     });
 
     this.instances.set(instance.id, instance);
@@ -396,7 +398,7 @@ export class WorkflowEngine extends EventEmitter {
       try {
         await this.transition(instance.id, state.timeoutTransition, {
           reason: 'timeout',
-          timeoutMs: state.timeout
+          timeoutMs: state.timeout,
         });
       } catch (error) {
         this.emit('error', { type: 'timeout-transition', instanceId: instance.id, error });
@@ -424,7 +426,7 @@ export class WorkflowEngine extends EventEmitter {
 
     // Find valid transition
     const transitions = workflow.getTransitions(instance.currentState);
-    const transition = transitions.find(t => t.to === targetState);
+    const transition = transitions.find((t) => t.to === targetState);
 
     if (!transition) {
       throw new Error(`No transition from '${instance.currentState}' to '${targetState}'`);
@@ -432,7 +434,11 @@ export class WorkflowEngine extends EventEmitter {
 
     // Check guard condition
     if (transition.condition) {
-      const allowed = await this.evaluateCondition(transition.condition, instance, transitionContext);
+      const allowed = await this.evaluateCondition(
+        transition.condition,
+        instance,
+        transitionContext,
+      );
       if (!allowed) {
         throw new Error(`Transition condition not met for '${transition.name}'`);
       }
@@ -468,7 +474,7 @@ export class WorkflowEngine extends EventEmitter {
       from: previousState,
       to: targetState,
       transition: transition.name,
-      context: { ...transitionContext }
+      context: { ...transitionContext },
     });
 
     // Execute onEnter
@@ -483,7 +489,7 @@ export class WorkflowEngine extends EventEmitter {
       instance.history.push({
         timestamp: instance.completedAt,
         event: 'completed',
-        state: targetState
+        state: targetState,
       });
       this.emit('instance:completed', { instance: instance.toJSON() });
     } else {
@@ -495,7 +501,7 @@ export class WorkflowEngine extends EventEmitter {
       instanceId,
       from: previousState,
       to: targetState,
-      transition: transition.name
+      transition: transition.name,
     });
 
     await this.save();
@@ -518,7 +524,7 @@ export class WorkflowEngine extends EventEmitter {
     }
 
     const transitions = workflow.getTransitions(instance.currentState);
-    const matchingTransition = transitions.find(t => t.name === eventName);
+    const matchingTransition = transitions.find((t) => t.name === eventName);
 
     if (!matchingTransition) {
       throw new Error(`No transition '${eventName}' from state '${instance.currentState}'`);
@@ -541,7 +547,7 @@ export class WorkflowEngine extends EventEmitter {
       workflowId: instance.workflowId,
       currentState: instance.currentState,
       instanceContext: instance.context,
-      transitionContext: context
+      transitionContext: context,
     });
   }
 
@@ -561,7 +567,7 @@ export class WorkflowEngine extends EventEmitter {
       instanceId: instance.id,
       currentState: instance.currentState,
       instanceContext: instance.context,
-      transitionContext: context
+      transitionContext: context,
     });
   }
 
@@ -584,7 +590,7 @@ export class WorkflowEngine extends EventEmitter {
     instance.history.push({
       timestamp: instance.updatedAt,
       event: 'paused',
-      state: instance.currentState
+      state: instance.currentState,
     });
 
     this.emit('instance:paused', { instance: instance.toJSON() });
@@ -611,7 +617,7 @@ export class WorkflowEngine extends EventEmitter {
     instance.history.push({
       timestamp: instance.updatedAt,
       event: 'resumed',
-      state: instance.currentState
+      state: instance.currentState,
     });
 
     // Restart timeout
@@ -644,7 +650,7 @@ export class WorkflowEngine extends EventEmitter {
       timestamp: instance.updatedAt,
       event: 'cancelled',
       state: instance.currentState,
-      reason
+      reason,
     });
 
     this.emit('instance:cancelled', { instance: instance.toJSON(), reason });
@@ -675,7 +681,7 @@ export class WorkflowEngine extends EventEmitter {
       timestamp: instance.updatedAt,
       event: 'failed',
       state: instance.currentState,
-      error: instance.error
+      error: instance.error,
     });
 
     this.emit('instance:failed', { instance: instance.toJSON(), error: instance.error });
@@ -698,17 +704,17 @@ export class WorkflowEngine extends EventEmitter {
     let instances = Array.from(this.instances.values());
 
     if (workflowId) {
-      instances = instances.filter(i => i.workflowId === workflowId);
+      instances = instances.filter((i) => i.workflowId === workflowId);
     }
 
     if (status) {
-      instances = instances.filter(i => i.status === status);
+      instances = instances.filter((i) => i.status === status);
     }
 
     return instances
       .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
       .slice(0, limit)
-      .map(i => i.toJSON());
+      .map((i) => i.toJSON());
   }
 
   /**
@@ -729,13 +735,13 @@ export class WorkflowEngine extends EventEmitter {
       recentInstances: instances
         .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
         .slice(0, 5)
-        .map(i => ({
+        .map((i) => ({
           id: i.id,
           workflowName: i.workflowName,
           currentState: i.currentState,
           status: i.status,
-          updatedAt: i.updatedAt
-        }))
+          updatedAt: i.updatedAt,
+        })),
     };
   }
 }
@@ -754,31 +760,37 @@ export const WorkflowTemplates = {
       {
         name: 'processing',
         description: 'Order being prepared',
-        onEnter: { agent: 'inventory', request: 'Reserve inventory for order {orderId}' }
+        onEnter: { agent: 'inventory', request: 'Reserve inventory for order {orderId}' },
       },
       {
         name: 'awaiting_payment',
         description: 'Waiting for payment confirmation',
         timeout: 3600000, // 1 hour
-        timeoutTransition: 'cancelled'
+        timeoutTransition: 'cancelled',
       },
       {
         name: 'paid',
         description: 'Payment received',
-        onEnter: { agent: 'inventory', request: 'Confirm inventory reservation for order {orderId}' }
+        onEnter: {
+          agent: 'inventory',
+          request: 'Confirm inventory reservation for order {orderId}',
+        },
       },
       {
         name: 'shipped',
         description: 'Order shipped to customer',
-        onEnter: { agent: 'orders', request: 'Update order {orderId} status to shipped' }
+        onEnter: { agent: 'orders', request: 'Update order {orderId} status to shipped' },
       },
       {
         name: 'delivered',
         description: 'Order delivered to customer',
-        onEnter: { agent: 'analytics', request: 'Record successful fulfillment for order {orderId}' }
+        onEnter: {
+          agent: 'analytics',
+          request: 'Record successful fulfillment for order {orderId}',
+        },
       },
       { name: 'cancelled', description: 'Order cancelled' },
-      { name: 'refunded', description: 'Order refunded' }
+      { name: 'refunded', description: 'Order refunded' },
     ],
     transitions: [
       { name: 'process', from: 'pending', to: 'processing' },
@@ -787,9 +799,9 @@ export const WorkflowTemplates = {
       { name: 'ship', from: 'paid', to: 'shipped' },
       { name: 'deliver', from: 'shipped', to: 'delivered' },
       { name: 'cancel', from: ['pending', 'processing', 'awaiting_payment'], to: 'cancelled' },
-      { name: 'refund', from: ['paid', 'shipped', 'delivered'], to: 'refunded' }
+      { name: 'refund', from: ['paid', 'shipped', 'delivered'], to: 'refunded' },
     ],
-    finalStates: ['delivered', 'cancelled', 'refunded']
+    finalStates: ['delivered', 'cancelled', 'refunded'],
   },
 
   // Return processing workflow
@@ -803,7 +815,7 @@ export const WorkflowTemplates = {
         name: 'pending_approval',
         description: 'Awaiting approval decision',
         timeout: 86400000, // 24 hours
-        timeoutTransition: 'auto_approved'
+        timeoutTransition: 'auto_approved',
       },
       { name: 'auto_approved', description: 'Auto-approved due to timeout' },
       { name: 'approved', description: 'Return approved' },
@@ -812,20 +824,20 @@ export const WorkflowTemplates = {
         name: 'awaiting_item',
         description: 'Waiting for item to be returned',
         timeout: 604800000, // 7 days
-        timeoutTransition: 'expired'
+        timeoutTransition: 'expired',
       },
       {
         name: 'item_received',
         description: 'Returned item received',
-        onEnter: { agent: 'returns', request: 'Inspect returned item for return {returnId}' }
+        onEnter: { agent: 'returns', request: 'Inspect returned item for return {returnId}' },
       },
       {
         name: 'processing_refund',
         description: 'Processing refund',
-        onEnter: { agent: 'payments', request: 'Process refund for return {returnId}' }
+        onEnter: { agent: 'payments', request: 'Process refund for return {returnId}' },
       },
       { name: 'refunded', description: 'Refund completed' },
-      { name: 'expired', description: 'Return window expired' }
+      { name: 'expired', description: 'Return window expired' },
     ],
     transitions: [
       { name: 'submit_for_approval', from: 'requested', to: 'pending_approval' },
@@ -834,9 +846,9 @@ export const WorkflowTemplates = {
       { name: 'await_item', from: 'approved', to: 'awaiting_item' },
       { name: 'receive_item', from: 'awaiting_item', to: 'item_received' },
       { name: 'process_refund', from: 'item_received', to: 'processing_refund' },
-      { name: 'complete_refund', from: 'processing_refund', to: 'refunded' }
+      { name: 'complete_refund', from: 'processing_refund', to: 'refunded' },
     ],
-    finalStates: ['refunded', 'rejected', 'expired']
+    finalStates: ['refunded', 'rejected', 'expired'],
   },
 
   // Subscription lifecycle workflow
@@ -849,7 +861,7 @@ export const WorkflowTemplates = {
         name: 'trial',
         description: 'Trial period',
         timeout: 1209600000, // 14 days
-        timeoutTransition: 'trial_ending'
+        timeoutTransition: 'trial_ending',
       },
       { name: 'trial_ending', description: 'Trial ending soon' },
       { name: 'active', description: 'Active subscription' },
@@ -857,16 +869,16 @@ export const WorkflowTemplates = {
         name: 'past_due',
         description: 'Payment past due',
         timeout: 604800000, // 7 days
-        timeoutTransition: 'suspended'
+        timeoutTransition: 'suspended',
       },
       {
         name: 'suspended',
         description: 'Subscription suspended',
         timeout: 2592000000, // 30 days
-        timeoutTransition: 'cancelled'
+        timeoutTransition: 'cancelled',
       },
       { name: 'cancelled', description: 'Subscription cancelled' },
-      { name: 'expired', description: 'Subscription expired' }
+      { name: 'expired', description: 'Subscription expired' },
     ],
     transitions: [
       { name: 'convert', from: ['trial', 'trial_ending'], to: 'active' },
@@ -874,10 +886,14 @@ export const WorkflowTemplates = {
       { name: 'payment_received', from: 'past_due', to: 'active' },
       { name: 'suspend', from: 'past_due', to: 'suspended' },
       { name: 'reactivate', from: 'suspended', to: 'active' },
-      { name: 'cancel', from: ['trial', 'trial_ending', 'active', 'past_due', 'suspended'], to: 'cancelled' },
-      { name: 'expire', from: 'active', to: 'expired' }
+      {
+        name: 'cancel',
+        from: ['trial', 'trial_ending', 'active', 'past_due', 'suspended'],
+        to: 'cancelled',
+      },
+      { name: 'expire', from: 'active', to: 'expired' },
     ],
-    finalStates: ['cancelled', 'expired']
+    finalStates: ['cancelled', 'expired'],
   },
 
   // Purchase order workflow
@@ -891,26 +907,26 @@ export const WorkflowTemplates = {
         name: 'pending_review',
         description: 'Awaiting initial review',
         timeout: 172800000, // 48 hours
-        timeoutTransition: 'escalated'
+        timeoutTransition: 'escalated',
       },
       { name: 'escalated', description: 'Escalated due to timeout' },
       {
         name: 'pending_approval',
         description: 'Awaiting manager approval',
         timeout: 172800000,
-        timeoutTransition: 'escalated'
+        timeoutTransition: 'escalated',
       },
       { name: 'approved', description: 'PO approved' },
       { name: 'rejected', description: 'PO rejected' },
       {
         name: 'sent',
         description: 'PO sent to supplier',
-        onEnter: { agent: 'suppliers', request: 'Send PO {purchaseOrderId} to supplier' }
+        onEnter: { agent: 'suppliers', request: 'Send PO {purchaseOrderId} to supplier' },
       },
       { name: 'acknowledged', description: 'Supplier acknowledged receipt' },
       { name: 'partially_received', description: 'Partial shipment received' },
       { name: 'received', description: 'All items received' },
-      { name: 'cancelled', description: 'PO cancelled' }
+      { name: 'cancelled', description: 'PO cancelled' },
     ],
     transitions: [
       { name: 'submit', from: 'draft', to: 'pending_review' },
@@ -919,12 +935,20 @@ export const WorkflowTemplates = {
       { name: 'reject', from: ['pending_review', 'pending_approval'], to: 'rejected' },
       { name: 'send', from: 'approved', to: 'sent' },
       { name: 'acknowledge', from: 'sent', to: 'acknowledged' },
-      { name: 'partial_receive', from: ['acknowledged', 'partially_received'], to: 'partially_received' },
+      {
+        name: 'partial_receive',
+        from: ['acknowledged', 'partially_received'],
+        to: 'partially_received',
+      },
       { name: 'receive', from: ['acknowledged', 'partially_received'], to: 'received' },
-      { name: 'cancel', from: ['draft', 'pending_review', 'pending_approval', 'approved'], to: 'cancelled' }
+      {
+        name: 'cancel',
+        from: ['draft', 'pending_review', 'pending_approval', 'approved'],
+        to: 'cancelled',
+      },
     ],
-    finalStates: ['received', 'rejected', 'cancelled']
-  }
+    finalStates: ['received', 'rejected', 'cancelled'],
+  },
 };
 
 export default WorkflowEngine;

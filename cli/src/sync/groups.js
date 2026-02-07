@@ -106,10 +106,7 @@ export class GroupKeyManager {
    */
   async _saveGroup(group) {
     await this._ensureGroupsDir();
-    await fs.writeFile(
-      this._groupFilePath(group.groupId),
-      JSON.stringify(group, null, 2)
-    );
+    await fs.writeFile(this._groupFilePath(group.groupId), JSON.stringify(group, null, 2));
 
     // Update tenant index
     await this._updateTenantIndex(group.tenantId, group.groupId, group.name);
@@ -148,10 +145,7 @@ export class GroupKeyManager {
 
     index[groupId] = { name, updatedAt: new Date().toISOString() };
 
-    await fs.writeFile(
-      this._tenantIndexPath(tenantId),
-      JSON.stringify(index, null, 2)
-    );
+    await fs.writeFile(this._tenantIndexPath(tenantId), JSON.stringify(index, null, 2));
   }
 
   /**
@@ -170,10 +164,7 @@ export class GroupKeyManager {
 
     delete index[groupId];
 
-    await fs.writeFile(
-      this._tenantIndexPath(tenantId),
-      JSON.stringify(index, null, 2)
-    );
+    await fs.writeFile(this._tenantIndexPath(tenantId), JSON.stringify(index, null, 2));
   }
 
   // ===========================================================================
@@ -210,14 +201,16 @@ export class GroupKeyManager {
       tenantId,
       name,
       description: options.description || '',
-      members: [{
-        agentId: creatorAgentId,
-        encryptionKeyId: creatorKey.keyId,
-        publicKey: bufferToHex(creatorKey.publicKey),
-        role: 'admin',
-        addedAt: now,
-        addedBy: creatorAgentId,
-      }],
+      members: [
+        {
+          agentId: creatorAgentId,
+          encryptionKeyId: creatorKey.keyId,
+          publicKey: bufferToHex(creatorKey.publicKey),
+          role: 'admin',
+          addedAt: now,
+          addedBy: creatorAgentId,
+        },
+      ],
       createdBy: creatorAgentId,
       createdAt: now,
       updatedAt: now,
@@ -244,7 +237,7 @@ export class GroupKeyManager {
    */
   async getGroupByName(tenantId, name) {
     const groups = await this.listGroups(tenantId);
-    return groups.find(g => g.name === name) || null;
+    return groups.find((g) => g.name === name) || null;
   }
 
   /**
@@ -280,9 +273,7 @@ export class GroupKeyManager {
    */
   async getAgentGroups(agentId, tenantId) {
     const allGroups = await this.listGroups(tenantId);
-    return allGroups.filter(g =>
-      g.members.some(m => m.agentId === agentId)
-    );
+    return allGroups.filter((g) => g.members.some((m) => m.agentId === agentId));
   }
 
   /**
@@ -297,7 +288,7 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Check if updater is admin
-    const updater = group.members.find(m => m.agentId === updaterAgentId);
+    const updater = group.members.find((m) => m.agentId === updaterAgentId);
     if (!updater || updater.role !== 'admin') {
       throw new Error('Only admins can update group metadata');
     }
@@ -332,7 +323,7 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Only creator or admin can delete
-    const deleter = group.members.find(m => m.agentId === deleterAgentId);
+    const deleter = group.members.find((m) => m.agentId === deleterAgentId);
     if (!deleter || (deleter.role !== 'admin' && group.createdBy !== deleterAgentId)) {
       throw new Error('Only admins or creator can delete the group');
     }
@@ -358,13 +349,13 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Check if adder has admin rights
-    const adder = group.members.find(m => m.agentId === addedByAgentId);
+    const adder = group.members.find((m) => m.agentId === addedByAgentId);
     if (!adder || adder.role !== 'admin') {
       throw new Error('Only admins can add members');
     }
 
     // Check if already a member
-    if (group.members.find(m => m.agentId === agentId)) {
+    if (group.members.find((m) => m.agentId === agentId)) {
       throw new Error(`Agent ${agentId} is already a member`);
     }
 
@@ -403,7 +394,7 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Check if remover has admin rights
-    const remover = group.members.find(m => m.agentId === removedByAgentId);
+    const remover = group.members.find((m) => m.agentId === removedByAgentId);
     if (!remover || remover.role !== 'admin') {
       throw new Error('Only admins can remove members');
     }
@@ -415,14 +406,14 @@ export class GroupKeyManager {
 
     // Cannot remove yourself if you're the last admin
     if (agentId === removedByAgentId) {
-      const admins = group.members.filter(m => m.role === 'admin');
+      const admins = group.members.filter((m) => m.role === 'admin');
       if (admins.length === 1) {
         throw new Error('Cannot remove yourself as the last admin');
       }
     }
 
     // Find and remove member
-    const memberIndex = group.members.findIndex(m => m.agentId === agentId);
+    const memberIndex = group.members.findIndex((m) => m.agentId === agentId);
     if (memberIndex === -1) {
       throw new Error(`Agent ${agentId} is not a member`);
     }
@@ -447,13 +438,13 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Check if updater has admin rights
-    const updater = group.members.find(m => m.agentId === updaterAgentId);
+    const updater = group.members.find((m) => m.agentId === updaterAgentId);
     if (!updater || updater.role !== 'admin') {
       throw new Error('Only admins can update member roles');
     }
 
     // Find member
-    const member = group.members.find(m => m.agentId === agentId);
+    const member = group.members.find((m) => m.agentId === agentId);
     if (!member) {
       throw new Error(`Agent ${agentId} is not a member`);
     }
@@ -465,7 +456,7 @@ export class GroupKeyManager {
 
     // Cannot demote the last admin
     if (member.role === 'admin' && newRole === 'member') {
-      const admins = group.members.filter(m => m.role === 'admin');
+      const admins = group.members.filter((m) => m.role === 'admin');
       if (admins.length === 1) {
         throw new Error('Cannot demote the last admin');
       }
@@ -489,7 +480,7 @@ export class GroupKeyManager {
     if (!group) throw new Error(`Group ${groupId} not found`);
 
     // Find member
-    const member = group.members.find(m => m.agentId === agentId);
+    const member = group.members.find((m) => m.agentId === agentId);
     if (!member) {
       throw new Error(`Agent ${agentId} is not a member`);
     }
@@ -529,7 +520,7 @@ export class GroupKeyManager {
       throw new Error('Group has no members');
     }
 
-    return group.members.map(m => ({
+    return group.members.map((m) => ({
       keyId: m.encryptionKeyId,
       publicKey: hexToBuffer(m.publicKey),
       agentId: m.agentId,
@@ -571,7 +562,7 @@ export class GroupKeyManager {
     const group = await this._loadGroup(groupId);
     if (!group) return false;
 
-    return group.members.some(m => m.agentId === agentId);
+    return group.members.some((m) => m.agentId === agentId);
   }
 
   /**
@@ -585,7 +576,7 @@ export class GroupKeyManager {
     const group = await this._loadGroup(groupId);
     if (!group) return null;
 
-    const member = group.members.find(m => m.agentId === agentId);
+    const member = group.members.find((m) => m.agentId === agentId);
     if (!member) return null;
 
     return {
@@ -608,8 +599,8 @@ export class GroupKeyManager {
     const group = await this._loadGroup(groupId);
     if (!group) throw new Error(`Group ${groupId} not found`);
 
-    const admins = group.members.filter(m => m.role === 'admin');
-    const members = group.members.filter(m => m.role === 'member');
+    const admins = group.members.filter((m) => m.role === 'admin');
+    const members = group.members.filter((m) => m.role === 'member');
 
     return {
       groupId: group.groupId,

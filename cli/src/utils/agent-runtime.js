@@ -7,7 +7,7 @@ export function resolveAgentRuntimeOptions(values = {}) {
   }
 
   const providerName = values.provider || 'claude';
-  const memoryOverride = values.noMemory ? false : (values.memory ? true : null);
+  const memoryOverride = values.noMemory ? false : values.memory ? true : null;
 
   return {
     thinkLevel,
@@ -15,7 +15,7 @@ export function resolveAgentRuntimeOptions(values = {}) {
     streaming: !!values.stream,
     maxBudgetUsd: values.budget || null,
     memoryOverride,
-    enableX402: !!values.x402
+    enableX402: !!values.x402,
   };
 }
 

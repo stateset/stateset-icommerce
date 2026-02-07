@@ -687,8 +687,7 @@ pub struct QualityHoldFilter {
 }
 
 /// Input for creating a defect code
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateDefectCode {
     pub code: String,
     pub name: String,
@@ -696,7 +695,6 @@ pub struct CreateDefectCode {
     pub category: String,
     pub severity: Severity,
 }
-
 
 // ============================================================================
 // Type Aliases for API compatibility
@@ -732,7 +730,10 @@ impl Default for CompleteInspection {
 impl Inspection {
     /// Check if inspection can be started
     pub fn can_start(&self) -> bool {
-        matches!(self.status, InspectionStatus::Pending | InspectionStatus::Scheduled)
+        matches!(
+            self.status,
+            InspectionStatus::Pending | InspectionStatus::Scheduled
+        )
     }
 
     /// Check if inspection can be completed
@@ -742,7 +743,9 @@ impl Inspection {
 
     /// Check if all items have been inspected
     pub fn all_items_inspected(&self) -> bool {
-        self.items.iter().all(|item| item.result != InspectionResult::Pending)
+        self.items
+            .iter()
+            .all(|item| item.result != InspectionResult::Pending)
     }
 
     /// Get overall pass rate
@@ -758,12 +761,22 @@ impl Inspection {
 
     /// Calculate overall result based on items
     pub fn calculate_overall_result(&self) -> InspectionStatus {
-        if self.items.is_empty() || self.items.iter().any(|i| i.result == InspectionResult::Pending) {
+        if self.items.is_empty()
+            || self
+                .items
+                .iter()
+                .any(|i| i.result == InspectionResult::Pending)
+        {
             return InspectionStatus::InProgress;
         }
 
-        let all_passed = self.items.iter().all(|i| i.result == InspectionResult::Pass);
-        let any_passed = self.items.iter().any(|i| i.result == InspectionResult::Pass || i.result == InspectionResult::ConditionalPass);
+        let all_passed = self
+            .items
+            .iter()
+            .all(|i| i.result == InspectionResult::Pass);
+        let any_passed = self.items.iter().any(|i| {
+            i.result == InspectionResult::Pass || i.result == InspectionResult::ConditionalPass
+        });
 
         if all_passed {
             InspectionStatus::Passed

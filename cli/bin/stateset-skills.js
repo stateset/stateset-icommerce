@@ -17,8 +17,8 @@
 import { parseArgs } from 'node:util';
 import fs from 'node:fs';
 import { discoverSkills } from '../src/skills/loader.js';
-import { SkillRegistry, getSkillRegistry, CATEGORY_MAP } from '../src/skills/registry.js';
-import { MarketplaceClient, getMarketplaceClient } from '../src/skills/marketplace.js';
+import { getSkillRegistry } from '../src/skills/registry.js';
+import { getMarketplaceClient } from '../src/skills/marketplace.js';
 
 // ============================================================================
 // CLI Parsing
@@ -66,10 +66,12 @@ function printTable(rows, headers) {
   console.log(`  ${sep}`);
 
   for (const row of rows) {
-    const line = row.map((cell, i) => {
-      const s = String(cell || '');
-      return s.length > widths[i] ? s.slice(0, widths[i] - 3) + '...' : s.padEnd(widths[i]);
-    }).join('  ');
+    const line = row
+      .map((cell, i) => {
+        const s = String(cell || '');
+        return s.length > widths[i] ? s.slice(0, widths[i] - 3) + '...' : s.padEnd(widths[i]);
+      })
+      .join('  ');
     console.log(`  ${line}`);
   }
 }
@@ -107,9 +109,14 @@ async function cmdList() {
   const skills = registry.list(opts);
 
   if (flags.json) {
-    writeJson(skills.map((s) => ({
-      name: s.name, description: s.description, category: s.category, origin: s.origin,
-    })));
+    writeJson(
+      skills.map((s) => ({
+        name: s.name,
+        description: s.description,
+        category: s.category,
+        origin: s.origin,
+      })),
+    );
     return;
   }
 
@@ -131,9 +138,13 @@ async function cmdSearch() {
   const results = registry.search(arg);
 
   if (flags.json) {
-    writeJson(results.map((s) => ({
-      name: s.name, description: s.description, category: s.category,
-    })));
+    writeJson(
+      results.map((s) => ({
+        name: s.name,
+        description: s.description,
+        category: s.category,
+      })),
+    );
     return;
   }
 
@@ -332,7 +343,7 @@ async function cmdDoctor() {
     writeJson({
       total: skills.length,
       issues: problemList.length,
-      problems: problemList
+      problems: problemList,
     });
     return;
   }
@@ -399,7 +410,9 @@ const commands = {
   categories: cmdCategories,
   marketplace: cmdMarketplace,
   doctor: cmdDoctor,
-  help: () => { printHelp(); },
+  help: () => {
+    printHelp();
+  },
 };
 
 const handler = commands[command];
@@ -409,7 +422,5 @@ if (!handler) {
   process.exit(1);
 }
 
-handler().catch((err) => {
-  console.error(`Error: ${err.message}`);
-  process.exit(1);
-});
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-skills', handler);

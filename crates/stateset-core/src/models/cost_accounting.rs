@@ -510,28 +510,49 @@ mod tests {
     #[test]
     fn test_cost_method_from_str() {
         assert_eq!(CostMethod::from_str("avg").unwrap(), CostMethod::Average);
-        assert_eq!(CostMethod::from_str("standard").unwrap(), CostMethod::Standard);
+        assert_eq!(
+            CostMethod::from_str("standard").unwrap(),
+            CostMethod::Standard
+        );
         assert!(CostMethod::from_str("nope").is_err());
     }
 
     #[test]
     fn test_cost_layer_source_from_str() {
-        assert_eq!(CostLayerSource::from_str("opening_balance").unwrap(), CostLayerSource::Opening);
-        assert_eq!(CostLayerSource::from_str("transfer").unwrap(), CostLayerSource::Transfer);
+        assert_eq!(
+            CostLayerSource::from_str("opening_balance").unwrap(),
+            CostLayerSource::Opening
+        );
+        assert_eq!(
+            CostLayerSource::from_str("transfer").unwrap(),
+            CostLayerSource::Transfer
+        );
         assert!(CostLayerSource::from_str("nope").is_err());
     }
 
     #[test]
     fn test_cost_transaction_type_from_str() {
-        assert_eq!(CostTransactionType::from_str("receipt").unwrap(), CostTransactionType::Receipt);
-        assert_eq!(CostTransactionType::from_str("revaluation").unwrap(), CostTransactionType::Revaluation);
+        assert_eq!(
+            CostTransactionType::from_str("receipt").unwrap(),
+            CostTransactionType::Receipt
+        );
+        assert_eq!(
+            CostTransactionType::from_str("revaluation").unwrap(),
+            CostTransactionType::Revaluation
+        );
         assert!(CostTransactionType::from_str("nope").is_err());
     }
 
     #[test]
     fn test_variance_type_from_str() {
-        assert_eq!(VarianceType::from_str("material").unwrap(), VarianceType::Material);
-        assert_eq!(VarianceType::from_str("volume").unwrap(), VarianceType::Volume);
+        assert_eq!(
+            VarianceType::from_str("material").unwrap(),
+            VarianceType::Material
+        );
+        assert_eq!(
+            VarianceType::from_str("volume").unwrap(),
+            VarianceType::Volume
+        );
         assert!(VarianceType::from_str("nope").is_err());
     }
 
@@ -541,13 +562,19 @@ mod tests {
             CostAdjustmentType::from_str("standardcostupdate").unwrap(),
             CostAdjustmentType::StandardCostUpdate
         );
-        assert_eq!(CostAdjustmentType::from_str("writeoff").unwrap(), CostAdjustmentType::WriteOff);
+        assert_eq!(
+            CostAdjustmentType::from_str("writeoff").unwrap(),
+            CostAdjustmentType::WriteOff
+        );
         assert!(CostAdjustmentType::from_str("nope").is_err());
     }
 
     #[test]
     fn test_cost_adjustment_status_from_str() {
-        assert_eq!(CostAdjustmentStatus::from_str("approved").unwrap(), CostAdjustmentStatus::Approved);
+        assert_eq!(
+            CostAdjustmentStatus::from_str("approved").unwrap(),
+            CostAdjustmentStatus::Approved
+        );
         assert!(CostAdjustmentStatus::from_str("nope").is_err());
     }
 }

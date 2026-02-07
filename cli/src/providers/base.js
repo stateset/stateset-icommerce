@@ -65,7 +65,7 @@ export class ModelProvider {
    * @param {ChatOptions} [options]
    * @returns {Promise<ChatResult>}
    */
-  async chat(messages, options = {}) {
+  async chat(_messages, _options = {}) {
     throw new Error(`${this.name}: chat() not implemented`);
   }
 
@@ -75,7 +75,7 @@ export class ModelProvider {
    * @param {string} [model]
    * @returns {number|null}
    */
-  estimateCost(usage, model = null) {
+  estimateCost(_usage, _model = null) {
     return null;
   }
 
@@ -184,13 +184,15 @@ class ProviderRegistry {
    * @returns {Object[]}
    */
   getInfo() {
-    const info = [{
-      name: 'claude',
-      displayName: 'Claude',
-      available: !!resolveProviderApiKey('claude') || !!process.env.ANTHROPIC_API_KEY,
-      models: Object.keys(PROVIDERS.claude.models),
-      default: PROVIDERS.claude.default,
-    }];
+    const info = [
+      {
+        name: 'claude',
+        displayName: 'Claude',
+        available: !!resolveProviderApiKey('claude') || !!process.env.ANTHROPIC_API_KEY,
+        models: Object.keys(PROVIDERS.claude.models),
+        default: PROVIDERS.claude.default,
+      },
+    ];
 
     for (const [name, provider] of this._providers) {
       const storedKey = resolveProviderApiKey(name);
@@ -243,17 +245,23 @@ async function _autoRegister() {
   try {
     const { OpenAIProvider } = await import('./openai.js');
     _registry.register(new OpenAIProvider());
-  } catch { /* optional */ }
+  } catch {
+    /* optional */
+  }
 
   try {
     const { GeminiProvider } = await import('./gemini.js');
     _registry.register(new GeminiProvider());
-  } catch { /* optional */ }
+  } catch {
+    /* optional */
+  }
 
   try {
     const { OllamaProvider } = await import('./ollama.js');
     _registry.register(new OllamaProvider());
-  } catch { /* optional */ }
+  } catch {
+    /* optional */
+  }
 }
 
 // ============================================================================
@@ -372,7 +380,7 @@ class FallbackChain {
     const attempted = [];
 
     // Build provider order: preferred first, then fallback chain
-    const order = [preferred, ...this._order.filter(p => p !== preferred)];
+    const order = [preferred, ...this._order.filter((p) => p !== preferred)];
 
     for (const providerName of order) {
       // Skip if circuit breaker is open
@@ -422,7 +430,7 @@ class FallbackChain {
 
     throw new Error(
       `All providers failed. Attempted: ${attempted.join(', ') || 'none available'}. ` +
-      `Check API keys and provider availability.`
+        `Check API keys and provider availability.`,
     );
   }
 

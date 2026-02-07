@@ -4,17 +4,16 @@ use crate::sqlite::{map_db_error, parse_uuid};
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::{params, types::Type};
+use rust_decimal::Decimal;
 use stateset_core::{
-    AccountStatus, AccountSubType, AccountType, AutoPostingConfig,
-    BalanceSide, BalanceSheet, BalanceSheetLine, BatchResult, CreateAutoPostingConfig,
-    CreateGlAccount, CreateGlPeriod, CreateJournalEntry, GeneralLedgerRepository,
-    GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement,
-    IncomeStatementLine, JournalEntry, JournalEntryFilter, JournalEntryLine,
-    JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus, Result,
-    TrialBalance, TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
-    generate_journal_entry_number,
+    create_default_chart_of_accounts, generate_journal_entry_number, AccountStatus, AccountSubType,
+    AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine, BalanceSide, BatchResult,
+    CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
+    GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement,
+    IncomeStatementLine, JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource,
+    JournalEntryStatus, JournalEntryType, PeriodStatus, Result, TrialBalance, TrialBalanceLine,
+    UpdateGlAccount,
 };
 use uuid::Uuid;
 
@@ -159,18 +158,28 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
-    fn update_account_balance(&self, account_id: Uuid, debit: Decimal, credit: Decimal) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn update_account_balance(
+        &self,
+        account_id: Uuid,
+        debit: Decimal,
+        credit: Decimal,
+    ) -> Result<()> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Get account to determine normal balance
-        let account: GlAccount = conn.query_row(
-            "SELECT id, account_number, name, description, account_type, account_sub_type,
+        let account: GlAccount = conn
+            .query_row(
+                "SELECT id, account_number, name, description, account_type, account_sub_type,
                     parent_account_id, is_header, is_posting, normal_balance, currency,
                     status, current_balance, created_at, updated_at
              FROM gl_accounts WHERE id = ?1",
-            params![account_id.to_string()],
-            Self::map_account_row,
-        ).map_err(map_db_error)?;
+                params![account_id.to_string()],
+                Self::map_account_row,
+            )
+            .map_err(map_db_error)?;
 
         let balance_change = account.balance_effect(debit, credit);
         let new_balance = account.current_balance + balance_change;
@@ -178,7 +187,8 @@ impl SqliteGeneralLedgerRepository {
         conn.execute(
             "UPDATE gl_accounts SET current_balance = ?1 WHERE id = ?2",
             params![new_balance.to_string(), account_id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -195,7 +205,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let normal_balance = input.account_type.normal_balance();
 
         {
-            let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let conn = self
+                .pool
+                .get()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
             conn.execute(
                 "INSERT INTO gl_accounts (id, account_number, name, description, account_type,
                  account_sub_type, parent_account_id, is_header, is_posting, normal_balance,
@@ -218,14 +231,19 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
         }
 
-        self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_account(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, account_number, name, description, account_type, account_sub_type,
@@ -242,7 +260,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, account_number, name, description, account_type, account_sub_type,
@@ -259,7 +280,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut updates = Vec::new();
         let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -283,25 +307,27 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         if !updates.is_empty() {
             values.push(Box::new(id.to_string()));
-            let sql = format!(
-                "UPDATE gl_accounts SET {} WHERE id = ?",
-                updates.join(", ")
-            );
+            let sql = format!("UPDATE gl_accounts SET {} WHERE id = ?", updates.join(", "));
             let params: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
-            conn.execute(&sql, params.as_slice()).map_err(map_db_error)?;
+            conn.execute(&sql, params.as_slice())
+                .map_err(map_db_error)?;
         }
 
-        self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_account(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, account_number, name, description, account_type, account_sub_type,
                     parent_account_id, is_header, is_posting, normal_balance, currency,
                     status, current_balance, created_at, updated_at
-             FROM gl_accounts WHERE 1=1"
+             FROM gl_accounts WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -347,7 +373,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(params_refs.as_slice(), Self::map_account_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::map_account_row)
+            .map_err(map_db_error)?;
 
         let mut accounts = Vec::new();
         for row in rows {
@@ -361,25 +389,31 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn delete_account(&self, id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Check if account has transactions
-        let count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM gl_journal_entry_lines WHERE account_id = ?1",
-            params![id.to_string()],
-            |row| row.get(0),
-        ).map_err(map_db_error)?;
+        let count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM gl_journal_entry_lines WHERE account_id = ?1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
 
         if count > 0 {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Cannot delete account with existing transactions".to_string()
+                "Cannot delete account with existing transactions".to_string(),
             ));
         }
 
         conn.execute(
             "DELETE FROM gl_accounts WHERE id = ?1",
             params![id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -403,7 +437,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -422,13 +459,18 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
@@ -444,7 +486,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_current_period(&self) -> Result<Option<GlPeriod>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
@@ -460,7 +505,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_period_for_date(&self, date: NaiveDate) -> Result<Option<GlPeriod>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
@@ -476,12 +524,15 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
                     status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods WHERE 1=1"
+             FROM gl_periods WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -505,7 +556,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(params_refs.as_slice(), Self::map_period_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::map_period_row)
+            .map_err(map_db_error)?;
 
         let mut periods = Vec::new();
         for row in rows {
@@ -515,52 +568,72 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE gl_periods SET status = 'open' WHERE id = ?1 AND status = 'future'",
             params![id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
             "UPDATE gl_periods SET status = 'closed', closed_at = ?1, closed_by = ?2
              WHERE id = ?3 AND status = 'open'",
             params![now.to_rfc3339(), closed_by, id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         conn.execute(
             "UPDATE gl_periods SET status = 'locked', locked_at = ?1, locked_by = ?2
              WHERE id = ?3 AND status = 'closed'",
             params![now.to_rfc3339(), locked_by, id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "UPDATE gl_periods SET status = 'open', closed_at = NULL, closed_by = NULL
              WHERE id = ?1 AND status = 'closed'",
             params![id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     // ========================================================================
@@ -568,20 +641,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let entry_number = generate_journal_entry_number();
 
         // Get period for entry date
-        let period = self.get_period_for_date(input.entry_date)?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                format!("No period found for date {}", input.entry_date)
-            ))?;
+        let period = self.get_period_for_date(input.entry_date)?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError(format!(
+                "No period found for date {}",
+                input.entry_date
+            ))
+        })?;
 
         if !period.can_post() {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Period is not open for posting".to_string()
+                "Period is not open for posting".to_string(),
             ));
         }
 
@@ -600,7 +678,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 entry_number,
                 input.entry_date.to_string(),
                 period.id.to_string(),
-                input.entry_type.unwrap_or(JournalEntryType::Standard).to_string(),
+                input
+                    .entry_type
+                    .unwrap_or(JournalEntryType::Standard)
+                    .to_string(),
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
                 input.source_document_id.map(|id| id.to_string()),
@@ -612,14 +693,16 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
         // Insert lines
         for (line_num, line) in input.lines.iter().enumerate() {
             let line_id = Uuid::new_v4();
 
             // Get account info
-            let account = self.get_account(line.account_id)?
+            let account = self
+                .get_account(line.account_id)?
                 .ok_or(stateset_core::CommerceError::NotFound)?;
 
             conn.execute(
@@ -642,7 +725,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     line.reference_id.map(|id| id.to_string()),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
         }
 
         // Auto-post if requested
@@ -650,11 +734,15 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             return self.post_journal_entry(id, "system");
         }
 
-        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let entry = match conn.query_row(
             "SELECT id, entry_number, entry_date, period_id, entry_type, source,
@@ -668,7 +756,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             Ok(mut entry) => {
                 entry.lines = self.get_journal_entry_lines(id)?;
                 entry
-            },
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(e) => return Err(map_db_error(e)),
         };
@@ -677,7 +765,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let id: String = match conn.query_row(
             "SELECT id FROM gl_journal_entries WHERE entry_number = ?1",
@@ -694,14 +785,17 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT id, entry_number, entry_date, period_id, entry_type, source,
                     source_document_type, source_document_id, description, total_debits,
                     total_credits, is_balanced, status, posted_at, posted_by,
                     reversed_entry_id, reversing_entry_id, created_at, updated_at
-             FROM gl_journal_entries WHERE 1=1"
+             FROM gl_journal_entries WHERE 1=1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -749,7 +843,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(params_refs.as_slice(), Self::map_journal_entry_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::map_journal_entry_row)
+            .map_err(map_db_error)?;
 
         let mut entries = Vec::new();
         for row in rows {
@@ -761,15 +857,20 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self
+            .get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !entry.can_post() {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Entry cannot be posted - must be draft and balanced".to_string()
+                "Entry cannot be posted - must be draft and balanced".to_string(),
             ));
         }
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
         // Update entry status
@@ -783,19 +884,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             self.update_account_balance(line.account_id, line.debit_amount, line.credit_amount)?;
         }
 
-        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self
+            .get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !entry.can_void() {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Entry cannot be voided - must be posted".to_string()
+                "Entry cannot be voided - must be posted".to_string(),
             ));
         }
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Reverse account balances
         for line in &entry.lines {
@@ -806,31 +913,37 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         conn.execute(
             "UPDATE gl_journal_entries SET status = 'voided' WHERE id = ?1",
             params![id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let entry = self
+            .get_journal_entry(id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if entry.status != JournalEntryStatus::Posted {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Can only reverse posted entries".to_string()
+                "Can only reverse posted entries".to_string(),
             ));
         }
 
         // Create reversing entry with swapped debits/credits
-        let reversing_lines: Vec<_> = entry.lines.iter().map(|l| {
-            stateset_core::CreateJournalEntryLine {
+        let reversing_lines: Vec<_> = entry
+            .lines
+            .iter()
+            .map(|l| stateset_core::CreateJournalEntryLine {
                 account_id: l.account_id,
                 description: Some(format!("Reversal of {}", entry.entry_number)),
                 debit_amount: l.credit_amount,
                 credit_amount: l.debit_amount,
                 reference_type: l.reference_type.clone(),
                 reference_id: l.reference_id,
-            }
-        }).collect();
+            })
+            .collect();
 
         let reversing_entry = self.create_journal_entry(stateset_core::CreateJournalEntry {
             entry_date: reversal_date,
@@ -843,7 +956,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         })?;
 
         // Link entries
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         conn.execute(
             "UPDATE gl_journal_entries SET reversing_entry_id = ?1, status = 'reversed' WHERE id = ?2",
             params![reversing_entry.id.to_string(), id.to_string()],
@@ -852,22 +968,33 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         conn.execute(
             "UPDATE gl_journal_entries SET reversed_entry_id = ?1 WHERE id = ?2",
             params![id.to_string(), reversing_entry.id.to_string()],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_journal_entry(reversing_entry.id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(reversing_entry.id)?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, journal_entry_id, line_number, account_id, account_number,
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, journal_entry_id, line_number, account_id, account_number,
                     account_name, description, debit_amount, credit_amount, currency,
                     reference_type, reference_id, created_at
-             FROM gl_journal_entry_lines WHERE journal_entry_id = ?1 ORDER BY line_number"
-        ).map_err(map_db_error)?;
+             FROM gl_journal_entry_lines WHERE journal_entry_id = ?1 ORDER BY line_number",
+            )
+            .map_err(map_db_error)?;
 
-        let rows = stmt.query_map(params![journal_entry_id.to_string()], Self::map_journal_entry_line_row)
+        let rows = stmt
+            .query_map(
+                params![journal_entry_id.to_string()],
+                Self::map_journal_entry_line_row,
+            )
             .map_err(map_db_error)?;
 
         let mut lines = Vec::new();
@@ -882,7 +1009,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         match conn.query_row(
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id,
@@ -900,12 +1030,16 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn set_auto_posting_config(&self, input: CreateAutoPostingConfig) -> Result<AutoPostingConfig> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
         // Deactivate existing configs
-        conn.execute("UPDATE gl_auto_posting_config SET is_active = 0", []).map_err(map_db_error)?;
+        conn.execute("UPDATE gl_auto_posting_config SET is_active = 0", [])
+            .map_err(map_db_error)?;
 
         conn.execute(
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id,
@@ -929,25 +1063,31 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 now.to_rfc3339(),
                 now.to_rfc3339(),
             ],
-        ).map_err(map_db_error)?;
+        )
+        .map_err(map_db_error)?;
 
-        self.get_auto_posting_config()?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_auto_posting_config()?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         // Get invoice details
-        let (total, invoice_date): (String, String) = conn.query_row(
-            "SELECT total_amount, invoice_date FROM invoices WHERE id = ?1",
-            params![invoice_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (total, invoice_date): (String, String) = conn
+            .query_row(
+                "SELECT total_amount, invoice_date FROM invoices WHERE id = ?1",
+                params![invoice_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
         let entry_date: NaiveDate = parse_required(invoice_date, 1).map_err(map_db_error)?;
@@ -975,18 +1115,22 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (amount_str, payment_date): (String, String) = conn.query_row(
-            "SELECT amount, payment_date FROM payments WHERE id = ?1",
-            params![payment_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (amount_str, payment_date): (String, String) = conn
+            .query_row(
+                "SELECT amount, payment_date FROM payments WHERE id = ?1",
+                params![payment_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
         let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
@@ -1014,18 +1158,22 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (total, bill_date): (String, String) = conn.query_row(
-            "SELECT total_amount, bill_date FROM bills WHERE id = ?1",
-            params![bill_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (total, bill_date): (String, String) = conn
+            .query_row(
+                "SELECT total_amount, bill_date FROM bills WHERE id = ?1",
+                params![bill_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(total, 0).map_err(map_db_error)?;
         let entry_date: NaiveDate = parse_required(bill_date, 1).map_err(map_db_error)?;
@@ -1053,18 +1201,22 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (amount_str, payment_date): (String, String) = conn.query_row(
-            "SELECT amount, payment_date FROM bill_payments WHERE id = ?1",
-            params![payment_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (amount_str, payment_date): (String, String) = conn
+            .query_row(
+                "SELECT amount, payment_date FROM bill_payments WHERE id = ?1",
+                params![payment_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
         let entry_date: NaiveDate = parse_required(payment_date, 1).map_err(map_db_error)?;
@@ -1092,12 +1244,14 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let (cost_str, transaction_date, transaction_type): (String, String, String) = conn.query_row(
             "SELECT total_cost, transaction_date, transaction_type FROM cost_transactions WHERE id = ?1",
@@ -1122,12 +1276,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 stateset_core::CreateJournalEntryLine::debit(
                     debit_account,
                     cost,
-                    Some(if transaction_type == "sale" { "COGS" } else { "Inventory" }.to_string()),
+                    Some(
+                        if transaction_type == "sale" {
+                            "COGS"
+                        } else {
+                            "Inventory"
+                        }
+                        .to_string(),
+                    ),
                 ),
                 stateset_core::CreateJournalEntryLine::credit(
                     credit_account,
                     cost,
-                    Some(if transaction_type == "sale" { "Inventory" } else { "COGS" }.to_string()),
+                    Some(
+                        if transaction_type == "sale" {
+                            "Inventory"
+                        } else {
+                            "COGS"
+                        }
+                        .to_string(),
+                    ),
                 ),
             ],
             source_document_type: Some("cost_transaction".to_string()),
@@ -1137,23 +1305,28 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
-        let config = self.get_auto_posting_config()?
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Auto-posting not configured".to_string()
-            ))?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Auto-posting not configured".to_string())
+        })?;
 
-        let bad_debt_account = config.bad_debt_expense_account_id
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Bad debt expense account not configured".to_string()
-            ))?;
+        let bad_debt_account = config.bad_debt_expense_account_id.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError(
+                "Bad debt expense account not configured".to_string(),
+            )
+        })?;
 
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let (amount_str, write_off_date): (String, String) = conn.query_row(
-            "SELECT amount, write_off_date FROM ar_write_offs WHERE id = ?1",
-            params![write_off_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(map_db_error)?;
+        let (amount_str, write_off_date): (String, String) = conn
+            .query_row(
+                "SELECT amount, write_off_date FROM ar_write_offs WHERE id = ?1",
+                params![write_off_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_db_error)?;
 
         let amount = parse_decimal_required(amount_str, 0).map_err(map_db_error)?;
         let entry_date: NaiveDate = parse_required(write_off_date, 1).map_err(map_db_error)?;
@@ -1185,7 +1358,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn get_trial_balance(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut stmt = conn.prepare(
             "SELECT a.id, a.account_number, a.name, a.account_type, a.normal_balance, a.current_balance
@@ -1194,24 +1370,26 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
              ORDER BY a.account_number"
         ).map_err(map_db_error)?;
 
-        let rows = stmt.query_map([], |row| {
-            let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-            let normal_balance: BalanceSide = parse_required(row.get::<_, String>(4)?, 4)?;
+        let rows = stmt
+            .query_map([], |row| {
+                let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                let normal_balance: BalanceSide = parse_required(row.get::<_, String>(4)?, 4)?;
 
-            let (debit_balance, credit_balance) = match normal_balance {
-                BalanceSide::Debit => (balance, Decimal::ZERO),
-                BalanceSide::Credit => (Decimal::ZERO, balance),
-            };
+                let (debit_balance, credit_balance) = match normal_balance {
+                    BalanceSide::Debit => (balance, Decimal::ZERO),
+                    BalanceSide::Credit => (Decimal::ZERO, balance),
+                };
 
-            Ok(TrialBalanceLine {
-                account_id: parse_required(row.get::<_, String>(0)?, 0)?,
-                account_number: row.get(1)?,
-                account_name: row.get(2)?,
-                account_type: parse_required(row.get::<_, String>(3)?, 3)?,
-                debit_balance,
-                credit_balance,
+                Ok(TrialBalanceLine {
+                    account_id: parse_required(row.get::<_, String>(0)?, 0)?,
+                    account_number: row.get(1)?,
+                    account_name: row.get(2)?,
+                    account_type: parse_required(row.get::<_, String>(3)?, 3)?,
+                    debit_balance,
+                    credit_balance,
+                })
             })
-        }).map_err(map_db_error)?;
+            .map_err(map_db_error)?;
 
         let mut lines = Vec::new();
         let mut total_debits = Decimal::ZERO;
@@ -1235,7 +1413,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut assets = Vec::new();
         let mut liabilities = Vec::new();
@@ -1252,28 +1433,36 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
              ORDER BY account_number"
         ).map_err(map_db_error)?;
 
-        let rows = stmt.query_map([], |row| {
-            let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-            let normal_balance: BalanceSide = parse_required(row.get::<_, String>(6)?, 6)?;
+        let rows = stmt
+            .query_map([], |row| {
+                let balance = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                let normal_balance: BalanceSide = parse_required(row.get::<_, String>(6)?, 6)?;
 
-            let display_balance = match normal_balance {
-                BalanceSide::Debit => balance,
-                BalanceSide::Credit => balance,
-            };
+                let display_balance = match normal_balance {
+                    BalanceSide::Debit => balance,
+                    BalanceSide::Credit => balance,
+                };
 
-            Ok((
-                parse_required(row.get::<_, String>(0)?, 0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                parse_required(row.get::<_, String>(3)?, 3)?,
-                parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
-                display_balance,
-            ))
-        }).map_err(map_db_error)?;
+                Ok((
+                    parse_required(row.get::<_, String>(0)?, 0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    parse_required(row.get::<_, String>(3)?, 3)?,
+                    parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
+                    display_balance,
+                ))
+            })
+            .map_err(map_db_error)?;
 
         for row in rows {
-            let (id, number, name, account_type, sub_type, balance): (Uuid, String, String, AccountType, Option<AccountSubType>, Decimal)
-                = row.map_err(map_db_error)?;
+            let (id, number, name, account_type, sub_type, balance): (
+                Uuid,
+                String,
+                String,
+                AccountType,
+                Option<AccountSubType>,
+                Decimal,
+            ) = row.map_err(map_db_error)?;
 
             let line = BalanceSheetLine {
                 account_id: id,
@@ -1289,15 +1478,15 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 AccountType::Asset => {
                     total_assets += balance;
                     assets.push(line);
-                },
+                }
                 AccountType::Liability => {
                     total_liabilities += balance;
                     liabilities.push(line);
-                },
+                }
                 AccountType::Equity => {
                     total_equity += balance;
                     equity.push(line);
-                },
+                }
                 _ => {}
             }
         }
@@ -1313,8 +1502,15 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         })
     }
 
-    fn get_income_statement(&self, start_date: NaiveDate, end_date: NaiveDate) -> Result<IncomeStatement> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn get_income_statement(
+        &self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    ) -> Result<IncomeStatement> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut revenue_lines = Vec::new();
         let mut expense_lines = Vec::new();
@@ -1322,8 +1518,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let mut total_expenses = Decimal::ZERO;
 
         // Get account activity for the period from posted journal entries
-        let mut stmt = conn.prepare(
-            "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
                     COALESCE(SUM(l.debit_amount), 0) as total_debits,
                     COALESCE(SUM(l.credit_amount), 0) as total_credits
              FROM gl_accounts a
@@ -1334,34 +1531,46 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                AND (je.status = 'posted' OR je.id IS NULL)
                AND (je.entry_date >= ?1 AND je.entry_date <= ?2 OR je.id IS NULL)
              GROUP BY a.id
-             ORDER BY a.account_number"
-        ).map_err(map_db_error)?;
+             ORDER BY a.account_number",
+            )
+            .map_err(map_db_error)?;
 
-        let rows = stmt.query_map(params![start_date.to_string(), end_date.to_string()], |row| {
-            let total_debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-            let total_credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
-            let account_type: AccountType = parse_required(row.get::<_, String>(3)?, 3)?;
+        let rows = stmt
+            .query_map(
+                params![start_date.to_string(), end_date.to_string()],
+                |row| {
+                    let total_debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
+                    let total_credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
+                    let account_type: AccountType = parse_required(row.get::<_, String>(3)?, 3)?;
 
-            // Revenue has credit normal balance, expense has debit
-            let amount = match account_type {
-                AccountType::Revenue => total_credits - total_debits,
-                AccountType::Expense => total_debits - total_credits,
-                _ => Decimal::ZERO,
-            };
+                    // Revenue has credit normal balance, expense has debit
+                    let amount = match account_type {
+                        AccountType::Revenue => total_credits - total_debits,
+                        AccountType::Expense => total_debits - total_credits,
+                        _ => Decimal::ZERO,
+                    };
 
-            Ok((
-                parse_required(row.get::<_, String>(0)?, 0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                account_type,
-                parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
-                amount,
-            ))
-        }).map_err(map_db_error)?;
+                    Ok((
+                        parse_required(row.get::<_, String>(0)?, 0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        account_type,
+                        parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
+                        amount,
+                    ))
+                },
+            )
+            .map_err(map_db_error)?;
 
         for row in rows {
-            let (id, number, name, account_type, sub_type, amount): (Uuid, String, String, AccountType, Option<AccountSubType>, Decimal)
-                = row.map_err(map_db_error)?;
+            let (id, number, name, account_type, sub_type, amount): (
+                Uuid,
+                String,
+                String,
+                AccountType,
+                Option<AccountSubType>,
+                Decimal,
+            ) = row.map_err(map_db_error)?;
 
             if amount == Decimal::ZERO {
                 continue;
@@ -1381,11 +1590,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 AccountType::Revenue => {
                     total_revenue += amount;
                     revenue_lines.push(line);
-                },
+                }
                 AccountType::Expense => {
                     total_expenses += amount;
                     expense_lines.push(line);
-                },
+                }
                 _ => {}
             }
         }
@@ -1401,14 +1610,25 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         })
     }
 
-    fn get_account_balance(&self, account_id: Uuid, _as_of_date: Option<NaiveDate>) -> Result<Option<Decimal>> {
+    fn get_account_balance(
+        &self,
+        account_id: Uuid,
+        _as_of_date: Option<NaiveDate>,
+    ) -> Result<Option<Decimal>> {
         Ok(self
             .get_account(account_id)?
             .map(|account| account.current_balance))
     }
 
-    fn get_account_transactions(&self, account_id: Uuid, filter: JournalEntryFilter) -> Result<Vec<JournalEntryLine>> {
-        let conn = self.pool.get().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+    fn get_account_transactions(
+        &self,
+        account_id: Uuid,
+        filter: JournalEntryFilter,
+    ) -> Result<Vec<JournalEntryLine>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let mut sql = String::from(
             "SELECT l.id, l.journal_entry_id, l.line_number, l.account_id, l.account_number,
@@ -1416,7 +1636,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     l.reference_type, l.reference_id, l.created_at
              FROM gl_journal_entry_lines l
              JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-             WHERE l.account_id = ?1"
+             WHERE l.account_id = ?1",
         );
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
 
@@ -1441,7 +1661,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
-        let rows = stmt.query_map(params_refs.as_slice(), Self::map_journal_entry_line_row).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(params_refs.as_slice(), Self::map_journal_entry_line_row)
+            .map_err(map_db_error)?;
 
         let mut lines = Vec::new();
         for row in rows {
@@ -1451,11 +1673,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        let period = self.get_period(period_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
+        let period = self
+            .get_period(period_id)?
+            .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if period.status != PeriodStatus::Open {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Period must be open to close".to_string()
+                "Period must be open to close".to_string(),
             ));
         }
 
@@ -1466,18 +1690,23 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         if income_statement.net_income == Decimal::ZERO {
             // Just close the period
             return Err(stateset_core::CommerceError::ValidationError(
-                "No net income to close".to_string()
+                "No net income to close".to_string(),
             ));
         }
 
         // Get retained earnings account
-        let retained_earnings = self.list_accounts(GlAccountFilter {
-            account_sub_type: Some(AccountSubType::RetainedEarnings),
-            ..Default::default()
-        })?.into_iter().next()
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError(
-                "Retained earnings account not found".to_string()
-            ))?;
+        let retained_earnings = self
+            .list_accounts(GlAccountFilter {
+                account_sub_type: Some(AccountSubType::RetainedEarnings),
+                ..Default::default()
+            })?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                stateset_core::CommerceError::ValidationError(
+                    "Retained earnings account not found".to_string(),
+                )
+            })?;
 
         // Create closing entry - debit revenue accounts, credit expense accounts
         // and net to retained earnings
@@ -1534,7 +1763,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // Batch Operations
     // ========================================================================
 
-    fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>) -> Result<BatchResult<GlAccount>> {
+    fn create_accounts_batch(
+        &self,
+        inputs: Vec<CreateGlAccount>,
+    ) -> Result<BatchResult<GlAccount>> {
         let mut result = BatchResult::new();
 
         for (index, input) in inputs.into_iter().enumerate() {

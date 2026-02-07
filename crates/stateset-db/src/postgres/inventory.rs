@@ -209,7 +209,8 @@ impl PgInventoryRepository {
         .map_err(map_db_error)?;
 
         for (reservation_id, quantity) in reservations {
-            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now).await?;
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now)
+                .await?;
         }
 
         Ok(())
@@ -624,33 +625,36 @@ impl PgInventoryRepository {
 
     /// Get inventory item by ID (async)
     pub async fn get_item_async(&self, id: i64) -> Result<Option<InventoryItem>> {
-        let row = sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(row.map(Self::row_to_item))
     }
 
     /// Get inventory item by SKU (async)
     pub async fn get_item_by_sku_async(&self, sku: &str) -> Result<Option<InventoryItem>> {
-        let row = sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE sku = $1")
-            .bind(sku)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE sku = $1")
+                .bind(sku)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(row.map(Self::row_to_item))
     }
 
     /// Get stock level for a SKU (async)
     pub async fn get_stock_async(&self, sku: &str) -> Result<Option<StockLevel>> {
-        let item_row = sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE sku = $1")
-            .bind(sku)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let item_row =
+            sqlx::query_as::<_, InventoryItemRow>("SELECT * FROM inventory_items WHERE sku = $1")
+                .bind(sku)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         let item = match item_row {
             Some(r) => r,
@@ -694,7 +698,11 @@ impl PgInventoryRepository {
     }
 
     /// Get balance at specific location (async)
-    pub async fn get_balance_async(&self, item_id: i64, location_id: i32) -> Result<Option<InventoryBalance>> {
+    pub async fn get_balance_async(
+        &self,
+        item_id: i64,
+        location_id: i32,
+    ) -> Result<Option<InventoryBalance>> {
         let row = sqlx::query_as::<_, InventoryBalanceRow>(
             "SELECT * FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
         )
@@ -932,7 +940,10 @@ impl PgInventoryRepository {
     }
 
     /// Get a reservation by ID (async)
-    pub async fn get_reservation_async(&self, reservation_id: Uuid) -> Result<Option<InventoryReservation>> {
+    pub async fn get_reservation_async(
+        &self,
+        reservation_id: Uuid,
+    ) -> Result<Option<InventoryReservation>> {
         let row = sqlx::query_as::<_, ReservationRow>(
             "SELECT * FROM inventory_reservations WHERE id = $1",
         )
@@ -1165,7 +1176,11 @@ impl PgInventoryRepository {
     }
 
     /// Get transaction history (async)
-    pub async fn get_transactions_async(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
+    pub async fn get_transactions_async(
+        &self,
+        item_id: i64,
+        limit: u32,
+    ) -> Result<Vec<InventoryTransaction>> {
         let rows = sqlx::query_as::<_, TransactionRow>(
             "SELECT * FROM inventory_transactions WHERE item_id = $1 ORDER BY created_at DESC LIMIT $2",
         )
@@ -1558,8 +1573,13 @@ impl InventoryRepository for PgInventoryRepository {
         super::block_on(self.get_reorder_needed_async())
     }
 
-    fn record_transaction(&self, _transaction: InventoryTransaction) -> Result<InventoryTransaction> {
-        Err(CommerceError::Internal("record_transaction not implemented".to_string()))
+    fn record_transaction(
+        &self,
+        _transaction: InventoryTransaction,
+    ) -> Result<InventoryTransaction> {
+        Err(CommerceError::Internal(
+            "record_transaction not implemented".to_string(),
+        ))
     }
 
     fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
@@ -1568,19 +1588,31 @@ impl InventoryRepository for PgInventoryRepository {
 
     // === Batch Operations ===
 
-    fn create_item_batch(&self, inputs: Vec<CreateInventoryItem>) -> Result<BatchResult<InventoryItem>> {
+    fn create_item_batch(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<BatchResult<InventoryItem>> {
         super::block_on(self.create_item_batch_async(inputs))
     }
 
-    fn create_item_batch_atomic(&self, inputs: Vec<CreateInventoryItem>) -> Result<Vec<InventoryItem>> {
+    fn create_item_batch_atomic(
+        &self,
+        inputs: Vec<CreateInventoryItem>,
+    ) -> Result<Vec<InventoryItem>> {
         super::block_on(self.create_item_batch_atomic_async(inputs))
     }
 
-    fn adjust_batch(&self, adjustments: Vec<AdjustInventory>) -> Result<BatchResult<InventoryTransaction>> {
+    fn adjust_batch(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<BatchResult<InventoryTransaction>> {
         super::block_on(self.adjust_batch_async(adjustments))
     }
 
-    fn adjust_batch_atomic(&self, adjustments: Vec<AdjustInventory>) -> Result<Vec<InventoryTransaction>> {
+    fn adjust_batch_atomic(
+        &self,
+        adjustments: Vec<AdjustInventory>,
+    ) -> Result<Vec<InventoryTransaction>> {
         super::block_on(self.adjust_batch_atomic_async(adjustments))
     }
 

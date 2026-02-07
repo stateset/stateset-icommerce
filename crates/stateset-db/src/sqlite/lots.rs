@@ -12,10 +12,9 @@ use rust_decimal::Decimal;
 use stateset_core::errors::BatchResult;
 use stateset_core::traits::LotRepository;
 use stateset_core::{
-    AddLotCertificate, AdjustLot, CommerceError, ConsumeLot, CreateLot, Lot,
-    LotCertificate, LotFilter, LotLocation, LotStatus, LotTransaction, LotTransactionType,
-    MergeLots, ReserveLot, Result, SplitLot, TraceabilityResult, TraceNode, TraceNodeType,
-    TransferLot, UpdateLot,
+    AddLotCertificate, AdjustLot, CommerceError, ConsumeLot, CreateLot, Lot, LotCertificate,
+    LotFilter, LotLocation, LotStatus, LotTransaction, LotTransactionType, MergeLots, ReserveLot,
+    Result, SplitLot, TraceNode, TraceNodeType, TraceabilityResult, TransferLot, UpdateLot,
 };
 use uuid::Uuid;
 
@@ -35,7 +34,11 @@ impl SqliteLotRepository {
     }
 
     fn generate_lot_number(sku: &str) -> String {
-        format!("LOT-{}-{}", sku.chars().take(6).collect::<String>().to_uppercase(), Utc::now().format("%Y%m%d%H%M%S"))
+        format!(
+            "LOT-{}-{}",
+            sku.chars().take(6).collect::<String>().to_uppercase(),
+            Utc::now().format("%Y%m%d%H%M%S")
+        )
     }
 
     fn row_to_lot(row: &rusqlite::Row) -> rusqlite::Result<Lot> {
@@ -105,21 +108,37 @@ impl SqliteLotRepository {
             )?,
             attributes,
             notes: row.get("notes")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "lot", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "lot", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "lot",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "lot",
+                "updated_at",
+            )?,
         })
     }
 
     fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<LotTransaction> {
         Ok(LotTransaction {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_transaction", "id")?,
-            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_transaction", "lot_id")?,
+            lot_id: parse_uuid_row(
+                &row.get::<_, String>("lot_id")?,
+                "lot_transaction",
+                "lot_id",
+            )?,
             transaction_type: parse_enum_row(
                 &row.get::<_, String>("transaction_type")?,
                 "lot_transaction",
                 "transaction_type",
             )?,
-            quantity: parse_decimal_row(&row.get::<_, String>("quantity")?, "lot_transaction", "quantity")?,
+            quantity: parse_decimal_row(
+                &row.get::<_, String>("quantity")?,
+                "lot_transaction",
+                "quantity",
+            )?,
             reference_type: row.get("reference_type")?,
             reference_id: parse_uuid_row(
                 &row.get::<_, String>("reference_id")?,
@@ -141,7 +160,11 @@ impl SqliteLotRepository {
     fn row_to_certificate(row: &rusqlite::Row) -> rusqlite::Result<LotCertificate> {
         Ok(LotCertificate {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_certificate", "id")?,
-            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_certificate", "lot_id")?,
+            lot_id: parse_uuid_row(
+                &row.get::<_, String>("lot_id")?,
+                "lot_certificate",
+                "lot_id",
+            )?,
             certificate_type: parse_enum_row(
                 &row.get::<_, String>("certificate_type")?,
                 "lot_certificate",
@@ -169,6 +192,7 @@ impl SqliteLotRepository {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_transaction(
         &self,
         conn: &rusqlite::Connection,
@@ -228,13 +252,15 @@ impl LotRepository for SqliteLotRepository {
         let tx = conn.transaction().map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
-        let lot_number = input.lot_number.unwrap_or_else(|| Self::generate_lot_number(&input.sku));
+        let lot_number = input
+            .lot_number
+            .unwrap_or_else(|| Self::generate_lot_number(&input.sku));
         let now = Utc::now();
         let production_date = input.production_date.unwrap_or(now);
         let attributes_json = input
             .attributes
             .as_ref()
-            .map(|a| serde_json::to_string(a))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
             .unwrap_or_else(|| "{}".to_string());
@@ -271,7 +297,10 @@ impl LotRepository for SqliteLotRepository {
 
         // Record initial transaction
         let tx_id = Uuid::new_v4();
-        let reference_id = input.work_order_id.or(input.purchase_order_id).unwrap_or(id);
+        let reference_id = input
+            .work_order_id
+            .or(input.purchase_order_id)
+            .unwrap_or(id);
         let reference_type = if input.work_order_id.is_some() {
             "work_order"
         } else if input.purchase_order_id.is_some() {
@@ -525,7 +554,10 @@ impl LotRepository for SqliteLotRepository {
             input.lot_id,
             LotTransactionType::Adjusted,
             input.quantity_change,
-            input.reference_type.as_deref().unwrap_or("manual_adjustment"),
+            input
+                .reference_type
+                .as_deref()
+                .unwrap_or("manual_adjustment"),
             input.reference_id.unwrap_or(input.lot_id),
             None,
             input.location_id,
@@ -883,7 +915,10 @@ impl LotRepository for SqliteLotRepository {
                 &new_lot_number,
                 input.quantity.to_string(),
                 input.quantity.to_string(),
-                input.reason.as_ref().map(|r| format!("Split from {}: {}", original.lot_number, r)),
+                input
+                    .reason
+                    .as_ref()
+                    .map(|r| format!("Split from {}: {}", original.lot_number, r)),
                 now.to_rfc3339(),
                 now.to_rfc3339(),
                 input.lot_id.to_string(),
@@ -980,7 +1015,9 @@ impl LotRepository for SqliteLotRepository {
             lots_to_consume.push((lot.id, lot.lot_number, lot.quantity_remaining));
         }
 
-        let sku = sku.ok_or(CommerceError::ValidationError("No lots to merge".to_string()))?;
+        let sku = sku.ok_or(CommerceError::ValidationError(
+            "No lots to merge".to_string(),
+        ))?;
 
         // Create new merged lot
         let new_lot_id = Uuid::new_v4();
@@ -1184,7 +1221,11 @@ impl LotRepository for SqliteLotRepository {
         );
 
         match result {
-            Ok(qty) => Ok(Some(parse_decimal_strict(&qty, "lot_location", "quantity")?)),
+            Ok(qty) => Ok(Some(parse_decimal_strict(
+                &qty,
+                "lot_location",
+                "quantity",
+            )?)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(map_db_error(e)),
         }
@@ -1202,7 +1243,11 @@ impl LotRepository for SqliteLotRepository {
                 Ok(LotLocation {
                     lot_id: parse_uuid_row(&row.get::<_, String>(0)?, "lot_location", "lot_id")?,
                     location_id: row.get(1)?,
-                    quantity: parse_decimal_row(&row.get::<_, String>(2)?, "lot_location", "quantity")?,
+                    quantity: parse_decimal_row(
+                        &row.get::<_, String>(2)?,
+                        "lot_location",
+                        "quantity",
+                    )?,
                     updated_at: parse_datetime_row(
                         &row.get::<_, String>(3)?,
                         "lot_location",

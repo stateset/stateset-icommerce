@@ -5,11 +5,7 @@
  * Each Slack user gets their own agent session for multi-turn conversations.
  */
 
-import {
-  createSessionManager,
-  createMessageHandler,
-  BOT_PREFIX,
-} from '../channels/base.js';
+import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
 
@@ -42,14 +38,14 @@ export async function startSlackGateway({
   // Dynamic import — clear error if not installed
   let App;
   try {
-    ({ default: { App } } = await import('@slack/bolt'));
+    ({
+      default: { App },
+    } = await import('@slack/bolt'));
   } catch {
     try {
       ({ App } = await import('@slack/bolt'));
     } catch {
-      throw new Error(
-        '@slack/bolt is not installed. Install it with: npm install @slack/bolt'
-      );
+      throw new Error('@slack/bolt is not installed. Install it with: npm install @slack/bolt');
     }
   }
 
@@ -59,13 +55,13 @@ export async function startSlackGateway({
   if (!botToken) {
     throw new Error(
       'SLACK_BOT_TOKEN environment variable is required.\n' +
-      'Get one from your Slack app settings: https://api.slack.com/apps'
+        'Get one from your Slack app settings: https://api.slack.com/apps',
     );
   }
   if (!appToken) {
     throw new Error(
       'SLACK_APP_TOKEN environment variable is required (starts with xapp-).\n' +
-      'Enable Socket Mode and generate an app-level token in your Slack app settings.'
+        'Enable Socket Mode and generate an app-level token in your Slack app settings.',
     );
   }
 
@@ -123,9 +119,7 @@ export async function startSlackGateway({
     formatForPlatform: (text) => {
       // Convert markdown bold to Slack bold (*text* stays the same)
       // Convert markdown headers to bold
-      return text
-        .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
-        .replace(/\*\*(.+?)\*\*/g, '*$1*');
+      return text.replace(/^#{1,6}\s+(.+)$/gm, '*$1*').replace(/\*\*(.+?)\*\*/g, '*$1*');
     },
     maxMessageLength: 3000,
 
@@ -254,8 +248,13 @@ export async function startSlackGateway({
       console.error('Error handling Slack action:', err.message);
       if (verbose) console.error(err);
       try {
-        await respond({ text: 'Sorry, I encountered an error processing that action.', replace_original: false });
-      } catch { /* ignore */ }
+        await respond({
+          text: 'Sorry, I encountered an error processing that action.',
+          replace_original: false,
+        });
+      } catch (err) {
+        console.warn('[slack] Failed to send error reply:', err.message);
+      }
     }
   });
 

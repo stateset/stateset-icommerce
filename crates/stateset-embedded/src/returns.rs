@@ -1,9 +1,6 @@
 //! Return operations
 
-use stateset_core::{
-    CreateReturn, Result, Return, ReturnFilter, ReturnStatus,
-    UpdateReturn,
-};
+use stateset_core::{CreateReturn, Result, Return, ReturnFilter, ReturnStatus, UpdateReturn};
 use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -118,20 +115,21 @@ impl Returns {
                         });
                     }
                     ReturnStatus::Completed => {
-                        let refund_amount = updated.refund_amount.clone().unwrap_or(Decimal::ZERO);
-                        let refund_method = updated.refund_method.clone();
+                        let refund_amount = updated.refund_amount.unwrap_or(Decimal::ZERO);
                         self.emit(CommerceEvent::ReturnCompleted {
                             return_id: updated.id,
                             order_id: updated.order_id,
                             refund_amount,
                             timestamp: updated.updated_at,
                         });
-                        if updated.refund_amount.is_some() && refund_method.is_some() {
+                        if let (Some(amount), Some(method)) =
+                            (updated.refund_amount, updated.refund_method.clone())
+                        {
                             self.emit(CommerceEvent::RefundIssued {
                                 return_id: updated.id,
                                 order_id: updated.order_id,
-                                amount: refund_amount,
-                                method: refund_method.unwrap(),
+                                amount,
+                                method,
                                 timestamp: updated.updated_at,
                             });
                         }
@@ -233,20 +231,19 @@ impl Returns {
             if let Some(previous) = previous {
                 self.emit_status_change(&previous, &ret);
             }
-            let refund_amount = ret.refund_amount.clone().unwrap_or(Decimal::ZERO);
-            let refund_method = ret.refund_method.clone();
+            let refund_amount = ret.refund_amount.unwrap_or(Decimal::ZERO);
             self.emit(CommerceEvent::ReturnCompleted {
                 return_id: ret.id,
                 order_id: ret.order_id,
                 refund_amount,
                 timestamp: ret.updated_at,
             });
-            if ret.refund_amount.is_some() && refund_method.is_some() {
+            if let (Some(amount), Some(method)) = (ret.refund_amount, ret.refund_method.clone()) {
                 self.emit(CommerceEvent::RefundIssued {
                     return_id: ret.id,
                     order_id: ret.order_id,
-                    amount: refund_amount,
-                    method: refund_method.unwrap(),
+                    amount,
+                    method,
                     timestamp: ret.updated_at,
                 });
             }

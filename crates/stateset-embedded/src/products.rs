@@ -1,8 +1,8 @@
 //! Product operations
 
 use stateset_core::{
-    CreateProduct, CreateProductVariant, Product, ProductFilter, ProductStatus,
-    ProductVariant, Result, UpdateProduct,
+    CreateProduct, CreateProductVariant, Product, ProductFilter, ProductStatus, ProductVariant,
+    Result, UpdateProduct,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -157,7 +157,11 @@ impl Products {
     }
 
     /// Add a variant to a product.
-    pub fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
+    pub fn add_variant(
+        &self,
+        product_id: Uuid,
+        variant: CreateProductVariant,
+    ) -> Result<ProductVariant> {
         let variant = self.db.products().add_variant(product_id, variant)?;
         #[cfg(feature = "events")]
         {
@@ -182,7 +186,11 @@ impl Products {
     }
 
     /// Update a variant.
-    pub fn update_variant(&self, id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
+    pub fn update_variant(
+        &self,
+        id: Uuid,
+        variant: CreateProductVariant,
+    ) -> Result<ProductVariant> {
         let variant = self.db.products().update_variant(id, variant)?;
         #[cfg(feature = "events")]
         {

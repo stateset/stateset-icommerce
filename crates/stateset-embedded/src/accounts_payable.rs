@@ -35,10 +35,9 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
-    BillPayment, BillPaymentFilter, CreateBill, CreateBillItem, CreateBillPayment,
-    CreatePaymentRun, PaymentAllocation, PaymentRun, PaymentRunFilter, Result,
-    SupplierApSummary, UpdateBill,
+    ApAgingSummary, BatchResult, Bill, BillFilter, BillItem, BillPayment, BillPaymentFilter,
+    CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentRun,
+    PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -273,7 +272,9 @@ impl AccountsPayable {
 
     /// Get allocations for a payment.
     pub fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
-        self.db.accounts_payable().get_payment_allocations(payment_id)
+        self.db
+            .accounts_payable()
+            .get_payment_allocations(payment_id)
     }
 
     /// Get all payments for a specific bill.
@@ -312,7 +313,10 @@ impl AccountsPayable {
     /// ```
     pub fn pay_bill(&self, bill_id: Uuid, input: stateset_core::PayBill) -> Result<Bill> {
         // Get the bill to find the supplier
-        let bill = self.db.accounts_payable().get_bill(bill_id)?
+        let bill = self
+            .db
+            .accounts_payable()
+            .get_bill(bill_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Create a payment for this bill
@@ -335,7 +339,9 @@ impl AccountsPayable {
         self.db.accounts_payable().create_payment(payment_input)?;
 
         // Return the updated bill
-        self.db.accounts_payable().get_bill(bill_id)?
+        self.db
+            .accounts_payable()
+            .get_bill(bill_id)?
             .ok_or(stateset_core::CommerceError::NotFound)
     }
 
@@ -388,7 +394,9 @@ impl AccountsPayable {
     ///
     /// Requires approval before processing.
     pub fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
-        self.db.accounts_payable().approve_payment_run(id, approved_by)
+        self.db
+            .accounts_payable()
+            .approve_payment_run(id, approved_by)
     }
 
     /// Process a payment run.

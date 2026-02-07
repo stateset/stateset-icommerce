@@ -3,20 +3,20 @@
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::params;
+use rust_decimal::Decimal;
 use stateset_core::{
-    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, ProductTaxCategory,
-    Result, TaxAddress, TaxBreakdown, TaxCalculationRequest, TaxCalculationResult, TaxExemption,
-    TaxJurisdiction, TaxJurisdictionFilter, TaxRate, TaxRateFilter, TaxRepository, TaxSettings,
-    LineItemTax, TaxDetail, JurisdictionSummary,
+    CommerceError, CreateTaxExemption, CreateTaxJurisdiction, CreateTaxRate, JurisdictionSummary,
+    LineItemTax, ProductTaxCategory, Result, TaxAddress, TaxBreakdown, TaxCalculationRequest,
+    TaxCalculationResult, TaxDetail, TaxExemption, TaxJurisdiction, TaxJurisdictionFilter, TaxRate,
+    TaxRateFilter, TaxRepository, TaxSettings,
 };
 use uuid::Uuid;
 
 use super::{
-    map_db_error, parse_date_row, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
-    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row,
-    parse_uuid_row,
+    map_db_error, parse_date_row, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row,
+    parse_uuid_opt_row, parse_uuid_row,
 };
 
 /// SQLite tax repository
@@ -48,7 +48,10 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get a jurisdiction by ID
     pub fn get_jurisdiction(&self, id: Uuid) -> Result<Option<TaxJurisdiction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -98,7 +101,10 @@ impl SqliteTaxRepository {
 
     /// Get a jurisdiction by code (e.g., "US-CA")
     pub fn get_jurisdiction_by_code(&self, code: &str) -> Result<Option<TaxJurisdiction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -147,8 +153,14 @@ impl SqliteTaxRepository {
     }
 
     /// List jurisdictions with optional filter
-    pub fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    pub fn list_jurisdictions(
+        &self,
+        filter: TaxJurisdictionFilter,
+    ) -> Result<Vec<TaxJurisdiction>> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut query = String::from(
             "SELECT id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at
@@ -178,43 +190,49 @@ impl SqliteTaxRepository {
         query.push_str(" ORDER BY country_code, state_code, level, name");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
-        let params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = params_vec
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
 
-        let rows = stmt.query_map(params.as_slice(), |row| {
-            let postal_codes_json: String = row.get(9)?;
-            let postal_codes: Vec<String> =
-                parse_json_row(&postal_codes_json, "tax_jurisdiction", "postal_codes")?;
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                let postal_codes_json: String = row.get(9)?;
+                let postal_codes: Vec<String> =
+                    parse_json_row(&postal_codes_json, "tax_jurisdiction", "postal_codes")?;
 
-            Ok(TaxJurisdiction {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_jurisdiction", "id")?,
-                parent_id: parse_uuid_opt_row(
-                    row.get::<_, Option<String>>(1)?,
-                    "tax_jurisdiction",
-                    "parent_id",
-                )?,
-                name: row.get(2)?,
-                code: row.get(3)?,
-                level: parse_enum_row(&row.get::<_, String>(4)?, "tax_jurisdiction", "level")?,
-                country_code: row.get(5)?,
-                state_code: row.get(6)?,
-                county: row.get(7)?,
-                city: row.get(8)?,
-                postal_codes,
-                active: row.get::<_, i32>(10)? != 0,
-                created_at: parse_datetime_row(
-                    &row.get::<_, String>(11)?,
-                    "tax_jurisdiction",
-                    "created_at",
-                )?,
-                updated_at: parse_datetime_row(
-                    &row.get::<_, String>(12)?,
-                    "tax_jurisdiction",
-                    "updated_at",
-                )?,
+                Ok(TaxJurisdiction {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_jurisdiction", "id")?,
+                    parent_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(1)?,
+                        "tax_jurisdiction",
+                        "parent_id",
+                    )?,
+                    name: row.get(2)?,
+                    code: row.get(3)?,
+                    level: parse_enum_row(&row.get::<_, String>(4)?, "tax_jurisdiction", "level")?,
+                    country_code: row.get(5)?,
+                    state_code: row.get(6)?,
+                    county: row.get(7)?,
+                    city: row.get(8)?,
+                    postal_codes,
+                    active: row.get::<_, i32>(10)? != 0,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(11)?,
+                        "tax_jurisdiction",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(12)?,
+                        "tax_jurisdiction",
+                        "updated_at",
+                    )?,
+                })
             })
-        }).map_err(map_db_error)?;
+            .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(map_db_error)
     }
 
     /// Create a new jurisdiction
@@ -224,7 +242,10 @@ impl SqliteTaxRepository {
         let postal_codes_json = serde_json::to_string(&input.postal_codes)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_jurisdictions (id, parent_id, name, code, level, country_code, state_code, county, city, postal_codes, active, created_at, updated_at)
@@ -258,7 +279,10 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get a tax rate by ID
     pub fn get_rate(&self, id: Uuid) -> Result<Option<TaxRate>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at
@@ -324,7 +348,10 @@ impl SqliteTaxRepository {
 
     /// List tax rates with optional filter
     pub fn list_rates(&self, filter: TaxRateFilter) -> Result<Vec<TaxRate>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let mut query = String::from(
             "SELECT id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at
@@ -352,7 +379,9 @@ impl SqliteTaxRepository {
         }
 
         if let Some(date) = &filter.effective_date {
-            query.push_str(" AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)");
+            query.push_str(
+                " AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)",
+            );
             params_vec.push(date.to_string());
             params_vec.push(date.to_string());
         }
@@ -360,63 +389,82 @@ impl SqliteTaxRepository {
         query.push_str(" ORDER BY priority, name");
 
         let mut stmt = conn.prepare(&query).map_err(map_db_error)?;
-        let params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = params_vec
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
 
-        let rows = stmt.query_map(params.as_slice(), |row| {
-            Ok(TaxRate {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_rate", "id")?,
-                jurisdiction_id: parse_uuid_row(
-                    &row.get::<_, String>(1)?,
-                    "tax_rate",
-                    "jurisdiction_id",
-                )?,
-                tax_type: parse_enum_row(&row.get::<_, String>(2)?, "tax_rate", "tax_type")?,
-                product_category: parse_enum_row(
-                    &row.get::<_, String>(3)?,
-                    "tax_rate",
-                    "product_category",
-                )?,
-                rate: parse_decimal_row(&row.get::<_, String>(4)?, "tax_rate", "rate")?,
-                name: row.get(5)?,
-                description: row.get(6)?,
-                is_compound: row.get::<_, i32>(7)? != 0,
-                priority: row.get(8)?,
-                threshold_min: parse_decimal_opt_row(
-                    row.get::<_, Option<String>>(9)?,
-                    "tax_rate",
-                    "threshold_min",
-                )?,
-                threshold_max: parse_decimal_opt_row(
-                    row.get::<_, Option<String>>(10)?,
-                    "tax_rate",
-                    "threshold_max",
-                )?,
-                fixed_amount: parse_decimal_opt_row(
-                    row.get::<_, Option<String>>(11)?,
-                    "tax_rate",
-                    "fixed_amount",
-                )?,
-                effective_from: parse_date_row(
-                    &row.get::<_, String>(12)?,
-                    "tax_rate",
-                    "effective_from",
-                )?,
-                effective_to: Self::parse_date_opt(
-                    row.get::<_, Option<String>>(13)?,
-                    "tax_rate",
-                    "effective_to",
-                )?,
-                active: row.get::<_, i32>(14)? != 0,
-                created_at: parse_datetime_row(&row.get::<_, String>(15)?, "tax_rate", "created_at")?,
-                updated_at: parse_datetime_row(&row.get::<_, String>(16)?, "tax_rate", "updated_at")?,
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(TaxRate {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_rate", "id")?,
+                    jurisdiction_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "tax_rate",
+                        "jurisdiction_id",
+                    )?,
+                    tax_type: parse_enum_row(&row.get::<_, String>(2)?, "tax_rate", "tax_type")?,
+                    product_category: parse_enum_row(
+                        &row.get::<_, String>(3)?,
+                        "tax_rate",
+                        "product_category",
+                    )?,
+                    rate: parse_decimal_row(&row.get::<_, String>(4)?, "tax_rate", "rate")?,
+                    name: row.get(5)?,
+                    description: row.get(6)?,
+                    is_compound: row.get::<_, i32>(7)? != 0,
+                    priority: row.get(8)?,
+                    threshold_min: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(9)?,
+                        "tax_rate",
+                        "threshold_min",
+                    )?,
+                    threshold_max: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(10)?,
+                        "tax_rate",
+                        "threshold_max",
+                    )?,
+                    fixed_amount: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(11)?,
+                        "tax_rate",
+                        "fixed_amount",
+                    )?,
+                    effective_from: parse_date_row(
+                        &row.get::<_, String>(12)?,
+                        "tax_rate",
+                        "effective_from",
+                    )?,
+                    effective_to: Self::parse_date_opt(
+                        row.get::<_, Option<String>>(13)?,
+                        "tax_rate",
+                        "effective_to",
+                    )?,
+                    active: row.get::<_, i32>(14)? != 0,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(15)?,
+                        "tax_rate",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(16)?,
+                        "tax_rate",
+                        "updated_at",
+                    )?,
+                })
             })
-        }).map_err(map_db_error)?;
+            .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(map_db_error)
     }
 
     /// Get rates for a jurisdiction and product category
-    pub fn get_rates_for_address(&self, address: &TaxAddress, category: ProductTaxCategory, date: NaiveDate) -> Result<Vec<TaxRate>> {
+    pub fn get_rates_for_address(
+        &self,
+        address: &TaxAddress,
+        category: ProductTaxCategory,
+        date: NaiveDate,
+    ) -> Result<Vec<TaxRate>> {
         // Find applicable jurisdictions (country, state, etc.)
         let mut jurisdiction_ids = Vec::new();
 
@@ -461,7 +509,10 @@ impl SqliteTaxRepository {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_rates (id, jurisdiction_id, tax_type, product_category, rate, name, description, is_compound, priority, threshold_min, threshold_max, fixed_amount, effective_from, effective_to, active, created_at, updated_at)
@@ -499,7 +550,10 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get an exemption by ID
     pub fn get_exemption(&self, id: Uuid) -> Result<Option<TaxExemption>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, customer_id, exemption_type, certificate_number, issuing_authority, jurisdiction_ids, exempt_categories, effective_from, expires_at, verified, verified_at, notes, active, created_at, updated_at
@@ -582,7 +636,10 @@ impl SqliteTaxRepository {
 
     /// Get active exemptions for a customer
     pub fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let today = Utc::now().date_naive().to_string();
 
         let mut stmt = conn.prepare(
@@ -591,71 +648,74 @@ impl SqliteTaxRepository {
              WHERE customer_id = ? AND active = 1 AND effective_from <= ? AND (expires_at IS NULL OR expires_at >= ?)"
         ).map_err(map_db_error)?;
 
-        let rows = stmt.query_map(params![customer_id.to_string(), &today, &today], |row| {
-            let jurisdiction_ids_json: String = row.get(5)?;
-            let raw_jurisdiction_ids: Vec<String> =
-                parse_json_row(&jurisdiction_ids_json, "tax_exemption", "jurisdiction_ids")?;
-            let jurisdiction_ids = raw_jurisdiction_ids
-                .into_iter()
-                .map(|value| parse_uuid_row(&value, "tax_exemption", "jurisdiction_ids"))
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt
+            .query_map(params![customer_id.to_string(), &today, &today], |row| {
+                let jurisdiction_ids_json: String = row.get(5)?;
+                let raw_jurisdiction_ids: Vec<String> =
+                    parse_json_row(&jurisdiction_ids_json, "tax_exemption", "jurisdiction_ids")?;
+                let jurisdiction_ids = raw_jurisdiction_ids
+                    .into_iter()
+                    .map(|value| parse_uuid_row(&value, "tax_exemption", "jurisdiction_ids"))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            let categories_json: String = row.get(6)?;
-            let raw_categories: Vec<String> =
-                parse_json_row(&categories_json, "tax_exemption", "exempt_categories")?;
-            let exempt_categories = raw_categories
-                .into_iter()
-                .map(|value| parse_enum_row(&value, "tax_exemption", "exempt_categories"))
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+                let categories_json: String = row.get(6)?;
+                let raw_categories: Vec<String> =
+                    parse_json_row(&categories_json, "tax_exemption", "exempt_categories")?;
+                let exempt_categories = raw_categories
+                    .into_iter()
+                    .map(|value| parse_enum_row(&value, "tax_exemption", "exempt_categories"))
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            Ok(TaxExemption {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_exemption", "id")?,
-                customer_id: parse_uuid_row(
-                    &row.get::<_, String>(1)?,
-                    "tax_exemption",
-                    "customer_id",
-                )?,
-                exemption_type: parse_enum_row(
-                    &row.get::<_, String>(2)?,
-                    "tax_exemption",
-                    "exemption_type",
-                )?,
-                certificate_number: row.get(3)?,
-                issuing_authority: row.get(4)?,
-                jurisdiction_ids,
-                exempt_categories,
-                effective_from: parse_date_row(
-                    &row.get::<_, String>(7)?,
-                    "tax_exemption",
-                    "effective_from",
-                )?,
-                expires_at: Self::parse_date_opt(
-                    row.get::<_, Option<String>>(8)?,
-                    "tax_exemption",
-                    "expires_at",
-                )?,
-                verified: row.get::<_, i32>(9)? != 0,
-                verified_at: parse_datetime_opt_row(
-                    row.get::<_, Option<String>>(10)?,
-                    "tax_exemption",
-                    "verified_at",
-                )?,
-                notes: row.get(11)?,
-                active: row.get::<_, i32>(12)? != 0,
-                created_at: parse_datetime_row(
-                    &row.get::<_, String>(13)?,
-                    "tax_exemption",
-                    "created_at",
-                )?,
-                updated_at: parse_datetime_row(
-                    &row.get::<_, String>(14)?,
-                    "tax_exemption",
-                    "updated_at",
-                )?,
+                Ok(TaxExemption {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "tax_exemption", "id")?,
+                    customer_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "tax_exemption",
+                        "customer_id",
+                    )?,
+                    exemption_type: parse_enum_row(
+                        &row.get::<_, String>(2)?,
+                        "tax_exemption",
+                        "exemption_type",
+                    )?,
+                    certificate_number: row.get(3)?,
+                    issuing_authority: row.get(4)?,
+                    jurisdiction_ids,
+                    exempt_categories,
+                    effective_from: parse_date_row(
+                        &row.get::<_, String>(7)?,
+                        "tax_exemption",
+                        "effective_from",
+                    )?,
+                    expires_at: Self::parse_date_opt(
+                        row.get::<_, Option<String>>(8)?,
+                        "tax_exemption",
+                        "expires_at",
+                    )?,
+                    verified: row.get::<_, i32>(9)? != 0,
+                    verified_at: parse_datetime_opt_row(
+                        row.get::<_, Option<String>>(10)?,
+                        "tax_exemption",
+                        "verified_at",
+                    )?,
+                    notes: row.get(11)?,
+                    active: row.get::<_, i32>(12)? != 0,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(13)?,
+                        "tax_exemption",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>(14)?,
+                        "tax_exemption",
+                        "updated_at",
+                    )?,
+                })
             })
-        }).map_err(map_db_error)?;
+            .map_err(map_db_error)?;
 
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(map_db_error)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(map_db_error)
     }
 
     /// Create a new exemption
@@ -664,18 +724,27 @@ impl SqliteTaxRepository {
         let now = Utc::now();
 
         let jurisdiction_ids_json = serde_json::to_string(
-            &input.jurisdiction_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>()
-        ).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            &input
+                .jurisdiction_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let categories_json = serde_json::to_string(
             &input
                 .exempt_categories
                 .iter()
                 .map(|c| c.to_string())
-                .collect::<Vec<_>>()
-        ).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO tax_exemptions (id, customer_id, exemption_type, certificate_number, issuing_authority, jurisdiction_ids, exempt_categories, effective_from, expires_at, verified, notes, active, created_at, updated_at)
@@ -709,7 +778,10 @@ impl SqliteTaxRepository {
 impl SqliteTaxRepository {
     /// Get tax settings
     pub fn get_settings(&self) -> Result<TaxSettings> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let result = conn.query_row(
             "SELECT id, enabled, calculation_method, compound_method, tax_shipping, tax_handling, tax_gift_wrap, origin_address, default_product_category, rounding_mode, decimal_places, validate_addresses, tax_provider, provider_credentials, created_at, updated_at
@@ -777,9 +849,13 @@ impl SqliteTaxRepository {
 
     /// Update tax settings
     pub fn update_settings(&self, settings: TaxSettings) -> Result<TaxSettings> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let origin_address_json = settings.origin_address
+        let origin_address_json = settings
+            .origin_address
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
@@ -878,7 +954,11 @@ impl SqliteTaxRepository {
             }
 
             // Get applicable tax rates
-            let rates = self.get_rates_for_address(&request.shipping_address, item.tax_category, transaction_date)?;
+            let rates = self.get_rates_for_address(
+                &request.shipping_address,
+                item.tax_category,
+                transaction_date,
+            )?;
 
             let mut line_tax = Decimal::ZERO;
             let mut line_tax_details = Vec::new();
@@ -922,13 +1002,15 @@ impl SqliteTaxRepository {
 
                 // Get jurisdiction info
                 if let Some(jurisdiction) = self.get_jurisdiction(rate.jurisdiction_id)? {
-                    jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| JurisdictionSummary {
-                        id: jurisdiction.id,
-                        name: jurisdiction.name.clone(),
-                        code: jurisdiction.code.clone(),
-                        level: jurisdiction.level,
-                        total_rate: Decimal::ZERO,
-                        total_tax: Decimal::ZERO,
+                    jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
+                        JurisdictionSummary {
+                            id: jurisdiction.id,
+                            name: jurisdiction.name.clone(),
+                            code: jurisdiction.code.clone(),
+                            level: jurisdiction.level,
+                            total_rate: Decimal::ZERO,
+                            total_tax: Decimal::ZERO,
+                        }
                     });
 
                     if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
@@ -937,7 +1019,9 @@ impl SqliteTaxRepository {
                     }
 
                     // Add to breakdown
-                    if let Some(existing) = tax_breakdown.iter_mut().find(|b| b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type) {
+                    if let Some(existing) = tax_breakdown.iter_mut().find(|b| {
+                        b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type
+                    }) {
                         existing.taxable_amount += taxable_amount;
                         existing.tax_amount += rate_tax;
                     } else {
@@ -988,7 +1072,11 @@ impl SqliteTaxRepository {
                     shipping_amount = Decimal::ZERO;
                 }
 
-                let shipping_rates = self.get_rates_for_address(&request.shipping_address, ProductTaxCategory::Standard, transaction_date)?;
+                let shipping_rates = self.get_rates_for_address(
+                    &request.shipping_address,
+                    ProductTaxCategory::Standard,
+                    transaction_date,
+                )?;
                 for rate in &shipping_rates {
                     if shipping_amount <= Decimal::ZERO {
                         continue;
@@ -1026,23 +1114,25 @@ impl SqliteTaxRepository {
                     shipping_tax += rate_tax;
 
                     if let Some(jurisdiction) = self.get_jurisdiction(rate.jurisdiction_id)? {
-                        jurisdictions_map
-                            .entry(jurisdiction.id)
-                            .or_insert_with(|| JurisdictionSummary {
+                        jurisdictions_map.entry(jurisdiction.id).or_insert_with(|| {
+                            JurisdictionSummary {
                                 id: jurisdiction.id,
                                 name: jurisdiction.name.clone(),
                                 code: jurisdiction.code.clone(),
                                 level: jurisdiction.level,
                                 total_rate: Decimal::ZERO,
                                 total_tax: Decimal::ZERO,
-                            });
+                            }
+                        });
 
                         if let Some(summary) = jurisdictions_map.get_mut(&jurisdiction.id) {
                             summary.total_rate += rate.rate;
                             summary.total_tax += rate_tax;
                         }
 
-                        if let Some(existing) = tax_breakdown.iter_mut().find(|b| b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type) {
+                        if let Some(existing) = tax_breakdown.iter_mut().find(|b| {
+                            b.jurisdiction_id == jurisdiction.id && b.tax_type == rate.tax_type
+                        }) {
                             existing.taxable_amount += taxable_amount;
                             existing.tax_amount += rate_tax;
                         } else {
@@ -1088,8 +1178,19 @@ impl SqliteTaxRepository {
     }
 
     /// Save a tax calculation to the database
-    pub fn save_calculation(&self, result: &TaxCalculationResult, order_id: Option<Uuid>, cart_id: Option<Uuid>, customer_id: Option<Uuid>, address: &TaxAddress, currency: &str) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    pub fn save_calculation(
+        &self,
+        result: &TaxCalculationResult,
+        order_id: Option<Uuid>,
+        cart_id: Option<Uuid>,
+        customer_id: Option<Uuid>,
+        address: &TaxAddress,
+        currency: &str,
+    ) -> Result<()> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         let address_json = serde_json::to_string(address)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
@@ -1097,7 +1198,9 @@ impl SqliteTaxRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let breakdown_json = serde_json::to_string(&result.tax_breakdown)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let exemption_json = result.exemption_details.as_ref()
+        let exemption_json = result
+            .exemption_details
+            .as_ref()
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;

@@ -1,0 +1,19 @@
+# Build artifacts
+target/
+dist/
+node_modules/
+.next/
+
+# Generated files
+*.min.js
+*.min.css
+package-lock.json
+Cargo.lock
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Coverage
+coverage/

@@ -69,9 +69,7 @@ function createPluginLogger(pluginId, verbose = false) {
     info: (...args) => console.log(prefix, ...args),
     warn: (...args) => console.warn(prefix, ...args),
     error: (...args) => console.error(prefix, ...args),
-    debug: verbose
-      ? (...args) => console.log(`${prefix} [debug]`, ...args)
-      : () => {},
+    debug: verbose ? (...args) => console.log(`${prefix} [debug]`, ...args) : () => {},
   };
 }
 
@@ -202,10 +200,7 @@ class PluginStorage {
         obj[key] = value;
       }
 
-      writeFileSync(
-        join(this._stateDir, `${this._pluginId}.json`),
-        JSON.stringify(obj, null, 2)
-      );
+      writeFileSync(join(this._stateDir, `${this._pluginId}.json`), JSON.stringify(obj, null, 2));
     } catch {
       // Ignore save errors
     }

@@ -20,17 +20,17 @@ export class SessionPersistence {
 
     try {
       await fs.mkdir(this.sessionDir, { recursive: true });
-      
+
       const files = await fs.readdir(this.sessionDir);
       const now = Date.now();
-      
+
       for (const file of files) {
         if (file.endsWith('.json')) {
           try {
             const filePath = path.join(this.sessionDir, file);
             const content = await fs.readFile(filePath, 'utf-8');
             const session = JSON.parse(content);
-            
+
             if (now - session.lastAccessedAt > this.sessionTtl) {
               await fs.unlink(filePath);
             } else {
@@ -51,11 +51,11 @@ export class SessionPersistence {
 
   async saveSession(session) {
     await this.initialize();
-    
+
     const sessionData = {
       ...session,
       lastAccessedAt: Date.now(),
-      persistedAt: Date.now()
+      persistedAt: Date.now(),
     };
 
     this.sessions.set(sessionData.id, sessionData);
@@ -70,7 +70,7 @@ export class SessionPersistence {
 
   async getSession(sessionId) {
     await this.initialize();
-    
+
     const session = this.sessions.get(sessionId);
     if (!session) {
       return null;
@@ -90,7 +90,7 @@ export class SessionPersistence {
 
   async deleteSession(sessionId) {
     await this.initialize();
-    
+
     this.sessions.delete(sessionId);
 
     const filePath = path.join(this.sessionDir, `${sessionId}.json`);
@@ -105,22 +105,22 @@ export class SessionPersistence {
 
   async listSessions(options = {}) {
     await this.initialize();
-    
+
     const sessions = Array.from(this.sessions.values()).sort(
-      (a, b) => b.lastAccessedAt - a.lastAccessedAt
+      (a, b) => b.lastAccessedAt - a.lastAccessedAt,
     );
 
     if (options.limit) {
       sessions.length = Math.min(sessions.length, options.limit);
     }
 
-    return sessions.map(s => ({
+    return sessions.map((s) => ({
       id: s.id,
       createdAt: s.createdAt,
       lastAccessedAt: s.lastAccessedAt,
       operationCount: s.operations?.length || 0,
       status: s.status || 'active',
-      lastOperation: s.operations?.[s.operations.length - 1]
+      lastOperation: s.operations?.[s.operations.length - 1],
     }));
   }
 
@@ -137,7 +137,7 @@ export class SessionPersistence {
     if (expired.length + this.sessions.size > this.maxSessions) {
       const toDelete = expired.slice(
         0,
-        expired.length + this.sessions.size - this.maxSessions + expired.length
+        expired.length + this.sessions.size - this.maxSessions + expired.length,
       );
 
       for (const sessionId of toDelete) {
@@ -162,18 +162,16 @@ export class SessionPersistence {
       context: {
         operations: session.operations || [],
         state: session.state,
-        metadata: session.metadata
+        metadata: session.metadata,
       },
-      nextSteps: this.suggestNextSteps(session)
+      nextSteps: this.suggestNextSteps(session),
     };
   }
 
   suggestNextSteps(session) {
     const operations = session.operations || [];
     if (operations.length === 0) {
-      return [
-        { action: 'start_fresh', description: 'Start a new operation' }
-      ];
+      return [{ action: 'start_fresh', description: 'Start a new operation' }];
     }
 
     const lastOp = operations[operations.length - 1];
@@ -183,7 +181,7 @@ export class SessionPersistence {
       suggestions.push({
         action: 'retry_last_operation',
         description: `Retry the failed operation: ${lastOp.tool}`,
-        context: lastOp
+        context: lastOp,
       });
     }
 
@@ -191,7 +189,7 @@ export class SessionPersistence {
       suggestions.push({
         action: 'reserve_inventory',
         description: 'Reserve inventory for the created order',
-        context: lastOp.result
+        context: lastOp.result,
       });
     }
 
@@ -199,7 +197,7 @@ export class SessionPersistence {
       suggestions.push({
         action: 'confirm_reservation',
         description: 'Confirm the inventory reservation',
-        context: lastOp.result
+        context: lastOp.result,
       });
     }
 
@@ -207,13 +205,13 @@ export class SessionPersistence {
       suggestions.push({
         action: 'execute_rollback',
         description: 'Rollback the failed transaction',
-        context: session.state.pendingRollback
+        context: session.state.pendingRollback,
       });
     }
 
     suggestions.push({
       action: 'continue_new_operation',
-      description: 'Start a new operation with existing context'
+      description: 'Start a new operation with existing context',
     });
 
     return suggestions;
@@ -232,7 +230,7 @@ export class SessionPersistence {
       operations: session.operations || [],
       state: session.state,
       metadata: session.metadata,
-      exportTimestamp: Date.now()
+      exportTimestamp: Date.now(),
     };
   }
 
@@ -248,7 +246,7 @@ export class SessionPersistence {
       operations: sessionData.operations,
       state: sessionData.state || {},
       metadata: sessionData.metadata || {},
-      status: 'imported'
+      status: 'imported',
     };
 
     return this.saveSession(session);
@@ -264,16 +262,17 @@ export class SessionPersistence {
       sessionId: session.id,
       sessionDuration: session.lastAccessedAt - session.createdAt,
       totalOperations: session.operations?.length || 0,
-      successfulOperations: session.operations?.filter(op => op.status === 'success').length || 0,
-      failedOperations: session.operations?.filter(op => op.status === 'failed').length || 0,
-      operations: session.operations?.map(op => ({
-        timestamp: op.timestamp,
-        tool: op.tool,
-        status: op.status,
-        params: op.params,
-        error: op.error
-      })) || [],
-      generatedAt: Date.now()
+      successfulOperations: session.operations?.filter((op) => op.status === 'success').length || 0,
+      failedOperations: session.operations?.filter((op) => op.status === 'failed').length || 0,
+      operations:
+        session.operations?.map((op) => ({
+          timestamp: op.timestamp,
+          tool: op.tool,
+          status: op.status,
+          params: op.params,
+          error: op.error,
+        })) || [],
+      generatedAt: Date.now(),
     };
 
     return auditTrail;

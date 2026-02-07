@@ -145,8 +145,7 @@ pub struct SeoMetadata {
 }
 
 /// Input for creating a product
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateProduct {
     pub name: String,
     pub slug: Option<String>,
@@ -156,7 +155,6 @@ pub struct CreateProduct {
     pub seo: Option<SeoMetadata>,
     pub variants: Option<Vec<CreateProductVariant>>,
 }
-
 
 /// Input for creating a product variant
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,15 +272,27 @@ mod tests {
 
     #[test]
     fn product_status_from_str() {
-        assert_eq!(ProductStatus::from_str("draft").unwrap(), ProductStatus::Draft);
-        assert_eq!(ProductStatus::from_str("Active").unwrap(), ProductStatus::Active);
+        assert_eq!(
+            ProductStatus::from_str("draft").unwrap(),
+            ProductStatus::Draft
+        );
+        assert_eq!(
+            ProductStatus::from_str("Active").unwrap(),
+            ProductStatus::Active
+        );
         assert!(ProductStatus::from_str("unknown").is_err());
     }
 
     #[test]
     fn product_type_from_str() {
-        assert_eq!(ProductType::from_str("simple").unwrap(), ProductType::Simple);
-        assert_eq!(ProductType::from_str("Bundle").unwrap(), ProductType::Bundle);
+        assert_eq!(
+            ProductType::from_str("simple").unwrap(),
+            ProductType::Simple
+        );
+        assert_eq!(
+            ProductType::from_str("Bundle").unwrap(),
+            ProductType::Bundle
+        );
         assert!(ProductType::from_str("physical").is_err());
     }
 
@@ -295,15 +305,13 @@ mod tests {
             description: "A great test product".to_string(),
             status,
             product_type: ProductType::Simple,
-            attributes: vec![
-                ProductAttribute {
-                    name: "Color".to_string(),
-                    value: "Blue".to_string(),
-                    group: Some("Appearance".to_string()),
-                    is_visible: true,
-                    is_variation: true,
-                },
-            ],
+            attributes: vec![ProductAttribute {
+                name: "Color".to_string(),
+                value: "Blue".to_string(),
+                group: Some("Appearance".to_string()),
+                is_visible: true,
+                is_variation: true,
+            }],
             seo: Some(SeoMetadata {
                 title: Some("Test Product | Store".to_string()),
                 description: Some("Buy Test Product".to_string()),
@@ -314,7 +322,11 @@ mod tests {
         }
     }
 
-    fn create_test_variant(price: Decimal, cost: Option<Decimal>, compare_at: Option<Decimal>) -> ProductVariant {
+    fn create_test_variant(
+        price: Decimal,
+        cost: Option<Decimal>,
+        compare_at: Option<Decimal>,
+    ) -> ProductVariant {
         let now = Utc::now();
         ProductVariant {
             id: Uuid::new_v4(),
@@ -327,12 +339,10 @@ mod tests {
             barcode: Some("1234567890123".to_string()),
             weight: Some(dec!(0.5)),
             weight_unit: Some("kg".to_string()),
-            options: vec![
-                VariantOption {
-                    name: "Size".to_string(),
-                    value: "Large".to_string(),
-                },
-            ],
+            options: vec![VariantOption {
+                name: "Size".to_string(),
+                value: "Large".to_string(),
+            }],
             is_default: true,
             is_active: true,
             created_at: now,

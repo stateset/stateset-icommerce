@@ -140,12 +140,11 @@ impl PgReturnRepository {
         let now = Utc::now();
 
         // Get customer_id from order
-        let order_info: (Uuid,) =
-            sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
-                .bind(input.order_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
+        let order_info: (Uuid,) = sqlx::query_as("SELECT customer_id FROM orders WHERE id = $1")
+            .bind(input.order_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|_| CommerceError::OrderNotFound(input.order_id))?;
 
         let customer_id = order_info.0;
 
@@ -243,11 +242,12 @@ impl PgReturnRepository {
     }
 
     async fn get_by_idempotency_key_async(&self, key: &str) -> Result<Option<Return>> {
-        let row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE idempotency_key = $1")
-            .bind(key)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE idempotency_key = $1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -276,13 +276,12 @@ impl PgReturnRepository {
 
     /// Get return items (async)
     pub async fn get_items_async(&self, return_id: Uuid) -> Result<Vec<ReturnItem>> {
-        let rows = sqlx::query_as::<_, ReturnItemRow>(
-            "SELECT * FROM return_items WHERE return_id = $1",
-        )
-        .bind(return_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, ReturnItemRow>("SELECT * FROM return_items WHERE return_id = $1")
+                .bind(return_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
@@ -295,7 +294,10 @@ impl PgReturnRepository {
     pub async fn update_async(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
         let now = Utc::now();
 
-        let existing = self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))?;
+        let existing = self
+            .get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))?;
 
         let new_status = input.status.unwrap_or(existing.status);
         let new_tracking = input.tracking_number.or(existing.tracking_number);
@@ -323,7 +325,9 @@ impl PgReturnRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// List returns (async)
@@ -395,7 +399,9 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Reject a return (async)
@@ -410,7 +416,9 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Complete a return (async)
@@ -424,7 +432,9 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Cancel a return (async)
@@ -438,7 +448,9 @@ impl PgReturnRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::ReturnNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ReturnNotFound(id))
     }
 
     /// Count returns (async)
@@ -508,7 +520,10 @@ impl PgReturnRepository {
     // =========================================================================
 
     /// Create multiple returns - partial success allowed (async)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateReturn>) -> Result<BatchResult<Return>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateReturn>,
+    ) -> Result<BatchResult<Return>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::with_capacity(inputs.len());
@@ -524,7 +539,10 @@ impl PgReturnRepository {
     }
 
     /// Create multiple returns - atomic (all-or-nothing) (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateReturn>) -> Result<Vec<Return>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateReturn>,
+    ) -> Result<Vec<Return>> {
         validate_batch_size(&inputs)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -633,7 +651,10 @@ impl PgReturnRepository {
     }
 
     /// Update multiple returns - partial success allowed (async)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<BatchResult<Return>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateReturn)>,
+    ) -> Result<BatchResult<Return>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
@@ -649,7 +670,10 @@ impl PgReturnRepository {
     }
 
     /// Update multiple returns - atomic (all-or-nothing) (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateReturn)>) -> Result<Vec<Return>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateReturn)>,
+    ) -> Result<Vec<Return>> {
         validate_batch_size(&updates)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -658,12 +682,13 @@ impl PgReturnRepository {
         for (id, input) in updates {
             let now = Utc::now();
 
-            let existing_row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
-                .bind(id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::ReturnNotFound(id))?;
+            let existing_row =
+                sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::ReturnNotFound(id))?;
 
             let items = sqlx::query_as::<_, ReturnItemRow>(
                 "SELECT * FROM return_items WHERE return_id = $1",

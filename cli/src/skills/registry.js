@@ -94,7 +94,22 @@ function generateTags(discovered) {
 
   // From description keywords
   const descWords = parsed.description.toLowerCase().split(/\s+/);
-  const stopWords = new Set(['and', 'the', 'for', 'use', 'when', 'or', 'a', 'an', 'in', 'to', 'of', 'is', 'on', 'at']);
+  const stopWords = new Set([
+    'and',
+    'the',
+    'for',
+    'use',
+    'when',
+    'or',
+    'a',
+    'an',
+    'in',
+    'to',
+    'of',
+    'is',
+    'on',
+    'at',
+  ]);
   for (const w of descWords) {
     const clean = w.replace(/[^a-z0-9-]/g, '');
     if (clean.length > 2 && !stopWords.has(clean)) {

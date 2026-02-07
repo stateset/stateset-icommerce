@@ -8,12 +8,31 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { Commerce } from '@stateset/embedded';
+import { createRequire } from 'node:module';
 
-/**
- * Database connection cache
- */
-const connectionCache = new Map();
+const require = createRequire(import.meta.url);
+
+/** @type {any} */
+let _CommerceCtor = null;
+
+function getCommerceCtor() {
+  if (_CommerceCtor) return _CommerceCtor;
+  let mod;
+  try {
+    mod = require('@stateset/embedded');
+  } catch (err) {
+    const msg = err && typeof err.message === 'string' ? err.message : String(err);
+    throw new Error(`Failed to load @stateset/embedded. ${msg}`);
+  }
+
+  const CommerceCtor = mod.Commerce || mod.default?.Commerce || mod.default;
+  if (!CommerceCtor) {
+    throw new Error('Failed to resolve Commerce export from @stateset/embedded.');
+  }
+
+  _CommerceCtor = CommerceCtor;
+  return CommerceCtor;
+}
 
 /**
  * DatabaseManager - Centralized database management
@@ -46,13 +65,14 @@ export class DatabaseManager {
     }
 
     // Create new connection
+    const Commerce = getCommerceCtor();
     const commerce = new Commerce(resolvedPath);
 
     this.connections.set(resolvedPath, {
       commerce,
       path: resolvedPath,
       createdAt: Date.now(),
-      lastUsed: Date.now()
+      lastUsed: Date.now(),
     });
 
     this.activeConnection = resolvedPath;
@@ -94,7 +114,7 @@ export class DatabaseManager {
       path: resolvedPath,
       exists: this.exists(dbPath),
       isMemory: dbPath === ':memory:',
-      isActive: this.activeConnection === resolvedPath
+      isActive: this.activeConnection === resolvedPath,
     };
 
     if (info.exists && !info.isMemory) {
@@ -117,7 +137,7 @@ export class DatabaseManager {
           customers: conn.commerce.customers.count(),
           orders: conn.commerce.orders.count(),
           products: conn.commerce.products.count(),
-          returns: conn.commerce.returns.count()
+          returns: conn.commerce.returns.count(),
         };
       } catch {
         // Ignore count errors
@@ -171,7 +191,7 @@ export class DatabaseManager {
       path,
       active: path === this.activeConnection,
       createdAt: conn.createdAt,
-      lastUsed: conn.lastUsed
+      lastUsed: conn.lastUsed,
     }));
   }
 
@@ -244,7 +264,7 @@ export class DatabaseManager {
     return {
       source: resolvedPath,
       backup: backupPath,
-      size: fs.statSync(backupPath).size
+      size: fs.statSync(backupPath).size,
     };
   }
 
@@ -268,7 +288,7 @@ export class DatabaseManager {
     return {
       backup: backupPath,
       restored: resolvedTarget,
-      size: fs.statSync(resolvedTarget).size
+      size: fs.statSync(resolvedTarget).size,
     };
   }
 
@@ -282,9 +302,10 @@ export class DatabaseManager {
       return [];
     }
 
-    return fs.readdirSync(targetDir)
-      .filter(f => f.endsWith('.db'))
-      .map(f => {
+    return fs
+      .readdirSync(targetDir)
+      .filter((f) => f.endsWith('.db'))
+      .map((f) => {
         const fullPath = path.join(targetDir, f);
         const stats = fs.statSync(fullPath);
         return {
@@ -292,7 +313,7 @@ export class DatabaseManager {
           path: fullPath,
           size: stats.size,
           sizeFormatted: this.formatSize(stats.size),
-          created: stats.birthtime
+          created: stats.birthtime,
         };
       })
       .sort((a, b) => b.created - a.created);
@@ -311,7 +332,7 @@ export class DatabaseManager {
       { name: 'orders', fn: () => commerce.orders.count() },
       { name: 'products', fn: () => commerce.products.count() },
       { name: 'inventory', fn: () => commerce.inventory.getStock('__test__') },
-      { name: 'returns', fn: () => commerce.returns.count() }
+      { name: 'returns', fn: () => commerce.returns.count() },
     ];
 
     for (const check of checks) {
@@ -320,14 +341,14 @@ export class DatabaseManager {
       } catch (error) {
         issues.push({
           table: check.name,
-          error: error.message
+          error: error.message,
         });
       }
     }
 
     return {
       valid: issues.length === 0,
-      issues
+      issues,
     };
   }
 
@@ -352,8 +373,8 @@ export class DatabaseManager {
         },
         returns: {
           total: commerce.returns.count(),
-        }
-      }
+        },
+      },
     };
   }
 }
@@ -391,5 +412,5 @@ export default {
   DatabaseManager,
   createDatabaseManager,
   getGlobalManager,
-  getCommerce
+  getCommerce,
 };

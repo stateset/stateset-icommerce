@@ -34,14 +34,14 @@
 //! ```
 
 use chrono::{DateTime, Utc};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rs_merkle::{algorithms::Sha256 as MerkleSha256, MerkleProof};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use rs_merkle::{algorithms::Sha256 as MerkleSha256, MerkleProof};
-use uuid::Uuid;
 use thiserror::Error;
-use ed25519_dalek::{Signer, Verifier, SigningKey, VerifyingKey, Signature};
+use uuid::Uuid;
 
 // =============================================================================
 // x402 Protocol Constants
@@ -96,8 +96,8 @@ impl X402Network {
         match self {
             Self::SetChain => 84532001,        // Set Chain mainnet
             Self::SetChainTestnet => 84532002, // Set Chain testnet
-            Self::Arc => 5042001,        // Arc mainnet
-            Self::ArcTestnet => 5042002, // Arc testnet
+            Self::Arc => 5042001,              // Arc mainnet
+            Self::ArcTestnet => 5042002,       // Arc testnet
             Self::Base => 8453,
             Self::BaseSepolia => 84532,
             Self::Ethereum => 1,
@@ -198,9 +198,7 @@ impl X402Asset {
                 Some("0x3600000000000000000000000000000000000000")
             }
             // Base addresses
-            (Self::Usdc, X402Network::Base) => {
-                Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
-            }
+            (Self::Usdc, X402Network::Base) => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
             // Ethereum addresses
             (Self::Usdc, X402Network::Ethereum) => {
                 Some("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -208,9 +206,7 @@ impl X402Asset {
             (Self::Usdt, X402Network::Ethereum) => {
                 Some("0xdAC17F958D2ee523a2206206994597C13D831ec7")
             }
-            (Self::Dai, X402Network::Ethereum) => {
-                Some("0x6B175474E89094C44Da98b954Ee4606eB48")
-            }
+            (Self::Dai, X402Network::Ethereum) => Some("0x6B175474E89094C44Da98b954Ee4606eB48"),
             // Native ETH has no contract
             (Self::Eth, _) => None,
             _ => None,
@@ -641,7 +637,7 @@ impl X402PaymentIntent {
         let signature = signing_key.sign(&signing_hash);
         let public_key = signing_key.verifying_key();
 
-        self.signing_hash = Some(hex0x(&signing_hash));
+        self.signing_hash = Some(hex0x(signing_hash));
         self.payer_signature = Some(hex0x(signature.to_bytes()));
         self.payer_public_key = Some(hex0x(public_key.to_bytes()));
         self.status = X402IntentStatus::Signed;
@@ -859,7 +855,7 @@ impl X402PaymentReceipt {
             return false;
         }
 
-        if self.total_leaves == 0 || self.leaf_index as u32 >= self.total_leaves {
+        if self.total_leaves == 0 || self.leaf_index >= self.total_leaves {
             return false;
         }
 
@@ -1151,7 +1147,6 @@ pub fn from_smallest_unit(amount: u64, asset: X402Asset) -> Decimal {
     Decimal::from(amount) / divisor
 }
 
-
 // =============================================================================
 // x402 Crypto Helpers
 // =============================================================================
@@ -1176,11 +1171,40 @@ fn decode_hex_array<const N: usize>(value: &str) -> Result<[u8; N], X402CryptoEr
     let trimmed = value.strip_prefix("0x").unwrap_or(value);
     let bytes = hex::decode(trimmed).map_err(|e| X402CryptoError::InvalidHex(e.to_string()))?;
     if bytes.len() != N {
-        return Err(X402CryptoError::InvalidLength { expected: N, got: bytes.len() });
+        return Err(X402CryptoError::InvalidLength {
+            expected: N,
+            got: bytes.len(),
+        });
     }
     let mut arr = [0u8; N];
     arr.copy_from_slice(&bytes);
     Ok(arr)
+}
+
+fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402CryptoError> {
+    let mut hasher = Sha256::new();
+
+    hasher.update(receipt.intent_id.as_bytes());
+    hasher.update(receipt.sequence_number.to_be_bytes());
+
+    hasher.update(receipt.payer_address.as_bytes());
+    hasher.update(receipt.payee_address.as_bytes());
+    hasher.update(receipt.amount.to_be_bytes());
+    hasher.update(receipt.asset.to_string().to_lowercase().as_bytes());
+    hasher.update(receipt.network.to_string().as_bytes());
+    hasher.update(receipt.chain_id.to_be_bytes());
+    hasher.update(receipt.nonce.to_be_bytes());
+    hasher.update(receipt.valid_until.to_be_bytes());
+
+    let signing_hash = decode_hex_array::<32>(&receipt.signing_hash)?;
+    let signature = decode_hex_array::<64>(&receipt.payer_signature)?;
+    hasher.update(signing_hash);
+    hasher.update(signature);
+
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    Ok(hash)
 }
 
 #[cfg(test)]
@@ -1299,30 +1323,4 @@ mod tests {
 
         assert!(receipt.verify_inclusion());
     }
-}
-
-fn payment_leaf_hash(receipt: &X402PaymentReceipt) -> Result<[u8; 32], X402CryptoError> {
-    let mut hasher = Sha256::new();
-
-    hasher.update(receipt.intent_id.as_bytes());
-    hasher.update(&receipt.sequence_number.to_be_bytes());
-
-    hasher.update(receipt.payer_address.as_bytes());
-    hasher.update(receipt.payee_address.as_bytes());
-    hasher.update(&receipt.amount.to_be_bytes());
-    hasher.update(receipt.asset.to_string().to_lowercase().as_bytes());
-    hasher.update(receipt.network.to_string().as_bytes());
-    hasher.update(&receipt.chain_id.to_be_bytes());
-    hasher.update(&receipt.nonce.to_be_bytes());
-    hasher.update(&receipt.valid_until.to_be_bytes());
-
-    let signing_hash = decode_hex_array::<32>(&receipt.signing_hash)?;
-    let signature = decode_hex_array::<64>(&receipt.payer_signature)?;
-    hasher.update(signing_hash);
-    hasher.update(signature);
-
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    Ok(hash)
 }

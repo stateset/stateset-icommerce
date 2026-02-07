@@ -137,8 +137,10 @@ function escapeString(s) {
   let result = '"';
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c === 0x22) result += '\\"';       // "
-    else if (c === 0x5c) result += '\\\\'; // \
+    if (c === 0x22)
+      result += '\\"'; // "
+    else if (c === 0x5c)
+      result += '\\\\'; // \
     else if (c < 0x20) {
       // Control characters
       if (c === 0x08) result += '\\b';
@@ -170,14 +172,14 @@ export function canonicalizeJson(value) {
   if (type === 'string') return escapeString(value);
 
   if (Array.isArray(value)) {
-    const items = value.map(v => canonicalizeJson(v));
+    const items = value.map((v) => canonicalizeJson(v));
     return '[' + items.join(',') + ']';
   }
 
   if (type === 'object') {
     // Sort keys lexicographically by UTF-16 code units
     const keys = Object.keys(value).sort();
-    const pairs = keys.map(k => escapeString(k) + ':' + canonicalizeJson(value[k]));
+    const pairs = keys.map((k) => escapeString(k) + ':' + canonicalizeJson(value[k]));
     return '{' + pairs.join(',') + '}';
   }
 
@@ -234,10 +236,10 @@ export function computePayloadCipherHash(params = null) {
 
   const hasher = crypto.createHash('sha256');
   hasher.update(DOMAIN.PAYLOAD_CIPHER);
-  hasher.update(nonce);       // 12 bytes
-  hasher.update(payloadAad);  // 32 bytes
-  hasher.update(ciphertext);  // variable
-  hasher.update(tag);         // 16 bytes
+  hasher.update(nonce); // 12 bytes
+  hasher.update(payloadAad); // 32 bytes
+  hasher.update(ciphertext); // variable
+  hasher.update(tag); // 16 bytes
   hasher.update(recipientsHash); // 32 bytes
 
   return hasher.digest();
@@ -302,10 +304,10 @@ export function signEventHash(eventSigningHash, privateKey) {
     key: Buffer.concat([
       // PKCS#8 Ed25519 private key header
       Buffer.from('302e020100300506032b657004220420', 'hex'),
-      privateKey
+      privateKey,
     ]),
     format: 'der',
-    type: 'pkcs8'
+    type: 'pkcs8',
   });
 
   return crypto.sign(null, eventSigningHash, keyObj);
@@ -325,14 +327,14 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
       key: Buffer.concat([
         // SPKI Ed25519 public key header
         Buffer.from('302a300506032b6570032100', 'hex'),
-        publicKey
+        publicKey,
       ]),
       format: 'der',
-      type: 'spki'
+      type: 'spki',
     });
 
     return crypto.verify(null, eventSigningHash, keyObj, signature);
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -342,7 +344,6 @@ export function verifyEventSignature(eventSigningHash, signature, publicKey) {
 // =============================================================================
 
 const NONCE_SIZE = 12;
-const TAG_SIZE = 16;
 const SALT_SIZE = 16;
 const KEY_SIZE = 32;
 
@@ -433,7 +434,7 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
   // Compute AAD
   const payloadAad = computePayloadAad({
     ...aadParams,
-    payloadPlainHash
+    payloadPlainHash,
   });
 
   // Prepare plaintext: salt || JCS(payload)
@@ -454,7 +455,7 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
     return {
       recipient_kid: kid,
       enc_b64u: enc.toString('base64url'),
-      ct_b64u: wrappedKey.toString('base64url')
+      ct_b64u: wrappedKey.toString('base64url'),
     };
   });
 
@@ -470,7 +471,7 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
     payloadAad,
     ciphertext,
     tag,
-    recipientsHash
+    recipientsHash,
   });
 
   // Build encrypted payload structure
@@ -484,16 +485,16 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
       mode: 'base',
       kem: 'X25519-HKDF-SHA256',
       kdf: 'HKDF-SHA256',
-      aead: 'AES-256-GCM'
+      aead: 'AES-256-GCM',
     },
-    recipients
+    recipients,
   };
 
   return {
     payloadEncrypted,
     salt,
     payloadPlainHash,
-    payloadCipherHash
+    payloadCipherHash,
   };
 }
 
@@ -506,9 +507,15 @@ export function encryptPayload(payload, aadParams, recipientKeys) {
  * @param {Buffer} expectedPlainHash - Expected payload_plain_hash
  * @returns {Object} - Decrypted JSON payload
  */
-export function decryptPayload(payloadEncrypted, payloadAad, recipientKid, recipientPrivateKey, expectedPlainHash) {
+export function decryptPayload(
+  payloadEncrypted,
+  payloadAad,
+  recipientKid,
+  recipientPrivateKey,
+  expectedPlainHash,
+) {
   // Find recipient entry
-  const recipient = payloadEncrypted.recipients.find(r => r.recipient_kid === recipientKid);
+  const recipient = payloadEncrypted.recipients.find((r) => r.recipient_kid === recipientKid);
   if (!recipient) {
     throw new Error(`Recipient ${recipientKid} not found`);
   }
@@ -567,15 +574,15 @@ function wrapDek(dek, recipientPublicKey, info) {
   const recipientKeyObj = crypto.createPublicKey({
     key: Buffer.concat([
       Buffer.from('302a300506032b656e032100', 'hex'), // X25519 SPKI header
-      recipientPublicKey
+      recipientPublicKey,
     ]),
     format: 'der',
-    type: 'spki'
+    type: 'spki',
   });
 
   const sharedSecret = crypto.diffieHellman({
     privateKey: ephemeral.privateKey,
-    publicKey: recipientKeyObj
+    publicKey: recipientKeyObj,
   });
 
   // Derive wrapping key using HKDF
@@ -606,25 +613,25 @@ function unwrapDek(enc, wrappedKey, recipientPrivateKey, info) {
   const ephemeralPubKeyObj = crypto.createPublicKey({
     key: Buffer.concat([
       Buffer.from('302a300506032b656e032100', 'hex'), // X25519 SPKI header
-      enc
+      enc,
     ]),
     format: 'der',
-    type: 'spki'
+    type: 'spki',
   });
 
   const recipientPrivKeyObj = crypto.createPrivateKey({
     key: Buffer.concat([
       Buffer.from('302e020100300506032b656e04220420', 'hex'), // X25519 PKCS#8 header
-      recipientPrivateKey
+      recipientPrivateKey,
     ]),
     format: 'der',
-    type: 'pkcs8'
+    type: 'pkcs8',
   });
 
   // Compute shared secret
   const sharedSecret = crypto.diffieHellman({
     privateKey: recipientPrivKeyObj,
-    publicKey: ephemeralPubKeyObj
+    publicKey: ephemeralPubKeyObj,
   });
 
   // Derive wrapping key

@@ -35,7 +35,11 @@ export function saveX402Config(filePath, config) {
   }
 }
 
-export function resolveX402ConfigPath({ env = process.env, configDir = '.stateset', configFile } = {}) {
+export function resolveX402ConfigPath({
+  env = process.env,
+  configDir = '.stateset',
+  configFile,
+} = {}) {
   return configFile || env.X402_CONFIG_FILE || getDefaultX402ConfigPath(configDir);
 }
 

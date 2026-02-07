@@ -32,120 +32,397 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use stateset_core::{
-    // Order types
-    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, PaymentStatus,
-    UpdateOrder,
-    // Inventory types
-    AdjustInventory, CreateInventoryItem, InventoryBalance, InventoryFilter, InventoryItem,
-    InventoryReservation, InventoryTransaction, ReserveInventory, StockLevel,
-    // Customer types
-    CreateCustomer, CreateCustomerAddress, Customer, CustomerAddress, CustomerFilter,
-    UpdateCustomer,
-    // Product types
-    CreateProduct, CreateProductVariant, Product, ProductFilter, ProductVariant, UpdateProduct,
-    // Return types
-    CreateReturn, Return, ReturnFilter, UpdateReturn,
-    // Shipment types
-    AddShipmentEvent, CreateShipment, CreateShipmentItem, Shipment, ShipmentEvent, ShipmentFilter,
-    ShipmentItem, UpdateShipment,
-    // Payment types
-    CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter, PaymentMethod,
-    Refund, UpdatePayment,
-    // Warranty types
-    ClaimResolution, CreateWarranty, CreateWarrantyClaim, UpdateWarranty, UpdateWarrantyClaim,
-    Warranty, WarrantyClaim, WarrantyClaimFilter, WarrantyFilter,
-    // BOM types
-    BillOfMaterials, BomComponent, BomFilter, CreateBom, CreateBomComponent, UpdateBom,
-    // Work Order types
-    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, UpdateWorkOrder,
-    UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial, WorkOrderTask,
-    // Purchase Order types
-    CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrder,
-    PurchaseOrderFilter, PurchaseOrderItem, ReceivePurchaseOrderItems, Supplier, SupplierFilter,
-    UpdatePurchaseOrder, UpdateSupplier,
-    // Invoice types
-    CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, RecordInvoicePayment,
-    UpdateInvoice,
     // Cart types
-    AddCartItem, Cart, CartAddress, CartFilter, CartItem, CheckoutResult, CreateCart,
-    SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
+    AddCartItem,
+    // Shipment types
+    AddShipmentEvent,
+    // Work Order types
+    AddWorkOrderMaterial,
+    // Inventory types
+    AdjustInventory,
     // Analytics types
-    AnalyticsQuery, CustomerMetrics, DemandForecast, FulfillmentMetrics, InventoryHealth,
-    InventoryMovement, LowStockItem, OrderStatusBreakdown, ProductPerformance, ReturnMetrics,
-    RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity, TopCustomer, TopProduct,
-    // Currency types
-    ConversionResult, ConvertCurrency, Currency, ExchangeRate, ExchangeRateFilter,
-    SetExchangeRate, StoreCurrencySettings,
+    AnalyticsQuery,
+    // BOM types
+    BillOfMaterials,
+    BomComponent,
+    BomFilter,
+    Cart,
+    CartAddress,
+    CartFilter,
+    CartItem,
+    CheckoutResult,
+    // Warranty types
+    ClaimResolution,
     // Error types
-    CommerceError, Result,
+    CommerceError,
+    // Currency types
+    ConversionResult,
+    ConvertCurrency,
+    CreateBom,
+    CreateBomComponent,
+    CreateCart,
+    // Customer types
+    CreateCustomer,
+    CreateCustomerAddress,
+    CreateInventoryItem,
+    // Invoice types
+    CreateInvoice,
+    CreateInvoiceItem,
+    // Order types
+    CreateOrder,
+    CreateOrderItem,
+    // Payment types
+    CreatePayment,
+    CreatePaymentMethod,
+    // Product types
+    CreateProduct,
+    CreateProductVariant,
+    // Purchase Order types
+    CreatePurchaseOrder,
+    CreatePurchaseOrderItem,
+    CreateRefund,
+    // Return types
+    CreateReturn,
+    CreateShipment,
+    CreateShipmentItem,
+    CreateSupplier,
+    CreateWarranty,
+    CreateWarrantyClaim,
+    CreateWorkOrder,
+    CreateWorkOrderTask,
+    Currency,
+    Customer,
+    CustomerAddress,
+    CustomerFilter,
+    CustomerMetrics,
+    DemandForecast,
+    ExchangeRate,
+    ExchangeRateFilter,
+    FulfillmentMetrics,
+    InventoryBalance,
+    InventoryFilter,
+    InventoryHealth,
+    InventoryItem,
+    InventoryMovement,
+    InventoryReservation,
+    InventoryTransaction,
+    Invoice,
+    InvoiceFilter,
+    InvoiceItem,
+    LowStockItem,
+    Order,
+    OrderFilter,
+    OrderItem,
+    OrderStatus,
+    OrderStatusBreakdown,
+    Payment,
+    PaymentFilter,
+    PaymentMethod,
+    PaymentStatus,
+    Product,
+    ProductFilter,
+    ProductPerformance,
+    ProductVariant,
+    PurchaseOrder,
+    PurchaseOrderFilter,
+    PurchaseOrderItem,
+    ReceivePurchaseOrderItems,
+    RecordInvoicePayment,
+    Refund,
+    ReserveInventory,
+    Result,
+    Return,
+    ReturnFilter,
+    ReturnMetrics,
+    RevenueByPeriod,
+    RevenueForecast,
+    SalesSummary,
+    SetCartPayment,
+    SetCartShipping,
+    SetExchangeRate,
+    Shipment,
+    ShipmentEvent,
+    ShipmentFilter,
+    ShipmentItem,
+    ShippingRate,
+    StockLevel,
+    StoreCurrencySettings,
+    Supplier,
+    SupplierFilter,
+    TimeGranularity,
+    TopCustomer,
+    TopProduct,
+    UpdateBom,
+    UpdateCart,
+    UpdateCartItem,
+    UpdateCustomer,
+    UpdateInvoice,
+    UpdateOrder,
+    UpdatePayment,
+    UpdateProduct,
+    UpdatePurchaseOrder,
+    UpdateReturn,
+    UpdateShipment,
+    UpdateSupplier,
+    UpdateWarranty,
+    UpdateWarrantyClaim,
+    UpdateWorkOrder,
+    UpdateWorkOrderTask,
+    Warranty,
+    WarrantyClaim,
+    WarrantyClaimFilter,
+    WarrantyFilter,
+    WorkOrder,
+    WorkOrderFilter,
+    WorkOrderMaterial,
+    WorkOrderTask,
 };
 use stateset_core::{
-    // Tax types
-    CreateTaxJurisdiction, TaxJurisdiction, TaxJurisdictionFilter, CreateTaxRate, TaxRate,
-    TaxRateFilter, TaxAddress, ProductTaxCategory, CreateTaxExemption, TaxExemption,
-    TaxCalculationRequest, TaxCalculationResult, TaxSettings,
-    // Promotion types
-    CreatePromotion, Promotion, PromotionFilter, UpdatePromotion, CreateCouponCode, CouponCode,
-    CouponFilter, ApplyPromotionsRequest, ApplyPromotionsResult, PromotionUsage,
-    // Subscription types
-    CreateSubscriptionPlan, SubscriptionPlan, SubscriptionPlanFilter, UpdateSubscriptionPlan,
-    CreateSubscription, Subscription, SubscriptionFilter, UpdateSubscription, CancelSubscription,
-    PauseSubscription, BillingCycle, BillingCycleFilter, BillingCycleStatus, CreateBillingCycle,
-    SkipBillingCycle, SubscriptionEvent, SubscriptionEventType,
-    // Quality types
-    CreateInspection, Inspection, InspectionFilter, UpdateInspection, RecordInspectionResult,
-    InspectionItem, CreateNonConformance, NonConformance, NonConformanceFilter,
-    UpdateNonConformance, CreateQualityHold, QualityHold, QualityHoldFilter, ReleaseQualityHold,
-    CreateDefectCode, DefectCode,
-    // Lot types
-    CreateLot, Lot, UpdateLot, LotFilter, AdjustLot, ConsumeLot, ReserveLot, TransferLot, SplitLot,
-    MergeLots, LotTransaction, LotLocation, AddLotCertificate, LotCertificate, TraceabilityResult,
-    // Serial types
-    CreateSerialNumber, CreateSerialNumbersBulk, SerialNumber, UpdateSerialNumber, SerialFilter,
-    ChangeSerialStatus, ReserveSerialNumber, SerialReservation, MoveSerial,
-    TransferSerialOwnership, SerialHistoryFilter, SerialHistory, SerialLookupResult,
-    SerialValidation,
-    // Warehouse types
-    CreateWarehouse, Warehouse, UpdateWarehouse, WarehouseFilter, CreateZone, Zone, UpdateZone,
-    CreateLocation, UpdateLocation, Location, LocationFilter, LocationInventory, AdjustLocationInventory,
-    MoveInventory, LocationMovement, LocationInventoryFilter, MovementFilter,
-    // Receiving types
-    CreateReceipt, Receipt, UpdateReceipt, ReceiptFilter, ReceiveItems, ReceiptItem,
-    CreatePutAway, PutAway, PutAwayFilter, CompletePutAway,
-    // Fulfillment types
-    CreateWave, Wave, WaveFilter, CreatePickTask, PickTask, PickTaskFilter, CompletePick,
-    CreatePackTask, PackTask, PackTaskFilter, AddCarton, Carton, AddCartonItem, CartonItem,
-    CreateShipTask, ShipTask, ShipTaskFilter, CompleteShip,
-    // Accounts Payable types
-    CreateBill, Bill, UpdateBill, BillFilter, BillItem, CreateBillItem, CreateBillPayment,
-    BillPayment, BillPaymentFilter, PaymentAllocation, CreatePaymentRun, PaymentRun,
-    PaymentRunFilter, ApAgingSummary, SupplierApSummary,
-    // Cost Accounting types
-    ItemCost, SetItemCost, ItemCostFilter, CreateCostLayer, CostLayer, CostLayerFilter,
-    IssueCostLayers, CostTransaction, CostTransactionFilter, RecordCostVariance, CostVariance,
-    CostVarianceFilter, CreateCostAdjustment, CostAdjustment, CostAdjustmentFilter, CostRollup,
-    CostMethod, InventoryValuation, SkuCostSummary,
-    // Credit types
-    CreateCreditAccount, CreditAccount, UpdateCreditAccount, CreditAccountFilter, CreditCheckResult,
-    PlaceCreditHold, CreditHold, CreditHoldFilter, ReleaseCreditHold, SubmitCreditApplication,
-    CreditApplication, CreditApplicationFilter, ReviewCreditApplication, RecordCreditTransaction,
-    CreditTransaction, CreditTransactionFilter, CustomerCreditSummary, CreditAgingBucket,
-    // Backorder types
-    CreateBackorder, Backorder, UpdateBackorder, BackorderFilter, FulfillBackorder,
-    BackorderFulfillment, AllocateBackorder, BackorderAllocation, BackorderSummary,
-    SkuBackorderSummary,
-    // Accounts Receivable types
-    CreateCollectionActivity, CollectionActivity, CollectionActivityFilter, CollectionStatus,
-    DunningLetterType, CreateWriteOff, WriteOff, WriteOffFilter, CreateCreditMemo, CreditMemo,
-    CreditMemoFilter, ApplyCreditMemo, ApplyPaymentToInvoices, ArPaymentApplication,
-    CustomerArSummary, GenerateStatementRequest, CustomerStatement, ArAgingSummary, CustomerArAging,
+    AddCarton,
+    AddCartonItem,
+    AddLotCertificate,
+    AdjustLocationInventory,
+    AdjustLot,
+    AllocateBackorder,
+    ApAgingSummary,
+    ApplyCreditMemo,
+    ApplyPaymentToInvoices,
+    ApplyPromotionsRequest,
+    ApplyPromotionsResult,
     ArAgingFilter,
-    // General Ledger types
-    CreateGlAccount, GlAccount, GlAccountFilter, UpdateGlAccount, CreateGlPeriod, GlPeriod,
-    GlPeriodFilter, CreateJournalEntry, JournalEntry, JournalEntryFilter, JournalEntryLine,
-    CreateAutoPostingConfig, AutoPostingConfig, TrialBalance, BalanceSheet, IncomeStatement,
+    ArAgingSummary,
+    ArPaymentApplication,
+    AutoPostingConfig,
+    Backorder,
+    BackorderAllocation,
+    BackorderFilter,
+    BackorderFulfillment,
+    BackorderSummary,
+    BalanceSheet,
     // Batch types
     BatchResult,
+    Bill,
+    BillFilter,
+    BillItem,
+    BillPayment,
+    BillPaymentFilter,
+    BillingCycle,
+    BillingCycleFilter,
+    BillingCycleStatus,
+    CancelSubscription,
+    Carton,
+    CartonItem,
+    ChangeSerialStatus,
+    CollectionActivity,
+    CollectionActivityFilter,
+    CollectionStatus,
+    CompletePick,
+    CompletePutAway,
+    CompleteShip,
+    ConsumeLot,
+    CostAdjustment,
+    CostAdjustmentFilter,
+    CostLayer,
+    CostLayerFilter,
+    CostMethod,
+    CostRollup,
+    CostTransaction,
+    CostTransactionFilter,
+    CostVariance,
+    CostVarianceFilter,
+    CouponCode,
+    CouponFilter,
+    CreateAutoPostingConfig,
+    // Backorder types
+    CreateBackorder,
+    // Accounts Payable types
+    CreateBill,
+    CreateBillItem,
+    CreateBillPayment,
+    CreateBillingCycle,
+    // Accounts Receivable types
+    CreateCollectionActivity,
+    CreateCostAdjustment,
+    CreateCostLayer,
+    CreateCouponCode,
+    // Credit types
+    CreateCreditAccount,
+    CreateCreditMemo,
+    CreateDefectCode,
+    // General Ledger types
+    CreateGlAccount,
+    CreateGlPeriod,
+    // Quality types
+    CreateInspection,
+    CreateJournalEntry,
+    CreateLocation,
+    // Lot types
+    CreateLot,
+    CreateNonConformance,
+    CreatePackTask,
+    CreatePaymentRun,
+    CreatePickTask,
+    // Promotion types
+    CreatePromotion,
+    CreatePutAway,
+    CreateQualityHold,
+    // Receiving types
+    CreateReceipt,
+    // Serial types
+    CreateSerialNumber,
+    CreateSerialNumbersBulk,
+    CreateShipTask,
+    CreateSubscription,
+    // Subscription types
+    CreateSubscriptionPlan,
+    CreateTaxExemption,
+    // Tax types
+    CreateTaxJurisdiction,
+    CreateTaxRate,
+    // Warehouse types
+    CreateWarehouse,
+    // Fulfillment types
+    CreateWave,
+    CreateWriteOff,
+    CreateZone,
+    CreditAccount,
+    CreditAccountFilter,
+    CreditAgingBucket,
+    CreditApplication,
+    CreditApplicationFilter,
+    CreditCheckResult,
+    CreditHold,
+    CreditHoldFilter,
+    CreditMemo,
+    CreditMemoFilter,
+    CreditTransaction,
+    CreditTransactionFilter,
+    CustomerArAging,
+    CustomerArSummary,
+    CustomerCreditSummary,
+    CustomerStatement,
+    DefectCode,
+    DunningLetterType,
+    FulfillBackorder,
+    GenerateStatementRequest,
+    GlAccount,
+    GlAccountFilter,
+    GlPeriod,
+    GlPeriodFilter,
+    IncomeStatement,
+    Inspection,
+    InspectionFilter,
+    InspectionItem,
+    InventoryValuation,
+    IssueCostLayers,
+    // Cost Accounting types
+    ItemCost,
+    ItemCostFilter,
+    JournalEntry,
+    JournalEntryFilter,
+    JournalEntryLine,
+    Location,
+    LocationFilter,
+    LocationInventory,
+    LocationInventoryFilter,
+    LocationMovement,
+    Lot,
+    LotCertificate,
+    LotFilter,
+    LotLocation,
+    LotTransaction,
+    MergeLots,
+    MoveInventory,
+    MoveSerial,
+    MovementFilter,
+    NonConformance,
+    NonConformanceFilter,
+    PackTask,
+    PackTaskFilter,
+    PauseSubscription,
+    PaymentAllocation,
+    PaymentRun,
+    PaymentRunFilter,
+    PickTask,
+    PickTaskFilter,
+    PlaceCreditHold,
+    ProductTaxCategory,
+    Promotion,
+    PromotionFilter,
+    PromotionUsage,
+    PutAway,
+    PutAwayFilter,
+    QualityHold,
+    QualityHoldFilter,
+    Receipt,
+    ReceiptFilter,
+    ReceiptItem,
+    ReceiveItems,
+    RecordCostVariance,
+    RecordCreditTransaction,
+    RecordInspectionResult,
+    ReleaseCreditHold,
+    ReleaseQualityHold,
+    ReserveLot,
+    ReserveSerialNumber,
+    ReviewCreditApplication,
+    SerialFilter,
+    SerialHistory,
+    SerialHistoryFilter,
+    SerialLookupResult,
+    SerialNumber,
+    SerialReservation,
+    SerialValidation,
+    SetItemCost,
+    ShipTask,
+    ShipTaskFilter,
+    SkipBillingCycle,
+    SkuBackorderSummary,
+    SkuCostSummary,
+    SplitLot,
+    SubmitCreditApplication,
+    Subscription,
+    SubscriptionEvent,
+    SubscriptionEventType,
+    SubscriptionFilter,
+    SubscriptionPlan,
+    SubscriptionPlanFilter,
+    SupplierApSummary,
+    TaxAddress,
+    TaxCalculationRequest,
+    TaxCalculationResult,
+    TaxExemption,
+    TaxJurisdiction,
+    TaxJurisdictionFilter,
+    TaxRate,
+    TaxRateFilter,
+    TaxSettings,
+    TraceabilityResult,
+    TransferLot,
+    TransferSerialOwnership,
+    TrialBalance,
+    UpdateBackorder,
+    UpdateBill,
+    UpdateCreditAccount,
+    UpdateGlAccount,
+    UpdateInspection,
+    UpdateLocation,
+    UpdateLot,
+    UpdateNonConformance,
+    UpdatePromotion,
+    UpdateReceipt,
+    UpdateSerialNumber,
+    UpdateSubscription,
+    UpdateSubscriptionPlan,
+    UpdateWarehouse,
+    UpdateZone,
+    Warehouse,
+    WarehouseFilter,
+    Wave,
+    WaveFilter,
+    WriteOff,
+    WriteOffFilter,
+    Zone,
 };
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
@@ -428,10 +705,19 @@ impl AsyncOrders {
     }
 
     async fn cancel_backorders_for_order(&self, order_id: Uuid) -> Result<()> {
-        let backorders = self.db.backorder().get_backorders_for_order_async(order_id).await?;
+        let backorders = self
+            .db
+            .backorder()
+            .get_backorders_for_order_async(order_id)
+            .await?;
         let mut first_error = None;
         for backorder in backorders {
-            if let Err(err) = self.db.backorder().cancel_backorder_async(backorder.id).await {
+            if let Err(err) = self
+                .db
+                .backorder()
+                .cancel_backorder_async(backorder.id)
+                .await
+            {
                 if first_error.is_none() {
                     first_error = Some(err);
                 }
@@ -465,7 +751,12 @@ impl AsyncOrders {
         }
 
         for backorder_id in backorder_ids {
-            if let Err(err) = self.db.backorder().cancel_backorder_async(*backorder_id).await {
+            if let Err(err) = self
+                .db
+                .backorder()
+                .cancel_backorder_async(*backorder_id)
+                .await
+            {
                 tracing::warn!(
                     backorder_id = %backorder_id,
                     error = ?err,
@@ -550,8 +841,12 @@ impl AsyncOrders {
                         reserved = Decimal::ZERO;
                     }
                     Err(err) => {
-                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
-                            .await;
+                        self.cleanup_order_after_failure(
+                            order.id,
+                            &reservation_ids,
+                            &backorder_ids,
+                        )
+                        .await;
                         return Err(err);
                     }
                 }
@@ -578,8 +873,12 @@ impl AsyncOrders {
                 {
                     Ok(backorder) => backorder_ids.push(backorder.id),
                     Err(err) => {
-                        self.cleanup_order_after_failure(order.id, &reservation_ids, &backorder_ids)
-                            .await;
+                        self.cleanup_order_after_failure(
+                            order.id,
+                            &reservation_ids,
+                            &backorder_ids,
+                        )
+                        .await;
                         return Err(err);
                     }
                 }
@@ -749,8 +1048,15 @@ impl AsyncInventory {
     }
 
     /// Get balance at a specific location.
-    pub async fn get_balance(&self, item_id: i64, location_id: i32) -> Result<Option<InventoryBalance>> {
-        self.db.inventory().get_balance_async(item_id, location_id).await
+    pub async fn get_balance(
+        &self,
+        item_id: i64,
+        location_id: i32,
+    ) -> Result<Option<InventoryBalance>> {
+        self.db
+            .inventory()
+            .get_balance_async(item_id, location_id)
+            .await
     }
 
     /// Adjust inventory quantity.
@@ -783,12 +1089,18 @@ impl AsyncInventory {
 
     /// Release a reservation.
     pub async fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.inventory().release_reservation_async(reservation_id).await
+        self.db
+            .inventory()
+            .release_reservation_async(reservation_id)
+            .await
     }
 
     /// Confirm a reservation.
     pub async fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.inventory().confirm_reservation_async(reservation_id).await
+        self.db
+            .inventory()
+            .confirm_reservation_async(reservation_id)
+            .await
     }
 
     /// List reservations by reference (e.g., order id).
@@ -814,8 +1126,15 @@ impl AsyncInventory {
     }
 
     /// Get transaction history.
-    pub async fn get_transactions(&self, item_id: i64, limit: u32) -> Result<Vec<InventoryTransaction>> {
-        self.db.inventory().get_transactions_async(item_id, limit).await
+    pub async fn get_transactions(
+        &self,
+        item_id: i64,
+        limit: u32,
+    ) -> Result<Vec<InventoryTransaction>> {
+        self.db
+            .inventory()
+            .get_transactions_async(item_id, limit)
+            .await
     }
 }
 
@@ -929,7 +1248,10 @@ impl AsyncProducts {
         product_id: Uuid,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        self.db.products().add_variant_public_async(product_id, variant).await
+        self.db
+            .products()
+            .add_variant_public_async(product_id, variant)
+            .await
     }
 
     /// Get variant by ID.
@@ -1053,12 +1375,18 @@ impl AsyncShipments {
 
     /// Get shipment by shipment number.
     pub async fn get_by_number(&self, shipment_number: &str) -> Result<Option<Shipment>> {
-        self.db.shipments().get_by_number_async(shipment_number).await
+        self.db
+            .shipments()
+            .get_by_number_async(shipment_number)
+            .await
     }
 
     /// Get shipment by tracking number.
     pub async fn get_by_tracking(&self, tracking_number: &str) -> Result<Option<Shipment>> {
-        self.db.shipments().get_by_tracking_async(tracking_number).await
+        self.db
+            .shipments()
+            .get_by_tracking_async(tracking_number)
+            .await
     }
 
     /// Update a shipment.
@@ -1127,7 +1455,11 @@ impl AsyncShipments {
     }
 
     /// Add item to shipment.
-    pub async fn add_item(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
+    pub async fn add_item(
+        &self,
+        shipment_id: Uuid,
+        item: CreateShipmentItem,
+    ) -> Result<ShipmentItem> {
         self.db.shipments().add_item_async(shipment_id, item).await
     }
 
@@ -1142,8 +1474,15 @@ impl AsyncShipments {
     }
 
     /// Add tracking event.
-    pub async fn add_event(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
-        self.db.shipments().add_event_async(shipment_id, event).await
+    pub async fn add_event(
+        &self,
+        shipment_id: Uuid,
+        event: AddShipmentEvent,
+    ) -> Result<ShipmentEvent> {
+        self.db
+            .shipments()
+            .add_event_async(shipment_id, event)
+            .await
     }
 
     /// Get tracking events.
@@ -1188,7 +1527,10 @@ impl AsyncPayments {
 
     /// Get payment by external ID.
     pub async fn get_by_external_id(&self, external_id: &str) -> Result<Option<Payment>> {
-        self.db.payments().get_by_external_id_async(external_id).await
+        self.db
+            .payments()
+            .get_by_external_id_async(external_id)
+            .await
     }
 
     /// Update a payment.
@@ -1263,7 +1605,10 @@ impl AsyncPayments {
 
     /// Get payment methods for a customer.
     pub async fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>> {
-        self.db.payments().get_payment_methods_async(customer_id).await
+        self.db
+            .payments()
+            .get_payment_methods_async(customer_id)
+            .await
     }
 
     /// Delete a payment method.
@@ -1272,8 +1617,15 @@ impl AsyncPayments {
     }
 
     /// Set default payment method.
-    pub async fn set_default_payment_method(&self, customer_id: Uuid, method_id: Uuid) -> Result<()> {
-        self.db.payments().set_default_payment_method_async(customer_id, method_id).await
+    pub async fn set_default_payment_method(
+        &self,
+        customer_id: Uuid,
+        method_id: Uuid,
+    ) -> Result<()> {
+        self.db
+            .payments()
+            .set_default_payment_method_async(customer_id, method_id)
+            .await
     }
 
     /// Count payments.
@@ -1308,12 +1660,18 @@ impl AsyncWarranties {
 
     /// Get warranty by warranty number.
     pub async fn get_by_number(&self, warranty_number: &str) -> Result<Option<Warranty>> {
-        self.db.warranties().get_by_number_async(warranty_number).await
+        self.db
+            .warranties()
+            .get_by_number_async(warranty_number)
+            .await
     }
 
     /// Get warranty by serial number.
     pub async fn get_by_serial(&self, serial_number: &str) -> Result<Option<Warranty>> {
-        self.db.warranties().get_by_serial_async(serial_number).await
+        self.db
+            .warranties()
+            .get_by_serial_async(serial_number)
+            .await
     }
 
     /// Update a warranty.
@@ -1348,7 +1706,10 @@ impl AsyncWarranties {
 
     /// Transfer warranty to new owner.
     pub async fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        self.db.warranties().transfer_async(id, new_customer_id).await
+        self.db
+            .warranties()
+            .transfer_async(id, new_customer_id)
+            .await
     }
 
     /// Create a warranty claim.
@@ -1363,11 +1724,18 @@ impl AsyncWarranties {
 
     /// Get claim by claim number.
     pub async fn get_claim_by_number(&self, claim_number: &str) -> Result<Option<WarrantyClaim>> {
-        self.db.warranties().get_claim_by_number_async(claim_number).await
+        self.db
+            .warranties()
+            .get_claim_by_number_async(claim_number)
+            .await
     }
 
     /// Update a claim.
-    pub async fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
+    pub async fn update_claim(
+        &self,
+        id: Uuid,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim> {
         self.db.warranties().update_claim_async(id, input).await
     }
 
@@ -1392,8 +1760,15 @@ impl AsyncWarranties {
     }
 
     /// Complete a claim.
-    pub async fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
-        self.db.warranties().complete_claim_async(id, resolution).await
+    pub async fn complete_claim(
+        &self,
+        id: Uuid,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim> {
+        self.db
+            .warranties()
+            .complete_claim_async(id, resolution)
+            .await
     }
 
     /// Cancel a claim.
@@ -1457,13 +1832,24 @@ impl AsyncBom {
     }
 
     /// Add component to BOM.
-    pub async fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
+    pub async fn add_component(
+        &self,
+        bom_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
         self.db.bom().add_component_async(bom_id, component).await
     }
 
     /// Update a component.
-    pub async fn update_component(&self, component_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
-        self.db.bom().update_component_async(component_id, component).await
+    pub async fn update_component(
+        &self,
+        component_id: Uuid,
+        component: CreateBomComponent,
+    ) -> Result<BomComponent> {
+        self.db
+            .bom()
+            .update_component_async(component_id, component)
+            .await
     }
 
     /// Remove component from BOM.
@@ -1508,7 +1894,10 @@ impl AsyncWorkOrders {
 
     /// Get work order by work order number.
     pub async fn get_by_number(&self, work_order_number: &str) -> Result<Option<WorkOrder>> {
-        self.db.work_orders().get_by_number_async(work_order_number).await
+        self.db
+            .work_orders()
+            .get_by_number_async(work_order_number)
+            .await
     }
 
     /// Update a work order.
@@ -1533,7 +1922,10 @@ impl AsyncWorkOrders {
 
     /// Complete a work order.
     pub async fn complete(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        self.db.work_orders().complete_async(id, quantity_completed).await
+        self.db
+            .work_orders()
+            .complete_async(id, quantity_completed)
+            .await
     }
 
     /// Put work order on hold.
@@ -1552,12 +1944,23 @@ impl AsyncWorkOrders {
     }
 
     /// Add task to work order.
-    pub async fn add_task(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
-        self.db.work_orders().add_task_async(work_order_id, task).await
+    pub async fn add_task(
+        &self,
+        work_order_id: Uuid,
+        task: CreateWorkOrderTask,
+    ) -> Result<WorkOrderTask> {
+        self.db
+            .work_orders()
+            .add_task_async(work_order_id, task)
+            .await
     }
 
     /// Update a task.
-    pub async fn update_task(&self, task_id: Uuid, task: UpdateWorkOrderTask) -> Result<WorkOrderTask> {
+    pub async fn update_task(
+        &self,
+        task_id: Uuid,
+        task: UpdateWorkOrderTask,
+    ) -> Result<WorkOrderTask> {
         self.db.work_orders().update_task_async(task_id, task).await
     }
 
@@ -1572,18 +1975,39 @@ impl AsyncWorkOrders {
     }
 
     /// Complete a task.
-    pub async fn complete_task(&self, task_id: Uuid, actual_hours: Option<Decimal>) -> Result<WorkOrderTask> {
-        self.db.work_orders().complete_task_async(task_id, actual_hours).await
+    pub async fn complete_task(
+        &self,
+        task_id: Uuid,
+        actual_hours: Option<Decimal>,
+    ) -> Result<WorkOrderTask> {
+        self.db
+            .work_orders()
+            .complete_task_async(task_id, actual_hours)
+            .await
     }
 
     /// Add material to work order.
-    pub async fn add_material(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial> {
-        self.db.work_orders().add_material_async(work_order_id, material).await
+    pub async fn add_material(
+        &self,
+        work_order_id: Uuid,
+        material: AddWorkOrderMaterial,
+    ) -> Result<WorkOrderMaterial> {
+        self.db
+            .work_orders()
+            .add_material_async(work_order_id, material)
+            .await
     }
 
     /// Consume material.
-    pub async fn consume_material(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
-        self.db.work_orders().consume_material_async(material_id, quantity).await
+    pub async fn consume_material(
+        &self,
+        material_id: Uuid,
+        quantity: Decimal,
+    ) -> Result<WorkOrderMaterial> {
+        self.db
+            .work_orders()
+            .consume_material_async(material_id, quantity)
+            .await
     }
 
     /// Count work orders.
@@ -1620,12 +2044,18 @@ impl AsyncPurchaseOrders {
 
     /// Get supplier by code.
     pub async fn get_supplier_by_code(&self, code: &str) -> Result<Option<Supplier>> {
-        self.db.purchase_orders().get_supplier_by_code_async(code).await
+        self.db
+            .purchase_orders()
+            .get_supplier_by_code_async(code)
+            .await
     }
 
     /// Update a supplier.
     pub async fn update_supplier(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        self.db.purchase_orders().update_supplier_async(id, input).await
+        self.db
+            .purchase_orders()
+            .update_supplier_async(id, input)
+            .await
     }
 
     /// List suppliers.
@@ -1652,7 +2082,10 @@ impl AsyncPurchaseOrders {
 
     /// Get purchase order by PO number.
     pub async fn get_by_number(&self, po_number: &str) -> Result<Option<PurchaseOrder>> {
-        self.db.purchase_orders().get_by_number_async(po_number).await
+        self.db
+            .purchase_orders()
+            .get_by_number_async(po_number)
+            .await
     }
 
     /// Update a purchase order.
@@ -1667,7 +2100,10 @@ impl AsyncPurchaseOrders {
 
     /// Get purchase orders for a supplier.
     pub async fn for_supplier(&self, supplier_id: Uuid) -> Result<Vec<PurchaseOrder>> {
-        self.db.purchase_orders().for_supplier_async(supplier_id).await
+        self.db
+            .purchase_orders()
+            .for_supplier_async(supplier_id)
+            .await
     }
 
     /// Delete a purchase order.
@@ -1677,12 +2113,18 @@ impl AsyncPurchaseOrders {
 
     /// Submit for approval.
     pub async fn submit(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().submit_for_approval_async(id).await
+        self.db
+            .purchase_orders()
+            .submit_for_approval_async(id)
+            .await
     }
 
     /// Approve purchase order.
     pub async fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().approve_async(id, approved_by).await
+        self.db
+            .purchase_orders()
+            .approve_async(id, approved_by)
+            .await
     }
 
     /// Send to supplier.
@@ -1691,8 +2133,15 @@ impl AsyncPurchaseOrders {
     }
 
     /// Mark as acknowledged by supplier.
-    pub async fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().acknowledge_async(id, supplier_reference).await
+    pub async fn acknowledge(
+        &self,
+        id: Uuid,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder> {
+        self.db
+            .purchase_orders()
+            .acknowledge_async(id, supplier_reference)
+            .await
     }
 
     /// Put on hold.
@@ -1706,7 +2155,11 @@ impl AsyncPurchaseOrders {
     }
 
     /// Receive items.
-    pub async fn receive(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
+    pub async fn receive(
+        &self,
+        id: Uuid,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder> {
         self.db.purchase_orders().receive_async(id, items).await
     }
 
@@ -1716,13 +2169,24 @@ impl AsyncPurchaseOrders {
     }
 
     /// Add item to purchase order.
-    pub async fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    pub async fn add_item(
+        &self,
+        po_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         self.db.purchase_orders().add_item_async(po_id, item).await
     }
 
     /// Update a PO item.
-    pub async fn update_item(&self, item_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
-        self.db.purchase_orders().update_item_async(item_id, item).await
+    pub async fn update_item(
+        &self,
+        item_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
+        self.db
+            .purchase_orders()
+            .update_item_async(item_id, item)
+            .await
     }
 
     /// Remove item from purchase order.
@@ -1742,7 +2206,10 @@ impl AsyncPurchaseOrders {
 
     /// Count suppliers.
     pub async fn count_suppliers(&self, filter: SupplierFilter) -> Result<u64> {
-        self.db.purchase_orders().count_suppliers_async(filter).await
+        self.db
+            .purchase_orders()
+            .count_suppliers_async(filter)
+            .await
     }
 }
 
@@ -1942,7 +2409,10 @@ impl AsyncCarts {
 
     /// Set shipping address.
     pub async fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        self.db.carts().set_shipping_address_async(id, address).await
+        self.db
+            .carts()
+            .set_shipping_address_async(id, address)
+            .await
     }
 
     /// Set billing address.
@@ -2071,8 +2541,14 @@ impl AsyncAnalytics {
     }
 
     /// Get product performance.
-    pub async fn product_performance(&self, query: AnalyticsQuery) -> Result<Vec<ProductPerformance>> {
-        self.db.analytics().get_product_performance_async(query).await
+    pub async fn product_performance(
+        &self,
+        query: AnalyticsQuery,
+    ) -> Result<Vec<ProductPerformance>> {
+        self.db
+            .analytics()
+            .get_product_performance_async(query)
+            .await
     }
 
     /// Get customer metrics.
@@ -2092,22 +2568,40 @@ impl AsyncAnalytics {
 
     /// Get low stock items.
     pub async fn low_stock_items(&self, threshold: Option<Decimal>) -> Result<Vec<LowStockItem>> {
-        self.db.analytics().get_low_stock_items_async(threshold).await
+        self.db
+            .analytics()
+            .get_low_stock_items_async(threshold)
+            .await
     }
 
     /// Get inventory movement summary.
-    pub async fn inventory_movement(&self, query: AnalyticsQuery) -> Result<Vec<InventoryMovement>> {
-        self.db.analytics().get_inventory_movement_async(query).await
+    pub async fn inventory_movement(
+        &self,
+        query: AnalyticsQuery,
+    ) -> Result<Vec<InventoryMovement>> {
+        self.db
+            .analytics()
+            .get_inventory_movement_async(query)
+            .await
     }
 
     /// Get order status breakdown.
-    pub async fn order_status_breakdown(&self, query: AnalyticsQuery) -> Result<OrderStatusBreakdown> {
-        self.db.analytics().get_order_status_breakdown_async(query).await
+    pub async fn order_status_breakdown(
+        &self,
+        query: AnalyticsQuery,
+    ) -> Result<OrderStatusBreakdown> {
+        self.db
+            .analytics()
+            .get_order_status_breakdown_async(query)
+            .await
     }
 
     /// Get fulfillment metrics.
     pub async fn fulfillment_metrics(&self, query: AnalyticsQuery) -> Result<FulfillmentMetrics> {
-        self.db.analytics().get_fulfillment_metrics_async(query).await
+        self.db
+            .analytics()
+            .get_fulfillment_metrics_async(query)
+            .await
     }
 
     /// Get return metrics.
@@ -2116,13 +2610,27 @@ impl AsyncAnalytics {
     }
 
     /// Get demand forecast for SKUs.
-    pub async fn demand_forecast(&self, skus: Option<Vec<String>>, days_ahead: u32) -> Result<Vec<DemandForecast>> {
-        self.db.analytics().get_demand_forecast_async(skus, days_ahead).await
+    pub async fn demand_forecast(
+        &self,
+        skus: Option<Vec<String>>,
+        days_ahead: u32,
+    ) -> Result<Vec<DemandForecast>> {
+        self.db
+            .analytics()
+            .get_demand_forecast_async(skus, days_ahead)
+            .await
     }
 
     /// Get revenue forecast.
-    pub async fn revenue_forecast(&self, periods_ahead: u32, granularity: TimeGranularity) -> Result<Vec<RevenueForecast>> {
-        self.db.analytics().get_revenue_forecast_async(periods_ahead, granularity).await
+    pub async fn revenue_forecast(
+        &self,
+        periods_ahead: u32,
+        granularity: TimeGranularity,
+    ) -> Result<Vec<RevenueForecast>> {
+        self.db
+            .analytics()
+            .get_revenue_forecast_async(periods_ahead, granularity)
+            .await
     }
 }
 
@@ -2176,7 +2684,10 @@ impl AsyncCurrency {
     }
 
     /// Update store currency settings.
-    pub async fn update_settings(&self, settings: StoreCurrencySettings) -> Result<StoreCurrencySettings> {
+    pub async fn update_settings(
+        &self,
+        settings: StoreCurrencySettings,
+    ) -> Result<StoreCurrencySettings> {
         self.db.currency().update_settings_async(settings).await
     }
 }
@@ -2195,7 +2706,10 @@ impl AsyncTax {
         Self { db }
     }
 
-    pub async fn create_jurisdiction(&self, input: CreateTaxJurisdiction) -> Result<TaxJurisdiction> {
+    pub async fn create_jurisdiction(
+        &self,
+        input: CreateTaxJurisdiction,
+    ) -> Result<TaxJurisdiction> {
         self.db.tax().create_jurisdiction_async(input).await
     }
 
@@ -2207,7 +2721,10 @@ impl AsyncTax {
         self.db.tax().get_jurisdiction_by_code_async(code).await
     }
 
-    pub async fn list_jurisdictions(&self, filter: TaxJurisdictionFilter) -> Result<Vec<TaxJurisdiction>> {
+    pub async fn list_jurisdictions(
+        &self,
+        filter: TaxJurisdictionFilter,
+    ) -> Result<Vec<TaxJurisdiction>> {
         self.db.tax().list_jurisdictions_async(filter).await
     }
 
@@ -2244,7 +2761,10 @@ impl AsyncTax {
     }
 
     pub async fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
-        self.db.tax().get_customer_exemptions_async(customer_id).await
+        self.db
+            .tax()
+            .get_customer_exemptions_async(customer_id)
+            .await
     }
 
     pub async fn get_settings(&self) -> Result<TaxSettings> {
@@ -2255,7 +2775,10 @@ impl AsyncTax {
         self.db.tax().update_settings_async(settings).await
     }
 
-    pub async fn calculate_tax(&self, request: TaxCalculationRequest) -> Result<TaxCalculationResult> {
+    pub async fn calculate_tax(
+        &self,
+        request: TaxCalculationRequest,
+    ) -> Result<TaxCalculationResult> {
         self.db.tax().calculate_tax_async(request).await
     }
 
@@ -2395,7 +2918,10 @@ impl AsyncSubscriptions {
         self.db.subscriptions().get_plan_by_code_async(code).await
     }
 
-    pub async fn list_plans(&self, filter: SubscriptionPlanFilter) -> Result<Vec<SubscriptionPlan>> {
+    pub async fn list_plans(
+        &self,
+        filter: SubscriptionPlanFilter,
+    ) -> Result<Vec<SubscriptionPlan>> {
         self.db.subscriptions().list_plans_async(filter).await
     }
 
@@ -2416,7 +2942,10 @@ impl AsyncSubscriptions {
     }
 
     pub async fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
-        self.db.subscriptions().create_subscription_async(input).await
+        self.db
+            .subscriptions()
+            .create_subscription_async(input)
+            .await
     }
 
     pub async fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
@@ -2424,11 +2953,20 @@ impl AsyncSubscriptions {
     }
 
     pub async fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
-        self.db.subscriptions().get_subscription_by_number_async(number).await
+        self.db
+            .subscriptions()
+            .get_subscription_by_number_async(number)
+            .await
     }
 
-    pub async fn list_subscriptions(&self, filter: SubscriptionFilter) -> Result<Vec<Subscription>> {
-        self.db.subscriptions().list_subscriptions_async(filter).await
+    pub async fn list_subscriptions(
+        &self,
+        filter: SubscriptionFilter,
+    ) -> Result<Vec<Subscription>> {
+        self.db
+            .subscriptions()
+            .list_subscriptions_async(filter)
+            .await
     }
 
     pub async fn update_subscription(
@@ -2436,7 +2974,10 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: UpdateSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().update_subscription_async(id, input).await
+        self.db
+            .subscriptions()
+            .update_subscription_async(id, input)
+            .await
     }
 
     pub async fn cancel_subscription(
@@ -2444,7 +2985,10 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: CancelSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().cancel_subscription_async(id, input).await
+        self.db
+            .subscriptions()
+            .cancel_subscription_async(id, input)
+            .await
     }
 
     pub async fn pause_subscription(
@@ -2452,7 +2996,10 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: PauseSubscription,
     ) -> Result<Subscription> {
-        self.db.subscriptions().pause_subscription_async(id, input).await
+        self.db
+            .subscriptions()
+            .pause_subscription_async(id, input)
+            .await
     }
 
     pub async fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
@@ -2460,7 +3007,10 @@ impl AsyncSubscriptions {
     }
 
     pub async fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
-        self.db.subscriptions().create_billing_cycle_async(input).await
+        self.db
+            .subscriptions()
+            .create_billing_cycle_async(input)
+            .await
     }
 
     pub async fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
@@ -2471,7 +3021,10 @@ impl AsyncSubscriptions {
         &self,
         filter: BillingCycleFilter,
     ) -> Result<Vec<BillingCycle>> {
-        self.db.subscriptions().list_billing_cycles_async(filter).await
+        self.db
+            .subscriptions()
+            .list_billing_cycles_async(filter)
+            .await
     }
 
     pub async fn update_billing_cycle_status(
@@ -2490,7 +3043,10 @@ impl AsyncSubscriptions {
         id: Uuid,
         input: SkipBillingCycle,
     ) -> Result<Subscription> {
-        self.db.subscriptions().skip_billing_cycle_async(id, input).await
+        self.db
+            .subscriptions()
+            .skip_billing_cycle_async(id, input)
+            .await
     }
 
     pub async fn record_event(
@@ -2510,7 +3066,10 @@ impl AsyncSubscriptions {
         &self,
         subscription_id: Uuid,
     ) -> Result<Vec<SubscriptionEvent>> {
-        self.db.subscriptions().get_subscription_events_async(subscription_id).await
+        self.db
+            .subscriptions()
+            .get_subscription_events_async(subscription_id)
+            .await
     }
 }
 
@@ -2537,7 +3096,10 @@ impl AsyncQuality {
     }
 
     pub async fn get_inspection_by_number(&self, number: &str) -> Result<Option<Inspection>> {
-        self.db.quality().get_inspection_by_number_async(number).await
+        self.db
+            .quality()
+            .get_inspection_by_number_async(number)
+            .await
     }
 
     pub async fn update_inspection(&self, id: Uuid, input: UpdateInspection) -> Result<Inspection> {
@@ -2564,11 +3126,17 @@ impl AsyncQuality {
         &self,
         input: RecordInspectionResult,
     ) -> Result<InspectionItem> {
-        self.db.quality().record_inspection_result_async(input).await
+        self.db
+            .quality()
+            .record_inspection_result_async(input)
+            .await
     }
 
     pub async fn get_inspection_items(&self, inspection_id: Uuid) -> Result<Vec<InspectionItem>> {
-        self.db.quality().get_inspection_items_async(inspection_id).await
+        self.db
+            .quality()
+            .get_inspection_items_async(inspection_id)
+            .await
     }
 
     pub async fn count_inspections(&self, filter: InspectionFilter) -> Result<u64> {
@@ -2587,7 +3155,11 @@ impl AsyncQuality {
         self.db.quality().get_ncr_by_number_async(number).await
     }
 
-    pub async fn update_ncr(&self, id: Uuid, input: UpdateNonConformance) -> Result<NonConformance> {
+    pub async fn update_ncr(
+        &self,
+        id: Uuid,
+        input: UpdateNonConformance,
+    ) -> Result<NonConformance> {
         self.db.quality().update_ncr_async(id, input).await
     }
 
@@ -2628,7 +3200,10 @@ impl AsyncQuality {
     }
 
     pub async fn get_active_holds_for_lot(&self, lot_number: &str) -> Result<Vec<QualityHold>> {
-        self.db.quality().get_active_holds_for_lot_async(lot_number).await
+        self.db
+            .quality()
+            .get_active_holds_for_lot_async(lot_number)
+            .await
     }
 
     pub async fn count_active_holds(&self) -> Result<u64> {
@@ -2703,11 +3278,17 @@ impl AsyncLots {
     }
 
     pub async fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.lots().release_reservation_async(reservation_id).await
+        self.db
+            .lots()
+            .release_reservation_async(reservation_id)
+            .await
     }
 
     pub async fn confirm_reservation(&self, reservation_id: Uuid) -> Result<LotTransaction> {
-        self.db.lots().confirm_reservation_async(reservation_id).await
+        self.db
+            .lots()
+            .confirm_reservation_async(reservation_id)
+            .await
     }
 
     pub async fn transfer(&self, input: TransferLot) -> Result<LotTransaction> {
@@ -2734,7 +3315,11 @@ impl AsyncLots {
         self.db.lots().get_transactions_async(lot_id, limit).await
     }
 
-    pub async fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
+    pub async fn get_quantity_at_location(
+        &self,
+        lot_id: Uuid,
+        location_id: i32,
+    ) -> Result<Option<Decimal>> {
         self.db
             .lots()
             .get_quantity_at_location_async(lot_id, location_id)
@@ -2754,7 +3339,10 @@ impl AsyncLots {
     }
 
     pub async fn delete_certificate(&self, certificate_id: Uuid) -> Result<()> {
-        self.db.lots().delete_certificate_async(certificate_id).await
+        self.db
+            .lots()
+            .delete_certificate_async(certificate_id)
+            .await
     }
 
     pub async fn get_expiring_lots(&self, days: i32) -> Result<Vec<Lot>> {
@@ -2837,21 +3425,24 @@ impl AsyncSerials {
     }
 
     pub async fn release_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.serials().release_reservation_async(reservation_id).await
+        self.db
+            .serials()
+            .release_reservation_async(reservation_id)
+            .await
     }
 
     pub async fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
-        self.db.serials().confirm_reservation_async(reservation_id).await
+        self.db
+            .serials()
+            .confirm_reservation_async(reservation_id)
+            .await
     }
 
     pub async fn move_serial(&self, input: MoveSerial) -> Result<SerialNumber> {
         self.db.serials().move_serial_async(input).await
     }
 
-    pub async fn transfer_ownership(
-        &self,
-        input: TransferSerialOwnership,
-    ) -> Result<SerialNumber> {
+    pub async fn transfer_ownership(&self, input: TransferSerialOwnership) -> Result<SerialNumber> {
         self.db.serials().transfer_ownership_async(input).await
     }
 
@@ -2861,7 +3452,10 @@ impl AsyncSerials {
         customer_id: Uuid,
         order_id: Option<Uuid>,
     ) -> Result<SerialNumber> {
-        self.db.serials().mark_sold_async(id, customer_id, order_id).await
+        self.db
+            .serials()
+            .mark_sold_async(id, customer_id, order_id)
+            .await
     }
 
     pub async fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> Result<SerialNumber> {
@@ -2905,7 +3499,10 @@ impl AsyncSerials {
     }
 
     pub async fn get_available_for_sku(&self, sku: &str, limit: u32) -> Result<Vec<SerialNumber>> {
-        self.db.serials().get_available_for_sku_async(sku, limit).await
+        self.db
+            .serials()
+            .get_available_for_sku_async(sku, limit)
+            .await
     }
 
     pub async fn get_for_lot(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>> {
@@ -3054,10 +3651,7 @@ impl AsyncWarehouse {
             .await
     }
 
-    pub async fn get_location_inventory(
-        &self,
-        location_id: i32,
-    ) -> Result<Vec<LocationInventory>> {
+    pub async fn get_location_inventory(&self, location_id: i32) -> Result<Vec<LocationInventory>> {
         self.db
             .warehouse()
             .get_location_inventory_async(location_id)
@@ -3090,7 +3684,10 @@ impl AsyncWarehouse {
         &self,
         filter: LocationInventoryFilter,
     ) -> Result<Vec<LocationInventory>> {
-        self.db.warehouse().list_location_inventory_async(filter).await
+        self.db
+            .warehouse()
+            .list_location_inventory_async(filter)
+            .await
     }
 
     pub async fn get_movements(&self, filter: MovementFilter) -> Result<Vec<LocationMovement>> {
@@ -3105,7 +3702,10 @@ impl AsyncWarehouse {
         &self,
         inputs: Vec<CreateLocation>,
     ) -> Result<BatchResult<Location>> {
-        self.db.warehouse().create_locations_batch_async(inputs).await
+        self.db
+            .warehouse()
+            .create_locations_batch_async(inputs)
+            .await
     }
 
     pub async fn get_locations_batch(&self, ids: Vec<i32>) -> Result<Vec<Location>> {
@@ -3136,7 +3736,10 @@ impl AsyncReceiving {
     }
 
     pub async fn get_receipt_by_number(&self, number: &str) -> Result<Option<Receipt>> {
-        self.db.receiving().get_receipt_by_number_async(number).await
+        self.db
+            .receiving()
+            .get_receipt_by_number_async(number)
+            .await
     }
 
     pub async fn update_receipt(&self, id: Uuid, input: UpdateReceipt) -> Result<Receipt> {
@@ -3168,7 +3771,10 @@ impl AsyncReceiving {
     }
 
     pub async fn get_receipt_items(&self, receipt_id: Uuid) -> Result<Vec<ReceiptItem>> {
-        self.db.receiving().get_receipt_items_async(receipt_id).await
+        self.db
+            .receiving()
+            .get_receipt_items_async(receipt_id)
+            .await
     }
 
     pub async fn count_receipts(&self, filter: ReceiptFilter) -> Result<u64> {
@@ -3188,7 +3794,10 @@ impl AsyncReceiving {
     }
 
     pub async fn assign_put_away(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
-        self.db.receiving().assign_put_away_async(id, assigned_to).await
+        self.db
+            .receiving()
+            .assign_put_away_async(id, assigned_to)
+            .await
     }
 
     pub async fn start_put_away(&self, id: Uuid) -> Result<PutAway> {
@@ -3204,7 +3813,10 @@ impl AsyncReceiving {
     }
 
     pub async fn get_pending_put_aways(&self, receipt_id: Uuid) -> Result<Vec<PutAway>> {
-        self.db.receiving().get_pending_put_aways_async(receipt_id).await
+        self.db
+            .receiving()
+            .get_pending_put_aways_async(receipt_id)
+            .await
     }
 
     pub async fn count_put_aways(&self, filter: PutAwayFilter) -> Result<u64> {
@@ -3222,7 +3834,10 @@ impl AsyncReceiving {
         &self,
         inputs: Vec<CreateReceipt>,
     ) -> Result<BatchResult<Receipt>> {
-        self.db.receiving().create_receipts_batch_async(inputs).await
+        self.db
+            .receiving()
+            .create_receipts_batch_async(inputs)
+            .await
     }
 
     pub async fn get_receipts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Receipt>> {
@@ -3293,7 +3908,10 @@ impl AsyncFulfillment {
     }
 
     pub async fn assign_pick(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
-        self.db.fulfillment().assign_pick_async(id, assigned_to).await
+        self.db
+            .fulfillment()
+            .assign_pick_async(id, assigned_to)
+            .await
     }
 
     pub async fn start_pick(&self, id: Uuid) -> Result<PickTask> {
@@ -3304,7 +3922,12 @@ impl AsyncFulfillment {
         self.db.fulfillment().complete_pick_async(input).await
     }
 
-    pub async fn report_short(&self, id: Uuid, short_qty: Decimal, reason: &str) -> Result<PickTask> {
+    pub async fn report_short(
+        &self,
+        id: Uuid,
+        short_qty: Decimal,
+        reason: &str,
+    ) -> Result<PickTask> {
         self.db
             .fulfillment()
             .report_short_async(id, short_qty, reason)
@@ -3316,11 +3939,17 @@ impl AsyncFulfillment {
     }
 
     pub async fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self.db.fulfillment().get_picks_for_order_async(order_id).await
+        self.db
+            .fulfillment()
+            .get_picks_for_order_async(order_id)
+            .await
     }
 
     pub async fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
-        self.db.fulfillment().get_picks_for_wave_async(wave_id).await
+        self.db
+            .fulfillment()
+            .get_picks_for_wave_async(wave_id)
+            .await
     }
 
     pub async fn count_picks(&self, filter: PickTaskFilter) -> Result<u64> {
@@ -3340,7 +3969,10 @@ impl AsyncFulfillment {
     }
 
     pub async fn assign_pack(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
-        self.db.fulfillment().assign_pack_async(id, assigned_to).await
+        self.db
+            .fulfillment()
+            .assign_pack_async(id, assigned_to)
+            .await
     }
 
     pub async fn start_pack(&self, id: Uuid) -> Result<PackTask> {
@@ -3364,11 +3996,17 @@ impl AsyncFulfillment {
     }
 
     pub async fn get_carton_items(&self, carton_id: Uuid) -> Result<Vec<CartonItem>> {
-        self.db.fulfillment().get_carton_items_async(carton_id).await
+        self.db
+            .fulfillment()
+            .get_carton_items_async(carton_id)
+            .await
     }
 
     pub async fn mark_label_printed(&self, carton_id: Uuid) -> Result<Carton> {
-        self.db.fulfillment().mark_label_printed_async(carton_id).await
+        self.db
+            .fulfillment()
+            .mark_label_printed_async(carton_id)
+            .await
     }
 
     pub async fn cancel_pack(&self, id: Uuid) -> Result<PackTask> {
@@ -3392,7 +4030,10 @@ impl AsyncFulfillment {
     }
 
     pub async fn assign_ship(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
-        self.db.fulfillment().assign_ship_async(id, assigned_to).await
+        self.db
+            .fulfillment()
+            .assign_ship_async(id, assigned_to)
+            .await
     }
 
     pub async fn print_label(&self, id: Uuid, label_url: &str) -> Result<ShipTask> {
@@ -3411,7 +4052,11 @@ impl AsyncFulfillment {
         self.db.fulfillment().count_ships_async(filter).await
     }
 
-    pub async fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
+    pub async fn create_picks_for_order(
+        &self,
+        order_id: Uuid,
+        warehouse_id: i32,
+    ) -> Result<Vec<PickTask>> {
         self.db
             .fulfillment()
             .create_picks_for_order_async(order_id, warehouse_id)
@@ -3419,11 +4064,17 @@ impl AsyncFulfillment {
     }
 
     pub async fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool> {
-        self.db.fulfillment().is_order_ready_to_pack_async(order_id).await
+        self.db
+            .fulfillment()
+            .is_order_ready_to_pack_async(order_id)
+            .await
     }
 
     pub async fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool> {
-        self.db.fulfillment().is_order_ready_to_ship_async(order_id).await
+        self.db
+            .fulfillment()
+            .is_order_ready_to_ship_async(order_id)
+            .await
     }
 
     pub async fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {
@@ -3458,11 +4109,17 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
-        self.db.accounts_payable().get_bill_by_number_async(number).await
+        self.db
+            .accounts_payable()
+            .get_bill_by_number_async(number)
+            .await
     }
 
     pub async fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
-        self.db.accounts_payable().update_bill_async(id, input).await
+        self.db
+            .accounts_payable()
+            .update_bill_async(id, input)
+            .await
     }
 
     pub async fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>> {
@@ -3486,15 +4143,24 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
-        self.db.accounts_payable().get_bill_items_async(bill_id).await
+        self.db
+            .accounts_payable()
+            .get_bill_items_async(bill_id)
+            .await
     }
 
     pub async fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
-        self.db.accounts_payable().add_bill_item_async(bill_id, item).await
+        self.db
+            .accounts_payable()
+            .add_bill_item_async(bill_id, item)
+            .await
     }
 
     pub async fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
-        self.db.accounts_payable().remove_bill_item_async(item_id).await
+        self.db
+            .accounts_payable()
+            .remove_bill_item_async(item_id)
+            .await
     }
 
     pub async fn count_bills(&self, filter: BillFilter) -> Result<u64> {
@@ -3506,7 +4172,10 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_bills_due_soon(&self, days: i32) -> Result<Vec<Bill>> {
-        self.db.accounts_payable().get_bills_due_soon_async(days).await
+        self.db
+            .accounts_payable()
+            .get_bills_due_soon_async(days)
+            .await
     }
 
     pub async fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment> {
@@ -3518,7 +4187,10 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>> {
-        self.db.accounts_payable().get_payment_by_number_async(number).await
+        self.db
+            .accounts_payable()
+            .get_payment_by_number_async(number)
+            .await
     }
 
     pub async fn list_payments(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>> {
@@ -3533,7 +4205,10 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().clear_payment_async(id).await
     }
 
-    pub async fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+    pub async fn get_payment_allocations(
+        &self,
+        payment_id: Uuid,
+    ) -> Result<Vec<PaymentAllocation>> {
         self.db
             .accounts_payable()
             .get_payment_allocations_async(payment_id)
@@ -3541,15 +4216,24 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
-        self.db.accounts_payable().get_payments_for_bill_async(bill_id).await
+        self.db
+            .accounts_payable()
+            .get_payments_for_bill_async(bill_id)
+            .await
     }
 
     pub async fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64> {
-        self.db.accounts_payable().count_payments_async(filter).await
+        self.db
+            .accounts_payable()
+            .count_payments_async(filter)
+            .await
     }
 
     pub async fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun> {
-        self.db.accounts_payable().create_payment_run_async(input).await
+        self.db
+            .accounts_payable()
+            .create_payment_run_async(input)
+            .await
     }
 
     pub async fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
@@ -3557,30 +4241,48 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
-        self.db.accounts_payable().list_payment_runs_async(filter).await
+        self.db
+            .accounts_payable()
+            .list_payment_runs_async(filter)
+            .await
     }
 
     pub async fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
-        self.db.accounts_payable().approve_payment_run_async(id, approved_by).await
+        self.db
+            .accounts_payable()
+            .approve_payment_run_async(id, approved_by)
+            .await
     }
 
     pub async fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.db.accounts_payable().process_payment_run_async(id).await
+        self.db
+            .accounts_payable()
+            .process_payment_run_async(id)
+            .await
     }
 
     pub async fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.db.accounts_payable().cancel_payment_run_async(id).await
+        self.db
+            .accounts_payable()
+            .cancel_payment_run_async(id)
+            .await
     }
 
     pub async fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
-        self.db.accounts_payable().get_payment_run_bills_async(run_id).await
+        self.db
+            .accounts_payable()
+            .get_payment_run_bills_async(run_id)
+            .await
     }
 
     pub async fn get_aging_summary(&self) -> Result<ApAgingSummary> {
         self.db.accounts_payable().get_aging_summary_async().await
     }
 
-    pub async fn get_supplier_summary(&self, supplier_id: Uuid) -> Result<Option<SupplierApSummary>> {
+    pub async fn get_supplier_summary(
+        &self,
+        supplier_id: Uuid,
+    ) -> Result<Option<SupplierApSummary>> {
         self.db
             .accounts_payable()
             .get_supplier_summary_async(supplier_id)
@@ -3588,11 +4290,17 @@ impl AsyncAccountsPayable {
     }
 
     pub async fn get_total_outstanding(&self) -> Result<Decimal> {
-        self.db.accounts_payable().get_total_outstanding_async().await
+        self.db
+            .accounts_payable()
+            .get_total_outstanding_async()
+            .await
     }
 
     pub async fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>> {
-        self.db.accounts_payable().create_bills_batch_async(inputs).await
+        self.db
+            .accounts_payable()
+            .create_bills_batch_async(inputs)
+            .await
     }
 
     pub async fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
@@ -3623,7 +4331,10 @@ impl AsyncCostAccounting {
     }
 
     pub async fn list_item_costs(&self, filter: ItemCostFilter) -> Result<Vec<ItemCost>> {
-        self.db.cost_accounting().list_item_costs_async(filter).await
+        self.db
+            .cost_accounting()
+            .list_item_costs_async(filter)
+            .await
     }
 
     pub async fn update_average_cost(
@@ -3646,7 +4357,10 @@ impl AsyncCostAccounting {
     }
 
     pub async fn create_cost_layer(&self, input: CreateCostLayer) -> Result<CostLayer> {
-        self.db.cost_accounting().create_cost_layer_async(input).await
+        self.db
+            .cost_accounting()
+            .create_cost_layer_async(input)
+            .await
     }
 
     pub async fn get_cost_layer(&self, id: Uuid) -> Result<Option<CostLayer>> {
@@ -3654,7 +4368,10 @@ impl AsyncCostAccounting {
     }
 
     pub async fn list_cost_layers(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>> {
-        self.db.cost_accounting().list_cost_layers_async(filter).await
+        self.db
+            .cost_accounting()
+            .list_cost_layers_async(filter)
+            .await
     }
 
     pub async fn issue_fifo(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
@@ -3666,7 +4383,10 @@ impl AsyncCostAccounting {
     }
 
     pub async fn get_layers_remaining(&self, sku: &str) -> Result<Decimal> {
-        self.db.cost_accounting().get_layers_remaining_async(sku).await
+        self.db
+            .cost_accounting()
+            .get_layers_remaining_async(sku)
+            .await
     }
 
     pub async fn record_cost_transaction(
@@ -3699,7 +4419,10 @@ impl AsyncCostAccounting {
         &self,
         filter: CostTransactionFilter,
     ) -> Result<Vec<CostTransaction>> {
-        self.db.cost_accounting().list_cost_transactions_async(filter).await
+        self.db
+            .cost_accounting()
+            .list_cost_transactions_async(filter)
+            .await
     }
 
     pub async fn record_variance(&self, input: RecordCostVariance) -> Result<CostVariance> {
@@ -3715,11 +4438,17 @@ impl AsyncCostAccounting {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Decimal> {
-        self.db.cost_accounting().get_variance_summary_async(from, to).await
+        self.db
+            .cost_accounting()
+            .get_variance_summary_async(from, to)
+            .await
     }
 
     pub async fn create_adjustment(&self, input: CreateCostAdjustment) -> Result<CostAdjustment> {
-        self.db.cost_accounting().create_adjustment_async(input).await
+        self.db
+            .cost_accounting()
+            .create_adjustment_async(input)
+            .await
     }
 
     pub async fn get_adjustment(&self, id: Uuid) -> Result<Option<CostAdjustment>> {
@@ -3730,11 +4459,17 @@ impl AsyncCostAccounting {
         &self,
         filter: CostAdjustmentFilter,
     ) -> Result<Vec<CostAdjustment>> {
-        self.db.cost_accounting().list_adjustments_async(filter).await
+        self.db
+            .cost_accounting()
+            .list_adjustments_async(filter)
+            .await
     }
 
     pub async fn approve_adjustment(&self, id: Uuid, approved_by: &str) -> Result<CostAdjustment> {
-        self.db.cost_accounting().approve_adjustment_async(id, approved_by).await
+        self.db
+            .cost_accounting()
+            .approve_adjustment_async(id, approved_by)
+            .await
     }
 
     pub async fn apply_adjustment(&self, id: Uuid) -> Result<CostAdjustment> {
@@ -3746,23 +4481,38 @@ impl AsyncCostAccounting {
     }
 
     pub async fn calculate_rollup(&self, sku: &str, bom_id: Option<Uuid>) -> Result<CostRollup> {
-        self.db.cost_accounting().calculate_rollup_async(sku, bom_id).await
+        self.db
+            .cost_accounting()
+            .calculate_rollup_async(sku, bom_id)
+            .await
     }
 
     pub async fn get_rollup(&self, sku: &str) -> Result<Option<CostRollup>> {
         self.db.cost_accounting().get_rollup_async(sku).await
     }
 
-    pub async fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        self.db.cost_accounting().get_inventory_valuation_async(cost_method).await
+    pub async fn get_inventory_valuation(
+        &self,
+        cost_method: CostMethod,
+    ) -> Result<InventoryValuation> {
+        self.db
+            .cost_accounting()
+            .get_inventory_valuation_async(cost_method)
+            .await
     }
 
     pub async fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
-        self.db.cost_accounting().get_sku_cost_summary_async(sku).await
+        self.db
+            .cost_accounting()
+            .get_sku_cost_summary_async(sku)
+            .await
     }
 
     pub async fn get_total_inventory_value(&self) -> Result<Decimal> {
-        self.db.cost_accounting().get_total_inventory_value_async().await
+        self.db
+            .cost_accounting()
+            .get_total_inventory_value_async()
+            .await
     }
 }
 
@@ -3792,7 +4542,10 @@ impl AsyncCredit {
         &self,
         customer_id: Uuid,
     ) -> Result<Option<CreditAccount>> {
-        self.db.credit().get_credit_account_by_customer_async(customer_id).await
+        self.db
+            .credit()
+            .get_credit_account_by_customer_async(customer_id)
+            .await
     }
 
     pub async fn update_credit_account(
@@ -3800,7 +4553,10 @@ impl AsyncCredit {
         id: Uuid,
         input: UpdateCreditAccount,
     ) -> Result<CreditAccount> {
-        self.db.credit().update_credit_account_async(id, input).await
+        self.db
+            .credit()
+            .update_credit_account_async(id, input)
+            .await
     }
 
     pub async fn list_credit_accounts(
@@ -3827,11 +4583,17 @@ impl AsyncCredit {
         customer_id: Uuid,
         reason: &str,
     ) -> Result<CreditAccount> {
-        self.db.credit().suspend_credit_account_async(customer_id, reason).await
+        self.db
+            .credit()
+            .suspend_credit_account_async(customer_id, reason)
+            .await
     }
 
     pub async fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
-        self.db.credit().reactivate_credit_account_async(customer_id).await
+        self.db
+            .credit()
+            .reactivate_credit_account_async(customer_id)
+            .await
     }
 
     pub async fn check_credit(
@@ -3839,7 +4601,10 @@ impl AsyncCredit {
         customer_id: Uuid,
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
-        self.db.credit().check_credit_async(customer_id, order_amount).await
+        self.db
+            .credit()
+            .check_credit_async(customer_id, order_amount)
+            .await
     }
 
     pub async fn reserve_credit(
@@ -3848,7 +4613,10 @@ impl AsyncCredit {
         order_id: Uuid,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db.credit().reserve_credit_async(customer_id, order_id, amount).await
+        self.db
+            .credit()
+            .reserve_credit_async(customer_id, order_id, amount)
+            .await
     }
 
     pub async fn release_credit_reservation(
@@ -3868,7 +4636,10 @@ impl AsyncCredit {
         order_id: Uuid,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db.credit().charge_credit_async(customer_id, order_id, amount).await
+        self.db
+            .credit()
+            .charge_credit_async(customer_id, order_id, amount)
+            .await
     }
 
     pub async fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold> {
@@ -3944,14 +4715,20 @@ impl AsyncCredit {
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
-        self.db.credit().apply_payment_async(customer_id, amount, reference_id).await
+        self.db
+            .credit()
+            .apply_payment_async(customer_id, amount, reference_id)
+            .await
     }
 
     pub async fn get_customer_summary(
         &self,
         customer_id: Uuid,
     ) -> Result<Option<CustomerCreditSummary>> {
-        self.db.credit().get_customer_summary_async(customer_id).await
+        self.db
+            .credit()
+            .get_customer_summary_async(customer_id)
+            .await
     }
 
     pub async fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
@@ -3986,7 +4763,10 @@ impl AsyncBackorder {
     }
 
     pub async fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>> {
-        self.db.backorder().get_backorder_by_number_async(number).await
+        self.db
+            .backorder()
+            .get_backorder_by_number_async(number)
+            .await
     }
 
     pub async fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
@@ -4002,13 +4782,13 @@ impl AsyncBackorder {
     }
 
     pub async fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        self.db.backorder().get_backorders_for_order_async(order_id).await
+        self.db
+            .backorder()
+            .get_backorders_for_order_async(order_id)
+            .await
     }
 
-    pub async fn get_backorders_for_customer(
-        &self,
-        customer_id: Uuid,
-    ) -> Result<Vec<Backorder>> {
+    pub async fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
         self.db
             .backorder()
             .get_backorders_for_customer_async(customer_id)
@@ -4040,19 +4820,25 @@ impl AsyncBackorder {
         self.db.backorder().allocate_backorder_async(input).await
     }
 
-    pub async fn get_allocations(
-        &self,
-        backorder_id: Uuid,
-    ) -> Result<Vec<BackorderAllocation>> {
-        self.db.backorder().get_allocations_async(backorder_id).await
+    pub async fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
+        self.db
+            .backorder()
+            .get_allocations_async(backorder_id)
+            .await
     }
 
     pub async fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.db.backorder().release_allocation_async(allocation_id).await
+        self.db
+            .backorder()
+            .release_allocation_async(allocation_id)
+            .await
     }
 
     pub async fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.db.backorder().confirm_allocation_async(allocation_id).await
+        self.db
+            .backorder()
+            .confirm_allocation_async(allocation_id)
+            .await
     }
 
     pub async fn expire_allocations(&self) -> Result<u32> {
@@ -4095,7 +4881,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn get_aging_summary(&self) -> Result<ArAgingSummary> {
-        self.db.accounts_receivable().get_aging_summary_async().await
+        self.db
+            .accounts_receivable()
+            .get_aging_summary_async()
+            .await
     }
 
     pub async fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
@@ -4106,7 +4895,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
-        self.db.accounts_receivable().get_aging_report_async(filter).await
+        self.db
+            .accounts_receivable()
+            .get_aging_report_async(filter)
+            .await
     }
 
     pub async fn log_collection_activity(
@@ -4141,7 +4933,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
-        self.db.accounts_receivable().get_invoices_due_for_dunning_async().await
+        self.db
+            .accounts_receivable()
+            .get_invoices_due_for_dunning_async()
+            .await
     }
 
     pub async fn send_dunning_letter(
@@ -4157,7 +4952,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn create_write_off(&self, input: CreateWriteOff) -> Result<WriteOff> {
-        self.db.accounts_receivable().create_write_off_async(input).await
+        self.db
+            .accounts_receivable()
+            .create_write_off_async(input)
+            .await
     }
 
     pub async fn get_write_off(&self, id: Uuid) -> Result<Option<WriteOff>> {
@@ -4165,19 +4963,31 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn list_write_offs(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>> {
-        self.db.accounts_receivable().list_write_offs_async(filter).await
+        self.db
+            .accounts_receivable()
+            .list_write_offs_async(filter)
+            .await
     }
 
     pub async fn reverse_write_off(&self, id: Uuid) -> Result<WriteOff> {
-        self.db.accounts_receivable().reverse_write_off_async(id).await
+        self.db
+            .accounts_receivable()
+            .reverse_write_off_async(id)
+            .await
     }
 
     pub async fn create_credit_memo(&self, input: CreateCreditMemo) -> Result<CreditMemo> {
-        self.db.accounts_receivable().create_credit_memo_async(input).await
+        self.db
+            .accounts_receivable()
+            .create_credit_memo_async(input)
+            .await
     }
 
     pub async fn get_credit_memo(&self, id: Uuid) -> Result<Option<CreditMemo>> {
-        self.db.accounts_receivable().get_credit_memo_async(id).await
+        self.db
+            .accounts_receivable()
+            .get_credit_memo_async(id)
+            .await
     }
 
     pub async fn get_credit_memo_by_number(&self, number: &str) -> Result<Option<CreditMemo>> {
@@ -4188,15 +4998,24 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn list_credit_memos(&self, filter: CreditMemoFilter) -> Result<Vec<CreditMemo>> {
-        self.db.accounts_receivable().list_credit_memos_async(filter).await
+        self.db
+            .accounts_receivable()
+            .list_credit_memos_async(filter)
+            .await
     }
 
     pub async fn apply_credit_memo(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
-        self.db.accounts_receivable().apply_credit_memo_async(input).await
+        self.db
+            .accounts_receivable()
+            .apply_credit_memo_async(input)
+            .await
     }
 
     pub async fn void_credit_memo(&self, id: Uuid) -> Result<CreditMemo> {
-        self.db.accounts_receivable().void_credit_memo_async(id).await
+        self.db
+            .accounts_receivable()
+            .void_credit_memo_async(id)
+            .await
     }
 
     pub async fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
@@ -4227,10 +5046,16 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        self.db.accounts_receivable().unapply_payment_async(application_id).await
+        self.db
+            .accounts_receivable()
+            .unapply_payment_async(application_id)
+            .await
     }
 
-    pub async fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
+    pub async fn get_customer_summary(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Option<CustomerArSummary>> {
         self.db
             .accounts_receivable()
             .get_customer_summary_async(customer_id)
@@ -4248,7 +5073,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn get_total_outstanding(&self) -> Result<Decimal> {
-        self.db.accounts_receivable().get_total_outstanding_async().await
+        self.db
+            .accounts_receivable()
+            .get_total_outstanding_async()
+            .await
     }
 
     pub async fn get_dso(&self, days: i32) -> Result<Decimal> {
@@ -4263,7 +5091,10 @@ impl AsyncAccountsReceivable {
     }
 
     pub async fn get_customers_batch(&self, ids: Vec<Uuid>) -> Result<Vec<CustomerArSummary>> {
-        self.db.accounts_receivable().get_customers_batch_async(ids).await
+        self.db
+            .accounts_receivable()
+            .get_customers_batch_async(ids)
+            .await
     }
 }
 
@@ -4297,7 +5128,10 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
-        self.db.general_ledger().update_account_async(id, input).await
+        self.db
+            .general_ledger()
+            .update_account_async(id, input)
+            .await
     }
 
     pub async fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
@@ -4313,7 +5147,10 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>> {
-        self.db.general_ledger().initialize_chart_of_accounts_async().await
+        self.db
+            .general_ledger()
+            .initialize_chart_of_accounts_async()
+            .await
     }
 
     pub async fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod> {
@@ -4329,7 +5166,10 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn get_period_for_date(&self, date: NaiveDate) -> Result<Option<GlPeriod>> {
-        self.db.general_ledger().get_period_for_date_async(date).await
+        self.db
+            .general_ledger()
+            .get_period_for_date_async(date)
+            .await
     }
 
     pub async fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
@@ -4341,11 +5181,17 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        self.db.general_ledger().close_period_async(id, closed_by).await
+        self.db
+            .general_ledger()
+            .close_period_async(id, closed_by)
+            .await
     }
 
     pub async fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        self.db.general_ledger().lock_period_async(id, locked_by).await
+        self.db
+            .general_ledger()
+            .lock_period_async(id, locked_by)
+            .await
     }
 
     pub async fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
@@ -4353,17 +5199,17 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
-        self.db.general_ledger().create_journal_entry_async(input).await
+        self.db
+            .general_ledger()
+            .create_journal_entry_async(input)
+            .await
     }
 
     pub async fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
         self.db.general_ledger().get_journal_entry_async(id).await
     }
 
-    pub async fn get_journal_entry_by_number(
-        &self,
-        number: &str,
-    ) -> Result<Option<JournalEntry>> {
+    pub async fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>> {
         self.db
             .general_ledger()
             .get_journal_entry_by_number_async(number)
@@ -4374,11 +5220,17 @@ impl AsyncGeneralLedger {
         &self,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntry>> {
-        self.db.general_ledger().list_journal_entries_async(filter).await
+        self.db
+            .general_ledger()
+            .list_journal_entries_async(filter)
+            .await
     }
 
     pub async fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        self.db.general_ledger().post_journal_entry_async(id, posted_by).await
+        self.db
+            .general_ledger()
+            .post_journal_entry_async(id, posted_by)
+            .await
     }
 
     pub async fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
@@ -4407,18 +5259,27 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>> {
-        self.db.general_ledger().get_auto_posting_config_async().await
+        self.db
+            .general_ledger()
+            .get_auto_posting_config_async()
+            .await
     }
 
     pub async fn set_auto_posting_config(
         &self,
         input: CreateAutoPostingConfig,
     ) -> Result<AutoPostingConfig> {
-        self.db.general_ledger().set_auto_posting_config_async(input).await
+        self.db
+            .general_ledger()
+            .set_auto_posting_config_async(input)
+            .await
     }
 
     pub async fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_invoice_async(invoice_id).await
+        self.db
+            .general_ledger()
+            .auto_post_invoice_async(invoice_id)
+            .await
     }
 
     pub async fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
@@ -4450,15 +5311,24 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_write_off_async(write_off_id).await
+        self.db
+            .general_ledger()
+            .auto_post_write_off_async(write_off_id)
+            .await
     }
 
     pub async fn get_trial_balance(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {
-        self.db.general_ledger().get_trial_balance_async(as_of_date).await
+        self.db
+            .general_ledger()
+            .get_trial_balance_async(as_of_date)
+            .await
     }
 
     pub async fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        self.db.general_ledger().get_balance_sheet_async(as_of_date).await
+        self.db
+            .general_ledger()
+            .get_balance_sheet_async(as_of_date)
+            .await
     }
 
     pub async fn get_income_statement(
@@ -4495,14 +5365,20 @@ impl AsyncGeneralLedger {
     }
 
     pub async fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        self.db.general_ledger().run_period_close_async(period_id, closed_by).await
+        self.db
+            .general_ledger()
+            .run_period_close_async(period_id, closed_by)
+            .await
     }
 
     pub async fn create_accounts_batch(
         &self,
         inputs: Vec<CreateGlAccount>,
     ) -> Result<BatchResult<GlAccount>> {
-        self.db.general_ledger().create_accounts_batch_async(inputs).await
+        self.db
+            .general_ledger()
+            .create_accounts_batch_async(inputs)
+            .await
     }
 
     pub async fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {

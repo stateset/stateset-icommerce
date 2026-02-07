@@ -13,7 +13,7 @@ import {
   getDefaultStablecoin,
   toSmallestUnit,
   fromSmallestUnit,
-  isEvmChain
+  isEvmChain,
 } from '../chains/config.js';
 import { getOrCreateWallet } from '../chains/wallet.js';
 import { TreasuryStore, defaultTreasuryDbPath } from './store.js';
@@ -22,25 +22,19 @@ import {
   loadTokenRegistry,
   saveTokenRegistry,
   upsertToken,
-  removeToken
+  removeToken,
 } from './registry.js';
-import {
-  normalizeSymbol,
-  isStablecoinSymbol,
-  resolveTokenPriceUsd
-} from './pricing.js';
+import { normalizeSymbol, isStablecoinSymbol, resolveTokenPriceUsd } from './pricing.js';
 import {
   defaultPricingPath,
   loadPricing,
   savePricing,
   upsertPricingRule,
   removePricingRule,
-  getPricingRule
+  getPricingRule,
 } from './pricing-store.js';
 
-const ERC20_ABI = [
-  'function balanceOf(address owner) view returns (uint256)'
-];
+const ERC20_ABI = ['function balanceOf(address owner) view returns (uint256)'];
 
 function trimTrailingZeros(value) {
   if (!value || typeof value !== 'string') return value;
@@ -79,22 +73,24 @@ export function resolveToken(chainId, symbol, registry) {
       ...chainToken,
       symbol: normalized,
       chainId,
-      source: 'chain'
+      source: 'chain',
     };
   }
 
   const custom = (registry?.tokens || []).find(
-    t => normalizeSymbol(t.symbol) === normalized && t.chainId === chainId
+    (t) => normalizeSymbol(t.symbol) === normalized && t.chainId === chainId,
   );
   if (custom) {
     const resolved = {
       ...custom,
       symbol: normalized,
       chainId,
-      source: 'registry'
+      source: 'registry',
     };
     if (resolved.decimals === undefined || resolved.decimals === null) {
-      throw new Error(`Token ${normalized} on ${chainId} is missing decimals. Update the registry entry.`);
+      throw new Error(
+        `Token ${normalized} on ${chainId} is missing decimals. Update the registry entry.`,
+      );
     }
     return resolved;
   }
@@ -111,7 +107,7 @@ export function listTokens(chainId, registry) {
         ...token,
         symbol: normalizeSymbol(token.symbol),
         chainId,
-        source: 'chain'
+        source: 'chain',
       });
     }
   }
@@ -122,12 +118,12 @@ export function listTokens(chainId, registry) {
       ...token,
       symbol: normalizeSymbol(token.symbol),
       chainId: token.chainId,
-      source: 'registry'
+      source: 'registry',
     });
   }
 
   const seen = new Set();
-  return tokens.filter(token => {
+  return tokens.filter((token) => {
     const key = `${token.chainId}:${token.symbol}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -164,7 +160,7 @@ export function getToolPricing(pricing, toolName) {
 }
 
 export function computeBalanceDisplay(balanceSmallest, decimals) {
-  if (balanceSmallest == null) return '0';
+  if (balanceSmallest === null || balanceSmallest === undefined) return '0';
   return formatSmallest(balanceSmallest, decimals);
 }
 
@@ -182,7 +178,7 @@ export async function recordDeposit(options, context) {
     taskId = null,
     sessionId = null,
     toolName = null,
-    requestId = null
+    requestId = null,
   } = options;
 
   const token = resolveToken(chainId, tokenSymbol, registry);
@@ -210,8 +206,8 @@ export async function recordDeposit(options, context) {
     request_id: requestId,
     metadata: {
       ...metadata,
-      fromAddress
-    }
+      fromAddress,
+    },
   };
 
   return store.record(entry);
@@ -231,7 +227,7 @@ export async function recordWithdrawal(options, context) {
     taskId = null,
     sessionId = null,
     toolName = null,
-    requestId = null
+    requestId = null,
   } = options;
 
   const token = resolveToken(chainId, tokenSymbol, registry);
@@ -259,8 +255,8 @@ export async function recordWithdrawal(options, context) {
     request_id: requestId,
     metadata: {
       ...metadata,
-      toAddress
-    }
+      toAddress,
+    },
   };
 
   return store.record(entry);
@@ -280,7 +276,7 @@ export async function buyTokens(options, context) {
     taskId = null,
     sessionId = null,
     toolName = null,
-    requestId = null
+    requestId = null,
   } = options;
 
   const fromTokenSymbol = fromSymbol || getDefaultStablecoin(chainId)?.symbol;
@@ -294,17 +290,23 @@ export async function buyTokens(options, context) {
   }
 
   if (!isStablecoinSymbol(fromToken.symbol)) {
-    throw new Error(`Funding token ${fromToken.symbol} is not a stablecoin. Only stablecoin swaps are supported.`);
+    throw new Error(
+      `Funding token ${fromToken.symbol} is not a stablecoin. Only stablecoin swaps are supported.`,
+    );
   }
 
   const toToken = resolveToken(chainId, toSymbol, registry);
   if (!toToken) {
-    throw new Error(`Unknown target token ${toSymbol} on ${chainId}. Add it to the registry first.`);
+    throw new Error(
+      `Unknown target token ${toSymbol} on ${chainId}. Add it to the registry first.`,
+    );
   }
 
   const price = resolveTokenPriceUsd(toToken, { priceUsd });
   if (!price) {
-    throw new Error(`Missing USD price for ${toToken.symbol}. Provide --price or set price in registry.`);
+    throw new Error(
+      `Missing USD price for ${toToken.symbol}. Provide --price or set price in registry.`,
+    );
   }
 
   const amountIn = typeof amount === 'string' ? Number(amount) : amount;
@@ -317,11 +319,13 @@ export async function buyTokens(options, context) {
     agentId,
     chainId,
     tokenSymbol: fromToken.symbol,
-    tokenDecimals: fromToken.decimals
+    tokenDecimals: fromToken.decimals,
   });
 
   if (balance.balanceSmallest < amountInSmallest) {
-    throw new Error(`Insufficient ${fromToken.symbol} balance. Available: ${formatSmallest(balance.balanceSmallest, fromToken.decimals)}`);
+    throw new Error(
+      `Insufficient ${fromToken.symbol} balance. Available: ${formatSmallest(balance.balanceSmallest, fromToken.decimals)}`,
+    );
   }
 
   const slippage = Number.isFinite(slippagePct) ? slippagePct : 0;
@@ -353,8 +357,8 @@ export async function buyTokens(options, context) {
     metadata: {
       ...metadata,
       toToken: toToken.symbol,
-      slippagePct: slippage
-    }
+      slippagePct: slippage,
+    },
   };
 
   const inEntry = {
@@ -377,8 +381,8 @@ export async function buyTokens(options, context) {
     metadata: {
       ...metadata,
       fromToken: fromToken.symbol,
-      slippagePct: slippage
-    }
+      slippagePct: slippage,
+    },
   };
 
   store.record(outEntry);
@@ -388,14 +392,14 @@ export async function buyTokens(options, context) {
     swapId,
     from: {
       symbol: fromToken.symbol,
-      amount: outEntry.amount_display
+      amount: outEntry.amount_display,
     },
     to: {
       symbol: toToken.symbol,
-      amount: inEntry.amount_display
+      amount: inEntry.amount_display,
     },
     priceUsd: price,
-    slippagePct: slippage
+    slippagePct: slippage,
   };
 }
 
@@ -411,7 +415,7 @@ export async function recordFee(options, context) {
     taskId = null,
     sessionId = null,
     toolName = null,
-    requestId = null
+    requestId = null,
   } = options;
 
   const token = resolveToken(chainId, tokenSymbol, registry);
@@ -437,8 +441,8 @@ export async function recordFee(options, context) {
     tool_name: toolName,
     request_id: requestId,
     metadata: {
-      ...metadata
-    }
+      ...metadata,
+    },
   };
 
   return store.record(entry);
@@ -470,11 +474,13 @@ export async function syncOnChainBalance(options, context) {
     tokenSymbol,
     configDir = '.stateset',
     source = 'sync',
-    apply = true
+    apply = true,
   } = options;
 
   if (!isEvmChain(chainId)) {
-    throw new Error(`On-chain sync currently supported only for EVM chains. ${chainId} is not EVM.`);
+    throw new Error(
+      `On-chain sync currently supported only for EVM chains. ${chainId} is not EVM.`,
+    );
   }
 
   const token = resolveToken(chainId, tokenSymbol, registry);
@@ -490,7 +496,7 @@ export async function syncOnChainBalance(options, context) {
     agentId,
     chainId,
     tokenSymbol: token.symbol,
-    tokenDecimals: token.decimals
+    tokenDecimals: token.decimals,
   });
 
   const delta = onChainBalance - ledgerBalance.balanceSmallest;
@@ -503,7 +509,7 @@ export async function syncOnChainBalance(options, context) {
       token: token.symbol,
       onChain: formatSmallest(onChainBalance, token.decimals),
       ledger: formatSmallest(ledgerBalance.balanceSmallest, token.decimals),
-      delta: '0'
+      delta: '0',
     };
   }
 
@@ -523,8 +529,8 @@ export async function syncOnChainBalance(options, context) {
     source,
     metadata: {
       onChainBalance: onChainBalance.toString(),
-      previousLedgerBalance: ledgerBalance.balanceSmallest.toString()
-    }
+      previousLedgerBalance: ledgerBalance.balanceSmallest.toString(),
+    },
   };
 
   if (apply) {
@@ -541,7 +547,7 @@ export async function syncOnChainBalance(options, context) {
     onChain: formatSmallest(onChainBalance, token.decimals),
     ledger: formatSmallest(ledgerBalance.balanceSmallest, token.decimals),
     delta: formatSmallest(amountSmallest, token.decimals),
-    wouldRecord: apply ? null : entry
+    wouldRecord: apply ? null : entry,
   };
 }
 
@@ -564,5 +570,5 @@ export default {
   recordFee,
   buyTokens,
   syncOnChainBalance,
-  ensureAgentWallet
+  ensureAgentWallet,
 };

@@ -196,7 +196,9 @@ impl Histogram {
 
     /// Default buckets for request durations (in seconds)
     pub fn default_buckets() -> Vec<f64> {
-        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+        vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+        ]
     }
 
     /// Record an observation value for the histogram
@@ -259,7 +261,10 @@ impl Histogram {
                 } else {
                     format!("{{{},le=\"{}\"}}", base_label_str, bucket)
                 };
-                output.push_str(&format!("{}_bucket{} {}\n", self.name, label_str, cumulative));
+                output.push_str(&format!(
+                    "{}_bucket{} {}\n",
+                    self.name, label_str, cumulative
+                ));
             }
 
             // +Inf bucket
@@ -504,7 +509,8 @@ impl LogEntry {
 
     /// Render as JSON string
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| format!("{{\"message\": \"{}\"}}", self.message))
+        serde_json::to_string(self)
+            .unwrap_or_else(|_| format!("{{\"message\": \"{}\"}}", self.message))
     }
 
     /// Render as human-readable string

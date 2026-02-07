@@ -1,8 +1,8 @@
 //! Order operations
 
 use stateset_core::{
-    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus,
-    PaymentStatus, Result, UpdateOrder,
+    CreateOrder, CreateOrderItem, Order, OrderFilter, OrderItem, OrderStatus, PaymentStatus,
+    Result, UpdateOrder,
 };
 use stateset_db::Database;
 use std::sync::Arc;

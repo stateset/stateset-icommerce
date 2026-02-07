@@ -523,7 +523,7 @@ The HTTP gateway supports API key authentication, per-route permission levels, a
 
 **Auth methods:**
 - `Authorization: Bearer <key>` header
-- `?api_key=<key>` query param
+- `?api_key=<key>` query param (disabled by default; enable with `httpGateway.allowQueryParamAuth: true`)
 
 ```bash
 # Authenticated request
@@ -535,7 +535,9 @@ curl -X POST -H "Authorization: Bearer sk-admin-secret" \
 # 403 — blocked by browser sandbox
 ```
 
-When `apiKeys` is empty or omitted, auth is disabled (backwards compatible).
+When `apiKeys` is empty or omitted, protected routes return `401 Authentication required` (health/ready remain public).
+
+To run an insecure local “open mode” for debugging, set `httpGateway.allowAnonymous: true` (not recommended).
 
 ### Heartbeat Monitor (v0.3.1)
 

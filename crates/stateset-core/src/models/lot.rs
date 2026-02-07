@@ -511,14 +511,12 @@ impl Default for SplitLot {
 }
 
 /// Input for merging lots
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MergeLots {
     pub source_lot_ids: Vec<Uuid>,
     pub target_lot_number: Option<String>,
     pub reason: Option<String>,
 }
-
 
 /// Filter for listing lots
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -611,9 +609,8 @@ impl Lot {
 
     /// Get days until expiration
     pub fn days_until_expiration(&self) -> Option<i64> {
-        self.expiration_date.map(|exp| {
-            (exp - Utc::now()).num_days()
-        })
+        self.expiration_date
+            .map(|exp| (exp - Utc::now()).num_days())
     }
 
     /// Get shelf life percentage remaining
@@ -622,7 +619,10 @@ impl Lot {
             let total_days = (exp - self.production_date).num_days();
             if total_days > 0 {
                 let remaining_days = (exp - Utc::now()).num_days();
-                Some(Decimal::from(remaining_days.max(0)) / Decimal::from(total_days) * Decimal::from(100))
+                Some(
+                    Decimal::from(remaining_days.max(0)) / Decimal::from(total_days)
+                        * Decimal::from(100),
+                )
             } else {
                 None
             }

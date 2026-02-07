@@ -10,11 +10,7 @@
  *   bridge.start();
  */
 
-import {
-  createOrderSummary,
-  createInventoryCard,
-  createAnalyticsSummary,
-} from './rich-messages.js';
+import { createOrderSummary, createInventoryCard } from './rich-messages.js';
 
 // ============================================================================
 // Event-to-notification mapping
@@ -36,7 +32,8 @@ const DEFAULT_EVENT_MAP = {
 
   'scheduler:job:failed': {
     notificationType: 'job.failed',
-    message: (d) => `Job failed: ${d.job?.name || 'unknown'} — ${d.result?.error || 'unknown error'}`,
+    message: (d) =>
+      `Job failed: ${d.job?.name || 'unknown'} — ${d.result?.error || 'unknown error'}`,
   },
 
   'workflows:instance:completed': {
@@ -69,10 +66,11 @@ const DEFAULT_EVENT_MAP = {
 
   'webhooks:event:received': {
     notificationType: 'webhook.received',
-    message: (d) => `Webhook received: ${d.event?.sourceName || 'unknown'} — ${d.event?.eventType || 'unknown'}`,
+    message: (d) =>
+      `Webhook received: ${d.event?.sourceName || 'unknown'} — ${d.event?.eventType || 'unknown'}`,
   },
 
-  'notification': {
+  notification: {
     notificationType: 'general',
     message: (d) => d.message || JSON.stringify(d),
   },
@@ -99,25 +97,29 @@ const COMMERCE_EVENT_BUILDERS = {
    */
   'order.shipped': {
     notificationType: 'order.shipped',
-    message: (order) => `Order ${order.orderNumber || order.order_number || order.id} has shipped! Tracking: ${order.trackingNumber || order.tracking_number || 'pending'}`,
+    message: (order) =>
+      `Order ${order.orderNumber || order.order_number || order.id} has shipped! Tracking: ${order.trackingNumber || order.tracking_number || 'pending'}`,
     richMessage: (order) => createOrderSummary(order),
   },
 
   'order.delivered': {
     notificationType: 'order.delivered',
-    message: (order) => `Order ${order.orderNumber || order.order_number || order.id} has been delivered.`,
+    message: (order) =>
+      `Order ${order.orderNumber || order.order_number || order.id} has been delivered.`,
     richMessage: (order) => createOrderSummary(order),
   },
 
   'order.cancelled': {
     notificationType: 'order.cancelled',
-    message: (order) => `Order ${order.orderNumber || order.order_number || order.id} has been cancelled.`,
+    message: (order) =>
+      `Order ${order.orderNumber || order.order_number || order.id} has been cancelled.`,
     richMessage: (order) => createOrderSummary(order),
   },
 
   'inventory.low': {
     notificationType: 'inventory.low',
-    message: (data) => `Low stock alert: ${data.sku} has ${data.available ?? 0} units remaining (reorder point: ${data.reorderPoint ?? 0})`,
+    message: (data) =>
+      `Low stock alert: ${data.sku} has ${data.available ?? 0} units remaining (reorder point: ${data.reorderPoint ?? 0})`,
     richMessage: (data) => createInventoryCard(data.sku, data),
   },
 
@@ -162,12 +164,18 @@ export class EventBridge {
         try {
           const notification = {
             type: mapping.notificationType,
-            message: typeof mapping.message === 'function' ? mapping.message(data) : String(mapping.message),
-            richMessage: typeof mapping.richMessage === 'function' ? mapping.richMessage(data) : null,
+            message:
+              typeof mapping.message === 'function'
+                ? mapping.message(data)
+                : String(mapping.message),
+            richMessage:
+              typeof mapping.richMessage === 'function' ? mapping.richMessage(data) : null,
           };
 
           if (this._verbose) {
-            console.log(`[EventBridge] ${eventName} → ${notification.type}: ${notification.message.slice(0, 80)}`);
+            console.log(
+              `[EventBridge] ${eventName} → ${notification.type}: ${notification.message.slice(0, 80)}`,
+            );
           }
 
           await this._notifier.sendNotification(notification);
@@ -205,7 +213,8 @@ export class EventBridge {
 
     return this._notifier.sendNotification({
       type: mapping.notificationType,
-      message: typeof mapping.message === 'function' ? mapping.message(data) : String(mapping.message),
+      message:
+        typeof mapping.message === 'function' ? mapping.message(data) : String(mapping.message),
       richMessage: typeof mapping.richMessage === 'function' ? mapping.richMessage(data) : null,
     });
   }

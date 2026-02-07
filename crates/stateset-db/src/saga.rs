@@ -231,8 +231,8 @@ impl SagaCoordinator {
             .await
             .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        let result_json =
-            serde_json::to_string(&result).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+        let result_json = serde_json::to_string(&result)
+            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
         sqlx::query!(
             r#"
             UPDATE saga_steps
@@ -323,11 +323,7 @@ impl SagaCoordinator {
         Ok(())
     }
 
-    pub async fn rollback_saga<F, Fut>(
-        &self,
-        saga_id: Uuid,
-        handler: F,
-    ) -> Result<(), SagaError>
+    pub async fn rollback_saga<F, Fut>(&self, saga_id: Uuid, handler: F) -> Result<(), SagaError>
     where
         F: FnOnce(Uuid, serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
@@ -424,10 +420,7 @@ impl SagaCoordinator {
         })
     }
 
-    pub async fn get_saga_by_idempotency_key(
-        &self,
-        key: &str,
-    ) -> Result<Option<Saga>, SagaError> {
+    pub async fn get_saga_by_idempotency_key(&self, key: &str) -> Result<Option<Saga>, SagaError> {
         let pool = self.db.pool();
 
         let row = sqlx::query!(
@@ -479,8 +472,7 @@ impl SagaCoordinator {
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        rows
-            .iter()
+        rows.iter()
             .map(|row| {
                 let status = deserialize_status(&row.status)?;
                 let result = match row.result.as_ref() {
@@ -490,8 +482,8 @@ impl SagaCoordinator {
                     ),
                     None => None,
                 };
-                let payload =
-                    serde_json::from_str(&row.payload).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
+                let payload = serde_json::from_str(&row.payload)
+                    .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
                 Ok(SagaStep {
                     id: row.id,
@@ -523,12 +515,8 @@ mod tests {
 
     #[test]
     fn test_saga_with_business_key() {
-        let saga = Saga::new(
-            "test-saga".to_string(),
-            "test-key".to_string(),
-            3,
-        )
-        .with_business_key("order-123".to_string());
+        let saga = Saga::new("test-saga".to_string(), "test-key".to_string(), 3)
+            .with_business_key("order-123".to_string());
         assert_eq!(saga.business_key, Some("order-123".to_string()));
     }
 }

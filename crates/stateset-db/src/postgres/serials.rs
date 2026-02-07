@@ -2,14 +2,14 @@
 
 use super::{block_on, map_db_error, PgLotRepository, PgWarrantyRepository};
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    BatchResult, ChangeSerialStatus, CommerceError, CreateSerialNumber, CreateSerialNumbersBulk,
-    MoveSerial, ReserveSerialNumber, Result, SerialEventType, SerialFilter, SerialHistory,
-    SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialReservation, SerialRepository,
-    SerialStatus, SerialValidation, TransferSerialOwnership, UpdateSerialNumber,
-    WarrantyLookupStatus, validate_batch_size,
+    validate_batch_size, BatchResult, ChangeSerialStatus, CommerceError, CreateSerialNumber,
+    CreateSerialNumbersBulk, MoveSerial, ReserveSerialNumber, Result, SerialEventType,
+    SerialFilter, SerialHistory, SerialHistoryFilter, SerialLookupResult, SerialNumber,
+    SerialRepository, SerialReservation, SerialStatus, SerialValidation, TransferSerialOwnership,
+    UpdateSerialNumber, WarrantyLookupStatus,
 };
 use uuid::Uuid;
 
@@ -247,7 +247,10 @@ impl PgSerialRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn create_bulk_async(&self, input: CreateSerialNumbersBulk) -> Result<Vec<SerialNumber>> {
+    pub async fn create_bulk_async(
+        &self,
+        input: CreateSerialNumbersBulk,
+    ) -> Result<Vec<SerialNumber>> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now();
@@ -366,7 +369,9 @@ impl PgSerialRepository {
             builder.push(" AND serial = ").push_bind(serial);
         }
         if let Some(prefix) = &filter.serial_prefix {
-            builder.push(" AND serial LIKE ").push_bind(format!("{}%", prefix));
+            builder
+                .push(" AND serial LIKE ")
+                .push_bind(format!("{}%", prefix));
         }
         if let Some(sku) = &filter.sku {
             builder.push(" AND sku = ").push_bind(sku);
@@ -393,13 +398,17 @@ impl PgSerialRepository {
             builder.push(" AND lot_number = ").push_bind(lot_number);
         }
         if let Some(loc_id) = filter.location_id {
-            builder.push(" AND current_location_id = ").push_bind(loc_id);
+            builder
+                .push(" AND current_location_id = ")
+                .push_bind(loc_id);
         }
         if let Some(owner_id) = &filter.owner_id {
             builder.push(" AND current_owner_id = ").push_bind(owner_id);
         }
         if let Some(owner_type) = &filter.owner_type {
-            builder.push(" AND current_owner_type = ").push_bind(owner_type);
+            builder
+                .push(" AND current_owner_type = ")
+                .push_bind(owner_type);
         }
         if let Some(warranty_id) = &filter.warranty_id {
             builder.push(" AND warranty_id = ").push_bind(warranty_id);
@@ -484,11 +493,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(input.serial_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(input.serial_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
@@ -512,38 +522,40 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                input.serial_id,
-                SerialEventType::StatusChanged,
-                input.reference_type.as_deref(),
-                input.reference_id,
-                serial.status,
-                input.new_status,
-                serial.current_location_id,
-                input.location_id,
-                serial.current_owner_id,
-                input.owner_id,
-                input.performed_by.as_deref(),
-                input.notes.as_deref(),
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            input.serial_id,
+            SerialEventType::StatusChanged,
+            input.reference_type.as_deref(),
+            input.reference_id,
+            serial.status,
+            input.new_status,
+            serial.current_location_id,
+            input.location_id,
+            serial.current_owner_id,
+            input.owner_id,
+            input.performed_by.as_deref(),
+            input.notes.as_deref(),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn reserve_async(&self, input: ReserveSerialNumber) -> Result<SerialReservation> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(input.serial_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(input.serial_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         if serial.status != SerialStatus::Available {
@@ -604,23 +616,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                input.serial_id,
-                SerialEventType::Reserved,
-                Some(&input.reference_type),
-                Some(input.reference_id),
-                SerialStatus::Available,
-                SerialStatus::Reserved,
-                None,
-                None,
-                None,
-                None,
-                input.reserved_by.as_deref(),
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            input.serial_id,
+            SerialEventType::Reserved,
+            Some(&input.reference_type),
+            Some(input.reference_id),
+            SerialStatus::Available,
+            SerialStatus::Reserved,
+            None,
+            None,
+            None,
+            None,
+            input.reserved_by.as_deref(),
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -671,23 +682,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                reservation.serial_id,
-                SerialEventType::Released,
-                Some(&reservation.reference_type),
-                Some(reservation.reference_id),
-                SerialStatus::Reserved,
-                SerialStatus::Available,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            reservation.serial_id,
+            SerialEventType::Released,
+            Some(&reservation.reference_type),
+            Some(reservation.reference_id),
+            SerialStatus::Reserved,
+            SerialStatus::Available,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -729,53 +739,61 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(input.serial_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(input.serial_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
-        sqlx::query("UPDATE serial_numbers SET current_location_id = $1, updated_at = $2 WHERE id = $3")
-            .bind(input.to_location_id)
-            .bind(now)
-            .bind(input.serial_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE serial_numbers SET current_location_id = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(input.to_location_id)
+        .bind(now)
+        .bind(input.serial_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                input.serial_id,
-                SerialEventType::LocationChanged,
-                None,
-                None,
-                serial.status,
-                serial.status,
-                serial.current_location_id,
-                Some(input.to_location_id),
-                None,
-                None,
-                input.performed_by.as_deref(),
-                input.notes.as_deref(),
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            input.serial_id,
+            SerialEventType::LocationChanged,
+            None,
+            None,
+            serial.status,
+            serial.status,
+            serial.current_location_id,
+            Some(input.to_location_id),
+            None,
+            None,
+            input.performed_by.as_deref(),
+            input.notes.as_deref(),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
-    pub async fn transfer_ownership_async(&self, input: TransferSerialOwnership) -> Result<SerialNumber> {
+    pub async fn transfer_ownership_async(
+        &self,
+        input: TransferSerialOwnership,
+    ) -> Result<SerialNumber> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(input.serial_id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(input.serial_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
@@ -797,38 +815,45 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                input.serial_id,
-                SerialEventType::Transferred,
-                input.reference_type.as_deref(),
-                input.reference_id,
-                serial.status,
-                SerialStatus::Transferred,
-                None,
-                None,
-                serial.current_owner_id,
-                Some(input.new_owner_id),
-                None,
-                input.notes.as_deref(),
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            input.serial_id,
+            SerialEventType::Transferred,
+            input.reference_type.as_deref(),
+            input.reference_id,
+            serial.status,
+            SerialStatus::Transferred,
+            None,
+            None,
+            serial.current_owner_id,
+            Some(input.new_owner_id),
+            None,
+            input.notes.as_deref(),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(input.serial_id).await?.ok_or(CommerceError::NotFound)
+        self.get_async(input.serial_id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
-    pub async fn mark_sold_async(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber> {
+    pub async fn mark_sold_async(
+        &self,
+        id: Uuid,
+        customer_id: Uuid,
+        order_id: Option<Uuid>,
+    ) -> Result<SerialNumber> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query(
@@ -850,23 +875,22 @@ impl PgSerialRepository {
         .await
         .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Sold,
-                order_id.map(|_| "order"),
-                order_id,
-                serial.status,
-                SerialStatus::Sold,
-                None,
-                None,
-                None,
-                Some(customer_id),
-                None,
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Sold,
+            order_id.map(|_| "order"),
+            order_id,
+            serial.status,
+            SerialStatus::Sold,
+            None,
+            None,
+            None,
+            Some(customer_id),
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -877,11 +901,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
@@ -892,23 +917,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Shipped,
-                Some("shipment"),
-                Some(shipment_id),
-                serial.status,
-                SerialStatus::Shipped,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Shipped,
+            Some("shipment"),
+            Some(shipment_id),
+            serial.status,
+            SerialStatus::Shipped,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -919,11 +943,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
@@ -934,23 +959,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Returned,
-                Some("return"),
-                Some(return_id),
-                serial.status,
-                SerialStatus::Returned,
-                None,
-                None,
-                serial.current_owner_id,
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Returned,
+            Some("return"),
+            Some(return_id),
+            serial.status,
+            SerialStatus::Returned,
+            None,
+            None,
+            serial.current_owner_id,
+            None,
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -971,23 +995,22 @@ impl PgSerialRepository {
 
         if let Some(serial) = self.get_async(id).await? {
             let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-            self
-                .record_history_tx(
-                    &mut tx,
-                    id,
-                    SerialEventType::Activated,
-                    None,
-                    None,
-                    serial.status,
-                    serial.status,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
+            self.record_history_tx(
+                &mut tx,
+                id,
+                SerialEventType::Activated,
+                None,
+                None,
+                serial.status,
+                serial.status,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await?;
             tx.commit().await.map_err(map_db_error)?;
         }
 
@@ -998,11 +1021,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         sqlx::query("UPDATE serial_numbers SET status = $1, updated_at = $2 WHERE id = $3")
@@ -1013,23 +1037,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Quarantined,
-                None,
-                None,
-                serial.status,
-                SerialStatus::Quarantined,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(reason),
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Quarantined,
+            None,
+            None,
+            serial.status,
+            SerialStatus::Quarantined,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reason),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1040,11 +1063,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         if serial.status != SerialStatus::Quarantined {
@@ -1061,23 +1085,22 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::QuarantineReleased,
-                None,
-                None,
-                SerialStatus::Quarantined,
-                SerialStatus::Available,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::QuarantineReleased,
+            None,
+            None,
+            SerialStatus::Quarantined,
+            SerialStatus::Available,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1088,11 +1111,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let serial_row = sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let serial_row =
+            sqlx::query_as::<_, SerialRow>("SELECT * FROM serial_numbers WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         let serial = Self::row_to_serial(serial_row)?;
 
         if !serial.can_scrap() {
@@ -1109,38 +1133,46 @@ impl PgSerialRepository {
             .await
             .map_err(map_db_error)?;
 
-        self
-            .record_history_tx(
-                &mut tx,
-                id,
-                SerialEventType::Scrapped,
-                None,
-                None,
-                serial.status,
-                SerialStatus::Scrapped,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(reason),
-            )
-            .await?;
+        self.record_history_tx(
+            &mut tx,
+            id,
+            SerialEventType::Scrapped,
+            None,
+            None,
+            serial.status,
+            SerialStatus::Scrapped,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reason),
+        )
+        .await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn get_history_async(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM serial_history WHERE serial_id = ");
+    pub async fn get_history_async(
+        &self,
+        serial_id: Uuid,
+        filter: SerialHistoryFilter,
+    ) -> Result<Vec<SerialHistory>> {
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT * FROM serial_history WHERE serial_id = ");
         builder.push_bind(serial_id);
 
         if let Some(event_type) = &filter.event_type {
-            builder.push(" AND event_type = ").push_bind(event_type.to_string());
+            builder
+                .push(" AND event_type = ")
+                .push_bind(event_type.to_string());
         }
         if let Some(reference_type) = &filter.reference_type {
-            builder.push(" AND reference_type = ").push_bind(reference_type);
+            builder
+                .push(" AND reference_type = ")
+                .push_bind(reference_type);
         }
         if let Some(from_date) = &filter.from_date {
             builder.push(" AND created_at >= ").push_bind(from_date);
@@ -1253,7 +1285,11 @@ impl PgSerialRepository {
         }
     }
 
-    pub async fn get_available_for_sku_async(&self, sku: &str, limit: u32) -> Result<Vec<SerialNumber>> {
+    pub async fn get_available_for_sku_async(
+        &self,
+        sku: &str,
+        limit: u32,
+    ) -> Result<Vec<SerialNumber>> {
         let rows = sqlx::query_as::<_, SerialRow>(
             "SELECT * FROM serial_numbers WHERE sku = $1 AND status = 'available' ORDER BY created_at ASC LIMIT $2",
         )
@@ -1301,13 +1337,16 @@ impl PgSerialRepository {
     }
 
     pub async fn count_async(&self, filter: SerialFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM serial_numbers WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM serial_numbers WHERE 1=1");
 
         if let Some(serial) = &filter.serial {
             builder.push(" AND serial = ").push_bind(serial);
         }
         if let Some(prefix) = &filter.serial_prefix {
-            builder.push(" AND serial LIKE ").push_bind(format!("{}%", prefix));
+            builder
+                .push(" AND serial LIKE ")
+                .push_bind(format!("{}%", prefix));
         }
         if let Some(sku) = &filter.sku {
             builder.push(" AND sku = ").push_bind(sku);
@@ -1334,13 +1373,17 @@ impl PgSerialRepository {
             builder.push(" AND lot_number = ").push_bind(lot_number);
         }
         if let Some(loc_id) = filter.location_id {
-            builder.push(" AND current_location_id = ").push_bind(loc_id);
+            builder
+                .push(" AND current_location_id = ")
+                .push_bind(loc_id);
         }
         if let Some(owner_id) = &filter.owner_id {
             builder.push(" AND current_owner_id = ").push_bind(owner_id);
         }
         if let Some(owner_type) = &filter.owner_type {
-            builder.push(" AND current_owner_type = ").push_bind(owner_type);
+            builder
+                .push(" AND current_owner_type = ")
+                .push_bind(owner_type);
         }
         if let Some(warranty_id) = &filter.warranty_id {
             builder.push(" AND warranty_id = ").push_bind(warranty_id);
@@ -1374,7 +1417,10 @@ impl PgSerialRepository {
         Ok(row.0 as u64)
     }
 
-    pub async fn create_batch_async(&self, inputs: Vec<CreateSerialNumber>) -> Result<BatchResult<SerialNumber>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateSerialNumber>,
+    ) -> Result<BatchResult<SerialNumber>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::with_capacity(inputs.len());
@@ -1394,7 +1440,8 @@ impl PgSerialRepository {
             return Ok(Vec::new());
         }
 
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM serial_numbers WHERE id IN (");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT * FROM serial_numbers WHERE id IN (");
         {
             let mut separated = builder.separated(", ");
             for id in ids {
@@ -1416,12 +1463,16 @@ impl PgSerialRepository {
         Ok(serials)
     }
 
-    pub async fn get_batch_by_serial_async(&self, serials: Vec<String>) -> Result<Vec<SerialNumber>> {
+    pub async fn get_batch_by_serial_async(
+        &self,
+        serials: Vec<String>,
+    ) -> Result<Vec<SerialNumber>> {
         if serials.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM serial_numbers WHERE serial IN (");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT * FROM serial_numbers WHERE serial IN (");
         {
             let mut separated = builder.separated(", ");
             for serial in serials {
@@ -1497,7 +1548,12 @@ impl SerialRepository for PgSerialRepository {
         block_on(self.transfer_ownership_async(input))
     }
 
-    fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber> {
+    fn mark_sold(
+        &self,
+        id: Uuid,
+        customer_id: Uuid,
+        order_id: Option<Uuid>,
+    ) -> Result<SerialNumber> {
         block_on(self.mark_sold_async(id, customer_id, order_id))
     }
 
@@ -1525,7 +1581,11 @@ impl SerialRepository for PgSerialRepository {
         block_on(self.scrap_async(id, reason))
     }
 
-    fn get_history(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>> {
+    fn get_history(
+        &self,
+        serial_id: Uuid,
+        filter: SerialHistoryFilter,
+    ) -> Result<Vec<SerialHistory>> {
         block_on(self.get_history_async(serial_id, filter))
     }
 

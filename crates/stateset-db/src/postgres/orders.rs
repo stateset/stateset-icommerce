@@ -12,8 +12,9 @@ use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_postal_code, validate_price,
     validate_required_text, validate_required_uuid, validate_sku, Address, BatchResult,
-    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order, OrderFilter,
-    OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result, UpdateOrder,
+    CommerceError, CreateBackorder, CreateOrder, CreateOrderItem, FulfillmentStatus, Order,
+    OrderFilter, OrderItem, OrderRepository, OrderStatus, PaymentStatus, ReserveInventory, Result,
+    UpdateOrder,
 };
 use uuid::Uuid;
 
@@ -153,10 +154,7 @@ impl PgOrderRepository {
 
     fn row_to_order(row: OrderRow, items: Vec<OrderItem>) -> Result<Order> {
         let status: OrderStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid order.status '{}': {}",
-                row.status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid order.status '{}': {}", row.status, e))
         })?;
         let payment_status: PaymentStatus = row.payment_status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
@@ -164,12 +162,13 @@ impl PgOrderRepository {
                 row.payment_status, e
             ))
         })?;
-        let fulfillment_status: FulfillmentStatus = row.fulfillment_status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid order.fulfillment_status '{}': {}",
-                row.fulfillment_status, e
-            ))
-        })?;
+        let fulfillment_status: FulfillmentStatus =
+            row.fulfillment_status.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid order.fulfillment_status '{}': {}",
+                    row.fulfillment_status, e
+                ))
+            })?;
 
         let shipping_address = row
             .shipping_address
@@ -236,14 +235,13 @@ impl PgOrderRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         order_id: Uuid,
     ) -> Result<()> {
-        let current_version: i32 = sqlx::query_scalar(
-            "SELECT version FROM orders WHERE id = $1 FOR UPDATE",
-        )
-        .bind(order_id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::OrderNotFound(order_id))?;
+        let current_version: i32 =
+            sqlx::query_scalar("SELECT version FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(order_id))?;
 
         let total: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(total), 0) FROM order_items WHERE order_id = $1",
@@ -301,7 +299,8 @@ impl PgOrderRepository {
             .iter()
             .map(|i| {
                 let subtotal = i.unit_price * Decimal::from(i.quantity);
-                subtotal - i.discount.unwrap_or(Decimal::ZERO) + i.tax_amount.unwrap_or(Decimal::ZERO)
+                subtotal - i.discount.unwrap_or(Decimal::ZERO)
+                    + i.tax_amount.unwrap_or(Decimal::ZERO)
             })
             .sum();
 
@@ -365,7 +364,12 @@ impl PgOrderRepository {
             let item_id = Uuid::new_v4();
             let discount = item_input.discount.unwrap_or(Decimal::ZERO);
             let tax = item_input.tax_amount.unwrap_or(Decimal::ZERO);
-            let item_total = OrderItem::calculate_total(item_input.quantity, item_input.unit_price, discount, tax);
+            let item_total = OrderItem::calculate_total(
+                item_input.quantity,
+                item_input.unit_price,
+                discount,
+                tax,
+            );
 
             sqlx::query(
                 r#"
@@ -411,13 +415,12 @@ impl PgOrderRepository {
                 continue;
             }
 
-            let item_id: Option<i64> = sqlx::query_scalar(
-                "SELECT id FROM inventory_items WHERE sku = $1",
-            )
-            .bind(&item.sku)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+            let item_id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
+                    .bind(&item.sku)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
             let item_id = match item_id {
                 Some(item_id) => item_id,
@@ -548,11 +551,12 @@ impl PgOrderRepository {
 
     /// Get order items (async)
     pub async fn get_items_async(&self, order_id: Uuid) -> Result<Vec<OrderItem>> {
-        let rows = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
-            .bind(order_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let rows =
+            sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
+                .bind(order_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }
@@ -596,14 +600,13 @@ impl PgOrderRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let existing_row = sqlx::query_as::<_, OrderRow>(
-            "SELECT * FROM orders WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::OrderNotFound(id))?;
+        let existing_row =
+            sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::OrderNotFound(id))?;
 
         let OrderRow {
             status: current_status_raw,
@@ -618,29 +621,38 @@ impl PgOrderRepository {
         } = existing_row;
 
         let current_status: OrderStatus = current_status_raw.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!("Invalid order.status '{}': {}", current_status_raw, e))
-        })?;
-        let current_payment_status: PaymentStatus = current_payment_status_raw.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
-                "Invalid order.payment_status '{}': {}",
-                current_payment_status_raw, e
+                "Invalid order.status '{}': {}",
+                current_status_raw, e
             ))
         })?;
-        let current_fulfillment_status: FulfillmentStatus = current_fulfillment_status_raw.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid order.fulfillment_status '{}': {}",
-                current_fulfillment_status_raw, e
-            ))
-        })?;
+        let current_payment_status: PaymentStatus =
+            current_payment_status_raw.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid order.payment_status '{}': {}",
+                    current_payment_status_raw, e
+                ))
+            })?;
+        let current_fulfillment_status: FulfillmentStatus =
+            current_fulfillment_status_raw.parse().map_err(|e| {
+                CommerceError::DatabaseError(format!(
+                    "Invalid order.fulfillment_status '{}': {}",
+                    current_fulfillment_status_raw, e
+                ))
+            })?;
 
         let new_status = input.status.unwrap_or(current_status);
         let new_payment_status = input.payment_status.unwrap_or(current_payment_status);
-        let new_fulfillment_status = input.fulfillment_status.unwrap_or(current_fulfillment_status);
+        let new_fulfillment_status = input
+            .fulfillment_status
+            .unwrap_or(current_fulfillment_status);
         let now = Utc::now();
 
         if !current_status.can_transition_to(new_status) {
             if new_status == OrderStatus::Cancelled {
-                return Err(CommerceError::OrderCannotBeCancelled(current_status.to_string()));
+                return Err(CommerceError::OrderCannotBeCancelled(
+                    current_status.to_string(),
+                ));
             }
 
             return Err(CommerceError::InvalidOrderStatusTransition {
@@ -758,7 +770,9 @@ impl PgOrderRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::OrderNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::OrderNotFound(id))
     }
 
     /// List orders (async)
@@ -991,7 +1005,8 @@ impl PgOrderRepository {
                 .iter()
                 .map(|i| {
                     let subtotal = i.unit_price * Decimal::from(i.quantity);
-                    subtotal - i.discount.unwrap_or(Decimal::ZERO) + i.tax_amount.unwrap_or(Decimal::ZERO)
+                    subtotal - i.discount.unwrap_or(Decimal::ZERO)
+                        + i.tax_amount.unwrap_or(Decimal::ZERO)
                 })
                 .sum();
 
@@ -1055,7 +1070,12 @@ impl PgOrderRepository {
                 let item_id = Uuid::new_v4();
                 let discount = item_input.discount.unwrap_or(Decimal::ZERO);
                 let tax = item_input.tax_amount.unwrap_or(Decimal::ZERO);
-                let item_total = OrderItem::calculate_total(item_input.quantity, item_input.unit_price, discount, tax);
+                let item_total = OrderItem::calculate_total(
+                    item_input.quantity,
+                    item_input.unit_price,
+                    discount,
+                    tax,
+                );
 
                 sqlx::query(
                     r#"
@@ -1123,7 +1143,10 @@ impl PgOrderRepository {
     }
 
     /// Update multiple orders in a batch (async, non-atomic)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<BatchResult<Order>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateOrder)>,
+    ) -> Result<BatchResult<Order>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -1138,7 +1161,10 @@ impl PgOrderRepository {
     }
 
     /// Update multiple orders in a batch atomically (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateOrder)>) -> Result<Vec<Order>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateOrder)>,
+    ) -> Result<Vec<Order>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut orders = Vec::with_capacity(updates.len());
@@ -1146,18 +1172,20 @@ impl PgOrderRepository {
 
         for (id, input) in updates {
             // Get existing order
-            let existing_row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
-                .bind(id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::OrderNotFound(id))?;
+            let existing_row =
+                sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE id = $1 FOR UPDATE")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::OrderNotFound(id))?;
 
-            let existing_items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
-                .bind(id)
-                .fetch_all(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+            let existing_items =
+                sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
+                    .bind(id)
+                    .fetch_all(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
             let existing = Self::row_to_order(
                 existing_row,
@@ -1167,21 +1195,19 @@ impl PgOrderRepository {
 
             let new_status = input.status.unwrap_or(existing.status);
             let new_payment_status = input.payment_status.unwrap_or(existing.payment_status);
-            let new_fulfillment_status = input.fulfillment_status.unwrap_or(existing.fulfillment_status);
+            let new_fulfillment_status = input
+                .fulfillment_status
+                .unwrap_or(existing.fulfillment_status);
             let new_tracking = input.tracking_number.or(existing.tracking_number);
             let new_notes = input.notes.or(existing.notes);
-            let new_shipping = input
-                .shipping_address
-                .clone()
-                .or(existing.shipping_address);
-            let new_billing = input
-                .billing_address
-                .clone()
-                .or(existing.billing_address);
+            let new_shipping = input.shipping_address.clone().or(existing.shipping_address);
+            let new_billing = input.billing_address.clone().or(existing.billing_address);
 
             if !existing.status.can_transition_to(new_status) {
                 if new_status == OrderStatus::Cancelled {
-                    return Err(CommerceError::OrderCannotBeCancelled(existing.status.to_string()));
+                    return Err(CommerceError::OrderCannotBeCancelled(
+                        existing.status.to_string(),
+                    ));
                 }
 
                 return Err(CommerceError::InvalidOrderStatusTransition {
@@ -1272,11 +1298,12 @@ impl PgOrderRepository {
                 .await
                 .map_err(map_db_error)?;
 
-            let items = sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
-                .bind(id)
-                .fetch_all(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+            let items =
+                sqlx::query_as::<_, OrderItemRow>("SELECT * FROM order_items WHERE order_id = $1")
+                    .bind(id)
+                    .fetch_all(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
             orders.push(Self::row_to_order(
                 updated_row,

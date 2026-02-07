@@ -24,7 +24,7 @@ import {
   recordDeposit,
   buyTokens,
   syncOnChainBalance,
-  ensureAgentWallet
+  ensureAgentWallet,
 } from '../src/treasury/index.js';
 import { listWalletAddresses, getWalletAddress } from '../src/chains/wallet.js';
 import { getDefaultStablecoin } from '../src/chains/config.js';
@@ -33,7 +33,7 @@ import {
   setAgentWallet,
   getIdentity,
   getIdentityByWallet,
-  listIdentities
+  listIdentities,
 } from '../src/erc8004/index.js';
 
 const program = new Command();
@@ -88,7 +88,7 @@ program
         ok: true,
         dbPath: ctx.dbPath,
         registryPath: ctx.registryPath,
-        tokenCount: ctx.registry.tokens.length
+        tokenCount: ctx.registry.tokens.length,
       });
       return;
     }
@@ -126,7 +126,9 @@ program
     }
 
     await ensureAgentWallet(options.agent, options.chain, '.stateset');
-    const address = await getWalletAddress(options.agent, options.chain, { configDir: '.stateset' });
+    const address = await getWalletAddress(options.agent, options.chain, {
+      configDir: '.stateset',
+    });
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, { agentId: options.agent, chainId: options.chain, address });
@@ -162,7 +164,7 @@ program
         agentId: options.agent,
         chainId: options.chain,
         tokenSymbol: token.symbol,
-        tokenDecimals: token.decimals
+        tokenDecimals: token.decimals,
       });
       const display = computeBalanceDisplay(balance.balanceSmallest, token.decimals);
 
@@ -172,7 +174,7 @@ program
           chainId: options.chain,
           token: token.symbol,
           balance: display,
-          balanceSmallest: balance.balanceSmallest.toString()
+          balanceSmallest: balance.balanceSmallest.toString(),
         });
         return;
       }
@@ -185,18 +187,21 @@ program
       return;
     }
 
-    const balances = ctx.store.getBalances({ agentId: options.agent, chainId: options.chain || null });
+    const balances = ctx.store.getBalances({
+      agentId: options.agent,
+      chainId: options.chain || null,
+    });
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, {
         agentId: options.agent,
         chainId: options.chain || null,
-        balances: balances.map(b => ({
+        balances: balances.map((b) => ({
           chainId: b.chainId,
           token: b.tokenSymbol,
           balance: computeBalanceDisplay(b.balanceSmallest, b.tokenDecimals || 0),
-          balanceSmallest: b.balanceSmallest.toString()
-        }))
+          balanceSmallest: b.balanceSmallest.toString(),
+        })),
       });
       return;
     }
@@ -236,7 +241,7 @@ program
       amount: options.amount,
       txId: options.tx || null,
       from: options.from || null,
-      taskId: options.task || null
+      taskId: options.task || null,
     };
 
     if (!apply) {
@@ -257,29 +262,32 @@ program
     const confirm = createConfirmHandler({
       output: { yellow: chalk.yellow, bold: chalk.bold },
       assumeYes: yes,
-      nonInteractive
+      nonInteractive,
     });
 
     const ok = await confirm({
       operation: 'treasury deposit',
       details: `${options.amount} ${options.token} on ${options.chain}`,
-      amount: Number(options.amount)
+      amount: Number(options.amount),
     });
 
     if (!ok) {
       return;
     }
 
-    const entry = await recordDeposit({
-      agentId: options.agent,
-      chainId: options.chain,
-      tokenSymbol: options.token,
-      amount: options.amount,
-      txId: options.tx || null,
-      fromAddress: options.from || null,
-      source: 'manual',
-      taskId: options.task || null
-    }, ctx);
+    const entry = await recordDeposit(
+      {
+        agentId: options.agent,
+        chainId: options.chain,
+        tokenSymbol: options.token,
+        amount: options.amount,
+        txId: options.tx || null,
+        fromAddress: options.from || null,
+        source: 'manual',
+        taskId: options.task || null,
+      },
+      ctx,
+    );
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, { success: true, entry });
@@ -323,7 +331,7 @@ program
       amount: options.amount,
       priceUsd: options.price || null,
       slippagePct: Number(options.slippage),
-      taskId: options.task || null
+      taskId: options.task || null,
     };
 
     if (!apply) {
@@ -344,27 +352,30 @@ program
     const confirm = createConfirmHandler({
       output: { yellow: chalk.yellow, bold: chalk.bold },
       assumeYes: yes,
-      nonInteractive
+      nonInteractive,
     });
 
     const ok = await confirm({
       operation: 'treasury buy',
       details: `${options.amount} ${fromSymbol} -> ${options.to}`,
-      amount: Number(options.amount)
+      amount: Number(options.amount),
     });
 
     if (!ok) return;
 
-    const result = await buyTokens({
-      agentId: options.agent,
-      chainId: options.chain,
-      fromSymbol: fromSymbol,
-      toSymbol: options.to,
-      amount: options.amount,
-      priceUsd: options.price ? Number(options.price) : null,
-      slippagePct: Number(options.slippage),
-      taskId: options.task || null
-    }, ctx);
+    const result = await buyTokens(
+      {
+        agentId: options.agent,
+        chainId: options.chain,
+        fromSymbol: fromSymbol,
+        toSymbol: options.to,
+        amount: options.amount,
+        priceUsd: options.price ? Number(options.price) : null,
+        slippagePct: Number(options.slippage),
+        taskId: options.task || null,
+      },
+      ctx,
+    );
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, { success: true, result });
@@ -417,7 +428,7 @@ token
       address: options.address || null,
       name: options.name || null,
       priceUsd: options.price ? Number(options.price) : null,
-      issuerAgentId: options.issuer || null
+      issuerAgentId: options.issuer || null,
     });
 
     if (jsonOutput) {
@@ -479,7 +490,12 @@ token
       return;
     }
 
-    const updated = await removeRegistryToken(ctx.registryPath, ctx.registry, options.symbol, options.chain);
+    const updated = await removeRegistryToken(
+      ctx.registryPath,
+      ctx.registry,
+      options.symbol,
+      options.chain,
+    );
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, { success: true, tokens: updated.tokens });
@@ -510,7 +526,7 @@ program
       tokenSymbol: options.token ? options.token.toUpperCase() : null,
       taskId: options.task || null,
       requestId: options.request || null,
-      limit: Number(options.limit)
+      limit: Number(options.limit),
     });
 
     if (jsonOutput) {
@@ -526,7 +542,9 @@ program
 
     for (const entry of entries) {
       const sign = entry.direction === 'deposit' || entry.direction === 'swap_in' ? '+' : '-';
-      console.log(`   ${new Date(entry.created_at).toISOString()} ${entry.chain_id} ${entry.token_symbol} ${sign}${entry.amount_display} (${entry.direction})`);
+      console.log(
+        `   ${new Date(entry.created_at).toISOString()} ${entry.chain_id} ${entry.token_symbol} ${sign}${entry.amount_display} (${entry.direction})`,
+      );
     }
   });
 
@@ -550,23 +568,26 @@ program
     const confirm = createConfirmHandler({
       output: { yellow: chalk.yellow, bold: chalk.bold },
       assumeYes: yes,
-      nonInteractive
+      nonInteractive,
     });
 
     if (apply) {
       const ok = await confirm({
         operation: 'treasury sync',
-        details: `${options.chain} ${options.token} for ${options.agent}`
+        details: `${options.chain} ${options.token} for ${options.agent}`,
       });
       if (!ok) return;
     }
 
-    const result = await syncOnChainBalance({
-      agentId: options.agent,
-      chainId: options.chain,
-      tokenSymbol: options.token,
-      apply
-    }, ctx);
+    const result = await syncOnChainBalance(
+      {
+        agentId: options.agent,
+        chainId: options.chain,
+        tokenSymbol: options.token,
+        apply,
+      },
+      ctx,
+    );
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, result);
@@ -618,7 +639,7 @@ pricing
       chainId: options.chain,
       tokenSymbol: options.token,
       amount: Number(options.amount),
-      description: options.description || null
+      description: options.description || null,
     });
 
     if (jsonOutput) {
@@ -677,7 +698,12 @@ pricing
       return;
     }
 
-    const updated = await removePricingRuleEntry(ctx.pricingPath, ctx.pricing, options.tool, options.chain);
+    const updated = await removePricingRuleEntry(
+      ctx.pricingPath,
+      ctx.pricing,
+      options.tool,
+      options.chain,
+    );
 
     if (jsonOutput) {
       writeJsonOutput(outputPath, { success: true, rules: updated.rules });
@@ -730,12 +756,12 @@ identity
     const confirm = createConfirmHandler({
       output: { yellow: chalk.yellow, bold: chalk.bold },
       assumeYes: yes,
-      nonInteractive
+      nonInteractive,
     });
 
     const ok = await confirm({
       operation: 'erc8004 register',
-      details: `${options.registry}:${options.agentId}`
+      details: `${options.registry}:${options.agentId}`,
     });
 
     if (!ok) return;
@@ -753,7 +779,7 @@ identity
       walletProof: options.proof || null,
       walletProofChainId: options.proofChain ? Number(options.proofChain) : null,
       walletProofDeadline: options.proofDeadline || null,
-      active: options.active !== false
+      active: options.active !== false,
     });
 
     if (jsonOutput) {
@@ -792,9 +818,9 @@ identity
             registry: options.registry,
             agentId: options.agentId,
             chain: options.chain,
-            wallet: wallet.address
+            wallet: wallet.address,
           },
-          apply: false
+          apply: false,
         });
         return;
       }
@@ -811,12 +837,12 @@ identity
     const confirm = createConfirmHandler({
       output: { yellow: chalk.yellow, bold: chalk.bold },
       assumeYes: yes,
-      nonInteractive
+      nonInteractive,
     });
 
     const ok = await confirm({
       operation: 'erc8004 link wallet',
-      details: `${options.registry}:${options.agentId}`
+      details: `${options.registry}:${options.agentId}`,
     });
 
     if (!ok) return;
@@ -828,7 +854,7 @@ identity
       walletProofType: options.proofType || null,
       walletProof: options.proof || null,
       walletProofChainId: options.proofChain ? Number(options.proofChain) : null,
-      walletProofDeadline: options.proofDeadline || null
+      walletProofDeadline: options.proofDeadline || null,
     });
 
     if (jsonOutput) {
@@ -911,7 +937,7 @@ identity
       agentId: options.agentId || null,
       agentWallet: options.wallet || null,
       active: options.active ? true : null,
-      limit: Number(options.limit)
+      limit: Number(options.limit),
     });
 
     if (jsonOutput) {
@@ -926,11 +952,11 @@ identity
     }
 
     for (const identity of identities) {
-      console.log(`   ${identity.agent_registry}:${identity.agent_id} -> ${identity.agent_wallet || 'no wallet'}`);
+      console.log(
+        `   ${identity.agent_registry}:${identity.agent_id} -> ${identity.agent_wallet || 'no wallet'}`,
+      );
     }
   });
 
-program.parseAsync().catch((err) => {
-  console.error(chalk.red(`Error: ${err.message}`));
-  process.exit(1);
-});
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-treasury', () => program.parseAsync());

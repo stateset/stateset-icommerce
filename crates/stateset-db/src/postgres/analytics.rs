@@ -71,9 +71,7 @@ impl PgAnalyticsRepository {
                     last_month_end.and_hms_opt(23, 59, 59).unwrap().and_utc(),
                 )
             }
-            TimePeriod::ThisQuarter | TimePeriod::LastQuarter => {
-                (now - Duration::days(90), now)
-            }
+            TimePeriod::ThisQuarter | TimePeriod::LastQuarter => (now - Duration::days(90), now),
             TimePeriod::ThisYear => {
                 let start = now
                     .date_naive()
@@ -179,7 +177,8 @@ impl PgAnalyticsRepository {
         };
 
         let order_count_change_percent = if prev_order_count > 0 {
-            let change = ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
+            let change =
+                ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
             Decimal::from_f64_retain(change)
         } else if order_count > 0 {
             Some(Decimal::from(100))
@@ -241,12 +240,14 @@ impl PgAnalyticsRepository {
 
         Ok(rows
             .into_iter()
-            .map(|(period, revenue, order_count, period_start)| RevenueByPeriod {
-                period,
-                revenue,
-                order_count: order_count as u64,
-                period_start,
-            })
+            .map(
+                |(period, revenue, order_count, period_start)| RevenueByPeriod {
+                    period,
+                    revenue,
+                    order_count: order_count as u64,
+                    period_start,
+                },
+            )
             .collect())
     }
 
@@ -387,10 +388,7 @@ impl PgAnalyticsRepository {
         })
     }
 
-    pub async fn get_top_customers_async(
-        &self,
-        query: AnalyticsQuery,
-    ) -> Result<Vec<TopCustomer>> {
+    pub async fn get_top_customers_async(&self, query: AnalyticsQuery) -> Result<Vec<TopCustomer>> {
         let (start, end) = self.get_date_range(&query);
         let limit = query.limit.unwrap_or(10) as i64;
 
@@ -832,8 +830,7 @@ impl PgAnalyticsRepository {
         Ok(rows
             .into_iter()
             .map(|(sku, name, avg_daily, current_stock)| {
-                let avg_daily_dec =
-                    Decimal::from_f64_retain(avg_daily).unwrap_or(Decimal::ZERO);
+                let avg_daily_dec = Decimal::from_f64_retain(avg_daily).unwrap_or(Decimal::ZERO);
                 let current_stock_dec =
                     Decimal::from_f64_retain(current_stock).unwrap_or(Decimal::ZERO);
                 let forecasted = avg_daily_dec * Decimal::from(days_ahead);

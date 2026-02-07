@@ -21,6 +21,9 @@
  *   # Fish: Already loaded from completions directory
  */
 
+import { installShutdownHandlers } from '../src/graceful-shutdown.js';
+installShutdownHandlers('stateset-completion');
+
 const HELP = `
 StateSet CLI - Shell Completion Generator
 
@@ -53,14 +56,80 @@ EXAMPLES:
 `;
 
 // Command structure for completions
-const COMMANDS = {
-  'ss': {
-    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
-    description: 'Shorthand for stateset'
+const _COMMANDS = {
+  ss: {
+    options: [
+      '--db',
+      '--apply',
+      '--agent',
+      '--profile',
+      '--model',
+      '--provider',
+      '--think',
+      '--stream',
+      '--budget',
+      '--memory',
+      '--no-memory',
+      '--x402',
+      '--treasury',
+      '--treasury-chain',
+      '--treasury-token',
+      '--treasury-agent',
+      '--treasury-db',
+      '--treasury-erc8004-registry',
+      '--treasury-erc8004-db',
+      '--resume',
+      '--json',
+      '--format',
+      '--output',
+      '--verbose',
+      '--stats',
+      '--yes',
+      '--quiet',
+      '--stdin',
+      '--batch',
+      '--parallel',
+      '--help',
+      '--version',
+    ],
+    description: 'Shorthand for stateset',
   },
-  'stateset': {
-    options: ['--db', '--apply', '--agent', '--profile', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--resume', '--json', '--format', '--output', '--verbose', '--stats', '--yes', '--quiet', '--stdin', '--batch', '--parallel', '--help', '--version'],
-    description: 'AI-powered commerce CLI'
+  stateset: {
+    options: [
+      '--db',
+      '--apply',
+      '--agent',
+      '--profile',
+      '--model',
+      '--provider',
+      '--think',
+      '--stream',
+      '--budget',
+      '--memory',
+      '--no-memory',
+      '--x402',
+      '--treasury',
+      '--treasury-chain',
+      '--treasury-token',
+      '--treasury-agent',
+      '--treasury-db',
+      '--treasury-erc8004-registry',
+      '--treasury-erc8004-db',
+      '--resume',
+      '--json',
+      '--format',
+      '--output',
+      '--verbose',
+      '--stats',
+      '--yes',
+      '--quiet',
+      '--stdin',
+      '--batch',
+      '--parallel',
+      '--help',
+      '--version',
+    ],
+    description: 'AI-powered commerce CLI',
   },
   'stateset-direct': {
     resources: {
@@ -69,69 +138,267 @@ const COMMANDS = {
       products: ['list', 'get', 'variant', 'variants', 'count', 'search'],
       inventory: ['list', 'stock', 'adjust', 'create', 'low', 'reserve', 'release'],
       returns: ['list', 'get', 'approve', 'reject', 'count', 'pending', 'create', 'stats'],
-      vector: ['search', 'index', 'index-all', 'stats', 'clear', 'clear-all']
+      vector: ['search', 'index', 'index-all', 'stats', 'clear', 'clear-all'],
     },
     aliases: {
-      c: 'customers', o: 'orders', p: 'products', i: 'inventory', r: 'returns', v: 'vector',
-      cust: 'customers', ord: 'orders', prod: 'products', inv: 'inventory', ret: 'returns', vec: 'vector'
+      c: 'customers',
+      o: 'orders',
+      p: 'products',
+      i: 'inventory',
+      r: 'returns',
+      v: 'vector',
+      cust: 'customers',
+      ord: 'orders',
+      prod: 'products',
+      inv: 'inventory',
+      ret: 'returns',
+      vec: 'vector',
     },
-    options: ['--db', '--apply', '--json', '--format', '--output', '--yes', '--help']
+    options: ['--db', '--apply', '--json', '--format', '--output', '--yes', '--help'],
   },
   'stateset-chat': {
-    options: ['--db', '--apply', '--model', '--provider', '--think', '--stream', '--budget', '--memory', '--no-memory', '--x402', '--treasury', '--treasury-chain', '--treasury-token', '--treasury-agent', '--treasury-db', '--treasury-erc8004-registry', '--treasury-erc8004-db', '--verbose', '--yes', '--help'],
-    description: 'Interactive REPL'
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--provider',
+      '--think',
+      '--stream',
+      '--budget',
+      '--memory',
+      '--no-memory',
+      '--x402',
+      '--treasury',
+      '--treasury-chain',
+      '--treasury-token',
+      '--treasury-agent',
+      '--treasury-db',
+      '--treasury-erc8004-registry',
+      '--treasury-erc8004-db',
+      '--verbose',
+      '--yes',
+      '--help',
+    ],
+    description: 'Interactive REPL',
   },
   'stateset-doctor': {
     options: ['--db', '--verbose', '--json', '--output', '--checks', '--fix', '--help'],
-    description: 'Health check & diagnostics'
+    description: 'Health check & diagnostics',
   },
   'stateset-config': {
     subcommands: ['set-key', 'show-keys', 'list', 'show', 'create', 'use', 'set', 'get', 'path'],
-    options: ['--profile', '--json', '--output', '--help']
+    options: ['--profile', '--json', '--output', '--help'],
   },
   'stateset-sync': {
-    subcommands: ['init', 'status', 'push', 'pull', 'verify', 'conflicts', 'resolve', 'rebase', 'history', 'keys:generate', 'keys:list', 'keys:register', 'keys:rotate', 'keys:export', 'keys:policy', 'keys:expiry', 'keys:batch-rotate', 'groups:create', 'groups:list', 'groups:show', 'groups:add-member', 'groups:remove-member', 'groups:delete', 'groups:refresh-key', 'groups:my-groups'],
-    options: ['--db', '--json', '--output', '--help']
+    subcommands: [
+      'init',
+      'status',
+      'push',
+      'pull',
+      'verify',
+      'conflicts',
+      'resolve',
+      'rebase',
+      'history',
+      'keys:generate',
+      'keys:list',
+      'keys:register',
+      'keys:rotate',
+      'keys:export',
+      'keys:policy',
+      'keys:expiry',
+      'keys:batch-rotate',
+      'groups:create',
+      'groups:list',
+      'groups:show',
+      'groups:add-member',
+      'groups:remove-member',
+      'groups:delete',
+      'groups:refresh-key',
+      'groups:my-groups',
+    ],
+    options: ['--db', '--json', '--output', '--help'],
   },
   'stateset-pay': {
-    options: ['--to', '--amount', '--chain', '--token', '--agent', '--order', '--customer', '--memo', '--wallet', '--balance', '--chains', '--apply', '--json', '--output', '--yes', '--help', '--version']
+    options: [
+      '--to',
+      '--amount',
+      '--chain',
+      '--token',
+      '--agent',
+      '--order',
+      '--customer',
+      '--memo',
+      '--wallet',
+      '--balance',
+      '--chains',
+      '--apply',
+      '--json',
+      '--output',
+      '--yes',
+      '--help',
+      '--version',
+    ],
   },
   'stateset-treasury': {
-    subcommands: ['init', 'wallet', 'balance', 'deposit', 'buy', 'token', 'ledger', 'sync', 'identity'],
-    options: ['--db', '--registry', '--commerce-db', '--json', '--output', '--apply', '--yes', '--help', '--version', '--task', '--request']
+    subcommands: [
+      'init',
+      'wallet',
+      'balance',
+      'deposit',
+      'buy',
+      'token',
+      'ledger',
+      'sync',
+      'identity',
+    ],
+    options: [
+      '--db',
+      '--registry',
+      '--commerce-db',
+      '--json',
+      '--output',
+      '--apply',
+      '--yes',
+      '--help',
+      '--version',
+      '--task',
+      '--request',
+    ],
   },
   'stateset-slack': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-discord': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--mention-only', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--mention-only',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-telegram': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-whatsapp': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--groups', '--auth-dir', '--reset', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--groups',
+      '--auth-dir',
+      '--reset',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-signal': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--phone', '--socket', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--phone',
+      '--socket',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-google-chat': {
-    options: ['--db', '--apply', '--model', '--max-turns', '--agent', '--allow', '--subscription', '--verbose', '--help']
+    options: [
+      '--db',
+      '--apply',
+      '--model',
+      '--max-turns',
+      '--agent',
+      '--allow',
+      '--subscription',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-autonomous': {
     subcommands: ['start', 'status', 'init', 'jobs'],
-    options: ['--db', '--store', '--port', '--no-webhooks', '--no-scheduler', '--no-workflows', '--no-policies', '--no-approvals', '--init-defaults', '--notify-config', '--force', '--status', '--enabled', '--disabled', '--json', '--output', '--verbose', '--help']
+    options: [
+      '--db',
+      '--store',
+      '--port',
+      '--no-webhooks',
+      '--no-scheduler',
+      '--no-workflows',
+      '--no-policies',
+      '--no-approvals',
+      '--init-defaults',
+      '--notify-config',
+      '--force',
+      '--status',
+      '--enabled',
+      '--disabled',
+      '--json',
+      '--output',
+      '--verbose',
+      '--help',
+    ],
   },
   'stateset-x402': {
     subcommands: ['init'],
-    options: ['--sequencer-url', '--tenant-id', '--store-id', '--agent-id', '--network', '--payer-address', '--config-dir', '--config-file', '--agent-key-id', '--budget-per-call', '--budget-daily', '--starting-balance', '--max-amount', '--api-key', '--jwt', '--json', '--output', '--force', '--help', '--version']
+    options: [
+      '--sequencer-url',
+      '--tenant-id',
+      '--store-id',
+      '--agent-id',
+      '--network',
+      '--payer-address',
+      '--config-dir',
+      '--config-file',
+      '--agent-key-id',
+      '--budget-per-call',
+      '--budget-daily',
+      '--starting-balance',
+      '--max-amount',
+      '--api-key',
+      '--jwt',
+      '--json',
+      '--output',
+      '--force',
+      '--help',
+      '--version',
+    ],
   },
   'stateset-x402-mcp': {
-    options: ['--config-dir', '--help', '--version']
+    options: ['--config-dir', '--help', '--version'],
   },
   'stateset-install-service': {
-    options: ['--dry-run', '--uninstall', '--json', '--output', '--help']
-  }
+    options: ['--dry-run', '--uninstall', '--json', '--output', '--help'],
+  },
 };
 
 function generateBashCompletion() {

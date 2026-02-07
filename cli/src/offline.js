@@ -17,7 +17,7 @@ export async function checkApiAvailability(apiKey, options = {}) {
     return {
       available: false,
       reason: 'no_api_key',
-      message: 'ANTHROPIC_API_KEY not configured'
+      message: 'ANTHROPIC_API_KEY not configured',
     };
   }
 
@@ -32,14 +32,14 @@ export async function checkApiAvailability(apiKey, options = {}) {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
         model: 'claude-haiku-3-5-20241022',
         max_tokens: 1,
-        messages: [{ role: 'user', content: 'ping' }]
+        messages: [{ role: 'user', content: 'ping' }],
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -49,7 +49,7 @@ export async function checkApiAvailability(apiKey, options = {}) {
       return {
         available: false,
         reason: 'invalid_api_key',
-        message: 'API key is invalid'
+        message: 'API key is invalid',
       };
     }
 
@@ -58,28 +58,28 @@ export async function checkApiAvailability(apiKey, options = {}) {
       return {
         available: true,
         reason: 'ok',
-        message: 'API is available'
+        message: 'API is available',
       };
     }
 
     return {
       available: false,
       reason: 'server_error',
-      message: `API returned status ${response.status}`
+      message: `API returned status ${response.status}`,
     };
   } catch (error) {
     if (error.name === 'AbortError') {
       return {
         available: false,
         reason: 'timeout',
-        message: `API check timed out after ${timeout}ms`
+        message: `API check timed out after ${timeout}ms`,
       };
     }
 
     return {
       available: false,
       reason: 'network_error',
-      message: error.message
+      message: error.message,
     };
   }
 }
@@ -107,7 +107,7 @@ export class OfflineManager {
 
     // Use cached status if recent
     const now = Date.now();
-    if (this.cachedStatus && this.lastCheck && (now - this.lastCheck) < this.checkInterval) {
+    if (this.cachedStatus && this.lastCheck && now - this.lastCheck < this.checkInterval) {
       return !this.cachedStatus.available;
     }
 
@@ -124,7 +124,7 @@ export class OfflineManager {
       this.onStatusChange({
         wasOffline,
         isOffline: isNowOffline,
-        status
+        status,
       });
     }
 
@@ -155,7 +155,7 @@ export class OfflineManager {
 
       if (offline) {
         logger.info('Using offline fallback', {
-          reason: this.cachedStatus?.reason
+          reason: this.cachedStatus?.reason,
         });
         return directHandler(...args);
       }
@@ -166,14 +166,14 @@ export class OfflineManager {
         // Check if error is API-related
         if (this.isApiError(error)) {
           logger.warn('AI request failed, falling back to direct mode', {
-            error: error.message
+            error: error.message,
           });
 
           // Update cached status
           this.cachedStatus = {
             available: false,
             reason: 'request_failed',
-            message: error.message
+            message: error.message,
           };
 
           return directHandler(...args);
@@ -198,13 +198,11 @@ export class OfflineManager {
       '503',
       '502',
       '500',
-      'rate limit'
+      'rate limit',
     ];
 
     const message = error.message?.toLowerCase() || '';
-    return apiErrorPatterns.some(pattern =>
-      message.includes(pattern.toLowerCase())
-    );
+    return apiErrorPatterns.some((pattern) => message.includes(pattern.toLowerCase()));
   }
 }
 
@@ -225,7 +223,7 @@ export function showOfflineWarning(output, status) {
     timeout: 'Running in offline mode: API is not responding',
     network_error: 'Running in offline mode: Network unavailable',
     server_error: 'Running in offline mode: API server error',
-    request_failed: 'Running in offline mode: API request failed'
+    request_failed: 'Running in offline mode: API request failed',
   };
 
   const message = warnings[status.reason] || `Running in offline mode: ${status.message}`;
@@ -266,8 +264,7 @@ export class OfflineCache {
   set(key, value) {
     // Evict oldest entries if at capacity
     if (this.cache.size >= this.maxSize) {
-      const oldest = [...this.cache.entries()]
-        .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+      const oldest = [...this.cache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
       if (oldest) {
         this.cache.delete(oldest[0]);
       }
@@ -275,7 +272,7 @@ export class OfflineCache {
 
     this.cache.set(key, {
       value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   }
 
@@ -307,7 +304,7 @@ export class OfflineCache {
       valid,
       expired,
       maxSize: this.maxSize,
-      maxAge: this.maxAge
+      maxAge: this.maxAge,
     };
   }
 }
@@ -317,5 +314,5 @@ export default {
   OfflineManager,
   createOfflineManager,
   showOfflineWarning,
-  OfflineCache
+  OfflineCache,
 };

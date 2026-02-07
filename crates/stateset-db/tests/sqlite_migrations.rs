@@ -1,7 +1,7 @@
 #[cfg(feature = "sqlite")]
-use stateset_db::SqliteDatabase;
-#[cfg(feature = "sqlite")]
 use rusqlite::OptionalExtension;
+#[cfg(feature = "sqlite")]
+use stateset_db::SqliteDatabase;
 
 #[cfg(feature = "sqlite")]
 fn column_names(conn: &rusqlite::Connection, table: &str) -> Vec<String> {
@@ -55,7 +55,10 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let expected = 31
         - if cfg!(feature = "vector") { 0 } else { 1 }
         - if fts5_available(&conn) { 0 } else { 1 };
-    assert_eq!(applied, expected, "expected all embedded migrations to apply");
+    assert_eq!(
+        applied, expected,
+        "expected all embedded migrations to apply"
+    );
 
     for table in [
         "exchange_rates",
@@ -77,12 +80,7 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
             assert!(has_table(&conn, table), "missing table `{table}`");
         }
         if fts5_available(&conn) {
-            for table in [
-                "product_fts",
-                "customer_fts",
-                "order_fts",
-                "inventory_fts",
-            ] {
+            for table in ["product_fts", "customer_fts", "order_fts", "inventory_fts"] {
                 assert!(has_table(&conn, table), "missing table `{table}`");
             }
         }
@@ -110,12 +108,12 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
             |row| row.get(0),
         )
         .expect("query store_currency_settings default row");
-    assert_eq!(defaults, 1, "expected a default store_currency_settings row");
+    assert_eq!(
+        defaults, 1,
+        "expected a default store_currency_settings row"
+    );
 
-    for table in [
-        "x402_credit_accounts",
-        "x402_credit_transactions",
-    ] {
+    for table in ["x402_credit_accounts", "x402_credit_transactions"] {
         assert!(has_table(&conn, table), "missing table `{table}`");
     }
 

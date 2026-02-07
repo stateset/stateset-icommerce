@@ -49,9 +49,10 @@ export class ConversationSummarizer {
 
     // Truncate very long transcripts to avoid excessive cost
     const maxChars = 8000;
-    const truncated = transcript.length > maxChars
-      ? transcript.slice(0, maxChars) + '\n[... truncated]'
-      : transcript;
+    const truncated =
+      transcript.length > maxChars
+        ? transcript.slice(0, maxChars) + '\n[... truncated]'
+        : transcript;
 
     try {
       const result = await this._callClaude(truncated);
@@ -80,9 +81,7 @@ export class ConversationSummarizer {
       model: this._model,
       max_tokens: 512,
       system: SUMMARIZE_SYSTEM,
-      messages: [
-        { role: 'user', content: `Summarize this conversation:\n\n${text}` },
-      ],
+      messages: [{ role: 'user', content: `Summarize this conversation:\n\n${text}` }],
     };
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -127,7 +126,11 @@ export class ConversationSummarizer {
         facts = JSON.parse(factsMatch[1]);
       } catch {
         // Non-JSON facts line — split by comma
-        facts = factsMatch[1].replace(/[\[\]"]/g, '').split(',').map(f => f.trim()).filter(Boolean);
+        facts = factsMatch[1]
+          .replace(/[[\]"]/g, '')
+          .split(',')
+          .map((f) => f.trim())
+          .filter(Boolean);
       }
     }
 

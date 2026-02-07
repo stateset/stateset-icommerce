@@ -55,7 +55,9 @@ pub struct EmbeddingResult {
 }
 
 impl EmbeddingService {
-    fn build_client(timeout_secs: u64) -> std::result::Result<reqwest::blocking::Client, reqwest::Error> {
+    fn build_client(
+        timeout_secs: u64,
+    ) -> std::result::Result<reqwest::blocking::Client, reqwest::Error> {
         reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()
@@ -133,7 +135,9 @@ impl EmbeddingService {
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
-            .map_err(|e| CommerceError::ExternalServiceError(format!("OpenAI API request failed: {}", e)))?;
+            .map_err(|e| {
+                CommerceError::ExternalServiceError(format!("OpenAI API request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -144,9 +148,9 @@ impl EmbeddingService {
             )));
         }
 
-        let result: OpenAIEmbeddingResponse = response
-            .json()
-            .map_err(|e| CommerceError::ExternalServiceError(format!("Failed to parse OpenAI response: {}", e)))?;
+        let result: OpenAIEmbeddingResponse = response.json().map_err(|e| {
+            CommerceError::ExternalServiceError(format!("Failed to parse OpenAI response: {}", e))
+        })?;
 
         // Calculate tokens per embedding (approximate)
         let tokens_per = result.usage.total_tokens / texts.len() as u32;
@@ -194,12 +198,7 @@ impl EmbeddingService {
 
     /// Generate searchable text for a product
     pub fn product_text(product: &Product) -> String {
-        format!(
-            "{} {} {}",
-            product.name,
-            product.description,
-            product.slug
-        )
+        format!("{} {} {}", product.name, product.description, product.slug)
     }
 
     /// Generate searchable text for a customer

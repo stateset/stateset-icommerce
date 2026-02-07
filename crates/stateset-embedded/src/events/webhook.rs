@@ -3,8 +3,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use stateset_core::CommerceEvent;
-use std::future::Future;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
@@ -285,7 +285,9 @@ impl WebhookManager {
                 }
             }));
 
-            deliveries.for_each_concurrent(max_in_flight, |fut| fut).await;
+            deliveries
+                .for_each_concurrent(max_in_flight, |fut| fut)
+                .await;
         });
     }
 }
@@ -399,8 +401,8 @@ fn compute_signature(secret: &str, body: &str) -> String {
 
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body.as_bytes());
     let result = mac.finalize();
 

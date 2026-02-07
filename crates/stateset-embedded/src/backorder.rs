@@ -31,8 +31,8 @@
 
 use stateset_core::{
     AllocateBackorder, Backorder, BackorderAllocation, BackorderFilter, BackorderFulfillment,
-    BackorderRepository, BackorderSummary, CreateBackorder, FulfillBackorder, Result,
-    SkuBackorderSummary, UpdateBackorder,
+    BackorderSummary, CreateBackorder, FulfillBackorder, Result, SkuBackorderSummary,
+    UpdateBackorder,
 };
 use stateset_db::Database;
 use std::sync::Arc;

@@ -28,7 +28,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const ret = await commerce.returns.get(id);
 
       if (!ret) {
-        throw new Error(`Return not found: ${idArg}\n\nTry 'stateset-direct returns list' to see all returns.`);
+        throw new Error(
+          `Return not found: ${idArg}\n\nTry 'stateset-direct returns list' to see all returns.`,
+        );
       }
 
       return formatReturnDetail(ret, { output, jsonOutput });
@@ -53,7 +55,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!idArg || !reason) {
         throw new Error(
           'Usage: returns reject <id> <reason>\n\n' +
-          'Example: stateset-direct returns reject abc123 "Outside return window"'
+            'Example: stateset-direct returns reject abc123 "Outside return window"',
         );
       }
 
@@ -70,7 +72,7 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
 
     case 'pending': {
       const returns = await commerce.returns.list();
-      const pending = returns.filter(r => r.status === 'pending' || r.status === 'requested');
+      const pending = returns.filter((r) => r.status === 'pending' || r.status === 'requested');
       return formatReturnList(pending, { output, jsonOutput });
     }
 
@@ -79,14 +81,14 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!orderId || !reason) {
         throw new Error(
           'Usage: returns create <orderId> <reason>\n\n' +
-          'Example: stateset-direct returns create abc123 "Defective product"'
+            'Example: stateset-direct returns create abc123 "Defective product"',
         );
       }
 
       const resolvedOrderId = await resolveId(orderId, 'orders');
       const ret = await commerce.returns.create({
         orderId: resolvedOrderId,
-        reason
+        reason,
       });
 
       return formatReturnCreated(ret, { output, jsonOutput });
@@ -96,10 +98,10 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const returns = await commerce.returns.list();
       const stats = {
         total: returns.length,
-        pending: returns.filter(r => r.status === 'pending' || r.status === 'requested').length,
-        approved: returns.filter(r => r.status === 'approved').length,
-        rejected: returns.filter(r => r.status === 'rejected').length,
-        completed: returns.filter(r => r.status === 'completed').length
+        pending: returns.filter((r) => r.status === 'pending' || r.status === 'requested').length,
+        approved: returns.filter((r) => r.status === 'approved').length,
+        rejected: returns.filter((r) => r.status === 'rejected').length,
+        completed: returns.filter((r) => r.status === 'completed').length,
       };
 
       return formatReturnStats(stats, { output, jsonOutput });
@@ -108,15 +110,15 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     default:
       throw new Error(
         `Unknown action: returns ${action}\n\n` +
-        'Available actions:\n' +
-        '  list              List all returns\n' +
-        '  get <id>          Get return details\n' +
-        '  create <orderId> <reason>  Create a return\n' +
-        '  approve <id>      Approve a return\n' +
-        '  reject <id> <reason>  Reject a return\n' +
-        '  count             Count returns\n' +
-        '  pending           List pending returns\n' +
-        '  stats             Show return statistics'
+          'Available actions:\n' +
+          '  list              List all returns\n' +
+          '  get <id>          Get return details\n' +
+          '  create <orderId> <reason>  Create a return\n' +
+          '  approve <id>      Approve a return\n' +
+          '  reject <id> <reason>  Reject a return\n' +
+          '  count             Count returns\n' +
+          '  pending           List pending returns\n' +
+          '  stats             Show return statistics',
       );
   }
 }
@@ -134,20 +136,20 @@ function formatReturnList(returns, { output, jsonOutput }) {
   }
 
   const formatted = output.table(
-    returns.map(r => ({
+    returns.map((r) => ({
       id: r.id.slice(0, 8) + '...',
       order: r.orderId.slice(0, 8) + '...',
       status: r.status,
       reason: r.reason?.length > 25 ? r.reason.slice(0, 22) + '...' : r.reason,
-      created: r.createdAt?.slice(0, 10) || 'N/A'
+      created: r.createdAt?.slice(0, 10) || 'N/A',
     })),
     [
       { key: 'id', header: 'ID' },
       { key: 'order', header: 'Order' },
       { key: 'status', header: 'Status' },
       { key: 'reason', header: 'Reason' },
-      { key: 'created', header: 'Created' }
-    ]
+      { key: 'created', header: 'Created' },
+    ],
   );
 
   return { returns, formatted };
@@ -156,14 +158,13 @@ function formatReturnList(returns, { output, jsonOutput }) {
 /**
  * Format single return detail
  */
-function formatReturnDetail(ret, { output, jsonOutput }) {
+function formatReturnDetail(ret, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return ret;
   }
 
-  const itemLines = ret.items?.map(i =>
-    `  - ${i.name || i.sku} x${i.quantity}`
-  ).join('\n') || '  (all items)';
+  const itemLines =
+    ret.items?.map((i) => `  - ${i.name || i.sku} x${i.quantity}`).join('\n') || '  (all items)';
 
   const formatted = `
 Return: ${ret.id}
@@ -184,49 +185,49 @@ ${itemLines}
 /**
  * Format return approved response
  */
-function formatReturnApproved(ret, { output, jsonOutput }) {
+function formatReturnApproved(ret, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, return: ret };
   }
 
   return {
     return: ret,
-    formatted: `Return ${ret.id.slice(0, 8)}... approved`
+    formatted: `Return ${ret.id.slice(0, 8)}... approved`,
   };
 }
 
 /**
  * Format return rejected response
  */
-function formatReturnRejected(ret, reason, { output, jsonOutput }) {
+function formatReturnRejected(ret, reason, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, return: ret };
   }
 
   return {
     return: ret,
-    formatted: `Return ${ret.id.slice(0, 8)}... rejected\n  Reason: ${reason}`
+    formatted: `Return ${ret.id.slice(0, 8)}... rejected\n  Reason: ${reason}`,
   };
 }
 
 /**
  * Format return created response
  */
-function formatReturnCreated(ret, { output, jsonOutput }) {
+function formatReturnCreated(ret, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, return: ret };
   }
 
   return {
     return: ret,
-    formatted: `Return created: ${ret.id}\n  Order: ${ret.orderId}\n  Status: ${ret.status}`
+    formatted: `Return created: ${ret.id}\n  Order: ${ret.orderId}\n  Status: ${ret.status}`,
   };
 }
 
 /**
  * Format return statistics
  */
-function formatReturnStats(stats, { output, jsonOutput }) {
+function formatReturnStats(stats, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return stats;
   }
@@ -259,8 +260,8 @@ export const metadata = {
     reject: { description: 'Reject a return', args: ['<id>', '<reason>'] },
     count: { description: 'Count returns', args: [] },
     pending: { description: 'List pending returns', args: [] },
-    stats: { description: 'Show return statistics', args: [] }
-  }
+    stats: { description: 'Show return statistics', args: [] },
+  },
 };
 
 export default { execute, metadata };

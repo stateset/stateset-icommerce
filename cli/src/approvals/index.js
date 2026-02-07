@@ -9,5 +9,5 @@ export {
   ApprovalRequest,
   ApprovalDecision,
   ApprovalStatus,
-  ApprovalChainTemplates
+  ApprovalChainTemplates,
 } from './queue.js';

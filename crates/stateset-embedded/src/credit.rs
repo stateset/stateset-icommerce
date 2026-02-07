@@ -29,11 +29,11 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    CreditAccount, CreditAccountFilter, CreditAgingBucket, CreditApplication,
-    CreditApplicationFilter, CreditCheckResult, CreditHold, CreditHoldFilter,
-    CreditRepository, CreditTransaction, CreditTransactionFilter, CreateCreditAccount,
-    CustomerCreditSummary, PlaceCreditHold, RecordCreditTransaction, ReleaseCreditHold,
-    Result, ReviewCreditApplication, SubmitCreditApplication, UpdateCreditAccount,
+    CreateCreditAccount, CreditAccount, CreditAccountFilter, CreditAgingBucket, CreditApplication,
+    CreditApplicationFilter, CreditCheckResult, CreditHold, CreditHoldFilter, CreditTransaction,
+    CreditTransactionFilter, CustomerCreditSummary, PlaceCreditHold, RecordCreditTransaction,
+    ReleaseCreditHold, Result, ReviewCreditApplication, SubmitCreditApplication,
+    UpdateCreditAccount,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -84,12 +84,19 @@ impl Credit {
     }
 
     /// Get a credit account by customer ID.
-    pub fn get_credit_account_by_customer(&self, customer_id: Uuid) -> Result<Option<CreditAccount>> {
+    pub fn get_credit_account_by_customer(
+        &self,
+        customer_id: Uuid,
+    ) -> Result<Option<CreditAccount>> {
         self.db.credit().get_credit_account_by_customer(customer_id)
     }
 
     /// Update a credit account.
-    pub fn update_credit_account(&self, id: Uuid, input: UpdateCreditAccount) -> Result<CreditAccount> {
+    pub fn update_credit_account(
+        &self,
+        id: Uuid,
+        input: UpdateCreditAccount,
+    ) -> Result<CreditAccount> {
         self.db.credit().update_credit_account(id, input)
     }
 
@@ -116,8 +123,15 @@ impl Credit {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn adjust_credit_limit(&self, customer_id: Uuid, new_limit: Decimal, reason: &str) -> Result<CreditAccount> {
-        self.db.credit().adjust_credit_limit(customer_id, new_limit, reason)
+    pub fn adjust_credit_limit(
+        &self,
+        customer_id: Uuid,
+        new_limit: Decimal,
+        reason: &str,
+    ) -> Result<CreditAccount> {
+        self.db
+            .credit()
+            .adjust_credit_limit(customer_id, new_limit, reason)
     }
 
     /// Suspend a credit account.
@@ -160,25 +174,49 @@ impl Credit {
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn check_credit(&self, customer_id: Uuid, order_amount: Decimal) -> Result<CreditCheckResult> {
+    pub fn check_credit(
+        &self,
+        customer_id: Uuid,
+        order_amount: Decimal,
+    ) -> Result<CreditCheckResult> {
         self.db.credit().check_credit(customer_id, order_amount)
     }
 
     /// Reserve credit for an order.
     ///
     /// Reduces available credit until the order is invoiced or cancelled.
-    pub fn reserve_credit(&self, customer_id: Uuid, order_id: Uuid, amount: Decimal) -> Result<CreditAccount> {
-        self.db.credit().reserve_credit(customer_id, order_id, amount)
+    pub fn reserve_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: Decimal,
+    ) -> Result<CreditAccount> {
+        self.db
+            .credit()
+            .reserve_credit(customer_id, order_id, amount)
     }
 
     /// Release a credit reservation (e.g., order cancelled).
-    pub fn release_credit_reservation(&self, customer_id: Uuid, order_id: Uuid) -> Result<CreditAccount> {
-        self.db.credit().release_credit_reservation(customer_id, order_id)
+    pub fn release_credit_reservation(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+    ) -> Result<CreditAccount> {
+        self.db
+            .credit()
+            .release_credit_reservation(customer_id, order_id)
     }
 
     /// Charge credit (convert reservation to balance when order is invoiced).
-    pub fn charge_credit(&self, customer_id: Uuid, order_id: Uuid, amount: Decimal) -> Result<CreditAccount> {
-        self.db.credit().charge_credit(customer_id, order_id, amount)
+    pub fn charge_credit(
+        &self,
+        customer_id: Uuid,
+        order_id: Uuid,
+        amount: Decimal,
+    ) -> Result<CreditAccount> {
+        self.db
+            .credit()
+            .charge_credit(customer_id, order_id, amount)
     }
 
     // ========================================================================
@@ -275,7 +313,10 @@ impl Credit {
     }
 
     /// List credit applications with optional filtering.
-    pub fn list_applications(&self, filter: CreditApplicationFilter) -> Result<Vec<CreditApplication>> {
+    pub fn list_applications(
+        &self,
+        filter: CreditApplicationFilter,
+    ) -> Result<Vec<CreditApplication>> {
         self.db.credit().list_applications(filter)
     }
 
@@ -299,13 +340,23 @@ impl Credit {
     }
 
     /// List credit transactions with optional filtering.
-    pub fn list_transactions(&self, filter: CreditTransactionFilter) -> Result<Vec<CreditTransaction>> {
+    pub fn list_transactions(
+        &self,
+        filter: CreditTransactionFilter,
+    ) -> Result<Vec<CreditTransaction>> {
         self.db.credit().list_transactions(filter)
     }
 
     /// Apply a payment to reduce customer balance.
-    pub fn apply_payment(&self, customer_id: Uuid, amount: Decimal, reference_id: Option<Uuid>) -> Result<CreditAccount> {
-        self.db.credit().apply_payment(customer_id, amount, reference_id)
+    pub fn apply_payment(
+        &self,
+        customer_id: Uuid,
+        amount: Decimal,
+        reference_id: Option<Uuid>,
+    ) -> Result<CreditAccount> {
+        self.db
+            .credit()
+            .apply_payment(customer_id, amount, reference_id)
     }
 
     // ========================================================================

@@ -87,7 +87,11 @@ impl PgAgentIdentityRepository {
         })
     }
 
-    async fn fetch_identity(&self, agent_registry: &str, agent_id: &str) -> Result<Option<AgentIdentity>> {
+    async fn fetch_identity(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+    ) -> Result<Option<AgentIdentity>> {
         let row: Option<AgentIdentityRow> = sqlx::query_as(
             r#"SELECT id, agent_registry, agent_id, agent_uri, agent_wallet, owner_address,
                       agent_card_id, registration, registration_hash, wallet_proof_type,
@@ -152,7 +156,9 @@ impl PgAgentIdentityRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
         let rows: Vec<AgentIdentityRow> = builder
@@ -165,7 +171,8 @@ impl PgAgentIdentityRepository {
     }
 
     async fn count_async(&self, filter: AgentIdentityFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM agent_identities WHERE 1=1");
+        let mut builder =
+            QueryBuilder::new("SELECT COUNT(*) as count FROM agent_identities WHERE 1=1");
 
         if let Some(registry) = filter.agent_registry {
             builder.push(" AND agent_registry = ").push_bind(registry);
@@ -258,7 +265,12 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         })
     }
 
-    fn update(&self, agent_registry: &str, agent_id: &str, input: UpdateAgentIdentity) -> Result<AgentIdentity> {
+    fn update(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        input: UpdateAgentIdentity,
+    ) -> Result<AgentIdentity> {
         let pool = self.pool.clone();
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();
@@ -277,8 +289,12 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
             let registration_hash = input.registration_hash.or(existing.registration_hash);
             let wallet_proof_type = input.wallet_proof_type.or(existing.wallet_proof_type);
             let wallet_proof = input.wallet_proof.or(existing.wallet_proof);
-            let wallet_proof_chain_id = input.wallet_proof_chain_id.or(existing.wallet_proof_chain_id);
-            let wallet_proof_deadline = input.wallet_proof_deadline.or(existing.wallet_proof_deadline);
+            let wallet_proof_chain_id = input
+                .wallet_proof_chain_id
+                .or(existing.wallet_proof_chain_id);
+            let wallet_proof_deadline = input
+                .wallet_proof_deadline
+                .or(existing.wallet_proof_deadline);
             let active = input.active.unwrap_or(existing.active);
 
             sqlx::query(
@@ -405,7 +421,12 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         block_on(async move { repo.count_async(filter).await })
     }
 
-    fn set_metadata(&self, agent_registry: &str, agent_id: &str, entry: AgentMetadataEntry) -> Result<()> {
+    fn set_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        entry: AgentMetadataEntry,
+    ) -> Result<()> {
         let pool = self.pool.clone();
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();
@@ -431,7 +452,12 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         })
     }
 
-    fn get_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<Option<Vec<u8>>> {
+    fn get_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        metadata_key: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let pool = self.pool.clone();
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();
@@ -450,7 +476,12 @@ impl AgentIdentityRepository for PgAgentIdentityRepository {
         })
     }
 
-    fn delete_metadata(&self, agent_registry: &str, agent_id: &str, metadata_key: &str) -> Result<()> {
+    fn delete_metadata(
+        &self,
+        agent_registry: &str,
+        agent_id: &str,
+        metadata_key: &str,
+    ) -> Result<()> {
         let pool = self.pool.clone();
         let registry = agent_registry.to_string();
         let agent = agent_id.to_string();

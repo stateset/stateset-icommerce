@@ -197,7 +197,11 @@ mod tests {
     // Test Helpers
     // ============================================================================
 
-    fn create_test_customer(status: CustomerStatus, accepts_marketing: bool, email_verified: bool) -> Customer {
+    fn create_test_customer(
+        status: CustomerStatus,
+        accepts_marketing: bool,
+        email_verified: bool,
+    ) -> Customer {
         let now = Utc::now();
         Customer {
             id: Uuid::new_v4(),

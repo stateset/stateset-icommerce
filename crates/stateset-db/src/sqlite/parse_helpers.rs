@@ -311,7 +311,11 @@ pub fn parse_decimal_legacy(s: &str) -> Decimal {
 
 /// Parse a UUID within a rusqlite row mapping context.
 /// Returns rusqlite::Error for compatibility with query_map closures.
-pub fn parse_uuid_row(s: &str, entity: &str, field: &str) -> std::result::Result<Uuid, rusqlite::Error> {
+pub fn parse_uuid_row(
+    s: &str,
+    entity: &str,
+    field: &str,
+) -> std::result::Result<Uuid, rusqlite::Error> {
     Uuid::parse_str(s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(
             0,
@@ -412,7 +416,10 @@ pub fn parse_json_row<T: DeserializeOwned>(
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid JSON for {}.{}: '{}...' - {}", entity, field, preview, e),
+                format!(
+                    "Invalid JSON for {}.{}: '{}...' - {}",
+                    entity, field, preview, e
+                ),
             )),
         )
     })

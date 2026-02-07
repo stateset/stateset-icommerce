@@ -19,11 +19,7 @@ impl EventEmitter {
     /// Emit an event (non-blocking)
     pub fn emit(&self, event: CommerceEvent) {
         let receivers = self.bus.publish(event.clone());
-        tracing::debug!(
-            event_type = event.event_type(),
-            receivers,
-            "Event emitted"
-        );
+        tracing::debug!(event_type = event.event_type(), receivers, "Event emitted");
     }
 
     /// Emit multiple events

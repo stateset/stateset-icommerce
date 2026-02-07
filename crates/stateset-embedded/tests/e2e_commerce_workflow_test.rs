@@ -9,10 +9,10 @@
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     Address, Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
-    CreatePayment, CreateProduct, CreateProductVariant, CreateRefund, CreateReturn, CreateReturnItem,
-    CreateShipment, ItemCondition, OrderStatus, PaymentMethodType, PaymentTransactionStatus,
-    RefundStatus, ReturnReason, ReturnStatus, ShipmentStatus, ShippingCarrier, ShippingMethod,
-    UpdateReturn,
+    CreatePayment, CreateProduct, CreateProductVariant, CreateRefund, CreateReturn,
+    CreateReturnItem, CreateShipment, ItemCondition, OrderStatus, PaymentMethodType,
+    PaymentTransactionStatus, RefundStatus, ReturnReason, ReturnStatus, ShipmentStatus,
+    ShippingCarrier, ShippingMethod, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -383,10 +383,22 @@ fn test_multi_product_order_partial_return() {
     assert_eq!(order.items.len(), 2);
 
     // Move to delivered
-    commerce.orders().update_status(order.id, OrderStatus::Confirmed).expect("confirm");
-    commerce.orders().update_status(order.id, OrderStatus::Processing).expect("process");
-    commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("ship");
-    commerce.orders().update_status(order.id, OrderStatus::Delivered).expect("deliver");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Confirmed)
+        .expect("confirm");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Processing)
+        .expect("process");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Shipped)
+        .expect("ship");
+    commerce
+        .orders()
+        .update_status(order.id, OrderStatus::Delivered)
+        .expect("deliver");
 
     // Return only Item A
     let ret = commerce

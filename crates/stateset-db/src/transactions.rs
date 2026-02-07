@@ -199,14 +199,14 @@ impl TransactionBuilder {
         }
     }
 
-    /// Add an operation
-    pub fn add(mut self, operation: Box<dyn Transactional<Output = ()>>) -> Self {
+    /// Add an operation to the batch.
+    pub fn push(mut self, operation: Box<dyn Transactional<Output = ()>>) -> Self {
         self.operations.push(operation);
         self
     }
 
     /// Build and execute the transaction
-    pub fn execute(mut self) -> TransactionResult<()> {
+    pub fn execute(self) -> TransactionResult<()> {
         let mut handle = TransactionHandle::new();
         for op in self.operations {
             handle.add_operation(op);
@@ -307,12 +307,12 @@ mod tests {
         let executed2 = Arc::new(Mutex::new(false));
 
         let result = TransactionBuilder::new()
-            .add(Box::new(SimpleOperation {
+            .push(Box::new(SimpleOperation {
                 name: "op1".into(),
                 executed: executed1.clone(),
                 compensated: Arc::new(Mutex::new(false)),
             }))
-            .add(Box::new(SimpleOperation {
+            .push(Box::new(SimpleOperation {
                 name: "op2".into(),
                 executed: executed2.clone(),
                 compensated: Arc::new(Mutex::new(false)),

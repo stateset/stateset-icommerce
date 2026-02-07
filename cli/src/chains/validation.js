@@ -4,7 +4,16 @@
  * Validates payment parameters before execution to catch errors early.
  */
 
-import { CHAINS, getChain, getToken, getDefaultStablecoin, isEd25519Chain, isEvmChain, isZcashChain, isBitcoinChain } from './config.js';
+import {
+  CHAINS,
+  getChain,
+  getToken,
+  getDefaultStablecoin,
+  isEd25519Chain,
+  isEvmChain,
+  isZcashChain,
+  isBitcoinChain,
+} from './config.js';
 import { isValidEthAddress } from './crypto-utils.js';
 
 // =============================================================================
@@ -59,11 +68,9 @@ export const ValidationErrorCodes = {
  */
 export function validateChainId(chainId) {
   if (!chainId || typeof chainId !== 'string') {
-    throw new ValidationError(
-      ValidationErrorCodes.MISSING_REQUIRED,
-      'Chain ID is required',
-      { field: 'chainId' }
-    );
+    throw new ValidationError(ValidationErrorCodes.MISSING_REQUIRED, 'Chain ID is required', {
+      field: 'chainId',
+    });
   }
 
   const chain = getChain(chainId);
@@ -72,7 +79,7 @@ export function validateChainId(chainId) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_CHAIN,
       `Unknown chain: ${chainId}. Valid chains: ${validChains.join(', ')}`,
-      { chainId, validChains }
+      { chainId, validChains },
     );
   }
 
@@ -96,7 +103,7 @@ export function validateToken(chainId, tokenSymbol) {
       throw new ValidationError(
         ValidationErrorCodes.INVALID_TOKEN,
         `No default stablecoin configured for chain ${chainId}`,
-        { chainId }
+        { chainId },
       );
     }
     return true;
@@ -109,7 +116,7 @@ export function validateToken(chainId, tokenSymbol) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_TOKEN,
       `Unknown token: ${tokenSymbol} on chain ${chainId}. Valid tokens: ${validTokens.join(', ')}`,
-      { chainId, tokenSymbol, validTokens }
+      { chainId, tokenSymbol, validTokens },
     );
   }
 
@@ -138,11 +145,9 @@ export function validateAmount(amount, options = {}) {
 
   // Check presence
   if (amount === null || amount === undefined || amount === '') {
-    throw new ValidationError(
-      ValidationErrorCodes.MISSING_REQUIRED,
-      'Amount is required',
-      { field: 'amount' }
-    );
+    throw new ValidationError(ValidationErrorCodes.MISSING_REQUIRED, 'Amount is required', {
+      field: 'amount',
+    });
   }
 
   // Parse to number
@@ -153,7 +158,7 @@ export function validateAmount(amount, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_AMOUNT,
       `Invalid amount: ${amount}. Must be a valid number.`,
-      { amount }
+      { amount },
     );
   }
 
@@ -162,7 +167,7 @@ export function validateAmount(amount, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_AMOUNT,
       `Amount must be positive, got: ${numAmount}`,
-      { amount: numAmount }
+      { amount: numAmount },
     );
   }
 
@@ -171,7 +176,7 @@ export function validateAmount(amount, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.AMOUNT_TOO_SMALL,
       `Amount ${numAmount} is below minimum of ${minAmount}`,
-      { amount: numAmount, minAmount }
+      { amount: numAmount, minAmount },
     );
   }
 
@@ -180,7 +185,7 @@ export function validateAmount(amount, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.AMOUNT_TOO_LARGE,
       `Amount ${numAmount} exceeds maximum of ${maxAmount}`,
-      { amount: numAmount, maxAmount }
+      { amount: numAmount, maxAmount },
     );
   }
 
@@ -191,7 +196,7 @@ export function validateAmount(amount, options = {}) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_AMOUNT,
       `Amount has too many decimal places (max 18): ${numAmount}`,
-      { amount: numAmount, decimals: decimalPart.length }
+      { amount: numAmount, decimals: decimalPart.length },
     );
   }
 
@@ -211,11 +216,9 @@ export function validateAmount(amount, options = {}) {
  */
 export function validateAddress(address, chainId) {
   if (!address || typeof address !== 'string') {
-    throw new ValidationError(
-      ValidationErrorCodes.MISSING_REQUIRED,
-      'Address is required',
-      { field: 'address' }
-    );
+    throw new ValidationError(ValidationErrorCodes.MISSING_REQUIRED, 'Address is required', {
+      field: 'address',
+    });
   }
 
   const trimmed = address.trim();
@@ -232,11 +235,9 @@ export function validateAddress(address, chainId) {
 
   // For unknown chain types, just check it's non-empty
   if (trimmed.length === 0) {
-    throw new ValidationError(
-      ValidationErrorCodes.INVALID_ADDRESS,
-      'Address cannot be empty',
-      { address }
-    );
+    throw new ValidationError(ValidationErrorCodes.INVALID_ADDRESS, 'Address cannot be empty', {
+      address,
+    });
   }
 
   return true;
@@ -254,7 +255,7 @@ export function validateEvmAddress(address) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_ADDRESS_FORMAT,
       `Invalid EVM address format: ${address}. Must be 0x followed by 40 hex characters.`,
-      { address, expectedFormat: '0x' + '0'.repeat(40) }
+      { address, expectedFormat: '0x' + '0'.repeat(40) },
     );
   }
 
@@ -263,7 +264,7 @@ export function validateEvmAddress(address) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_ADDRESS,
       `Invalid EVM address checksum: ${address}. The address may have incorrect capitalization.`,
-      { address }
+      { address },
     );
   }
 
@@ -285,7 +286,7 @@ export function validateSolanaAddress(address) {
     throw new ValidationError(
       ValidationErrorCodes.INVALID_ADDRESS_FORMAT,
       `Invalid Solana address format: ${address}. Must be 32-44 base58 characters.`,
-      { address }
+      { address },
     );
   }
 
@@ -331,7 +332,7 @@ export function validateZcashAddress(address) {
   throw new ValidationError(
     ValidationErrorCodes.INVALID_ADDRESS_FORMAT,
     `Invalid Zcash address format: ${address}. Supported: t-addresses (t1.../t3...), z-addresses (zs1...), unified (u1...)`,
-    { address }
+    { address },
   );
 }
 
@@ -376,7 +377,7 @@ export function validateBitcoinAddress(address) {
   throw new ValidationError(
     ValidationErrorCodes.INVALID_ADDRESS_FORMAT,
     `Invalid Bitcoin address format: ${address}. Supported: P2PKH (1.../m.../n...), P2SH (3.../2...), Bech32 (bc1.../tb1...)`,
-    { address }
+    { address },
   );
 }
 
@@ -417,7 +418,7 @@ export function validatePaymentParams(params) {
   }
 
   // Validate token (if chain is valid)
-  if (!errors.find(e => e.field === 'chainId')) {
+  if (!errors.find((e) => e.field === 'chainId')) {
     try {
       validateToken(params.chainId, params.tokenSymbol);
     } catch (e) {
@@ -434,7 +435,7 @@ export function validatePaymentParams(params) {
   }
 
   // Validate address (if chain is valid)
-  if (!errors.find(e => e.field === 'chainId')) {
+  if (!errors.find((e) => e.field === 'chainId')) {
     try {
       validateAddress(params.toAddress, params.chainId);
     } catch (e) {
@@ -473,8 +474,8 @@ export function validatePaymentParams(params) {
       firstError.code,
       errors.length === 1
         ? firstError.message
-        : `Multiple validation errors: ${errors.map(e => e.message).join('; ')}`,
-      { errors }
+        : `Multiple validation errors: ${errors.map((e) => e.message).join('; ')}`,
+      { errors },
     );
     throw error;
   }

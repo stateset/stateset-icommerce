@@ -1,25 +1,25 @@
 //! SQLite cart repository implementation
 
+use super::parse_helpers::{parse_decimal as parse_decimal_err, parse_uuid};
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params,
-    parse_uuid_row, parse_uuid_opt_row, parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row, parse_json_opt_row, parse_enum_row, sum_decimal_query,
-    SqliteCustomerRepository, SqliteOrderRepository, SqlitePromotionRepository,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_decimal_opt_row, parse_decimal_row, parse_enum_row, parse_json_opt_row,
+    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query, uuid_params, SqliteCustomerRepository,
+    SqliteOrderRepository, SqlitePromotionRepository,
 };
-use super::parse_helpers::{parse_uuid, parse_decimal as parse_decimal_err};
 use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::OptionalExtension;
+use rust_decimal::Decimal;
 use stateset_core::{
     validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
     CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
     CartX402Payment, CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PromotionType,
-    Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
-    UpdateCart, UpdateCartItem, UpdateOrder, X402CheckoutResult, X402PaymentRequiredData,
-    X402IntentCreatedData, X402AwaitingSettlementData, X402IntentStatus,
+    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PromotionType, Result,
+    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
+    UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
+    X402IntentStatus, X402PaymentRequiredData,
 };
 use uuid::Uuid;
 
@@ -53,17 +53,37 @@ impl SqliteCartRepository {
         Ok(Cart {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "cart", "id")?,
             cart_number: row.get("cart_number")?,
-            customer_id: parse_uuid_opt_row(row.get::<_, Option<String>>("customer_id")?, "cart", "customer_id")?,
+            customer_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("customer_id")?,
+                "cart",
+                "customer_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "cart", "status")?,
             currency: row.get("currency")?,
 
             items: vec![], // Loaded separately
 
             subtotal: parse_decimal_row(&row.get::<_, String>("subtotal")?, "cart", "subtotal")?,
-            tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "cart", "tax_amount")?,
-            shipping_amount: parse_decimal_row(&row.get::<_, String>("shipping_amount")?, "cart", "shipping_amount")?,
-            discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "cart", "discount_amount")?,
-            grand_total: parse_decimal_row(&row.get::<_, String>("grand_total")?, "cart", "grand_total")?,
+            tax_amount: parse_decimal_row(
+                &row.get::<_, String>("tax_amount")?,
+                "cart",
+                "tax_amount",
+            )?,
+            shipping_amount: parse_decimal_row(
+                &row.get::<_, String>("shipping_amount")?,
+                "cart",
+                "shipping_amount",
+            )?,
+            discount_amount: parse_decimal_row(
+                &row.get::<_, String>("discount_amount")?,
+                "cart",
+                "discount_amount",
+            )?,
+            grand_total: parse_decimal_row(
+                &row.get::<_, String>("grand_total")?,
+                "cart",
+                "grand_total",
+            )?,
 
             customer_email: row.get("customer_email")?,
             customer_phone: row.get("customer_phone")?,
@@ -79,23 +99,39 @@ impl SqliteCartRepository {
             },
             shipping_method: row.get("shipping_method")?,
             shipping_carrier: row.get("shipping_carrier")?,
-            estimated_delivery: parse_datetime_opt_row(row.get::<_, Option<String>>("estimated_delivery")?, "cart", "estimated_delivery")?,
+            estimated_delivery: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("estimated_delivery")?,
+                "cart",
+                "estimated_delivery",
+            )?,
 
             payment_method: row.get("payment_method")?,
             payment_token: row.get("payment_token")?,
-            payment_status: parse_enum_row(&row.get::<_, String>("payment_status")?, "cart", "payment_status")?,
+            payment_status: parse_enum_row(
+                &row.get::<_, String>("payment_status")?,
+                "cart",
+                "payment_status",
+            )?,
 
             coupon_code: row.get("coupon_code")?,
             discount_description: row.get("discount_description")?,
 
-            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>("order_id")?, "cart", "order_id")?,
+            order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("order_id")?,
+                "cart",
+                "order_id",
+            )?,
             order_number: row.get("order_number")?,
 
             notes: row.get("notes")?,
             metadata: parse_json_opt_row(metadata, "cart", "metadata")?,
 
             inventory_reserved: row.get::<_, i32>("inventory_reserved")? == 1,
-            reservation_expires_at: parse_datetime_opt_row(row.get::<_, Option<String>>("reservation_expires_at")?, "cart", "reservation_expires_at")?,
+            reservation_expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("reservation_expires_at")?,
+                "cart",
+                "reservation_expires_at",
+            )?,
 
             // x402 payment fields
             x402_payment: {
@@ -108,19 +144,41 @@ impl SqliteCartRepository {
                     Some(CartX402Payment {
                         intent_id: parse_uuid_opt_row(intent_id, "cart", "x402_intent_id")?,
                         payer_address,
-                        network: network_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
-                        asset: asset_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
-                        status: status_str.map(|s| s.parse().unwrap_or_default()).unwrap_or_default(),
+                        network: network_str
+                            .map(|s| s.parse().unwrap_or_default())
+                            .unwrap_or_default(),
+                        asset: asset_str
+                            .map(|s| s.parse().unwrap_or_default())
+                            .unwrap_or_default(),
+                        status: status_str
+                            .map(|s| s.parse().unwrap_or_default())
+                            .unwrap_or_default(),
                     })
                 } else {
                     None
                 }
             },
 
-            expires_at: parse_datetime_opt_row(row.get::<_, Option<String>>("expires_at")?, "cart", "expires_at")?,
-            completed_at: parse_datetime_opt_row(row.get::<_, Option<String>>("completed_at")?, "cart", "completed_at")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "cart", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "cart", "updated_at")?,
+            expires_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("expires_at")?,
+                "cart",
+                "expires_at",
+            )?,
+            completed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>("completed_at")?,
+                "cart",
+                "completed_at",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "cart",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "cart",
+                "updated_at",
+            )?,
         })
     }
 
@@ -142,24 +200,68 @@ impl SqliteCartRepository {
                 let metadata: Option<String> = row.get("metadata")?;
                 Ok(CartItem {
                     id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
-                    cart_id: parse_uuid_row(&row.get::<_, String>("cart_id")?, "cart_item", "cart_id")?,
-                    product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "cart_item", "product_id")?,
-                    variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>("variant_id")?, "cart_item", "variant_id")?,
+                    cart_id: parse_uuid_row(
+                        &row.get::<_, String>("cart_id")?,
+                        "cart_item",
+                        "cart_id",
+                    )?,
+                    product_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>("product_id")?,
+                        "cart_item",
+                        "product_id",
+                    )?,
+                    variant_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>("variant_id")?,
+                        "cart_item",
+                        "variant_id",
+                    )?,
                     sku: row.get("sku")?,
                     name: row.get("name")?,
                     description: row.get("description")?,
                     image_url: row.get("image_url")?,
                     quantity: row.get("quantity")?,
-                    unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "cart_item", "unit_price")?,
-                    original_price: parse_decimal_opt_row(row.get::<_, Option<String>>("original_price")?, "cart_item", "original_price")?,
-                    discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "cart_item", "discount_amount")?,
-                    tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "cart_item", "tax_amount")?,
-                    total: parse_decimal_row(&row.get::<_, String>("total")?, "cart_item", "total")?,
-                    weight: parse_decimal_opt_row(row.get::<_, Option<String>>("weight")?, "cart_item", "weight")?,
+                    unit_price: parse_decimal_row(
+                        &row.get::<_, String>("unit_price")?,
+                        "cart_item",
+                        "unit_price",
+                    )?,
+                    original_price: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>("original_price")?,
+                        "cart_item",
+                        "original_price",
+                    )?,
+                    discount_amount: parse_decimal_row(
+                        &row.get::<_, String>("discount_amount")?,
+                        "cart_item",
+                        "discount_amount",
+                    )?,
+                    tax_amount: parse_decimal_row(
+                        &row.get::<_, String>("tax_amount")?,
+                        "cart_item",
+                        "tax_amount",
+                    )?,
+                    total: parse_decimal_row(
+                        &row.get::<_, String>("total")?,
+                        "cart_item",
+                        "total",
+                    )?,
+                    weight: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>("weight")?,
+                        "cart_item",
+                        "weight",
+                    )?,
                     requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
                     metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
-                    created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "cart_item", "created_at")?,
-                    updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "cart_item", "updated_at")?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>("created_at")?,
+                        "cart_item",
+                        "created_at",
+                    )?,
+                    updated_at: parse_datetime_row(
+                        &row.get::<_, String>("updated_at")?,
+                        "cart_item",
+                        "updated_at",
+                    )?,
                 })
             })
             .map_err(map_db_error)?
@@ -193,7 +295,9 @@ impl SqliteCartRepository {
                 new_customer.id
             }
         } else {
-            return Err(CommerceError::ValidationError("Customer ID or email required".into()));
+            return Err(CommerceError::ValidationError(
+                "Customer ID or email required".into(),
+            ));
         };
 
         // Build order items
@@ -250,11 +354,7 @@ impl SqliteCartRepository {
         }))
     }
 
-    fn update_cart_totals(
-        &self,
-        conn: &rusqlite::Connection,
-        cart_id: Uuid,
-    ) -> Result<()> {
+    fn update_cart_totals(&self, conn: &rusqlite::Connection, cart_id: Uuid) -> Result<()> {
         // Calculate subtotal from items
         let cart_id_param = cart_id.to_string();
         let cart_params: [&dyn rusqlite::ToSql; 1] = [&cart_id_param];
@@ -711,24 +811,68 @@ impl CartRepository for SqliteCartRepository {
                     let metadata: Option<String> = row.get("metadata")?;
                     Ok(CartItem {
                         id: parse_uuid_row(&row.get::<_, String>("id")?, "cart_item", "id")?,
-                        cart_id: parse_uuid_row(&row.get::<_, String>("cart_id")?, "cart_item", "cart_id")?,
-                        product_id: parse_uuid_opt_row(row.get::<_, Option<String>>("product_id")?, "cart_item", "product_id")?,
-                        variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>("variant_id")?, "cart_item", "variant_id")?,
+                        cart_id: parse_uuid_row(
+                            &row.get::<_, String>("cart_id")?,
+                            "cart_item",
+                            "cart_id",
+                        )?,
+                        product_id: parse_uuid_opt_row(
+                            row.get::<_, Option<String>>("product_id")?,
+                            "cart_item",
+                            "product_id",
+                        )?,
+                        variant_id: parse_uuid_opt_row(
+                            row.get::<_, Option<String>>("variant_id")?,
+                            "cart_item",
+                            "variant_id",
+                        )?,
                         sku: row.get("sku")?,
                         name: row.get("name")?,
                         description: row.get("description")?,
                         image_url: row.get("image_url")?,
                         quantity: row.get("quantity")?,
-                        unit_price: parse_decimal_row(&row.get::<_, String>("unit_price")?, "cart_item", "unit_price")?,
-                        original_price: parse_decimal_opt_row(row.get::<_, Option<String>>("original_price")?, "cart_item", "original_price")?,
-                        discount_amount: parse_decimal_row(&row.get::<_, String>("discount_amount")?, "cart_item", "discount_amount")?,
-                        tax_amount: parse_decimal_row(&row.get::<_, String>("tax_amount")?, "cart_item", "tax_amount")?,
-                        total: parse_decimal_row(&row.get::<_, String>("total")?, "cart_item", "total")?,
-                        weight: parse_decimal_opt_row(row.get::<_, Option<String>>("weight")?, "cart_item", "weight")?,
+                        unit_price: parse_decimal_row(
+                            &row.get::<_, String>("unit_price")?,
+                            "cart_item",
+                            "unit_price",
+                        )?,
+                        original_price: parse_decimal_opt_row(
+                            row.get::<_, Option<String>>("original_price")?,
+                            "cart_item",
+                            "original_price",
+                        )?,
+                        discount_amount: parse_decimal_row(
+                            &row.get::<_, String>("discount_amount")?,
+                            "cart_item",
+                            "discount_amount",
+                        )?,
+                        tax_amount: parse_decimal_row(
+                            &row.get::<_, String>("tax_amount")?,
+                            "cart_item",
+                            "tax_amount",
+                        )?,
+                        total: parse_decimal_row(
+                            &row.get::<_, String>("total")?,
+                            "cart_item",
+                            "total",
+                        )?,
+                        weight: parse_decimal_opt_row(
+                            row.get::<_, Option<String>>("weight")?,
+                            "cart_item",
+                            "weight",
+                        )?,
                         requires_shipping: row.get::<_, i32>("requires_shipping")? == 1,
                         metadata: parse_json_opt_row(metadata, "cart_item", "metadata")?,
-                        created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "cart_item", "created_at")?,
-                        updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "cart_item", "updated_at")?,
+                        created_at: parse_datetime_row(
+                            &row.get::<_, String>("created_at")?,
+                            "cart_item",
+                            "created_at",
+                        )?,
+                        updated_at: parse_datetime_row(
+                            &row.get::<_, String>("updated_at")?,
+                            "cart_item",
+                            "updated_at",
+                        )?,
                     })
                 },
             )
@@ -752,11 +896,8 @@ impl CartRepository for SqliteCartRepository {
             )
             .map_err(map_db_error)?;
 
-        tx.execute(
-            "DELETE FROM cart_items WHERE id = ?",
-            [item_id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        tx.execute("DELETE FROM cart_items WHERE id = ?", [item_id.to_string()])
+            .map_err(map_db_error)?;
 
         let cart_uuid: Uuid = parse_uuid(&cart_id, "cart_item", "cart_id")?;
         self.update_cart_totals(&tx, cart_uuid)?;
@@ -952,7 +1093,10 @@ impl CartRepository for SqliteCartRepository {
         if let Some(intent_id) = x402_payment.intent_id {
             // Get the intent status from x402_payment_intents table
             let conn = self.conn()?;
-            let status_result: Option<(String, Option<String>, Option<i64>, Option<String>)> = conn
+
+            type IntentStatusRow = (String, Option<String>, Option<i64>, Option<String>);
+
+            let status_result: Option<IntentStatusRow> = conn
                 .query_row(
                     "SELECT status, signing_hash, sequence_number, batch_id FROM x402_payment_intents WHERE id = ?",
                     [intent_id.to_string()],
@@ -968,15 +1112,19 @@ impl CartRepository for SqliteCartRepository {
                         // Payment is settled - complete the checkout
                         return self.finalize_x402_checkout(id);
                     }
-                    X402IntentStatus::Signed | X402IntentStatus::Sequenced | X402IntentStatus::Batched => {
+                    X402IntentStatus::Signed
+                    | X402IntentStatus::Sequenced
+                    | X402IntentStatus::Batched => {
                         // Awaiting settlement
-                        return Ok(X402CheckoutResult::AwaitingSettlement(X402AwaitingSettlementData {
-                            cart_id: id,
-                            intent_id,
-                            status,
-                            sequence_number: seq_num.map(|n| n as u64),
-                            batch_id: batch_id_str.and_then(|s| s.parse().ok()),
-                        }));
+                        return Ok(X402CheckoutResult::AwaitingSettlement(
+                            X402AwaitingSettlementData {
+                                cart_id: id,
+                                intent_id,
+                                status,
+                                sequence_number: seq_num.map(|n| n as u64),
+                                batch_id: batch_id_str.and_then(|s| s.parse().ok()),
+                            },
+                        ));
                     }
                     X402IntentStatus::Created => {
                         // Intent exists but not signed yet
@@ -993,7 +1141,9 @@ impl CartRepository for SqliteCartRepository {
                             nonce: 0,
                         }));
                     }
-                    X402IntentStatus::Expired | X402IntentStatus::Failed | X402IntentStatus::Cancelled => {
+                    X402IntentStatus::Expired
+                    | X402IntentStatus::Failed
+                    | X402IntentStatus::Cancelled => {
                         // Need to create a new intent
                     }
                 }
@@ -1002,16 +1152,18 @@ impl CartRepository for SqliteCartRepository {
 
         // No valid intent exists - return PaymentRequired
         let chain_id = x402_payment.network.chain_id();
-        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
-            cart_id: id,
-            payee_address: payee_address.to_string(),
-            amount,
-            amount_display,
-            asset: x402_payment.asset,
-            network: x402_payment.network,
-            chain_id,
-            valid_seconds: 3600, // 1 hour default
-        }))
+        Ok(X402CheckoutResult::PaymentRequired(
+            X402PaymentRequiredData {
+                cart_id: id,
+                payee_address: payee_address.to_string(),
+                amount,
+                amount_display,
+                asset: x402_payment.asset,
+                network: x402_payment.network,
+                chain_id,
+                valid_seconds: 3600, // 1 hour default
+            },
+        ))
     }
 
     fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
@@ -1020,10 +1172,12 @@ impl CartRepository for SqliteCartRepository {
 
         // Look up the coupon and its promotion
         let promo_repo = SqlitePromotionRepository::new(self.pool.clone());
-        let coupon = promo_repo.get_coupon_by_code(coupon_code)?
-            .ok_or_else(|| CommerceError::ValidationError(format!("Invalid coupon code: {}", coupon_code)))?;
+        let coupon = promo_repo.get_coupon_by_code(coupon_code)?.ok_or_else(|| {
+            CommerceError::ValidationError(format!("Invalid coupon code: {}", coupon_code))
+        })?;
 
-        let promotion = promo_repo.get(coupon.promotion_id)?
+        let promotion = promo_repo
+            .get(coupon.promotion_id)?
             .ok_or_else(|| CommerceError::ValidationError("Promotion not found".into()))?;
 
         // Calculate the discount based on promotion type
@@ -1039,9 +1193,10 @@ impl CartRepository for SqliteCartRepository {
                     discount
                 }
             }
-            PromotionType::FixedAmountOff => {
-                promotion.fixed_amount_off.unwrap_or(Decimal::ZERO).min(subtotal)
-            }
+            PromotionType::FixedAmountOff => promotion
+                .fixed_amount_off
+                .unwrap_or(Decimal::ZERO)
+                .min(subtotal),
             _ => Decimal::ZERO, // Other types not fully implemented
         };
 
@@ -1082,8 +1237,7 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
-        let cart = self.get(id)?
-            .ok_or(CommerceError::NotFound)?;
+        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -1117,8 +1271,7 @@ impl CartRepository for SqliteCartRepository {
     }
 
     fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        let cart = self.get(id)?
-            .ok_or(CommerceError::NotFound)?;
+        let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
         if cart.items.is_empty() {
             return Err(CommerceError::ValidationError(
@@ -1165,10 +1318,13 @@ impl CartRepository for SqliteCartRepository {
         })?;
 
         // Confirm the order after checkout
-        let order = order_repo.update(order.id, UpdateOrder {
-            status: Some(OrderStatus::Confirmed),
-            ..Default::default()
-        })?;
+        let order = order_repo.update(
+            order.id,
+            UpdateOrder {
+                status: Some(OrderStatus::Confirmed),
+                ..Default::default()
+            },
+        )?;
 
         let order_id = order.id;
         let order_number = order.order_number.clone();
@@ -1285,7 +1441,11 @@ impl CartRepository for SqliteCartRepository {
             let conn = self.conn()?;
             conn.execute(
                 "UPDATE carts SET tax_amount = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![tax_amount.to_string(), Utc::now().to_rfc3339(), id.to_string()],
+                rusqlite::params![
+                    tax_amount.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ],
             )
             .map_err(map_db_error)?;
         }
@@ -1564,8 +1724,11 @@ impl CartRepository for SqliteCartRepository {
             params.push(Box::new(id.to_string()));
 
             let sql = format!("UPDATE carts SET {} WHERE id = ?", update_parts.join(", "));
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-            let rows_affected = tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let rows_affected = tx
+                .execute(&sql, params_refs.as_slice())
+                .map_err(map_db_error)?;
 
             if rows_affected == 0 {
                 return Err(CommerceError::NotFound);
@@ -1622,10 +1785,7 @@ impl CartRepository for SqliteCartRepository {
         let params_refs = params_refs(&params);
 
         // Delete cart items first
-        let sql = format!(
-            "DELETE FROM cart_items WHERE cart_id IN ({})",
-            placeholders
-        );
+        let sql = format!("DELETE FROM cart_items WHERE cart_id IN ({})", placeholders);
         tx.execute(&sql, params_refs.as_slice())
             .map_err(map_db_error)?;
 
@@ -1681,12 +1841,8 @@ impl SqliteCartRepository {
         let now = Utc::now();
         let requires_shipping = item.requires_shipping.unwrap_or(true);
 
-        let total = CartItem::calculate_total(
-            item.quantity,
-            item.unit_price,
-            Decimal::ZERO,
-            Decimal::ZERO,
-        );
+        let total =
+            CartItem::calculate_total(item.quantity, item.unit_price, Decimal::ZERO, Decimal::ZERO);
 
         let metadata_json = item
             .metadata

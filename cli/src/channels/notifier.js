@@ -113,7 +113,9 @@ export class ChannelNotifier {
     for (const route of allRoutes) {
       const adapter = this._channels.get(route.channel);
       if (!adapter) {
-        console.warn(`[Notifier] Channel '${route.channel}' not registered, skipping route to ${route.target}`);
+        console.warn(
+          `[Notifier] Channel '${route.channel}' not registered, skipping route to ${route.target}`,
+        );
         errors++;
         continue;
       }
@@ -135,7 +137,10 @@ export class ChannelNotifier {
         }
         sent++;
       } catch (err) {
-        console.error(`[Notifier] Failed to send to ${route.channel}:${route.target}:`, err.message);
+        console.error(
+          `[Notifier] Failed to send to ${route.channel}:${route.target}:`,
+          err.message,
+        );
         errors++;
       }
     }
@@ -196,7 +201,10 @@ export class ChannelNotifier {
         }
         sent++;
       } catch (err) {
-        console.error(`[Notifier] Failed to send to customer ${customerId} via ${channel}:`, err.message);
+        console.error(
+          `[Notifier] Failed to send to customer ${customerId} via ${channel}:`,
+          err.message,
+        );
         errors++;
       }
     }

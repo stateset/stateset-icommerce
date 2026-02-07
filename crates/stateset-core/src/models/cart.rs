@@ -8,8 +8,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::Address;
 use super::x402::{X402Asset, X402IntentStatus, X402Network};
+use super::Address;
 
 /// Cart/Checkout Session aggregate
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +149,7 @@ impl From<Address> for CartAddress {
 }
 
 /// x402 payment configuration for cart checkout
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CartX402Payment {
     /// x402 payment intent ID (if created)
     pub intent_id: Option<Uuid>,
@@ -161,18 +161,6 @@ pub struct CartX402Payment {
     pub asset: X402Asset,
     /// Current status of the x402 payment
     pub status: X402IntentStatus,
-}
-
-impl Default for CartX402Payment {
-    fn default() -> Self {
-        Self {
-            intent_id: None,
-            payer_address: String::new(),
-            network: X402Network::default(),
-            asset: X402Asset::default(),
-            status: X402IntentStatus::default(),
-        }
-    }
 }
 
 /// Input for setting x402 payment on cart
@@ -571,7 +559,10 @@ impl Cart {
 
     /// Check if cart can be completed
     pub fn can_complete(&self) -> bool {
-        matches!(self.status, CartStatus::ReadyForPayment | CartStatus::PaymentPending)
+        matches!(
+            self.status,
+            CartStatus::ReadyForPayment | CartStatus::PaymentPending
+        )
     }
 
     /// Check if cart can be cancelled
@@ -599,13 +590,19 @@ impl Cart {
     /// Recalculate totals from items
     pub fn recalculate_totals(&mut self) {
         self.subtotal = self.items.iter().map(|i| i.total).sum();
-        self.grand_total = self.subtotal + self.tax_amount + self.shipping_amount - self.discount_amount;
+        self.grand_total =
+            self.subtotal + self.tax_amount + self.shipping_amount - self.discount_amount;
     }
 }
 
 impl CartItem {
     /// Calculate item total
-    pub fn calculate_total(quantity: i32, unit_price: Decimal, discount: Decimal, tax: Decimal) -> Decimal {
+    pub fn calculate_total(
+        quantity: i32,
+        unit_price: Decimal,
+        discount: Decimal,
+        tax: Decimal,
+    ) -> Decimal {
         let subtotal = unit_price * Decimal::from(quantity);
         subtotal - discount + tax
     }

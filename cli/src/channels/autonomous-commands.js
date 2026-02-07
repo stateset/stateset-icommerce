@@ -86,7 +86,10 @@ function createWorkflowHandler() {
     const name = parts[0];
 
     if (!name) {
-      return { response: 'Usage: /workflow <name> [JSON context]\nExample: /workflow order-fulfillment {"orderId": "ORD-123"}' };
+      return {
+        response:
+          'Usage: /workflow <name> [JSON context]\nExample: /workflow order-fulfillment {"orderId": "ORD-123"}',
+      };
     }
 
     let context = { triggeredBy: senderId };
@@ -323,7 +326,7 @@ const _registeredCommands = [];
  *
  * @param {import('../autonomous/engine.js').AutonomousEngine} engine
  */
-export function registerAutonomousCommands(engine) {
+export function registerAutonomousCommands(_engine) {
   const registry = getCommandRegistry();
 
   for (const cmd of AUTONOMOUS_COMMANDS) {

@@ -15,7 +15,6 @@ import {
   RECONNECT_POLICY,
   computeBackoff,
   sleep,
-  BOT_PREFIX,
 } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
@@ -52,7 +51,7 @@ export async function startSignalGateway({
 } = {}) {
   if (!phone) {
     throw new Error(
-      '--phone is required. Provide the registered Signal phone number (e.g. +14155551234).'
+      '--phone is required. Provide the registered Signal phone number (e.g. +14155551234).',
     );
   }
 
@@ -83,9 +82,7 @@ export async function startSignalGateway({
    * Format text for Signal (strip markdown headers, basic formatting).
    */
   function formatForSignal(text) {
-    return text
-      .replace(/^#{1,6}\s+(.+)$/gm, '$1')
-      .replace(/\*\*(.+?)\*\*/g, '*$1*');
+    return text.replace(/^#{1,6}\s+(.+)$/gm, '$1').replace(/\*\*(.+?)\*\*/g, '*$1*');
   }
 
   /** @type {import('../channels/base.js').ChannelAdapter} */
@@ -192,7 +189,9 @@ export async function startSignalGateway({
         else console.error('Signal socket error:', err.message);
       });
 
-      conn.once('connect', () => { conn._connected = true; });
+      conn.once('connect', () => {
+        conn._connected = true;
+      });
 
       conn.on('close', () => {
         console.log('Signal socket closed.');
@@ -226,7 +225,7 @@ export async function startSignalGateway({
 
         const delay = computeBackoff(RECONNECT_POLICY, attempts);
         console.error(
-          `Signal connection failed: ${err.message}. Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${attempts}/${RECONNECT_POLICY.maxAttempts})...`
+          `Signal connection failed: ${err.message}. Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${attempts}/${RECONNECT_POLICY.maxAttempts})...`,
         );
         await sleep(delay);
       }
@@ -240,7 +239,11 @@ export async function startSignalGateway({
     getNotifier().unregisterChannel('signal');
     sessionManager.stopCleanup(cleanupHandle);
     if (conn) {
-      try { conn.destroy(); } catch { /* ignore */ }
+      try {
+        conn.destroy();
+      } catch (err) {
+        console.warn('[signal] Connection destroy error:', err.message);
+      }
     }
     console.log('Signal gateway shut down.');
   };
@@ -248,10 +251,15 @@ export async function startSignalGateway({
   // Wait for first successful connection
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error(
-        `Could not connect to signal-cli daemon at ${socketPath}.\n` +
-        'Ensure signal-cli is running: signal-cli -u ' + phone + ' daemon --json --socket ' + socketPath
-      ));
+      reject(
+        new Error(
+          `Could not connect to signal-cli daemon at ${socketPath}.\n` +
+            'Ensure signal-cli is running: signal-cli -u ' +
+            phone +
+            ' daemon --json --socket ' +
+            socketPath,
+        ),
+      );
     }, 15_000);
 
     const check = setInterval(() => {

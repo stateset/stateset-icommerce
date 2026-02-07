@@ -177,7 +177,9 @@ async function main() {
 
     if (started.length === 0) {
       if (values.json) {
-        await writeJson({ error: 'No channels started. Check your config and environment variables.' });
+        await writeJson({
+          error: 'No channels started. Check your config and environment variables.',
+        });
       } else {
         console.error('\n  No channels started. Check your config and environment variables.');
       }
@@ -211,4 +213,5 @@ async function main() {
   }
 }
 
-main();
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-channels', main);

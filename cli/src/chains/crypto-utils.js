@@ -15,24 +15,38 @@ import crypto from 'crypto';
  */
 const KECCAK_ROUNDS = 24;
 const KECCAK_RC = [
-  0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an,
-  0x8000000080008000n, 0x000000000000808bn, 0x0000000080000001n,
-  0x8000000080008081n, 0x8000000000008009n, 0x000000000000008an,
-  0x0000000000000088n, 0x0000000080008009n, 0x000000008000000an,
-  0x000000008000808bn, 0x800000000000008bn, 0x8000000000008089n,
-  0x8000000000008003n, 0x8000000000008002n, 0x8000000000000080n,
-  0x000000000000800an, 0x800000008000000an, 0x8000000080008081n,
-  0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n
+  0x0000000000000001n,
+  0x0000000000008082n,
+  0x800000000000808an,
+  0x8000000080008000n,
+  0x000000000000808bn,
+  0x0000000080000001n,
+  0x8000000080008081n,
+  0x8000000000008009n,
+  0x000000000000008an,
+  0x0000000000000088n,
+  0x0000000080008009n,
+  0x000000008000000an,
+  0x000000008000808bn,
+  0x800000000000008bn,
+  0x8000000000008089n,
+  0x8000000000008003n,
+  0x8000000000008002n,
+  0x8000000000000080n,
+  0x000000000000800an,
+  0x800000008000000an,
+  0x8000000080008081n,
+  0x8000000000008080n,
+  0x0000000080000001n,
+  0x8000000080008008n,
 ];
 
 const KECCAK_ROTC = [
-  1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14,
-  27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44
+  1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44,
 ];
 
 const KECCAK_PILN = [
-  10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4,
-  15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1
+  10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1,
 ];
 
 /**
@@ -76,7 +90,7 @@ function keccakF(state) {
         bc[i] = state[j + i];
       }
       for (let i = 0; i < 5; i++) {
-        state[j + i] ^= (~bc[(i + 1) % 5]) & bc[(i + 2) % 5];
+        state[j + i] ^= ~bc[(i + 1) % 5] & bc[(i + 2) % 5];
       }
     }
 
@@ -95,7 +109,6 @@ export function keccak256(input) {
 
   // Rate for Keccak-256: 1088 bits = 136 bytes
   const rate = 136;
-  const capacity = 64; // 512 bits
 
   // Initialize state (25 x 64-bit = 1600 bits)
   const state = new Array(25).fill(0n);
@@ -213,8 +226,10 @@ export function isValidEthAddress(address) {
     return false;
   }
 
-  // If mixed case, verify checksum
-  if (address !== address.toLowerCase() && address !== address.toUpperCase()) {
+  // If mixed case (EIP-55 checksum), verify checksum. Ignore the "0x" prefix when
+  // checking case because `toUpperCase()` would convert it to "0X".
+  const hex = address.slice(2);
+  if (hex !== hex.toLowerCase() && hex !== hex.toUpperCase()) {
     return toChecksumAddress(address) === address;
   }
 
@@ -228,8 +243,8 @@ export function isValidEthAddress(address) {
 /**
  * RIPEMD-160 constants
  */
-const RIPEMD160_KL = [0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E];
-const RIPEMD160_KR = [0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000];
+const RIPEMD160_KL = [0x00000000, 0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xa953fd4e];
+const RIPEMD160_KR = [0x50a28be6, 0x5c4dd124, 0x6d703ef3, 0x7a6d76e9, 0x00000000];
 
 const RIPEMD160_RL = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -291,17 +306,17 @@ export function ripemd160(input) {
 
   // Initial hash values
   let h0 = 0x67452301;
-  let h1 = 0xEFCDAB89;
-  let h2 = 0x98BADCFE;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
   let h3 = 0x10325476;
-  let h4 = 0xC3D2E1F0;
+  let h4 = 0xc3d2e1f0;
 
   // Pre-processing: adding padding bits
   const msgLen = data.length;
   const bitLen = BigInt(msgLen) * 8n;
 
   // Pad message to 64-byte boundary (512 bits)
-  const padLen = (msgLen % 64 < 56) ? (56 - msgLen % 64) : (120 - msgLen % 64);
+  const padLen = msgLen % 64 < 56 ? 56 - (msgLen % 64) : 120 - (msgLen % 64);
   const padded = Buffer.alloc(msgLen + padLen + 8);
   data.copy(padded);
   padded[msgLen] = 0x80;
@@ -320,8 +335,16 @@ export function ripemd160(input) {
     }
 
     // Initialize working variables
-    let al = h0, bl = h1, cl = h2, dl = h3, el = h4;
-    let ar = h0, br = h1, cr = h2, dr = h3, er = h4;
+    let al = h0,
+      bl = h1,
+      cl = h2,
+      dl = h3,
+      el = h4;
+    let ar = h0,
+      br = h1,
+      cr = h2,
+      dr = h3,
+      er = h4;
 
     // 80 rounds
     for (let j = 0; j < 80; j++) {

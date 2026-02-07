@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// ERC-8004 registration file type URL (v1)
-pub const ERC8004_REGISTRATION_V1: &str =
-    "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
+pub const ERC8004_REGISTRATION_V1: &str = "https://eips.ethereum.org/EIPS/eip-8004#registration-v1";
 
 // =============================================================================
 // Registration File Models

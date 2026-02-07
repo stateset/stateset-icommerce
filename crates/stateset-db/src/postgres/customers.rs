@@ -97,10 +97,7 @@ impl PgCustomerRepository {
 
     fn row_to_customer(row: CustomerRow) -> Result<Customer> {
         let status: CustomerStatus = row.status.parse().map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid customer.status '{}': {}",
-                row.status, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid customer.status '{}': {}", row.status, e))
         })?;
 
         Ok(Customer {
@@ -159,13 +156,11 @@ impl PgCustomerRepository {
         let accepts_marketing = input.accepts_marketing.unwrap_or(false);
 
         // Check email uniqueness
-        let exists: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM customers WHERE email = $1"
-        )
-        .bind(&input.email)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE email = $1")
+            .bind(&input.email)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         if exists.0 > 0 {
             return Err(CommerceError::EmailAlreadyExists(input.email));
@@ -218,13 +213,11 @@ impl PgCustomerRepository {
 
     /// Get a customer by ID (async)
     pub async fn get_async(&self, id: Uuid) -> Result<Option<Customer>> {
-        let result = sqlx::query_as::<_, CustomerRow>(
-            "SELECT * FROM customers WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let result = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         match result {
             Some(row) => Ok(Some(Self::row_to_customer(row)?)),
@@ -234,13 +227,11 @@ impl PgCustomerRepository {
 
     /// Get a customer by email (async)
     pub async fn get_by_email_async(&self, email: &str) -> Result<Option<Customer>> {
-        let result = sqlx::query_as::<_, CustomerRow>(
-            "SELECT * FROM customers WHERE email = $1"
-        )
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let result = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email = $1")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         match result {
             Some(row) => Ok(Some(Self::row_to_customer(row)?)),
@@ -252,24 +243,24 @@ impl PgCustomerRepository {
     pub async fn update_async(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
         let now = Utc::now();
 
-        let existing_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::CustomerNotFound(id))?;
+        let existing_row =
+            sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::CustomerNotFound(id))?;
         let current_version = existing_row.version;
         let existing = Self::row_to_customer(existing_row)?;
 
         if let Some(email) = &input.email {
             validate_email(email)?;
-            let existing_id: Option<Uuid> = sqlx::query_scalar(
-                "SELECT id FROM customers WHERE email = $1",
-            )
-            .bind(email)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+            let existing_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
+                    .bind(email)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(map_db_error)?;
             if let Some(existing_id) = existing_id {
                 if existing_id != id {
                     return Err(CommerceError::EmailAlreadyExists(email.clone()));
@@ -291,7 +282,9 @@ impl PgCustomerRepository {
         let new_last_name = input.last_name.unwrap_or(existing.last_name);
         let new_phone = input.phone.or(existing.phone);
         let new_status = input.status.unwrap_or(existing.status);
-        let new_accepts_marketing = input.accepts_marketing.unwrap_or(existing.accepts_marketing);
+        let new_accepts_marketing = input
+            .accepts_marketing
+            .unwrap_or(existing.accepts_marketing);
         let new_tags = input.tags.unwrap_or(existing.tags);
         let new_metadata = input.metadata.or(existing.metadata);
 
@@ -327,7 +320,9 @@ impl PgCustomerRepository {
             });
         }
 
-        self.get_async(id).await?.ok_or(CommerceError::CustomerNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::CustomerNotFound(id))
     }
 
     /// List customers (async)
@@ -384,14 +379,12 @@ impl PgCustomerRepository {
 
     /// Delete a customer (soft delete, async)
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = $2"
-        )
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = $2")
+            .bind(Utc::now())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -520,7 +513,7 @@ impl PgCustomerRepository {
     /// Get customer addresses (async)
     pub async fn get_addresses_async(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
         let rows = sqlx::query_as::<_, AddressRow>(
-            "SELECT * FROM customer_addresses WHERE customer_id = $1"
+            "SELECT * FROM customer_addresses WHERE customer_id = $1",
         )
         .bind(customer_id)
         .fetch_all(&self.pool)
@@ -543,13 +536,12 @@ impl PgCustomerRepository {
 
         let now = Utc::now();
 
-        let owner: Option<Uuid> = sqlx::query_scalar(
-            "SELECT customer_id FROM customer_addresses WHERE id = $1",
-        )
-        .bind(address_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let owner: Option<Uuid> =
+            sqlx::query_scalar("SELECT customer_id FROM customer_addresses WHERE id = $1")
+                .bind(address_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
         match owner {
             Some(customer_id) if customer_id != input.customer_id => {
                 return Err(CommerceError::ValidationError(
@@ -676,13 +668,12 @@ impl PgCustomerRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        let owner: Option<Uuid> = sqlx::query_scalar(
-            "SELECT customer_id FROM customer_addresses WHERE id = $1",
-        )
-        .bind(address_id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let owner: Option<Uuid> =
+            sqlx::query_scalar("SELECT customer_id FROM customer_addresses WHERE id = $1")
+                .bind(address_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         match owner {
             Some(id) if id != customer_id => {
                 return Err(CommerceError::ValidationError(
@@ -803,7 +794,10 @@ impl PgCustomerRepository {
     // =========================================================================
 
     /// Create multiple customers - partial success allowed (async)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateCustomer>) -> Result<BatchResult<Customer>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateCustomer>,
+    ) -> Result<BatchResult<Customer>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::with_capacity(inputs.len());
@@ -819,7 +813,10 @@ impl PgCustomerRepository {
     }
 
     /// Create multiple customers - atomic (all-or-nothing) (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateCustomer>) -> Result<Vec<Customer>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateCustomer>,
+    ) -> Result<Vec<Customer>> {
         validate_batch_size(&inputs)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -834,13 +831,11 @@ impl PgCustomerRepository {
             let accepts_marketing = input.accepts_marketing.unwrap_or(false);
 
             // Check email uniqueness within transaction
-            let exists: (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM customers WHERE email = $1"
-            )
-            .bind(&input.email)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+            let exists: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM customers WHERE email = $1")
+                .bind(&input.email)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
             if exists.0 > 0 {
                 return Err(CommerceError::EmailAlreadyExists(input.email));
@@ -896,7 +891,10 @@ impl PgCustomerRepository {
     }
 
     /// Update multiple customers - partial success allowed (async)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<BatchResult<Customer>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateCustomer)>,
+    ) -> Result<BatchResult<Customer>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
@@ -912,7 +910,10 @@ impl PgCustomerRepository {
     }
 
     /// Update multiple customers - atomic (all-or-nothing) (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateCustomer)>) -> Result<Vec<Customer>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateCustomer)>,
+    ) -> Result<Vec<Customer>> {
         validate_batch_size(&updates)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -921,24 +922,24 @@ impl PgCustomerRepository {
         for (id, input) in updates {
             let now = Utc::now();
 
-            let existing_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                .bind(id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::CustomerNotFound(id))?;
+            let existing_row =
+                sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::CustomerNotFound(id))?;
             let current_version = existing_row.version;
             let existing = Self::row_to_customer(existing_row)?;
 
             if let Some(email) = &input.email {
                 validate_email(email)?;
-                let existing_id: Option<Uuid> = sqlx::query_scalar(
-                    "SELECT id FROM customers WHERE email = $1",
-                )
-                .bind(email)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+                let existing_id: Option<Uuid> =
+                    sqlx::query_scalar("SELECT id FROM customers WHERE email = $1")
+                        .bind(email)
+                        .fetch_optional(tx.as_mut())
+                        .await
+                        .map_err(map_db_error)?;
                 if let Some(existing_id) = existing_id {
                     if existing_id != id {
                         return Err(CommerceError::EmailAlreadyExists(email.clone()));
@@ -960,7 +961,9 @@ impl PgCustomerRepository {
             let new_last_name = input.last_name.unwrap_or(existing.last_name);
             let new_phone = input.phone.or(existing.phone);
             let new_status = input.status.unwrap_or(existing.status);
-            let new_accepts_marketing = input.accepts_marketing.unwrap_or(existing.accepts_marketing);
+            let new_accepts_marketing = input
+                .accepts_marketing
+                .unwrap_or(existing.accepts_marketing);
             let new_tags = input.tags.unwrap_or(existing.tags);
             let new_metadata = input.metadata.or(existing.metadata);
 
@@ -998,11 +1001,12 @@ impl PgCustomerRepository {
             }
 
             // Fetch the updated customer
-            let updated_row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
-                .bind(id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+            let updated_row =
+                sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
             customers.push(Self::row_to_customer(updated_row)?);
         }
@@ -1037,14 +1041,12 @@ impl PgCustomerRepository {
 
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = ANY($2)"
-        )
-        .bind(now)
-        .bind(&ids)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE customers SET status = 'deleted', updated_at = $1 WHERE id = ANY($2)")
+            .bind(now)
+            .bind(&ids)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -1057,13 +1059,11 @@ impl PgCustomerRepository {
             return Ok(Vec::new());
         }
 
-        let rows = sqlx::query_as::<_, CustomerRow>(
-            "SELECT * FROM customers WHERE id = ANY($1)"
-        )
-        .bind(&ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let rows = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(rows
             .into_iter()
@@ -1105,7 +1105,11 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.get_addresses_async(customer_id))
     }
 
-    fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+    fn update_address(
+        &self,
+        address_id: Uuid,
+        input: CreateCustomerAddress,
+    ) -> Result<CustomerAddress> {
         super::block_on(self.update_address_async(address_id, input))
     }
 
@@ -1113,7 +1117,12 @@ impl CustomerRepository for PgCustomerRepository {
         super::block_on(self.delete_address_async(address_id))
     }
 
-    fn set_default_address(&self, customer_id: Uuid, address_id: Uuid, address_type: AddressType) -> Result<()> {
+    fn set_default_address(
+        &self,
+        customer_id: Uuid,
+        address_id: Uuid,
+        address_type: AddressType,
+    ) -> Result<()> {
         super::block_on(self.set_default_address_async(customer_id, address_id, address_type))
     }
 

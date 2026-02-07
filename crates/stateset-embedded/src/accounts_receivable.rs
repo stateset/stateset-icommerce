@@ -25,12 +25,11 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountsReceivableRepository, ApplyCreditMemo, ApplyPaymentToInvoices,
-    ArAgingFilter, ArAgingSummary, ArPaymentApplication, CollectionActivity,
-    CollectionActivityFilter, CollectionStatus, CreateCollectionActivity,
-    CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter,
-    CustomerArAging, CustomerArSummary, CustomerStatement, DunningLetterType,
-    GenerateStatementRequest, Invoice, Result, WriteOff, WriteOffFilter,
+    ApplyCreditMemo, ApplyPaymentToInvoices, ArAgingFilter, ArAgingSummary, ArPaymentApplication,
+    CollectionActivity, CollectionActivityFilter, CollectionStatus, CreateCollectionActivity,
+    CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CustomerArAging,
+    CustomerArSummary, CustomerStatement, DunningLetterType, GenerateStatementRequest, Invoice,
+    Result, WriteOff, WriteOffFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -74,7 +73,9 @@ impl AccountsReceivable {
 
     /// Get AR aging for a specific customer.
     pub fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
-        self.db.accounts_receivable().get_customer_aging(customer_id)
+        self.db
+            .accounts_receivable()
+            .get_customer_aging(customer_id)
     }
 
     /// Get detailed AR aging report with filtering.
@@ -109,18 +110,32 @@ impl AccountsReceivable {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn log_collection_activity(&self, input: CreateCollectionActivity) -> Result<CollectionActivity> {
+    pub fn log_collection_activity(
+        &self,
+        input: CreateCollectionActivity,
+    ) -> Result<CollectionActivity> {
         self.db.accounts_receivable().log_collection_activity(input)
     }
 
     /// List collection activities with filtering.
-    pub fn list_collection_activities(&self, filter: CollectionActivityFilter) -> Result<Vec<CollectionActivity>> {
-        self.db.accounts_receivable().list_collection_activities(filter)
+    pub fn list_collection_activities(
+        &self,
+        filter: CollectionActivityFilter,
+    ) -> Result<Vec<CollectionActivity>> {
+        self.db
+            .accounts_receivable()
+            .list_collection_activities(filter)
     }
 
     /// Update the collection status of an invoice.
-    pub fn update_collection_status(&self, invoice_id: Uuid, status: CollectionStatus) -> Result<()> {
-        self.db.accounts_receivable().update_collection_status(invoice_id, status)
+    pub fn update_collection_status(
+        &self,
+        invoice_id: Uuid,
+        status: CollectionStatus,
+    ) -> Result<()> {
+        self.db
+            .accounts_receivable()
+            .update_collection_status(invoice_id, status)
     }
 
     // ========================================================================
@@ -155,7 +170,9 @@ impl AccountsReceivable {
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
-        self.db.accounts_receivable().send_dunning_letter(invoice_id, letter_type, sent_by)
+        self.db
+            .accounts_receivable()
+            .send_dunning_letter(invoice_id, letter_type, sent_by)
     }
 
     // ========================================================================
@@ -236,7 +253,9 @@ impl AccountsReceivable {
 
     /// Get a credit memo by number.
     pub fn get_credit_memo_by_number(&self, number: &str) -> Result<Option<CreditMemo>> {
-        self.db.accounts_receivable().get_credit_memo_by_number(number)
+        self.db
+            .accounts_receivable()
+            .get_credit_memo_by_number(number)
     }
 
     /// List credit memos with filtering.
@@ -256,7 +275,9 @@ impl AccountsReceivable {
 
     /// Get unapplied credit memos for a customer.
     pub fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
-        self.db.accounts_receivable().get_unapplied_credits(customer_id)
+        self.db
+            .accounts_receivable()
+            .get_unapplied_credits(customer_id)
     }
 
     // ========================================================================
@@ -291,18 +312,27 @@ impl AccountsReceivable {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn apply_payment_to_invoices(&self, input: ApplyPaymentToInvoices) -> Result<Vec<ArPaymentApplication>> {
-        self.db.accounts_receivable().apply_payment_to_invoices(input)
+    pub fn apply_payment_to_invoices(
+        &self,
+        input: ApplyPaymentToInvoices,
+    ) -> Result<Vec<ArPaymentApplication>> {
+        self.db
+            .accounts_receivable()
+            .apply_payment_to_invoices(input)
     }
 
     /// Get all payment applications for a payment.
     pub fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>> {
-        self.db.accounts_receivable().get_payment_applications(payment_id)
+        self.db
+            .accounts_receivable()
+            .get_payment_applications(payment_id)
     }
 
     /// Unapply a payment application (remove application, restore invoice balance).
     pub fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        self.db.accounts_receivable().unapply_payment(application_id)
+        self.db
+            .accounts_receivable()
+            .unapply_payment(application_id)
     }
 
     // ========================================================================
@@ -311,7 +341,9 @@ impl AccountsReceivable {
 
     /// Get AR summary for a customer.
     pub fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
-        self.db.accounts_receivable().get_customer_summary(customer_id)
+        self.db
+            .accounts_receivable()
+            .get_customer_summary(customer_id)
     }
 
     /// Generate a customer statement.
@@ -338,7 +370,10 @@ impl AccountsReceivable {
     /// println!("Closing balance: ${}", statement.closing_balance);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
+    pub fn generate_statement(
+        &self,
+        request: GenerateStatementRequest,
+    ) -> Result<CustomerStatement> {
         self.db.accounts_receivable().generate_statement(request)
     }
 
@@ -358,7 +393,9 @@ impl AccountsReceivable {
 
     /// Get average days to pay for a customer.
     pub fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>> {
-        self.db.accounts_receivable().get_average_days_to_pay(customer_id)
+        self.db
+            .accounts_receivable()
+            .get_average_days_to_pay(customer_id)
     }
 
     /// Get AR summary for multiple customers.

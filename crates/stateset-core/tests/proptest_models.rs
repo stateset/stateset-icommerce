@@ -4,15 +4,9 @@
 
 use proptest::prelude::*;
 use rust_decimal::Decimal;
-use chrono::{DateTime, Utc, TimeZone};
 use uuid::Uuid;
 
-use stateset_core::models::{
-    OrderStatus, PaymentStatus, FulfillmentStatus,
-    CartStatus, CartPaymentStatus,
-    CustomerStatus,
-    ProductStatus,
-};
+use stateset_core::models::{CartStatus, OrderStatus, PaymentStatus};
 
 // ============================================================================
 // Decimal Arithmetic Properties
@@ -140,24 +134,11 @@ proptest! {
 
 fn valid_order_status_transitions(from: OrderStatus) -> Vec<OrderStatus> {
     match from {
-        OrderStatus::Pending => vec![
-            OrderStatus::Confirmed,
-            OrderStatus::Cancelled,
-        ],
-        OrderStatus::Confirmed => vec![
-            OrderStatus::Processing,
-            OrderStatus::Cancelled,
-        ],
-        OrderStatus::Processing => vec![
-            OrderStatus::Shipped,
-            OrderStatus::Cancelled,
-        ],
-        OrderStatus::Shipped => vec![
-            OrderStatus::Delivered,
-        ],
-        OrderStatus::Delivered => vec![
-            OrderStatus::Refunded,
-        ],
+        OrderStatus::Pending => vec![OrderStatus::Confirmed, OrderStatus::Cancelled],
+        OrderStatus::Confirmed => vec![OrderStatus::Processing, OrderStatus::Cancelled],
+        OrderStatus::Processing => vec![OrderStatus::Shipped, OrderStatus::Cancelled],
+        OrderStatus::Shipped => vec![OrderStatus::Delivered],
+        OrderStatus::Delivered => vec![OrderStatus::Refunded],
         OrderStatus::Cancelled => vec![],
         OrderStatus::Refunded => vec![],
     }

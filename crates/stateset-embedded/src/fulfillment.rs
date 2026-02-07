@@ -37,9 +37,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AddCarton, AddCartonItem, BatchResult, Carton, CartonItem, CompletePick, CompleteShip,
-    CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, FulfillmentRepository,
-    PackTask, PackTaskFilter, PickTask, PickTaskFilter, Result,
-    ShipTask, ShipTaskFilter, Wave, WaveFilter,
+    CreatePackTask, CreatePickTask, CreateShipTask, CreateWave, PackTask, PackTaskFilter, PickTask,
+    PickTaskFilter, Result, ShipTask, ShipTaskFilter, Wave, WaveFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -391,8 +390,14 @@ impl Fulfillment {
     /// Create pick tasks for all items in an order.
     ///
     /// Automatically finds pickable locations for each item.
-    pub fn create_picks_for_order(&self, order_id: Uuid, warehouse_id: i32) -> Result<Vec<PickTask>> {
-        self.db.fulfillment().create_picks_for_order(order_id, warehouse_id)
+    pub fn create_picks_for_order(
+        &self,
+        order_id: Uuid,
+        warehouse_id: i32,
+    ) -> Result<Vec<PickTask>> {
+        self.db
+            .fulfillment()
+            .create_picks_for_order(order_id, warehouse_id)
     }
 
     /// Check if all picks for an order are complete (ready to pack).

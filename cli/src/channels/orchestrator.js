@@ -162,15 +162,27 @@ export class ChannelOrchestrator {
   async start() {
     if (this._running) throw new Error('Orchestrator is already running');
 
-    const { channels, shared = {}, middleware: mwConfig, notifications, persistSessions = true, sessionDbPath, identityDbPath } = this.config;
+    const {
+      channels,
+      shared = {},
+      middleware: mwConfig,
+      notifications,
+      persistSessions = true,
+      sessionDbPath,
+      identityDbPath,
+    } = this.config;
 
     // 1. Session store
     if (persistSessions) {
-      this.sessionStore = new ChannelSessionStore(sessionDbPath ? { dbPath: sessionDbPath } : undefined);
+      this.sessionStore = new ChannelSessionStore(
+        sessionDbPath ? { dbPath: sessionDbPath } : undefined,
+      );
     }
 
     // 2. Identity store
-    this.identityStore = new CustomerIdentityStore(identityDbPath ? { dbPath: identityDbPath } : undefined);
+    this.identityStore = new CustomerIdentityStore(
+      identityDbPath ? { dbPath: identityDbPath } : undefined,
+    );
 
     // 3. Middleware
     this.middleware = buildMiddleware(mwConfig);
@@ -215,9 +227,11 @@ export class ChannelOrchestrator {
     const configState = getPluginConfigState({
       allow: pluginsConfig.allow,
       deny: pluginsConfig.deny,
-      entries: pluginsConfig.configs ? Object.fromEntries(
-        Object.entries(pluginsConfig.configs).map(([id, config]) => [id, { config }])
-      ) : {},
+      entries: pluginsConfig.configs
+        ? Object.fromEntries(
+            Object.entries(pluginsConfig.configs).map(([id, config]) => [id, { config }]),
+          )
+        : {},
       statePath: stateDir ? `${stateDir}/plugin-state.json` : null,
     });
 
@@ -231,7 +245,12 @@ export class ChannelOrchestrator {
     }
 
     // Discover and load plugins
-    if (pluginsConfig.bundledDir || pluginsConfig.globalDir || pluginsConfig.workspaceDir || pluginsConfig.loadPaths?.length) {
+    if (
+      pluginsConfig.bundledDir ||
+      pluginsConfig.globalDir ||
+      pluginsConfig.workspaceDir ||
+      pluginsConfig.loadPaths?.length
+    ) {
       try {
         this._pluginLoadResults = await discoverAndLoadPlugins({
           bundledDir: pluginsConfig.bundledDir,
@@ -257,7 +276,9 @@ export class ChannelOrchestrator {
       const skillsDiscovered = discoverSkills({ verbose: shared.verbose ?? false });
       skillRegistry.loadFromDiscovered(skillsDiscovered);
       registerSkillHooks(skillRegistry);
-      console.log(`[Orchestrator] Loaded ${skillRegistry.count()} skills across ${skillRegistry.getCategories().length} categories`);
+      console.log(
+        `[Orchestrator] Loaded ${skillRegistry.count()} skills across ${skillRegistry.getCategories().length} categories`,
+      );
     } catch (err) {
       console.error('[Orchestrator] Skill loading failed:', err.message);
     }
@@ -286,6 +307,11 @@ export class ChannelOrchestrator {
           verbose: shared.verbose ?? false,
           configState,
           apiKeys: httpConfig.apiKeys || [],
+          allowAnonymous: httpConfig.allowAnonymous === true,
+          anonymousIdentity: httpConfig.anonymousIdentity || null,
+          allowQueryParamAuth: httpConfig.allowQueryParamAuth === true,
+          corsOrigins: httpConfig.corsOrigins,
+          allowRemoteAdminEndpoints: httpConfig.allowRemoteAdminEndpoints === true,
           sandbox: httpConfig.sandbox || null,
         });
         const addr = await this._httpGateway.start();
@@ -330,10 +356,7 @@ export class ChannelOrchestrator {
     // Init heartbeat monitor (via autonomous engine)
     if (autonomousEngine && this.config.heartbeat?.enabled) {
       try {
-        await autonomousEngine.initHeartbeat(
-          this.config.heartbeat,
-          shared.commerce || null,
-        );
+        await autonomousEngine.initHeartbeat(this.config.heartbeat, shared.commerce || null);
         this._heartbeat = autonomousEngine.heartbeat;
         console.log('[Orchestrator] Heartbeat monitor initialized.');
       } catch (err) {
@@ -353,7 +376,9 @@ export class ChannelOrchestrator {
         if (runtime) {
           runtime.vectorAutoIndex = this._vectorAutoIndex;
         }
-        console.log('[Orchestrator] Vector auto-index enabled — new entities will be embedded automatically.');
+        console.log(
+          '[Orchestrator] Vector auto-index enabled — new entities will be embedded automatically.',
+        );
       } catch (err) {
         console.error(`[Orchestrator] Vector auto-index init failed: ${err.message}`);
         this._vectorAutoIndex = null;
@@ -366,7 +391,7 @@ export class ChannelOrchestrator {
         voice: this._voice,
         browser: this._browser,
         memory: this._memory,
-        heartbeat: this._heartbeat || (autonomousEngine?.heartbeat) || null,
+        heartbeat: this._heartbeat || autonomousEngine?.heartbeat || null,
         vectorAutoIndex: this._vectorAutoIndex || null,
       });
 
@@ -423,7 +448,9 @@ export class ChannelOrchestrator {
         await service.start();
         console.log(`[Orchestrator] Started plugin service: ${service.name}`);
       } catch (err) {
-        console.error(`[Orchestrator] Failed to start plugin service ${service.name}: ${err.message}`);
+        console.error(
+          `[Orchestrator] Failed to start plugin service ${service.name}: ${err.message}`,
+        );
       }
     }
 
@@ -474,15 +501,27 @@ export class ChannelOrchestrator {
 
     // Destroy subsystems
     if (this._voice) {
-      try { this._voice.destroy(); } catch {}
+      try {
+        this._voice.destroy();
+      } catch (err) {
+        console.warn('[Orchestrator] Voice cleanup error:', err.message);
+      }
       this._voice = null;
     }
     if (this._browser) {
-      try { await this._browser.close(); } catch {}
+      try {
+        await this._browser.close();
+      } catch (err) {
+        console.warn('[Orchestrator] Browser cleanup error:', err.message);
+      }
       this._browser = null;
     }
     if (this._memory) {
-      try { this._memory.close(); } catch {}
+      try {
+        this._memory.close();
+      } catch (err) {
+        console.warn('[Orchestrator] Memory cleanup error:', err.message);
+      }
       this._memory = null;
     }
 
@@ -502,7 +541,9 @@ export class ChannelOrchestrator {
         await service.stop();
         console.log(`[Orchestrator] Stopped plugin service: ${service.name}`);
       } catch (err) {
-        console.error(`[Orchestrator] Error stopping plugin service ${service.name}: ${err.message}`);
+        console.error(
+          `[Orchestrator] Error stopping plugin service ${service.name}: ${err.message}`,
+        );
       }
     }
 

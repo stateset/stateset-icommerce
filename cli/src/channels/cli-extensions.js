@@ -347,7 +347,9 @@ export class CliExtensionRegistry {
 
     const lines = ['', 'Plugin Extensions:'];
 
-    for (const ns of [...this._namespaces.values()].sort((a, b) => a.namespace.localeCompare(b.namespace))) {
+    for (const ns of [...this._namespaces.values()].sort((a, b) =>
+      a.namespace.localeCompare(b.namespace),
+    )) {
       const desc = ns.description ? ` - ${ns.description}` : '';
       lines.push(`  stateset ${ns.namespace}${desc}`);
 

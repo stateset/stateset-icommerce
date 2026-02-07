@@ -31,9 +31,8 @@
 //! ```
 
 use stateset_core::{
-    BatchResult, CompletePutAway, CreatePutAway, CreateReceipt, PutAway, PutAwayFilter,
-    Receipt, ReceiptFilter, ReceiptItem, ReceiveItems, ReceivingRepository, Result,
-    UpdateReceipt,
+    BatchResult, CompletePutAway, CreatePutAway, CreateReceipt, PutAway, PutAwayFilter, Receipt,
+    ReceiptFilter, ReceiptItem, ReceiveItems, Result, UpdateReceipt,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -319,7 +318,9 @@ impl Receiving {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
-        self.db.receiving().create_receipt_from_po(po_id, warehouse_id)
+        self.db
+            .receiving()
+            .create_receipt_from_po(po_id, warehouse_id)
     }
 
     // ========================================================================
@@ -327,7 +328,10 @@ impl Receiving {
     // ========================================================================
 
     /// Create multiple receipts in a batch.
-    pub fn create_receipts_batch(&self, inputs: Vec<CreateReceipt>) -> Result<BatchResult<Receipt>> {
+    pub fn create_receipts_batch(
+        &self,
+        inputs: Vec<CreateReceipt>,
+    ) -> Result<BatchResult<Receipt>> {
         self.db.receiving().create_receipts_batch(inputs)
     }
 

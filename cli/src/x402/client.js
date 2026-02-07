@@ -84,18 +84,17 @@ export class X402SequencerClient {
 
   async waitForReceipt(intentId, { timeoutMs = 300_000, intervalMs = 2_000 } = {}) {
     const start = Date.now();
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         const response = await this.getPaymentReceipt(intentId);
         if (response?.receipt) return response.receipt;
-      } catch (err) {
+      } catch {
         // ignore until timeout
       }
       if (Date.now() - start > timeoutMs) {
         throw new Error(`Timed out waiting for receipt for intent ${intentId}`);
       }
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
   }
 }

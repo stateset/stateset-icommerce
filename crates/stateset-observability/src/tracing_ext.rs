@@ -18,7 +18,11 @@ pub struct TracingConfig {
 
 impl TracingConfig {
     /// Create a new tracing configuration.
-    pub fn new(service_name: impl Into<String>, environment: impl Into<String>, region: impl Into<String>) -> Self {
+    pub fn new(
+        service_name: impl Into<String>,
+        environment: impl Into<String>,
+        region: impl Into<String>,
+    ) -> Self {
         Self {
             service_name: service_name.into(),
             environment: environment.into(),
@@ -43,7 +47,9 @@ pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Resu
         ));
     }
     if region.is_empty() {
-        return Err(ObservabilityError::InvalidConfig("region must be non-empty".to_string()));
+        return Err(ObservabilityError::InvalidConfig(
+            "region must be non-empty".to_string(),
+        ));
     }
     Ok(())
 }
@@ -52,4 +58,3 @@ pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Resu
 pub fn init_tracing_with(config: TracingConfig) -> Result<()> {
     init_tracing(&config.service_name, &config.environment, &config.region)
 }
-

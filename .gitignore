@@ -75,6 +75,12 @@ bindings/php/modules/
 cli/.stateset/
 .stateset/
 
+# Secrets (keep .template files, ignore filled-in secrets)
+**/secrets.yaml
+**/secrets.yml
+**/secrets.json
+!**/secrets.yaml.template
+
 # Dev/test files
 cli/test-*.mjs
 cli/add-more-events.mjs

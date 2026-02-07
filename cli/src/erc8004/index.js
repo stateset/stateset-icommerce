@@ -58,7 +58,7 @@ function mapIdentity(row) {
   if (!row) return null;
   return {
     ...row,
-    active: Boolean(row.active)
+    active: Boolean(row.active),
   };
 }
 
@@ -107,12 +107,12 @@ export function registerIdentity(dbPath, input) {
     input.walletProofDeadline || null,
     active,
     now,
-    now
+    now,
   );
 
-  const record = db.prepare(
-    'SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?'
-  ).get(input.agentRegistry, input.agentId);
+  const record = db
+    .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
+    .get(input.agentRegistry, input.agentId);
   db.close();
   return mapIdentity(record);
 }
@@ -141,12 +141,12 @@ export function setAgentWallet(dbPath, input) {
     input.walletProofDeadline || null,
     now,
     input.agentRegistry,
-    input.agentId
+    input.agentId,
   );
 
-  const record = db.prepare(
-    'SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?'
-  ).get(input.agentRegistry, input.agentId);
+  const record = db
+    .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
+    .get(input.agentRegistry, input.agentId);
   db.close();
 
   if (!record) {
@@ -158,18 +158,16 @@ export function setAgentWallet(dbPath, input) {
 
 export function getIdentity(dbPath, agentRegistry, agentId) {
   const db = openDb(dbPath);
-  const record = db.prepare(
-    'SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?'
-  ).get(agentRegistry, agentId);
+  const record = db
+    .prepare('SELECT * FROM agent_identities WHERE agent_registry = ? AND agent_id = ?')
+    .get(agentRegistry, agentId);
   db.close();
   return mapIdentity(record);
 }
 
 export function getIdentityByWallet(dbPath, wallet) {
   const db = openDb(dbPath);
-  const record = db.prepare(
-    'SELECT * FROM agent_identities WHERE agent_wallet = ?'
-  ).get(wallet);
+  const record = db.prepare('SELECT * FROM agent_identities WHERE agent_wallet = ?').get(wallet);
   db.close();
   return mapIdentity(record);
 }
@@ -199,12 +197,16 @@ export function listIdentities(dbPath, filter = {}) {
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = filter.limit || 50;
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT * FROM agent_identities
     ${where}
     ORDER BY updated_at DESC
     LIMIT ?
-  `).all(...params, limit);
+  `,
+    )
+    .all(...params, limit);
 
   db.close();
   return rows.map(mapIdentity);
@@ -215,5 +217,5 @@ export default {
   setAgentWallet,
   getIdentity,
   getIdentityByWallet,
-  listIdentities
+  listIdentities,
 };

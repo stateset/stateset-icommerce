@@ -525,29 +525,53 @@ mod tests {
 
     #[test]
     fn test_wave_status_from_str() {
-        assert_eq!(WaveStatus::from_str("released").unwrap(), WaveStatus::Released);
-        assert_eq!(WaveStatus::from_str("InProgress").unwrap(), WaveStatus::InProgress);
+        assert_eq!(
+            WaveStatus::from_str("released").unwrap(),
+            WaveStatus::Released
+        );
+        assert_eq!(
+            WaveStatus::from_str("InProgress").unwrap(),
+            WaveStatus::InProgress
+        );
         assert!(WaveStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_pick_status_from_str() {
-        assert_eq!(PickStatus::from_str("assigned").unwrap(), PickStatus::Assigned);
-        assert_eq!(PickStatus::from_str("canceled").unwrap(), PickStatus::Cancelled);
+        assert_eq!(
+            PickStatus::from_str("assigned").unwrap(),
+            PickStatus::Assigned
+        );
+        assert_eq!(
+            PickStatus::from_str("canceled").unwrap(),
+            PickStatus::Cancelled
+        );
         assert!(PickStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_pack_status_from_str() {
-        assert_eq!(PackStatus::from_str("assigned").unwrap(), PackStatus::Assigned);
-        assert_eq!(PackStatus::from_str("readytopack").unwrap(), PackStatus::ReadyToPack);
+        assert_eq!(
+            PackStatus::from_str("assigned").unwrap(),
+            PackStatus::Assigned
+        );
+        assert_eq!(
+            PackStatus::from_str("readytopack").unwrap(),
+            PackStatus::ReadyToPack
+        );
         assert!(PackStatus::from_str("nope").is_err());
     }
 
     #[test]
     fn test_ship_status_from_str() {
-        assert_eq!(ShipStatus::from_str("labelprinted").unwrap(), ShipStatus::LabelPrinted);
-        assert_eq!(ShipStatus::from_str("ready_to_ship").unwrap(), ShipStatus::ReadyToShip);
+        assert_eq!(
+            ShipStatus::from_str("labelprinted").unwrap(),
+            ShipStatus::LabelPrinted
+        );
+        assert_eq!(
+            ShipStatus::from_str("ready_to_ship").unwrap(),
+            ShipStatus::ReadyToShip
+        );
         assert!(ShipStatus::from_str("nope").is_err());
     }
 
@@ -559,7 +583,10 @@ mod tests {
 
     #[test]
     fn test_wave_type_from_str() {
-        assert_eq!(WaveType::from_str("single_order").unwrap(), WaveType::Single);
+        assert_eq!(
+            WaveType::from_str("single_order").unwrap(),
+            WaveType::Single
+        );
         assert!(WaveType::from_str("nope").is_err());
     }
 }

@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/stateset/stateset-icommerce/bindings/go/stateset"
 )
@@ -17,7 +18,7 @@ func main() {
 	defer commerce.Close()
 
 	fmt.Println("StateSet Commerce initialized successfully!")
-	fmt.Println("=" + string(make([]byte, 50)))
+	fmt.Println(strings.Repeat("=", 50))
 
 	// =========================================================================
 	// Core Commerce: Customers, Products, Inventory, Orders
@@ -83,10 +84,12 @@ func main() {
 	fmt.Printf("✓ Order status updated to: %s\n", order.Status)
 
 	// Ship the order
-	order, err = commerce.Orders().Ship(order.ID)
+	shippedOrder, err := commerce.Orders().Ship(order.ID)
 	if err != nil {
 		log.Printf("  Note: Ship order requires fulfillment setup")
 	} else {
+		// Only overwrite `order` when the operation succeeded to avoid nil deref.
+		order = shippedOrder
 		fmt.Printf("✓ Order shipped: %s\n", order.Status)
 	}
 
@@ -318,7 +321,7 @@ func main() {
 	// =========================================================================
 	// Summary
 	// =========================================================================
-	fmt.Println("\n" + "=" + string(make([]byte, 50)))
+	fmt.Println("\n" + strings.Repeat("=", 50))
 
 	// List all customers
 	customers, err := commerce.Customers().List()

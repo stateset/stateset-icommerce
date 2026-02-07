@@ -24,7 +24,7 @@ export const ApprovalStatus = {
   EXPIRED: 'expired',
   AUTO_APPROVED: 'auto_approved',
   AUTO_REJECTED: 'auto_rejected',
-  CANCELLED: 'cancelled'
+  CANCELLED: 'cancelled',
 };
 
 /**
@@ -40,7 +40,7 @@ export class ApprovalTier {
     timeout = null, // Auto-escalate after timeout (ms)
     timeoutAction = 'escalate', // 'escalate', 'auto_approve', 'auto_reject'
     canApproveAmount = null, // Max amount this tier can approve
-    metadata = {}
+    metadata = {},
   }) {
     this.level = level;
     this.name = name;
@@ -63,7 +63,7 @@ export class ApprovalTier {
       timeout: this.timeout,
       timeoutAction: this.timeoutAction,
       canApproveAmount: this.canApproveAmount,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -80,13 +80,13 @@ export class ApprovalChain {
     tiers = [],
     conditions = null, // When to require this chain
     enabled = true,
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.name = name;
     this.description = description;
     this.domain = domain;
-    this.tiers = tiers.map(t => t instanceof ApprovalTier ? t : new ApprovalTier(t));
+    this.tiers = tiers.map((t) => (t instanceof ApprovalTier ? t : new ApprovalTier(t)));
     this.tiers.sort((a, b) => a.level - b.level);
     this.conditions = conditions;
     this.enabled = enabled;
@@ -97,14 +97,14 @@ export class ApprovalChain {
    * Get tier by level
    */
   getTier(level) {
-    return this.tiers.find(t => t.level === level);
+    return this.tiers.find((t) => t.level === level);
   }
 
   /**
    * Get next tier
    */
   getNextTier(currentLevel) {
-    return this.tiers.find(t => t.level > currentLevel);
+    return this.tiers.find((t) => t.level > currentLevel);
   }
 
   /**
@@ -127,10 +127,10 @@ export class ApprovalChain {
       name: this.name,
       description: this.description,
       domain: this.domain,
-      tiers: this.tiers.map(t => t.toJSON()),
+      tiers: this.tiers.map((t) => t.toJSON()),
       conditions: this.conditions,
       enabled: this.enabled,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -146,7 +146,7 @@ export class ApprovalDecision {
     reason = null,
     timestamp = new Date().toISOString(),
     tier,
-    metadata = {}
+    metadata = {},
   }) {
     this.approverId = approverId;
     this.approverName = approverName;
@@ -165,7 +165,7 @@ export class ApprovalDecision {
       reason: this.reason,
       timestamp: this.timestamp,
       tier: this.tier,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -195,7 +195,7 @@ export class ApprovalRequest {
     resolvedAt = null,
     expiresAt = null,
     action = null, // Action to execute on approval
-    metadata = {}
+    metadata = {},
   }) {
     this.id = id;
     this.chainId = chainId;
@@ -210,7 +210,9 @@ export class ApprovalRequest {
     this.requestedByName = requestedByName;
     this.currentTier = currentTier;
     this.status = status;
-    this.decisions = decisions.map(d => d instanceof ApprovalDecision ? d : new ApprovalDecision(d));
+    this.decisions = decisions.map((d) =>
+      d instanceof ApprovalDecision ? d : new ApprovalDecision(d),
+    );
     this.context = context;
     this.createdAt = createdAt;
     this.updatedAt = updatedAt;
@@ -225,7 +227,7 @@ export class ApprovalRequest {
    * Get approvals at current tier
    */
   getCurrentTierApprovals() {
-    return this.decisions.filter(d => d.tier === this.currentTier && d.action === 'approve');
+    return this.decisions.filter((d) => d.tier === this.currentTier && d.action === 'approve');
   }
 
   /**
@@ -238,7 +240,7 @@ export class ApprovalRequest {
       ApprovalStatus.EXPIRED,
       ApprovalStatus.AUTO_APPROVED,
       ApprovalStatus.AUTO_REJECTED,
-      ApprovalStatus.CANCELLED
+      ApprovalStatus.CANCELLED,
     ].includes(this.status);
   }
 
@@ -257,14 +259,14 @@ export class ApprovalRequest {
       requestedByName: this.requestedByName,
       currentTier: this.currentTier,
       status: this.status,
-      decisions: this.decisions.map(d => d.toJSON()),
+      decisions: this.decisions.map((d) => d.toJSON()),
       context: this.context,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       resolvedAt: this.resolvedAt,
       expiresAt: this.expiresAt,
       action: this.action,
-      metadata: this.metadata
+      metadata: this.metadata,
     };
   }
 }
@@ -277,7 +279,7 @@ export class ApprovalQueue extends EventEmitter {
     storePath = null,
     executor = null, // Function to execute approved actions
     notifier = null, // Function to send notifications
-    checkInterval = 60000 // Check for timeouts every minute
+    checkInterval = 60000, // Check for timeouts every minute
   }) {
     super();
 
@@ -327,7 +329,7 @@ export class ApprovalQueue extends EventEmitter {
 
       this.emit('loaded', {
         chainCount: this.chains.size,
-        pendingCount: this.requests.size
+        pendingCount: this.requests.size,
       });
     } catch (error) {
       this.emit('error', { type: 'load', error });
@@ -347,15 +349,15 @@ export class ApprovalQueue extends EventEmitter {
       const requestsFile = path.join(this.storePath, 'approval-requests.json');
 
       const chainsData = Array.from(this.chains.values())
-        .filter(c => c instanceof ApprovalChain)
-        .map(c => c.toJSON());
+        .filter((c) => c instanceof ApprovalChain)
+        .map((c) => c.toJSON());
       fs.writeFileSync(chainsFile, JSON.stringify(chainsData, null, 2));
 
       const allRequests = [
         ...Array.from(this.requests.values()),
-        ...this.history.slice(-500) // Keep last 500 resolved
+        ...this.history.slice(-500), // Keep last 500 resolved
       ];
-      const requestsData = allRequests.map(r => r.toJSON());
+      const requestsData = allRequests.map((r) => r.toJSON());
       fs.writeFileSync(requestsFile, JSON.stringify(requestsData, null, 2));
 
       this.emit('saved');
@@ -423,7 +425,7 @@ export class ApprovalQueue extends EventEmitter {
     requestedBy,
     requestedByName = null,
     context = {},
-    action = null
+    action = null,
   }) {
     // Find appropriate chain
     const chain = this.getChainForDomain(domain, { amount, ...context });
@@ -433,9 +435,7 @@ export class ApprovalQueue extends EventEmitter {
     }
 
     // Determine starting tier based on amount
-    const startingTier = amount !== null
-      ? chain.getTierForAmount(amount)
-      : chain.getTier(1);
+    const startingTier = amount !== null ? chain.getTierForAmount(amount) : chain.getTier(1);
 
     const request = new ApprovalRequest({
       chainId: chain.id,
@@ -450,7 +450,7 @@ export class ApprovalQueue extends EventEmitter {
       requestedByName,
       currentTier: startingTier.level,
       context,
-      action
+      action,
     });
 
     // Set expiration
@@ -564,7 +564,7 @@ export class ApprovalQueue extends EventEmitter {
       approverName,
       action: 'approve',
       reason,
-      tier: request.currentTier
+      tier: request.currentTier,
     });
     request.decisions.push(decision);
     request.updatedAt = new Date().toISOString();
@@ -592,7 +592,7 @@ export class ApprovalQueue extends EventEmitter {
               requestId: request.id,
               entityType: request.entityType,
               entityId: request.entityId,
-              context: request.context
+              context: request.context,
             });
             this.emit('action:executed', { request: request.toJSON() });
           } catch (error) {
@@ -626,7 +626,7 @@ export class ApprovalQueue extends EventEmitter {
       approverName,
       action: 'reject',
       reason,
-      tier: request.currentTier
+      tier: request.currentTier,
     });
     request.decisions.push(decision);
 
@@ -668,7 +668,7 @@ export class ApprovalQueue extends EventEmitter {
       approverId,
       action: 'escalate',
       reason,
-      tier: request.currentTier
+      tier: request.currentTier,
     });
     request.decisions.push(decision);
 
@@ -701,7 +701,7 @@ export class ApprovalQueue extends EventEmitter {
     this.emit('request:escalated', {
       request: request.toJSON(),
       tier: tier.toJSON(),
-      reason
+      reason,
     });
   }
 
@@ -720,7 +720,7 @@ export class ApprovalQueue extends EventEmitter {
       approverId: 'system',
       action: 'approve',
       reason,
-      tier: request.currentTier
+      tier: request.currentTier,
     });
     request.decisions.push(decision);
 
@@ -733,7 +733,7 @@ export class ApprovalQueue extends EventEmitter {
           requestId: request.id,
           entityType: request.entityType,
           entityId: request.entityId,
-          context: request.context
+          context: request.context,
         });
       } catch (error) {
         this.emit('action:failed', { request: request.toJSON(), error });
@@ -761,7 +761,7 @@ export class ApprovalQueue extends EventEmitter {
       approverId: 'system',
       action: 'reject',
       reason,
-      tier: request.currentTier
+      tier: request.currentTier,
     });
     request.decisions.push(decision);
 
@@ -830,7 +830,7 @@ export class ApprovalQueue extends EventEmitter {
         type: 'approval_required',
         request: request.toJSON(),
         tier: tier.toJSON(),
-        approvers: tier.approvers
+        approvers: tier.approvers,
       });
     } catch (error) {
       this.emit('notification:failed', { request: request.toJSON(), error });
@@ -841,8 +841,7 @@ export class ApprovalQueue extends EventEmitter {
    * Get a request
    */
   getRequest(requestId) {
-    return this.requests.get(requestId) ||
-      this.history.find(r => r.id === requestId);
+    return this.requests.get(requestId) || this.history.find((r) => r.id === requestId);
   }
 
   /**
@@ -852,11 +851,11 @@ export class ApprovalQueue extends EventEmitter {
     let requests = Array.from(this.requests.values());
 
     if (domain) {
-      requests = requests.filter(r => r.domain === domain);
+      requests = requests.filter((r) => r.domain === domain);
     }
 
     if (approverId) {
-      requests = requests.filter(r => {
+      requests = requests.filter((r) => {
         const chain = this.chains.get(r.chainId);
         if (!chain) return false;
         const tier = chain.getTier(r.currentTier);
@@ -865,7 +864,7 @@ export class ApprovalQueue extends EventEmitter {
       });
     }
 
-    return requests.map(r => r.toJSON());
+    return requests.map((r) => r.toJSON());
   }
 
   /**
@@ -875,14 +874,14 @@ export class ApprovalQueue extends EventEmitter {
     let history = this.history;
 
     if (domain) {
-      history = history.filter(r => r.domain === domain);
+      history = history.filter((r) => r.domain === domain);
     }
 
     if (status) {
-      history = history.filter(r => r.status === status);
+      history = history.filter((r) => r.status === status);
     }
 
-    return history.slice(-limit).map(r => r.toJSON());
+    return history.slice(-limit).map((r) => r.toJSON());
   }
 
   /**
@@ -902,11 +901,11 @@ export class ApprovalQueue extends EventEmitter {
     }
 
     return {
-      chainCount: Array.from(this.chains.values()).filter(c => c instanceof ApprovalChain).length,
+      chainCount: Array.from(this.chains.values()).filter((c) => c instanceof ApprovalChain).length,
       pendingCount: pending.length,
       byDomain,
       historyByStatus: byStatus,
-      recentHistory: this.history.slice(-5).map(r => r.toJSON())
+      recentHistory: this.history.slice(-5).map((r) => r.toJSON()),
     };
   }
 
@@ -973,7 +972,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 1000,
         timeout: 0,
-        timeoutAction: 'auto_approve'
+        timeoutAction: 'auto_approve',
       },
       {
         level: 2,
@@ -983,7 +982,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 5000,
         timeout: 3600000, // 1 hour
-        timeoutAction: 'escalate'
+        timeoutAction: 'escalate',
       },
       {
         level: 3,
@@ -993,7 +992,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: null, // Unlimited
         timeout: 86400000, // 24 hours
-        timeoutAction: 'escalate'
+        timeoutAction: 'escalate',
       },
       {
         level: 4,
@@ -1002,9 +1001,9 @@ export const ApprovalChainTemplates = {
         approvers: ['cfo', 'ceo'],
         requiredApprovals: 1,
         timeout: 172800000, // 48 hours
-        timeoutAction: 'auto_reject'
-      }
-    ]
+        timeoutAction: 'auto_reject',
+      },
+    ],
   },
 
   // Return approval
@@ -1020,7 +1019,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 100,
         timeout: 0,
-        timeoutAction: 'auto_approve'
+        timeoutAction: 'auto_approve',
       },
       {
         level: 2,
@@ -1029,7 +1028,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 500,
         timeout: 14400000, // 4 hours
-        timeoutAction: 'auto_approve'
+        timeoutAction: 'auto_approve',
       },
       {
         level: 3,
@@ -1037,9 +1036,9 @@ export const ApprovalChainTemplates = {
         approvers: ['cs_manager'],
         requiredApprovals: 1,
         timeout: 86400000, // 24 hours
-        timeoutAction: 'escalate'
-      }
-    ]
+        timeoutAction: 'escalate',
+      },
+    ],
   },
 
   // Purchase order approval
@@ -1055,7 +1054,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 5000,
         timeout: 86400000,
-        timeoutAction: 'escalate'
+        timeoutAction: 'escalate',
       },
       {
         level: 2,
@@ -1064,7 +1063,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 25000,
         timeout: 172800000,
-        timeoutAction: 'escalate'
+        timeoutAction: 'escalate',
       },
       {
         level: 3,
@@ -1073,7 +1072,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 100000,
         timeout: 259200000, // 3 days
-        timeoutAction: 'escalate'
+        timeoutAction: 'escalate',
       },
       {
         level: 4,
@@ -1081,9 +1080,9 @@ export const ApprovalChainTemplates = {
         approvers: ['cfo'],
         requiredApprovals: 1,
         timeout: 604800000, // 7 days
-        timeoutAction: 'auto_reject'
-      }
-    ]
+        timeoutAction: 'auto_reject',
+      },
+    ],
   },
 
   // Refund approval
@@ -1099,7 +1098,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 50,
         timeout: 0,
-        timeoutAction: 'auto_approve'
+        timeoutAction: 'auto_approve',
       },
       {
         level: 2,
@@ -1108,7 +1107,7 @@ export const ApprovalChainTemplates = {
         requiredApprovals: 1,
         canApproveAmount: 200,
         timeout: 7200000, // 2 hours
-        timeoutAction: 'auto_approve'
+        timeoutAction: 'auto_approve',
       },
       {
         level: 3,
@@ -1116,10 +1115,10 @@ export const ApprovalChainTemplates = {
         approvers: ['cs_supervisor', 'finance_analyst'],
         requiredApprovals: 1,
         timeout: 86400000,
-        timeoutAction: 'escalate'
-      }
-    ]
-  }
+        timeoutAction: 'escalate',
+      },
+    ],
+  },
 };
 
 export default ApprovalQueue;

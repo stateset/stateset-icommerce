@@ -13,7 +13,7 @@ import * as readline from 'node:readline';
 function createInterface() {
   return readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 }
 
@@ -100,7 +100,7 @@ export async function select(question, choices) {
         return `Please enter a number between 1 and ${choices.length}`;
       }
       return true;
-    }
+    },
   });
 
   const index = parseInt(answer, 10) - 1;
@@ -128,7 +128,7 @@ export async function promptSchema(schema) {
         default: field.default,
         required: field.required,
         validate: field.validate,
-        transform: field.type === 'number' ? (v) => parseFloat(v) : undefined
+        transform: field.type === 'number' ? (v) => parseFloat(v) : undefined,
       });
     }
   }
@@ -145,14 +145,16 @@ export const InteractivePrompts = {
    */
   async customer(partial = {}) {
     return {
-      email: partial.email || await prompt('Customer email', {
-        required: true,
-        validate: (v) => v.includes('@') || 'Please enter a valid email'
-      }),
-      firstName: partial.firstName || await prompt('First name', { required: true }),
-      lastName: partial.lastName || await prompt('Last name', { required: true }),
-      phone: partial.phone || await prompt('Phone (optional)'),
-      acceptsMarketing: partial.acceptsMarketing ?? await confirm('Accepts marketing?', false)
+      email:
+        partial.email ||
+        (await prompt('Customer email', {
+          required: true,
+          validate: (v) => v.includes('@') || 'Please enter a valid email',
+        })),
+      firstName: partial.firstName || (await prompt('First name', { required: true })),
+      lastName: partial.lastName || (await prompt('Last name', { required: true })),
+      phone: partial.phone || (await prompt('Phone (optional)')),
+      acceptsMarketing: partial.acceptsMarketing ?? (await confirm('Accepts marketing?', false)),
     };
   },
 
@@ -177,11 +179,11 @@ export const InteractivePrompts = {
         const name = await prompt('  Product name', { required: true });
         const quantity = await prompt('  Quantity', {
           default: '1',
-          transform: (v) => parseInt(v, 10)
+          transform: (v) => parseInt(v, 10),
         });
         const unitPrice = await prompt('  Unit price', {
           required: true,
-          transform: (v) => parseFloat(v)
+          transform: (v) => parseFloat(v),
         });
 
         result.items.push({ sku, name, quantity, unitPrice });
@@ -189,7 +191,7 @@ export const InteractivePrompts = {
       }
     }
 
-    result.currency = partial.currency || await prompt('Currency', { default: 'USD' });
+    result.currency = partial.currency || (await prompt('Currency', { default: 'USD' }));
 
     return result;
   },
@@ -199,13 +201,15 @@ export const InteractivePrompts = {
    */
   async inventoryAdjust(partial = {}) {
     return {
-      sku: partial.sku || await prompt('SKU', { required: true }),
-      quantity: partial.quantity ?? await prompt('Adjustment quantity (+/-)', {
-        required: true,
-        transform: (v) => parseInt(v, 10),
-        validate: (v) => !isNaN(v) || 'Please enter a valid number'
-      }),
-      reason: partial.reason || await prompt('Reason for adjustment', { required: true })
+      sku: partial.sku || (await prompt('SKU', { required: true })),
+      quantity:
+        partial.quantity ??
+        (await prompt('Adjustment quantity (+/-)', {
+          required: true,
+          transform: (v) => parseInt(v, 10),
+          validate: (v) => !isNaN(v) || 'Please enter a valid number',
+        })),
+      reason: partial.reason || (await prompt('Reason for adjustment', { required: true })),
     };
   },
 
@@ -218,13 +222,13 @@ export const InteractivePrompts = {
       { value: 'wrong_item', label: 'Wrong item received' },
       { value: 'not_as_described', label: 'Not as described' },
       { value: 'no_longer_needed', label: 'No longer needed' },
-      { value: 'other', label: 'Other' }
+      { value: 'other', label: 'Other' },
     ];
 
     return {
-      orderId: partial.orderId || await prompt('Order ID', { required: true }),
-      reason: partial.reason || await select('Return reason', reasons),
-      items: partial.items || [] // Could add interactive item selection
+      orderId: partial.orderId || (await prompt('Order ID', { required: true })),
+      reason: partial.reason || (await select('Return reason', reasons)),
+      items: partial.items || [], // Could add interactive item selection
     };
   },
 
@@ -251,7 +255,7 @@ export const InteractivePrompts = {
 
     const confirmation = await prompt('Type the identifier to confirm');
     return confirmation === identifier;
-  }
+  },
 };
 
 /**
@@ -284,5 +288,5 @@ export default {
   promptSchema,
   InteractivePrompts,
   isInteractive,
-  interactiveOr
+  interactiveOr,
 };

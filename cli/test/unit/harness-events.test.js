@@ -4,8 +4,32 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { existsSync, unlinkSync } from 'node:fs';
 import { runAgentLoop } from '../../src/claude-harness.js';
 import { ModelProvider, resetProviderRegistry, getProviderRegistry } from '../../src/providers/base.js';
+
+function newDbPath() {
+  return join(
+    tmpdir(),
+    `stateset-harness-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.db`,
+  );
+}
+
+function cleanupDb(dbPath) {
+  if (!dbPath) return;
+  for (const suffix of ['', '-wal', '-shm']) {
+    const path = `${dbPath}${suffix}`;
+    if (existsSync(path)) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
+}
 
 class MockProvider extends ModelProvider {
   constructor() {
@@ -44,12 +68,13 @@ describe('runAgentLoop (non-Claude) enhancements', () => {
   it('applies transformContext and emits lifecycle events', async () => {
     const events = [];
     const controller = new AbortController();
+    const dbPath = newDbPath();
 
     const result = await runAgentLoop({
       request: 'What is the status?',
       provider: 'mock',
       model: 'mock-model',
-      dbPath: '/tmp/stateset-harness-test.db',
+      dbPath,
       enableSync: false,
       enableMemory: false,
       conversationHistory: [{ role: 'user', content: 'OLD' }],
@@ -87,5 +112,7 @@ describe('runAgentLoop (non-Claude) enhancements', () => {
     for (const type of expected) {
       assert.ok(events.includes(type), `expected event: ${type}`);
     }
+
+    cleanupDb(dbPath);
   });
 });

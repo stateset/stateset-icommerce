@@ -13,7 +13,8 @@ import { z } from 'zod';
 export const customerTools = [
   {
     name: 'list_customers',
-    description: 'List all customers in the database. Returns customer details including email, name, and status.',
+    description:
+      'List all customers in the database. Returns customer details including email, name, and status.',
     inputSchema: {},
     permission: 'read',
     handler: async ({ commerce }) => {
@@ -23,23 +24,23 @@ export const customerTools = [
       return {
         success: true,
         count,
-        customers: customers.map(c => ({
+        customers: customers.map((c) => ({
           id: c.id,
           email: c.email,
           name: `${c.firstName} ${c.lastName}`,
           status: c.status,
           acceptsMarketing: c.acceptsMarketing,
-          createdAt: c.createdAt
-        }))
+          createdAt: c.createdAt,
+        })),
       };
-    }
+    },
   },
 
   {
     name: 'get_customer',
     description: 'Get a specific customer by ID or email address.',
     inputSchema: {
-      identifier: z.string().describe('Customer ID (UUID) or email address')
+      identifier: z.string().describe('Customer ID (UUID) or email address'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -67,10 +68,10 @@ export const customerTools = [
           status: customer.status,
           acceptsMarketing: customer.acceptsMarketing,
           createdAt: customer.createdAt,
-          updatedAt: customer.updatedAt
-        }
+          updatedAt: customer.updatedAt,
+        },
       };
-    }
+    },
   },
 
   {
@@ -81,7 +82,11 @@ export const customerTools = [
       firstName: z.string().describe('Customer first name'),
       lastName: z.string().describe('Customer last name'),
       phone: z.string().optional().describe('Customer phone number'),
-      acceptsMarketing: z.boolean().optional().default(false).describe('Whether customer accepts marketing')
+      acceptsMarketing: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Whether customer accepts marketing'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -89,7 +94,7 @@ export const customerTools = [
         return {
           error: 'Create operation not allowed. The --apply flag must be set to create customers.',
           hint: 'Run with --apply to enable write operations.',
-          wouldCreate: params
+          wouldCreate: params,
         };
       }
 
@@ -101,11 +106,11 @@ export const customerTools = [
         customer: {
           id: customer.id,
           email: customer.email,
-          name: `${customer.firstName} ${customer.lastName}`
-        }
+          name: `${customer.firstName} ${customer.lastName}`,
+        },
       };
-    }
-  }
+    },
+  },
 ];
 
 /**
@@ -119,7 +124,7 @@ export function getCustomerTools() {
  * Get customer tool by name
  */
 export function getCustomerTool(name) {
-  return customerTools.find(t => t.name === name);
+  return customerTools.find((t) => t.name === name);
 }
 
 export default customerTools;

@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::{postgres::PgPool, FromRow, Row};
 use stateset_core::{
-    BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter,
-    InvoiceItem, InvoiceRepository, InvoiceStatus, InvoiceType, RecordInvoicePayment, Result,
-    UpdateInvoice, generate_invoice_number, validate_batch_size,
+    generate_invoice_number, validate_batch_size, BatchResult, CommerceError, CreateInvoice,
+    CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
+    InvoiceType, RecordInvoicePayment, Result, UpdateInvoice,
 };
 use uuid::Uuid;
 
@@ -157,13 +157,12 @@ impl PgInvoiceRepository {
     }
 
     async fn get_invoice_items_async(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        let rows: Vec<InvoiceItemRow> = sqlx::query_as(
-            "SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order",
-        )
-        .bind(invoice_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let rows: Vec<InvoiceItemRow> =
+            sqlx::query_as("SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order")
+                .bind(invoice_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
@@ -560,12 +559,11 @@ impl PgInvoiceRepository {
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
         // Check status first
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let status: String = sqlx::query_scalar("SELECT status FROM invoices WHERE id = $1")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid invoice.status '{}': {}", status, e))
@@ -745,8 +743,7 @@ impl PgInvoiceRepository {
     ) -> Result<InvoiceItem> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let line_total = item.quantity * item.unit_price
-            - item.discount_amount.unwrap_or_default()
+        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
 
         sqlx::query(
@@ -790,8 +787,7 @@ impl PgInvoiceRepository {
         item: CreateInvoiceItem,
     ) -> Result<InvoiceItem> {
         let now = Utc::now();
-        let line_total = item.quantity * item.unit_price
-            - item.discount_amount.unwrap_or_default()
+        let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
 
         sqlx::query(
@@ -1192,9 +1188,13 @@ impl PgInvoiceRepository {
             .await
             .map_err(map_db_error)?;
 
-            let discount_amount = input.discount_amount.unwrap_or(existing_row.discount_amount);
+            let discount_amount = input
+                .discount_amount
+                .unwrap_or(existing_row.discount_amount);
             let tax_amount = input.tax_amount.unwrap_or(existing_row.tax_amount);
-            let shipping_amount = input.shipping_amount.unwrap_or(existing_row.shipping_amount);
+            let shipping_amount = input
+                .shipping_amount
+                .unwrap_or(existing_row.shipping_amount);
             let total = subtotal - discount_amount + tax_amount + shipping_amount;
 
             // Get current amount_paid to calculate balance
@@ -1246,13 +1246,12 @@ impl PgInvoiceRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         // Verify all invoices are in draft status before deleting
-        let statuses: Vec<(Uuid, String)> = sqlx::query_as(
-            "SELECT id, status FROM invoices WHERE id = ANY($1)",
-        )
-        .bind(&ids)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let statuses: Vec<(Uuid, String)> =
+            sqlx::query_as("SELECT id, status FROM invoices WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         for (id, status) in &statuses {
             let parsed_status: InvoiceStatus = status.parse().map_err(|e| {
@@ -1288,12 +1287,11 @@ impl PgInvoiceRepository {
     pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<Invoice>> {
         validate_batch_size(&ids)?;
 
-        let rows: Vec<InvoiceRow> =
-            sqlx::query_as("SELECT * FROM invoices WHERE id = ANY($1)")
-                .bind(&ids)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let rows: Vec<InvoiceRow> = sqlx::query_as("SELECT * FROM invoices WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         let mut invoices = Vec::with_capacity(rows.len());
         for row in rows {

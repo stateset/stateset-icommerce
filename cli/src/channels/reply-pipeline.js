@@ -69,7 +69,7 @@ function hashText(text) {
   let hash = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text.charCodeAt(i);
-    hash = ((hash << 5) - hash) + ch;
+    hash = (hash << 5) - hash + ch;
     hash = hash & hash; // Convert to 32-bit integer
   }
   return hash.toString(36);
@@ -88,7 +88,8 @@ export class ReplyPipeline {
     this._sendFnStyle = !opts.onBlockReply && !!opts.sendFn;
     this._bufferMs = opts.bufferMs ?? (opts.buffer?.enabled ? (opts.buffer.ms ?? 200) : 0);
     this._timeoutMs = opts.timeoutMs ?? 30000;
-    this._rateLimitMs = opts.rateLimitMs ?? (opts.rateLimit?.enabled ? (opts.rateLimit.ms ?? 100) : 0);
+    this._rateLimitMs =
+      opts.rateLimitMs ?? (opts.rateLimit?.enabled ? (opts.rateLimit.ms ?? 100) : 0);
     this._coalescing = opts.coalescing || null;
 
     // Dedup config: accept boolean, object { enabled, windowMs }, or default
@@ -268,11 +269,14 @@ export class ReplyPipeline {
         ? this._coalescing.coalescer(texts)
         : texts.join(separator);
 
-      await this._sendWithRateLimit({
-        targetId,
-        text: coalesced,
-        richMessage: payloads[payloads.length - 1].richMessage,
-      }, opts);
+      await this._sendWithRateLimit(
+        {
+          targetId,
+          text: coalesced,
+          richMessage: payloads[payloads.length - 1].richMessage,
+        },
+        opts,
+      );
     } else {
       // Send individually
       for (const payload of payloads) {
@@ -492,9 +496,7 @@ class StreamSession {
     const separator = this._pipeline._coalescing?.separator || '';
     const coalescer = this._pipeline._coalescing?.coalescer;
 
-    const text = coalescer
-      ? coalescer(this._chunks)
-      : this._chunks.join(separator);
+    const text = coalescer ? coalescer(this._chunks) : this._chunks.join(separator);
 
     this._chunks = [];
     return text;

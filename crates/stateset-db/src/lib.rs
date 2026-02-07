@@ -49,17 +49,17 @@ pub use sqlite::SqliteDatabase;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;
 
-
 use stateset_core::{
-    AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository, AnalyticsRepository,
-    BackorderRepository, BomRepository, CartRepository, CostAccountingRepository, CreditRepository,
-    CurrencyRepository, CustomerRepository, FulfillmentRepository, GeneralLedgerRepository,
-    InventoryRepository, InvoiceRepository, LotRepository, OrderRepository, PaymentRepository,
-    ProductRepository, PromotionRepository, PurchaseOrderRepository, QualityRepository,
-    ReceivingRepository, Result, ReturnRepository, SerialRepository, ShipmentRepository,
-    SubscriptionRepository, TaxRepository, WarehouseRepository, WarrantyRepository,
-    WorkOrderRepository, X402PaymentIntentRepository, X402CreditRepository,
+    AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository,
     AgentIdentityRepository, AgentReputationRepository, AgentValidationRepository,
+    AnalyticsRepository, BackorderRepository, BomRepository, CartRepository,
+    CostAccountingRepository, CreditRepository, CurrencyRepository, CustomerRepository,
+    FulfillmentRepository, GeneralLedgerRepository, InventoryRepository, InvoiceRepository,
+    LotRepository, OrderRepository, PaymentRepository, ProductRepository, PromotionRepository,
+    PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result, ReturnRepository,
+    SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
+    WarehouseRepository, WarrantyRepository, WorkOrderRepository, X402CreditRepository,
+    X402PaymentIntentRepository,
 };
 
 // ============================================================================
@@ -295,7 +295,11 @@ pub trait AsyncDatabaseExt {
         T: Send;
 
     /// Execute an async closure within a transaction with custom options.
-    async fn with_transaction_async_opts<F, T, Fut>(&self, opts: TransactionOptions, f: F) -> Result<T>
+    async fn with_transaction_async_opts<F, T, Fut>(
+        &self,
+        opts: TransactionOptions,
+        f: F,
+    ) -> Result<T>
     where
         F: FnOnce(sqlx::Transaction<'static, sqlx::Postgres>) -> Fut + Send,
         Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>> + Send,

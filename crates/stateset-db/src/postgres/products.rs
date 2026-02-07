@@ -148,13 +148,19 @@ impl PgProductRepository {
     pub async fn create_async(&self, input: CreateProduct) -> Result<Product> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
+        let slug = input
+            .slug
+            .clone()
+            .unwrap_or_else(|| Product::generate_slug(&input.name));
         let description = input.description.clone().unwrap_or_default();
         let product_type = input.product_type.unwrap_or_default();
         let attributes = input.attributes.clone().unwrap_or_default();
 
         let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
-        let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+        let seo_json = input
+            .seo
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or_default());
 
         sqlx::query(
             r#"
@@ -240,7 +246,9 @@ impl PgProductRepository {
         let new_seo = input.seo.or(existing.seo);
 
         let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-        let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+        let seo_json = new_seo
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or_default());
 
         let result = sqlx::query(
             r#"
@@ -270,7 +278,9 @@ impl PgProductRepository {
             });
         }
 
-        self.get_async(id).await?.ok_or(CommerceError::ProductNotFound(id))
+        self.get_async(id)
+            .await?
+            .ok_or(CommerceError::ProductNotFound(id))
     }
 
     /// List products (async)
@@ -481,15 +491,17 @@ impl PgProductRepository {
         input: CreateProductVariant,
     ) -> Result<ProductVariant> {
         let now = Utc::now();
-        let current_version: i32 = sqlx::query_scalar("SELECT version FROM product_variants WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| match e {
-                sqlx::Error::RowNotFound => CommerceError::ProductVariantNotFound(id),
-                e => map_db_error(e),
-            })?;
-        let options_json = serde_json::to_value(&input.options.clone().unwrap_or_default()).unwrap_or_default();
+        let current_version: i32 =
+            sqlx::query_scalar("SELECT version FROM product_variants WHERE id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| match e {
+                    sqlx::Error::RowNotFound => CommerceError::ProductVariantNotFound(id),
+                    e => map_db_error(e),
+                })?;
+        let options_json =
+            serde_json::to_value(&input.options.clone().unwrap_or_default()).unwrap_or_default();
 
         let result = sqlx::query(
             r#"
@@ -644,7 +656,10 @@ impl PgProductRepository {
     // === Batch Operations (async) ===
 
     /// Create multiple products - partial success allowed (async)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateProduct>) -> Result<BatchResult<Product>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateProduct>,
+    ) -> Result<BatchResult<Product>> {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
@@ -659,7 +674,10 @@ impl PgProductRepository {
     }
 
     /// Create multiple products - atomic (all-or-nothing) (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateProduct>) -> Result<Vec<Product>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateProduct>,
+    ) -> Result<Vec<Product>> {
         validate_batch_size(&inputs)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut products = Vec::with_capacity(inputs.len());
@@ -667,13 +685,19 @@ impl PgProductRepository {
         for input in inputs {
             let id = Uuid::new_v4();
             let now = Utc::now();
-            let slug = input.slug.clone().unwrap_or_else(|| Product::generate_slug(&input.name));
+            let slug = input
+                .slug
+                .clone()
+                .unwrap_or_else(|| Product::generate_slug(&input.name));
             let description = input.description.clone().unwrap_or_default();
             let product_type = input.product_type.unwrap_or_default();
             let attributes = input.attributes.clone().unwrap_or_default();
 
             let attributes_json = serde_json::to_value(&attributes).unwrap_or_default();
-            let seo_json = input.seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+            let seo_json = input
+                .seo
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or_default());
 
             sqlx::query(
                 r#"
@@ -750,7 +774,10 @@ impl PgProductRepository {
     }
 
     /// Update multiple products - partial success allowed (async)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<BatchResult<Product>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateProduct)>,
+    ) -> Result<BatchResult<Product>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -765,7 +792,10 @@ impl PgProductRepository {
     }
 
     /// Update multiple products - atomic (all-or-nothing) (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateProduct)>) -> Result<Vec<Product>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateProduct)>,
+    ) -> Result<Vec<Product>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut products = Vec::with_capacity(updates.len());
@@ -773,12 +803,13 @@ impl PgProductRepository {
         for (id, input) in updates {
             let now = Utc::now();
 
-            let existing_row = sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
-                .bind(id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or(CommerceError::ProductNotFound(id))?;
+            let existing_row =
+                sqlx::query_as::<_, ProductRow>("SELECT * FROM products WHERE id = $1 FOR UPDATE")
+                    .bind(id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?
+                    .ok_or(CommerceError::ProductNotFound(id))?;
             let current_version = existing_row.version;
             let existing = Self::row_to_product(existing_row)?;
 
@@ -790,7 +821,9 @@ impl PgProductRepository {
             let new_seo = input.seo.or(existing.seo);
 
             let attributes_json = serde_json::to_value(&new_attributes).unwrap_or_default();
-            let seo_json = new_seo.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+            let seo_json = new_seo
+                .as_ref()
+                .map(|s| serde_json::to_value(s).unwrap_or_default());
 
             let result = sqlx::query(
                 r#"
@@ -921,7 +954,11 @@ impl ProductRepository for PgProductRepository {
         super::block_on(self.delete_async(id))
     }
 
-    fn add_variant(&self, product_id: Uuid, variant: CreateProductVariant) -> Result<ProductVariant> {
+    fn add_variant(
+        &self,
+        product_id: Uuid,
+        variant: CreateProductVariant,
+    ) -> Result<ProductVariant> {
         super::block_on(self.add_variant_public_async(product_id, variant))
     }
 

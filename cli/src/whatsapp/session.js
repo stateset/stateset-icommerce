@@ -5,7 +5,6 @@
  * and credential persistence. Modeled after moltbot's session handling.
  */
 
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {

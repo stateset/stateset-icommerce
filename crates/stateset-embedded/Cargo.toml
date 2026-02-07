@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+autobenches = false
 
 [dependencies]
 stateset-core = { workspace = true }
@@ -25,8 +26,10 @@ opentelemetry-otlp = { version = "0.16", optional = true }
 opentelemetry_sdk = { version = "0.23", features = ["rt-tokio"], optional = true }
 tracing-opentelemetry = { version = "0.24", optional = true }
 metrics = "0.23"
-prometheus = { version = "0.13", optional = true }
-sqlx = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+# This is only used when the `postgres` feature is enabled (for the async event store).
+# Keep it lean and avoid SQLx default features (notably `any`).
+sqlx = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio", "postgres", "json", "uuid", "chrono", "rust_decimal", "tls-none"] }
 
 # Event streaming dependencies
 reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
@@ -35,9 +38,9 @@ sha2 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 
 # SQLite event store
-r2d2 = { version = "0.8", optional = true }
-r2d2_sqlite = { version = "0.24", optional = true }
-rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+r2d2 = { workspace = true, optional = true }
+r2d2_sqlite = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
 
 [features]
 default = ["sqlite", "events"]
@@ -57,6 +60,10 @@ proptest = "1.4"
 
 [[bench]]
 name = "api_benchmarks"
+harness = false
+
+[[bench]]
+name = "performance_benchmarks"
 harness = false
 
 [[example]]

@@ -11,7 +11,7 @@ import {
   bufferToHex,
   hexToBuffer,
   signEventHash,
-  verifyEventSignature
+  verifyEventSignature,
 } from '../sync/crypto.js';
 
 export const X402_DOMAIN_SEPARATOR = 'X402_PAYMENT_V1';

@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
-    AgentValidationRepository, AgentValidationRequest, AgentValidationResponse, AgentValidationStatus,
-    CommerceError, CreateAgentValidationRequest, CreateAgentValidationResponse, Result,
-    ValidationSummary,
+    AgentValidationRepository, AgentValidationRequest, AgentValidationResponse,
+    AgentValidationStatus, CommerceError, CreateAgentValidationRequest,
+    CreateAgentValidationResponse, Result, ValidationSummary,
 };
 use uuid::Uuid;
 
@@ -74,7 +74,10 @@ impl PgAgentValidationRepository {
 }
 
 impl AgentValidationRepository for PgAgentValidationRepository {
-    fn request_validation(&self, input: CreateAgentValidationRequest) -> Result<AgentValidationRequest> {
+    fn request_validation(
+        &self,
+        input: CreateAgentValidationRequest,
+    ) -> Result<AgentValidationRequest> {
         let pool = self.pool.clone();
         block_on(async move {
             let now = Utc::now();
@@ -230,7 +233,10 @@ impl AgentValidationRepository for PgAgentValidationRepository {
 
             if let Some(validators) = validator_addresses {
                 if !validators.is_empty() {
-                    builder.push(" AND validator_address = ANY(").push_bind(validators).push(")");
+                    builder
+                        .push(" AND validator_address = ANY(")
+                        .push_bind(validators)
+                        .push(")");
                 }
             }
 

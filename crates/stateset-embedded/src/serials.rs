@@ -25,10 +25,10 @@
 //! ```
 
 use stateset_core::{
-    BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk,
-    MoveSerial, ReserveSerialNumber, Result, SerialFilter, SerialHistory,
-    SerialHistoryFilter, SerialLookupResult, SerialNumber, SerialReservation,
-    SerialValidation, TransferSerialOwnership, UpdateSerialNumber,
+    BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, MoveSerial,
+    ReserveSerialNumber, Result, SerialFilter, SerialHistory, SerialHistoryFilter,
+    SerialLookupResult, SerialNumber, SerialReservation, SerialValidation, TransferSerialOwnership,
+    UpdateSerialNumber,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -163,7 +163,12 @@ impl Serials {
     }
 
     /// Mark a serial as sold.
-    pub fn mark_sold(&self, id: Uuid, customer_id: Uuid, order_id: Option<Uuid>) -> Result<SerialNumber> {
+    pub fn mark_sold(
+        &self,
+        id: Uuid,
+        customer_id: Uuid,
+        order_id: Option<Uuid>,
+    ) -> Result<SerialNumber> {
         self.db.serials().mark_sold(id, customer_id, order_id)
     }
 
@@ -296,7 +301,11 @@ impl Serials {
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn get_history(&self, serial_id: Uuid, filter: SerialHistoryFilter) -> Result<Vec<SerialHistory>> {
+    pub fn get_history(
+        &self,
+        serial_id: Uuid,
+        filter: SerialHistoryFilter,
+    ) -> Result<Vec<SerialHistory>> {
         self.db.serials().get_history(serial_id, filter)
     }
 
@@ -361,7 +370,10 @@ impl Serials {
     // ========================================================================
 
     /// Create multiple serials with partial success handling.
-    pub fn create_batch(&self, inputs: Vec<CreateSerialNumber>) -> Result<BatchResult<SerialNumber>> {
+    pub fn create_batch(
+        &self,
+        inputs: Vec<CreateSerialNumber>,
+    ) -> Result<BatchResult<SerialNumber>> {
         self.db.serials().create_batch(inputs)
     }
 

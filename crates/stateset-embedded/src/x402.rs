@@ -46,11 +46,10 @@
 //! ```
 
 use stateset_core::{
-    AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent,
-    Result, SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset,
-    X402CreditAccount, X402CreditAdjustment, X402CreditDirection, X402CreditTransaction,
-    X402CreditTransactionFilter, X402IntentStatus, X402Network, X402PaymentIntent,
-    X402PaymentIntentFilter,
+    AgentCard, AgentCardFilter, CreateAgentCard, CreateX402PaymentIntent, Result,
+    SignX402PaymentIntent, TrustLevel, UpdateAgentCard, X402Asset, X402CreditAccount,
+    X402CreditAdjustment, X402CreditDirection, X402CreditTransaction, X402CreditTransactionFilter,
+    X402IntentStatus, X402Network, X402PaymentIntent, X402PaymentIntentFilter,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -114,11 +113,7 @@ impl X402 {
     ///     public_key: base64::encode(&public_key_bytes),
     /// })?;
     /// ```
-    pub fn sign_intent(
-        &self,
-        id: Uuid,
-        input: SignX402PaymentIntent,
-    ) -> Result<X402PaymentIntent> {
+    pub fn sign_intent(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.db.x402_payment_intents().sign(id, input)
     }
 
@@ -254,7 +249,9 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<Option<X402CreditAccount>> {
-        self.db.x402_credits().get_account(payer_address, asset, network)
+        self.db
+            .x402_credits()
+            .get_account(payer_address, asset, network)
     }
 
     /// Get or create a credit account (balance default = 0)
@@ -264,7 +261,9 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<X402CreditAccount> {
-        self.db.x402_credits().get_or_create_account(payer_address, asset, network)
+        self.db
+            .x402_credits()
+            .get_or_create_account(payer_address, asset, network)
     }
 
     /// Get current credit balance for a payer/asset/network
@@ -274,7 +273,9 @@ impl X402 {
         asset: X402Asset,
         network: X402Network,
     ) -> Result<u64> {
-        self.db.x402_credits().get_balance(payer_address, asset, network)
+        self.db
+            .x402_credits()
+            .get_balance(payer_address, asset, network)
     }
 
     /// Apply a credit or debit adjustment
@@ -286,6 +287,7 @@ impl X402 {
     }
 
     /// Credit an account (increase balance)
+    #[allow(clippy::too_many_arguments)]
     pub fn credit_account(
         &self,
         payer_address: &str,
@@ -309,6 +311,7 @@ impl X402 {
     }
 
     /// Debit an account (decrease balance)
+    #[allow(clippy::too_many_arguments)]
     pub fn debit_account(
         &self,
         payer_address: &str,
@@ -402,7 +405,9 @@ impl X402 {
     ///
     /// Upgrades the agent's trust level to `Verified`.
     pub fn verify_agent(&self, id: Uuid) -> Result<AgentCard> {
-        self.db.agent_cards().verify(id, TrustLevel::Verified, "system")
+        self.db
+            .agent_cards()
+            .verify(id, TrustLevel::Verified, "system")
     }
 
     /// Suspend an agent card

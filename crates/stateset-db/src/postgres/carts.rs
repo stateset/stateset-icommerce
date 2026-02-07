@@ -315,13 +315,12 @@ impl PgCartRepository {
 
     async fn update_cart_totals_async(&self, cart_id: Uuid) -> Result<()> {
         // Calculate subtotal from items
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let subtotal: Decimal =
+            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
+                .bind(cart_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         // Get current tax, shipping, and discount
         let row: (Decimal, Decimal, Decimal) = sqlx::query_as(
@@ -498,13 +497,12 @@ impl PgCartRepository {
         }
 
         // Update totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let subtotal: Decimal =
+            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         sqlx::query("UPDATE carts SET subtotal = $1, grand_total = $2 WHERE id = $3")
             .bind(subtotal)
@@ -530,7 +528,8 @@ impl PgCartRepository {
         let item_id = Uuid::new_v4();
         let now = Utc::now();
         let requires_shipping = item.requires_shipping.unwrap_or(true);
-        let total = CartItem::calculate_total(item.quantity, item.unit_price, Decimal::ZERO, Decimal::ZERO);
+        let total =
+            CartItem::calculate_total(item.quantity, item.unit_price, Decimal::ZERO, Decimal::ZERO);
         let metadata_json = item.metadata.clone();
 
         sqlx::query(
@@ -634,8 +633,18 @@ impl PgCartRepository {
         .bind(&input.customer_email)
         .bind(&input.customer_phone)
         .bind(&input.customer_name)
-        .bind(input.shipping_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default()))
-        .bind(input.billing_address.as_ref().map(|a| serde_json::to_value(a).unwrap_or_default()))
+        .bind(
+            input
+                .shipping_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default()),
+        )
+        .bind(
+            input
+                .billing_address
+                .as_ref()
+                .map(|a| serde_json::to_value(a).unwrap_or_default()),
+        )
         .bind(input.billing_same_as_shipping)
         .bind(input.fulfillment_type.map(|f| f.to_string()))
         .bind(&input.shipping_method)
@@ -770,13 +779,12 @@ impl PgCartRepository {
         let result = self.add_item_internal(&mut tx, cart_id, item).await?;
 
         // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let subtotal: Decimal =
+            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
+                .bind(cart_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
@@ -804,7 +812,11 @@ impl PgCartRepository {
         Ok(result)
     }
 
-    pub async fn update_item_async(&self, item_id: Uuid, input: UpdateCartItem) -> Result<CartItem> {
+    pub async fn update_item_async(
+        &self,
+        item_id: Uuid,
+        input: UpdateCartItem,
+    ) -> Result<CartItem> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
@@ -835,13 +847,15 @@ impl PgCartRepository {
                 .map_err(map_db_error)?;
         }
         if let Some(discount) = input.discount_amount {
-            sqlx::query("UPDATE cart_items SET discount_amount = $1, updated_at = $2 WHERE id = $3")
-                .bind(discount)
-                .bind(now)
-                .bind(item_id)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
+            sqlx::query(
+                "UPDATE cart_items SET discount_amount = $1, updated_at = $2 WHERE id = $3",
+            )
+            .bind(discount)
+            .bind(now)
+            .bind(item_id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
         }
         if let Some(meta) = &input.metadata {
             sqlx::query("UPDATE cart_items SET metadata = $1, updated_at = $2 WHERE id = $3")
@@ -872,13 +886,12 @@ impl PgCartRepository {
             .map_err(map_db_error)?;
 
         // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let subtotal: Decimal =
+            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
+                .bind(cart_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         let (cart_tax, shipping, discount_cart): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
@@ -930,13 +943,12 @@ impl PgCartRepository {
             .map_err(map_db_error)?;
 
         // Update cart totals
-        let subtotal: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1",
-        )
-        .bind(cart_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let subtotal: Decimal =
+            sqlx::query_scalar("SELECT COALESCE(SUM(total), 0) FROM cart_items WHERE cart_id = $1")
+                .bind(cart_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
 
         let (tax, shipping, discount): (Decimal, Decimal, Decimal) = sqlx::query_as(
             "SELECT tax_amount, shipping_amount, discount_amount FROM carts WHERE id = $1",
@@ -1126,7 +1138,11 @@ impl PgCartRepository {
             .ok_or(CommerceError::NotFound)
     }
 
-    pub async fn set_x402_payment_async(&self, id: Uuid, payment: SetCartX402Payment) -> Result<Cart> {
+    pub async fn set_x402_payment_async(
+        &self,
+        id: Uuid,
+        payment: SetCartX402Payment,
+    ) -> Result<Cart> {
         sqlx::query(
             r#"UPDATE carts SET
                 x402_payer_address = $1, x402_network = $2, x402_asset = $3,
@@ -1228,16 +1244,18 @@ impl PgCartRepository {
         }
 
         let chain_id = x402_payment.network.chain_id();
-        Ok(X402CheckoutResult::PaymentRequired(X402PaymentRequiredData {
-            cart_id: id,
-            payee_address: payee_address.to_string(),
-            amount,
-            amount_display,
-            asset: x402_payment.asset,
-            network: x402_payment.network,
-            chain_id,
-            valid_seconds: 3600,
-        }))
+        Ok(X402CheckoutResult::PaymentRequired(
+            X402PaymentRequiredData {
+                cart_id: id,
+                payee_address: payee_address.to_string(),
+                amount,
+                amount_display,
+                asset: x402_payment.asset,
+                network: x402_payment.network,
+                chain_id,
+                valid_seconds: 3600,
+            },
+        ))
     }
 
     pub async fn apply_discount_async(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {

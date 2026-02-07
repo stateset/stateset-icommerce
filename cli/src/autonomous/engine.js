@@ -18,7 +18,7 @@ import path from 'path';
 import { Scheduler, JobTemplates } from '../workflows/scheduler.js';
 import { WorkflowEngine, WorkflowTemplates } from '../workflows/state-machine.js';
 import { PolicyEngine, PolicyTemplates } from '../policies/engine.js';
-import { WebhookServer, WebhookSourceTemplates, WebhookHandlerTemplates } from '../webhooks/server.js';
+import { WebhookServer, WebhookSourceTemplates } from '../webhooks/server.js';
 import { ApprovalQueue, ApprovalChainTemplates } from '../approvals/queue.js';
 
 /**
@@ -35,7 +35,7 @@ export class AutonomousEngine extends EventEmitter {
     enableScheduler = true,
     enableWorkflows = true,
     enablePolicies = true,
-    enableApprovals = true
+    enableApprovals = true,
   }) {
     super();
 
@@ -57,34 +57,44 @@ export class AutonomousEngine extends EventEmitter {
     this.heartbeat = null;
 
     // Initialize subsystems
-    this.scheduler = enableScheduler ? new Scheduler({
-      storePath: path.join(storePath, 'scheduler'),
-      executor: this.executeAction.bind(this)
-    }) : null;
+    this.scheduler = enableScheduler
+      ? new Scheduler({
+          storePath: path.join(storePath, 'scheduler'),
+          executor: this.executeAction.bind(this),
+        })
+      : null;
 
-    this.workflows = enableWorkflows ? new WorkflowEngine({
-      storePath: path.join(storePath, 'workflows'),
-      executor: this.executeAction.bind(this),
-      conditionEvaluator: this.evaluateCondition.bind(this)
-    }) : null;
+    this.workflows = enableWorkflows
+      ? new WorkflowEngine({
+          storePath: path.join(storePath, 'workflows'),
+          executor: this.executeAction.bind(this),
+          conditionEvaluator: this.evaluateCondition.bind(this),
+        })
+      : null;
 
-    this.policies = enablePolicies ? new PolicyEngine({
-      storePath: storePath,
-      executor: this.executeAction.bind(this)
-    }) : null;
+    this.policies = enablePolicies
+      ? new PolicyEngine({
+          storePath: storePath,
+          executor: this.executeAction.bind(this),
+        })
+      : null;
 
-    this.webhooks = enableWebhooks ? new WebhookServer({
-      port: webhookPort,
-      host: webhookHost,
-      storePath: path.join(storePath, 'webhooks'),
-      executor: this.executeAction.bind(this)
-    }) : null;
+    this.webhooks = enableWebhooks
+      ? new WebhookServer({
+          port: webhookPort,
+          host: webhookHost,
+          storePath: path.join(storePath, 'webhooks'),
+          executor: this.executeAction.bind(this),
+        })
+      : null;
 
-    this.approvals = enableApprovals ? new ApprovalQueue({
-      storePath: path.join(storePath, 'approvals'),
-      executor: this.executeAction.bind(this),
-      notifier: this.sendNotification.bind(this)
-    }) : null;
+    this.approvals = enableApprovals
+      ? new ApprovalQueue({
+          storePath: path.join(storePath, 'approvals'),
+          executor: this.executeAction.bind(this),
+          notifier: this.sendNotification.bind(this),
+        })
+      : null;
 
     this.isRunning = false;
     this._notifier = null;
@@ -102,7 +112,7 @@ export class AutonomousEngine extends EventEmitter {
       { name: 'workflows', instance: this.workflows },
       { name: 'policies', instance: this.policies },
       { name: 'webhooks', instance: this.webhooks },
-      { name: 'approvals', instance: this.approvals }
+      { name: 'approvals', instance: this.approvals },
     ];
 
     for (const { name, instance } of subsystems) {
@@ -309,7 +319,7 @@ export class AutonomousEngine extends EventEmitter {
 
     return this.approvals.createRequest({
       ...config,
-      context: { ...config.context, ...context }
+      context: { ...config.context, ...context },
     });
   }
 
@@ -364,41 +374,41 @@ export class AutonomousEngine extends EventEmitter {
   async initializeDefaults() {
     // Register default job templates
     if (this.scheduler) {
-      for (const [key, template] of Object.entries(JobTemplates)) {
+      for (const template of Object.values(JobTemplates)) {
         this.scheduler.addJob({
           ...template,
-          enabled: false // Disabled by default
+          enabled: false, // Disabled by default
         });
       }
     }
 
     // Register default workflow templates
     if (this.workflows) {
-      for (const [key, template] of Object.entries(WorkflowTemplates)) {
+      for (const template of Object.values(WorkflowTemplates)) {
         this.workflows.registerWorkflow(template);
       }
     }
 
     // Register default policy templates
     if (this.policies) {
-      for (const [key, template] of Object.entries(PolicyTemplates)) {
+      for (const template of Object.values(PolicyTemplates)) {
         this.policies.registerPolicySet(template);
       }
     }
 
     // Register default webhook sources
     if (this.webhooks) {
-      for (const [key, template] of Object.entries(WebhookSourceTemplates)) {
+      for (const template of Object.values(WebhookSourceTemplates)) {
         this.webhooks.registerSource({
           ...template,
-          enabled: false // Disabled by default
+          enabled: false, // Disabled by default
         });
       }
     }
 
     // Register default approval chains
     if (this.approvals) {
-      for (const [key, template] of Object.entries(ApprovalChainTemplates)) {
+      for (const template of Object.values(ApprovalChainTemplates)) {
         this.approvals.registerChain(template);
       }
     }
@@ -541,7 +551,7 @@ export class AutonomousEngine extends EventEmitter {
       return {
         allowed: false,
         reason: 'denied_by_policy',
-        policyResult
+        policyResult,
       };
     }
 
@@ -553,13 +563,13 @@ export class AutonomousEngine extends EventEmitter {
         allowed: false,
         reason: 'requires_approval',
         approvalCheck,
-        policyResult
+        policyResult,
       };
     }
 
     return {
       allowed: true,
-      policyResult
+      policyResult,
     };
   }
 }

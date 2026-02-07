@@ -13,10 +13,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { MemoryStore, getMemoryStore } from './store.js';
+import { getMemoryStore } from './store.js';
 
 // ============================================================================
 // Constants
@@ -95,7 +92,7 @@ function hashEmbed(text, dim = VECTOR_DIM) {
     const h = fnv1a(term);
     const bucket = h % dim;
     // Use second hash for sign to reduce collisions
-    const sign = (fnv1a(term + '\x00') & 1) ? 1 : -1;
+    const sign = fnv1a(term + '\x00') & 1 ? 1 : -1;
     vec[bucket] += logTf * sign;
   }
 
@@ -104,7 +101,7 @@ function hashEmbed(text, dim = VECTOR_DIM) {
     const bigram = tokens[i] + '_' + tokens[i + 1];
     const h = fnv1a(bigram);
     const bucket = h % dim;
-    const sign = (fnv1a(bigram + '\x00') & 1) ? 1 : -1;
+    const sign = fnv1a(bigram + '\x00') & 1 ? 1 : -1;
     vec[bucket] += 0.5 * sign;
   }
 
@@ -150,7 +147,7 @@ function cosineSimilarity(a, b, normA, normB) {
 export class VectorMemoryStore {
   /**
    * @param {Object} [opts]
-   * @param {MemoryStore} [opts.memoryStore] - Base memory store (uses singleton if not provided)
+   * @param {import('./store.js').MemoryStore} [opts.memoryStore] - Base memory store (uses singleton if not provided)
    * @param {string} [opts.dbPath] - Database path for the vector table
    * @param {number} [opts.dim] - Embedding dimension (default: 256)
    * @param {Function} [opts.embedFn] - Custom embedding function (default: hashEmbed)
@@ -283,10 +280,12 @@ export class VectorMemoryStore {
     // Score each candidate
     const scored = [];
     for (const row of rows) {
-      const embedding = new Float64Array(row.embedding.buffer.slice(
-        row.embedding.byteOffset,
-        row.embedding.byteOffset + row.embedding.byteLength
-      ));
+      const embedding = new Float64Array(
+        row.embedding.buffer.slice(
+          row.embedding.byteOffset,
+          row.embedding.byteOffset + row.embedding.byteLength,
+        ),
+      );
       const sim = cosineSimilarity(queryVec, embedding, queryNorm, row.norm);
       if (sim >= minSimilarity) {
         scored.push({
@@ -338,7 +337,10 @@ export class VectorMemoryStore {
 
     // Vector search
     const vectorResults = this.vectorSearch(query, {
-      channel, senderId, limit: limit * 3, minSimilarity: 0.05,
+      channel,
+      senderId,
+      limit: limit * 3,
+      minSimilarity: 0.05,
     });
 
     // Build RRF score map
@@ -404,9 +406,10 @@ export class VectorMemoryStore {
    * @returns {{ processed: number, errors: number }}
    */
   backfill(channel, senderId) {
-    const memories = channel && senderId
-      ? this._base.getRecent(channel, senderId, 10000)
-      : this._base.getAllRecent(10000);
+    const memories =
+      channel && senderId
+        ? this._base.getRecent(channel, senderId, 10000)
+        : this._base.getAllRecent(10000);
 
     let processed = 0;
     let errors = 0;

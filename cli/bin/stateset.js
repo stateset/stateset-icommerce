@@ -21,7 +21,7 @@ const __savedArgv = [...process.argv];
 process.argv = process.argv.slice(0, 2);
 
 // Use dynamic imports after cleaning argv
-const { runAgentLoop, RichOutput, ICONS, AgentTelemetry, AGENTS } = await import('../src/claude-harness.js');
+const { runAgentLoop, RichOutput, ICONS, AGENTS } = await import('../src/claude-harness.js');
 const { DEFAULT_MODEL, CLI_VERSION } = await import('../src/config.js');
 const { formatStructuredOutput } = await import('../src/output.js');
 const { createConfirmHandler } = await import('../src/utils/confirm.js');
@@ -259,13 +259,26 @@ async function readStdin() {
   for await (const chunk of process.stdin) {
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString('utf-8').trim().split('\n').filter(line => line.trim());
+  return Buffer.concat(chunks)
+    .toString('utf-8')
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim());
 }
 
 /**
  * Process a single request in batch mode
  */
-async function processBatchRequest(request, index, total, config, values, output, treasuryConfig, onConfirmRequired) {
+async function processBatchRequest(
+  request,
+  index,
+  total,
+  config,
+  values,
+  output,
+  treasuryConfig,
+  onConfirmRequired,
+) {
   const startTime = Date.now();
 
   try {
@@ -278,7 +291,7 @@ async function processBatchRequest(request, index, total, config, values, output
       verbose: false,
       treasury: treasuryConfig,
       onConfirmRequired,
-      enableX402: values.x402
+      enableX402: values.x402,
     });
 
     const duration = Date.now() - startTime;
@@ -291,7 +304,7 @@ async function processBatchRequest(request, index, total, config, values, output
       agent: result.agent,
       sessionId: result.sessionId,
       treasury: result.treasury,
-      duration
+      duration,
     };
   } catch (error) {
     return {
@@ -299,7 +312,7 @@ async function processBatchRequest(request, index, total, config, values, output
       request,
       success: false,
       error: error.message,
-      duration: Date.now() - startTime
+      duration: Date.now() - startTime,
     };
   }
 }
@@ -307,7 +320,14 @@ async function processBatchRequest(request, index, total, config, values, output
 /**
  * Process requests sequentially (maintains session context)
  */
-async function processSequential(requests, config, values, output, treasuryConfig, onConfirmRequired) {
+async function processSequential(
+  requests,
+  config,
+  values,
+  output,
+  treasuryConfig,
+  onConfirmRequired,
+) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let sessionId = values.resume;
@@ -333,7 +353,7 @@ async function processSequential(requests, config, values, output, treasuryConfi
         verbose: false,
         treasury: treasuryConfig,
         onConfirmRequired,
-        enableX402: values.x402
+        enableX402: values.x402,
       });
 
       // Chain session IDs for sequential operations
@@ -347,13 +367,15 @@ async function processSequential(requests, config, values, output, treasuryConfi
         agent: result.agent,
         sessionId: result.sessionId,
         treasury: result.treasury,
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       };
 
       results.push(batchResult);
 
       if (!isQuiet && !values.json) {
-        console.log(`   ${output.green('✓')} ${result.response.slice(0, 100)}${result.response.length > 100 ? '...' : ''}`);
+        console.log(
+          `   ${output.green('✓')} ${result.response.slice(0, 100)}${result.response.length > 100 ? '...' : ''}`,
+        );
         console.log();
       }
     } catch (error) {
@@ -362,7 +384,7 @@ async function processSequential(requests, config, values, output, treasuryConfi
         request,
         success: false,
         error: error.message,
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       });
 
       if (!isQuiet && !values.json) {
@@ -378,15 +400,23 @@ async function processSequential(requests, config, values, output, treasuryConfi
 /**
  * Process requests in parallel with controlled concurrency
  */
-async function processParallel(requests, concurrency, config, values, output, treasuryConfig, onConfirmRequired) {
+async function processParallel(
+  requests,
+  concurrency,
+  config,
+  values,
+  output,
+  treasuryConfig,
+  onConfirmRequired,
+) {
   const isQuiet = values.quiet || values.json || values.format === 'json';
   const results = [];
   let completed = 0;
-  let inProgress = 0;
 
   // Create a queue of work
-  const queue = requests.map((request, index) => ({ request: request.trim(), index }))
-    .filter(item => item.request);
+  const queue = requests
+    .map((request, index) => ({ request: request.trim(), index }))
+    .filter((item) => item.request);
 
   const total = queue.length;
 
@@ -400,8 +430,6 @@ async function processParallel(requests, concurrency, config, values, output, tr
       const item = queue.shift();
       if (!item) break;
 
-      inProgress++;
-
       const result = await processBatchRequest(
         item.request,
         item.index,
@@ -410,18 +438,19 @@ async function processParallel(requests, concurrency, config, values, output, tr
         values,
         output,
         treasuryConfig,
-        onConfirmRequired
+        onConfirmRequired,
       );
 
       results.push(result);
       completed++;
-      inProgress--;
 
       // Progress update for non-quiet mode
       if (!isQuiet && !values.json) {
         const pct = Math.round((completed / total) * 100);
         const status = result.success ? output.green('✓') : output.red('✗');
-        process.stdout.write(`\r${output.dim(`Progress: ${completed}/${total} (${pct}%)`)}  `);
+        process.stdout.write(
+          `\r${status} ${output.dim(`Progress: ${completed}/${total} (${pct}%)`)}  `,
+        );
       }
     }
   };
@@ -456,14 +485,17 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   const onConfirmRequired = createConfirmHandler({
     output,
     assumeYes: values.yes,
-    nonInteractive: true
+    nonInteractive: true,
   });
 
   // Read requests
   let requests = [];
   if (values.batch) {
     const content = await fs.readFile(values.batch, 'utf-8');
-    requests = content.trim().split('\n').filter(line => line.trim() && !line.startsWith('#'));
+    requests = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim() && !line.startsWith('#'));
   } else if (values.stdin) {
     requests = await readStdin();
   }
@@ -478,8 +510,12 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   if (!isQuiet) {
     console.log(`\n${ICONS.order} StateSet iCommerce CLI - Batch Mode`);
     console.log(`   ${output.dim('Requests:')}    ${requests.length}`);
-    console.log(`   ${output.dim('Mode:')}        ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
-    console.log(`   ${output.dim('Processing:')}  ${parallelism > 0 ? output.cyan(`Parallel (${parallelism} concurrent)`) : 'Sequential'}`);
+    console.log(
+      `   ${output.dim('Mode:')}        ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`,
+    );
+    console.log(
+      `   ${output.dim('Processing:')}  ${parallelism > 0 ? output.cyan(`Parallel (${parallelism} concurrent)`) : 'Sequential'}`,
+    );
     console.log();
   }
 
@@ -487,10 +523,25 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
 
   if (parallelism > 0) {
     // Parallel processing mode
-    results = await processParallel(requests, parallelism, config, values, output, treasuryConfig, onConfirmRequired);
+    results = await processParallel(
+      requests,
+      parallelism,
+      config,
+      values,
+      output,
+      treasuryConfig,
+      onConfirmRequired,
+    );
   } else {
     // Sequential processing mode (maintains session context)
-    results = await processSequential(requests, config, values, output, treasuryConfig, onConfirmRequired);
+    results = await processSequential(
+      requests,
+      config,
+      values,
+      output,
+      treasuryConfig,
+      onConfirmRequired,
+    );
   }
 
   // Sort results by original index for consistent output
@@ -499,16 +550,18 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
   // Output results
   for (const result of results) {
     if (isJsonOutput) {
-      console.log(JSON.stringify({
-        request: result.request,
-        success: result.success,
-        response: result.response,
-        error: result.error,
-        agent: result.agent,
-        sessionId: result.sessionId,
-        treasury: result.treasury,
-        duration: result.duration
-      }));
+      console.log(
+        JSON.stringify({
+          request: result.request,
+          success: result.success,
+          response: result.response,
+          error: result.error,
+          agent: result.agent,
+          sessionId: result.sessionId,
+          treasury: result.treasury,
+          duration: result.duration,
+        }),
+      );
     } else if (!isQuiet && parallelism > 0) {
       // For parallel mode, output results after completion
       const status = result.success ? output.green('✓') : output.red('✗');
@@ -525,31 +578,36 @@ async function handleBatchMode(values, config, output, treasuryConfig) {
 
   // Summary
   if (!isQuiet && !isJsonOutput) {
-    const succeeded = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
-    const avgDuration = results.length > 0
-      ? Math.round(results.reduce((sum, r) => sum + (r.duration || 0), 0) / results.length)
-      : 0;
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    const avgDuration =
+      results.length > 0
+        ? Math.round(results.reduce((sum, r) => sum + (r.duration || 0), 0) / results.length)
+        : 0;
 
     console.log(output.dim('─'.repeat(50)));
     console.log(`${output.bold('Summary:')}`);
-    console.log(`   ${output.dim('Results:')}    ${output.green(succeeded + ' succeeded')}, ${failed > 0 ? output.red(failed + ' failed') : output.dim('0 failed')}`);
+    console.log(
+      `   ${output.dim('Results:')}    ${output.green(succeeded + ' succeeded')}, ${failed > 0 ? output.red(failed + ' failed') : output.dim('0 failed')}`,
+    );
     console.log(`   ${output.dim('Total time:')} ${(totalDuration / 1000).toFixed(2)}s`);
     console.log(`   ${output.dim('Avg/request:')} ${(avgDuration / 1000).toFixed(2)}s`);
 
     if (parallelism > 0) {
-      const speedup = (results.reduce((sum, r) => sum + (r.duration || 0), 0) / totalDuration).toFixed(1);
+      const speedup = (
+        results.reduce((sum, r) => sum + (r.duration || 0), 0) / totalDuration
+      ).toFixed(1);
       console.log(`   ${output.dim('Speedup:')}    ${speedup}x (${parallelism} concurrent)`);
     }
 
     // Show last session for sequential mode
-    const lastSession = results.filter(r => r.sessionId).pop()?.sessionId;
+    const lastSession = results.filter((r) => r.sessionId).pop()?.sessionId;
     if (lastSession && parallelism === 0) {
       console.log(`   ${output.dim('Session:')}    ${lastSession}`);
     }
   }
 
-  process.exit(results.some(r => !r.success) ? 1 : 0);
+  process.exit(results.some((r) => !r.success) ? 1 : 0);
 }
 
 async function main() {
@@ -588,9 +646,9 @@ async function main() {
       batch: { type: 'string' },
       parallel: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
-      version: { type: 'boolean', short: 'v', default: false }
+      version: { type: 'boolean', short: 'v', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   // Load profile config and merge with CLI args (CLI args take precedence)
@@ -599,30 +657,32 @@ async function main() {
     db: values.db || profileConfig.db || './store.db',
     model: values.model || profileConfig.model || DEFAULT_MODEL,
     apply: values.apply || profileConfig.apply || false,
-    verbose: values.verbose || profileConfig.verbose || false
+    verbose: values.verbose || profileConfig.verbose || false,
   };
 
   const isJsonOutput = values.json || values.format === 'json';
   const isQuiet = values.quiet || isJsonOutput;
-  const memoryOverride = values.noMemory ? false : (values.memory ? true : null);
+  const memoryOverride = values.noMemory ? false : values.memory ? true : null;
   const treasuryEnabled = Boolean(
-    values.treasury
-      || values.treasuryChain
-      || values.treasuryToken
-      || values.treasuryAgent
-      || values.treasuryDb
-      || values.treasuryErc8004Registry
-      || values.treasuryErc8004Db
+    values.treasury ||
+    values.treasuryChain ||
+    values.treasuryToken ||
+    values.treasuryAgent ||
+    values.treasuryDb ||
+    values.treasuryErc8004Registry ||
+    values.treasuryErc8004Db,
   );
-  const treasuryConfig = treasuryEnabled ? {
-    enabled: true,
-    chainId: values.treasuryChain,
-    tokenSymbol: values.treasuryToken,
-    agentId: values.treasuryAgent,
-    dbPath: values.treasuryDb,
-    erc8004Registry: values.treasuryErc8004Registry,
-    erc8004DbPath: values.treasuryErc8004Db
-  } : null;
+  const treasuryConfig = treasuryEnabled
+    ? {
+        enabled: true,
+        chainId: values.treasuryChain,
+        tokenSymbol: values.treasuryToken,
+        agentId: values.treasuryAgent,
+        dbPath: values.treasuryDb,
+        erc8004Registry: values.treasuryErc8004Registry,
+        erc8004DbPath: values.treasuryErc8004Db,
+      }
+    : null;
 
   // Initialize output formatter
   const output = new RichOutput({ color: !isQuiet });
@@ -640,7 +700,9 @@ async function main() {
   }
 
   if (values.stream && isJsonOutput) {
-    console.error('Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.');
+    console.error(
+      'Error: --stream cannot be used with JSON output. Remove --stream or use a non-JSON format.',
+    );
     process.exit(1);
   }
 
@@ -683,7 +745,9 @@ async function main() {
       console.log(`   ${output.dim('Profile:')}  ${output.cyan(values.profile)}`);
     }
     console.log(`   ${output.dim('Database:')} ${config.db}`);
-    console.log(`   ${output.dim('Mode:')}     ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`);
+    console.log(
+      `   ${output.dim('Mode:')}     ${config.apply ? output.green('Write enabled') : output.yellow('Preview only')}`,
+    );
     if (providerName !== 'claude') {
       console.log(`   ${output.dim('Provider:')} ${output.cyan(providerName)}`);
     }
@@ -700,7 +764,9 @@ async function main() {
       console.log(`   ${output.dim('Budget:')}   ${output.cyan('$' + values.budget)}`);
     }
     if (memoryOverride !== null) {
-      console.log(`   ${output.dim('Memory:')}   ${memoryOverride ? output.cyan('Enabled') : output.yellow('Disabled')}`);
+      console.log(
+        `   ${output.dim('Memory:')}   ${memoryOverride ? output.cyan('Enabled') : output.yellow('Disabled')}`,
+      );
     }
     if (config.verbose) {
       console.log(`   ${output.dim('Verbose:')}  ${output.cyan('Enabled')}`);
@@ -715,11 +781,10 @@ async function main() {
   const onConfirmRequired = createConfirmHandler({
     output,
     assumeYes: values.yes,
-    nonInteractive
+    nonInteractive,
   });
 
   try {
-
     const result = await runAgentLoop({
       request,
       dbPath: config.db,
@@ -737,27 +802,34 @@ async function main() {
       provider: providerName,
       enableMemory: memoryOverride === null ? null : memoryOverride,
       enableX402: values.x402,
-      onPartialMessage: values.stream ? (event) => {
-        // Write partial text to stdout for streaming display
-        if (event?.content) {
-          process.stdout.write(event.content);
-        } else if (event?.delta?.text) {
-          process.stdout.write(event.delta.text);
-        } else if (typeof event?.text === 'string') {
-          process.stdout.write(event.text);
-        }
-      } : null,
-      onThinkingBlock: thinkLevel !== 'off' ? (block) => {
-        if (!isQuiet && config.verbose) {
-          const preview = (block.thinking || block.text || '').slice(0, 200);
-          console.log(output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`));
-        }
-      } : null,
+      onPartialMessage: values.stream
+        ? (event) => {
+            // Write partial text to stdout for streaming display
+            if (event?.content) {
+              process.stdout.write(event.content);
+            } else if (event?.delta?.text) {
+              process.stdout.write(event.delta.text);
+            } else if (typeof event?.text === 'string') {
+              process.stdout.write(event.text);
+            }
+          }
+        : null,
+      onThinkingBlock:
+        thinkLevel !== 'off'
+          ? (block) => {
+              if (!isQuiet && config.verbose) {
+                const preview = (block.thinking || block.text || '').slice(0, 200);
+                console.log(
+                  output.dim(`\n[Thinking] ${preview}${preview.length >= 200 ? '...' : ''}\n`),
+                );
+              }
+            }
+          : null,
       onToolCall: (toolCall) => {
         if (!isQuiet && !config.verbose) {
           console.log(output.toolCall(toolCall.name, toolCall.input));
         }
-      }
+      },
     });
 
     // Prepare output data
@@ -769,27 +841,30 @@ async function main() {
       traceId: result.traceId,
       agent: result.agent,
       treasury: result.treasury,
-      routing: result.routing ? {
-        agent: result.routing.primary.agent,
-        confidence: result.routing.primary.confidence,
-        ambiguous: result.routing.ambiguous
-      } : undefined,
+      routing: result.routing
+        ? {
+            agent: result.routing.primary.agent,
+            confidence: result.routing.primary.confidence,
+            ambiguous: result.routing.ambiguous,
+          }
+        : undefined,
       response: result.response,
-      toolResults: result.toolResults.map(tr => ({
+      toolResults: result.toolResults.map((tr) => ({
         tool: tr.toolCall.name,
         input: tr.toolCall.input,
         result: tr.result,
-        duration: tr.duration
+        duration: tr.duration,
       })),
-      telemetry: values.stats || values.verbose ? result.telemetry : undefined
+      telemetry: values.stats || values.verbose ? result.telemetry : undefined,
     };
 
     // Handle file output
     if (values.output) {
       const fs = await import('node:fs/promises');
-      const formattedOutput = values.format === 'json'
-        ? JSON.stringify(outputData, null, 2)
-        : formatOutput(outputData, values.format);
+      const formattedOutput =
+        values.format === 'json'
+          ? JSON.stringify(outputData, null, 2)
+          : formatOutput(outputData, values.format);
       await fs.writeFile(values.output, formattedOutput);
       if (!isQuiet) {
         console.log(`${output.green('✓')} Output written to ${values.output}`);
@@ -811,7 +886,9 @@ async function main() {
         if ((values.verbose || !values.agent) && result.routing) {
           const conf = Math.round(result.routing.primary.confidence * 100);
           if (!values.agent) {
-            console.log(`\n${output.dim('Agent:')} ${result.agent}${conf > 0 ? ` (${conf}% confidence)` : ''}`);
+            console.log(
+              `\n${output.dim('Agent:')} ${result.agent}${conf > 0 ? ` (${conf}% confidence)` : ''}`,
+            );
           }
           if (result.routing.ambiguous) {
             console.log(output.yellow('  💡 Tip: Use --agent <name> for more precise routing'));
@@ -825,18 +902,22 @@ async function main() {
           console.log(`${ICONS.analytics} ${output.bold('Execution Stats')}`);
           console.log(`   ${output.dim('Trace ID:')}    ${result.traceId}`);
           console.log(`   ${output.dim('Duration:')}    ${stats.duration}ms`);
-          console.log(`   ${output.dim('Tool Calls:')}  ${stats.toolCalls?.total || 0} (${stats.toolCalls?.successRate || 'N/A'} success)`);
+          console.log(
+            `   ${output.dim('Tool Calls:')}  ${stats.toolCalls?.total || 0} (${stats.toolCalls?.successRate || 'N/A'} success)`,
+          );
           if (stats.avgToolDuration > 0) {
             console.log(`   ${output.dim('Avg Latency:')} ${stats.avgToolDuration}ms per tool`);
           }
           if (result.provider) {
             console.log(`   ${output.dim('Provider:')}    ${result.provider}`);
           }
-          if (result.cost != null) {
+          if (result.cost !== null && result.cost !== undefined) {
             console.log(`   ${output.dim('Cost:')}        $${result.cost.toFixed(4)}`);
           }
           if (result.budgetExceeded) {
-            console.log(`   ${output.yellow('Budget exceeded')}${values.budget ? ` (limit: $${values.budget})` : ''}`);
+            console.log(
+              `   ${output.yellow('Budget exceeded')}${values.budget ? ` (limit: $${values.budget})` : ''}`,
+            );
           }
           if (result.thinkLevel && result.thinkLevel !== 'off') {
             console.log(`   ${output.dim('Thinking:')}    ${result.thinkLevel}`);
@@ -845,7 +926,9 @@ async function main() {
 
         if (result.sessionId) {
           console.log(`\n${ICONS.session} ${output.dim('Session ID:')} ${result.sessionId}`);
-          console.log(`   ${output.dim('Use')} --resume ${result.sessionId} ${output.dim('to continue this conversation')}`);
+          console.log(
+            `   ${output.dim('Use')} --resume ${result.sessionId} ${output.dim('to continue this conversation')}`,
+          );
         }
       } else {
         // Quiet mode - just the response
@@ -864,4 +947,15 @@ async function main() {
   }
 }
 
-main();
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '[stateset] Unhandled rejection:',
+    reason instanceof Error ? reason.message : reason,
+  );
+  process.exit(1);
+});
+
+main().catch((err) => {
+  console.error('[stateset] Fatal error:', err instanceof Error ? err.message : err);
+  process.exit(1);
+});

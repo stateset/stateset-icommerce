@@ -36,18 +36,35 @@ impl SqliteAnalyticsRepository {
         let period = query.period.unwrap_or(TimePeriod::Last30Days);
 
         match period {
-            TimePeriod::Today => (now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(), now),
+            TimePeriod::Today => (
+                now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
+                now,
+            ),
             TimePeriod::Yesterday => {
                 let yesterday = now - Duration::days(1);
                 (
-                    yesterday.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
-                    yesterday.date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc(),
+                    yesterday
+                        .date_naive()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                        .and_utc(),
+                    yesterday
+                        .date_naive()
+                        .and_hms_opt(23, 59, 59)
+                        .unwrap()
+                        .and_utc(),
                 )
             }
             TimePeriod::Last7Days => (now - Duration::days(7), now),
             TimePeriod::Last30Days => (now - Duration::days(30), now),
             TimePeriod::ThisMonth => {
-                let start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+                let start = now
+                    .date_naive()
+                    .with_day(1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc();
                 (start, now)
             }
             TimePeriod::LastMonth => {
@@ -64,13 +81,22 @@ impl SqliteAnalyticsRepository {
                 (now - Duration::days(90), now)
             }
             TimePeriod::ThisYear => {
-                let start = now.date_naive().with_month(1).unwrap().with_day(1).unwrap()
-                    .and_hms_opt(0, 0, 0).unwrap().and_utc();
+                let start = now
+                    .date_naive()
+                    .with_month(1)
+                    .unwrap()
+                    .with_day(1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc();
                 (start, now)
             }
             TimePeriod::LastYear => (now - Duration::days(365), now),
             TimePeriod::AllTime => (
-                DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc),
+                DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
                 now,
             ),
             TimePeriod::Custom => {
@@ -171,7 +197,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         };
 
         let order_count_change_percent = if prev_order_count > 0 {
-            let change = ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
+            let change =
+                ((order_count - prev_order_count) as f64 / prev_order_count as f64) * 100.0;
             Decimal::from_f64_retain(change)
         } else if order_count > 0 {
             Some(Decimal::from(100))
@@ -283,16 +310,27 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([&start_str as &dyn rusqlite::ToSql, &end_str, &limit], |row| {
-                let product_id: Option<String> = row.get(0)?;
-                let sku: String = row.get(1)?;
-                let name: String = row.get(2)?;
-                let units_sold: i64 = row.get(3)?;
-                let revenue: String = row.get(4)?;
-                let order_count: i64 = row.get(5)?;
-                let avg_price: String = row.get(6)?;
-                Ok((product_id, sku, name, units_sold, revenue, order_count, avg_price))
-            })
+            .query_map(
+                [&start_str as &dyn rusqlite::ToSql, &end_str, &limit],
+                |row| {
+                    let product_id: Option<String> = row.get(0)?;
+                    let sku: String = row.get(1)?;
+                    let name: String = row.get(2)?;
+                    let units_sold: i64 = row.get(3)?;
+                    let revenue: String = row.get(4)?;
+                    let order_count: i64 = row.get(5)?;
+                    let avg_price: String = row.get(6)?;
+                    Ok((
+                        product_id,
+                        sku,
+                        name,
+                        units_sold,
+                        revenue,
+                        order_count,
+                        avg_price,
+                    ))
+                },
+            )
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -445,17 +483,29 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
             .map_err(map_db_error)?;
 
         let rows = stmt
-            .query_map([&start_str as &dyn rusqlite::ToSql, &end_str, &limit], |row| {
-                let id: String = row.get(0)?;
-                let email: String = row.get(1)?;
-                let name: String = row.get(2)?;
-                let total_spent: String = row.get(3)?;
-                let order_count: i64 = row.get(4)?;
-                let avg_order: String = row.get(5)?;
-                let first_order: Option<String> = row.get(6)?;
-                let last_order: Option<String> = row.get(7)?;
-                Ok((id, email, name, total_spent, order_count, avg_order, first_order, last_order))
-            })
+            .query_map(
+                [&start_str as &dyn rusqlite::ToSql, &end_str, &limit],
+                |row| {
+                    let id: String = row.get(0)?;
+                    let email: String = row.get(1)?;
+                    let name: String = row.get(2)?;
+                    let total_spent: String = row.get(3)?;
+                    let order_count: i64 = row.get(4)?;
+                    let avg_order: String = row.get(5)?;
+                    let first_order: Option<String> = row.get(6)?;
+                    let last_order: Option<String> = row.get(7)?;
+                    Ok((
+                        id,
+                        email,
+                        name,
+                        total_spent,
+                        order_count,
+                        avg_order,
+                        first_order,
+                        last_order,
+                    ))
+                },
+            )
             .map_err(map_db_error)?;
 
         let mut results = Vec::new();
@@ -702,7 +752,12 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let _end_str = end.to_rfc3339();
 
         // Shipped today
-        let today_start = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339();
+        let today_start = Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .to_rfc3339();
         let shipped_today: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM orders WHERE status = 'shipped' AND updated_at >= ?1",
@@ -865,7 +920,11 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         })
     }
 
-    fn get_demand_forecast(&self, skus: Option<Vec<String>>, days_ahead: u32) -> Result<Vec<DemandForecast>> {
+    fn get_demand_forecast(
+        &self,
+        skus: Option<Vec<String>>,
+        days_ahead: u32,
+    ) -> Result<Vec<DemandForecast>> {
         let conn = self.conn()?;
         let days_back = 30; // Use 30 days of history
         let start = (Utc::now() - Duration::days(days_back)).to_rfc3339();
@@ -919,7 +978,8 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         for row in rows {
             let (sku, name, avg_daily, current_stock) = row.map_err(map_db_error)?;
             let avg_daily_dec = Decimal::from_f64_retain(avg_daily).unwrap_or(Decimal::ZERO);
-            let current_stock_dec = Decimal::from_f64_retain(current_stock).unwrap_or(Decimal::ZERO);
+            let current_stock_dec =
+                Decimal::from_f64_retain(current_stock).unwrap_or(Decimal::ZERO);
             let forecasted = avg_daily_dec * Decimal::from(days_ahead);
 
             let days_until_stockout = if avg_daily > 0.0 {
@@ -958,7 +1018,11 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         Ok(results)
     }
 
-    fn get_revenue_forecast(&self, periods_ahead: u32, granularity: TimeGranularity) -> Result<Vec<RevenueForecast>> {
+    fn get_revenue_forecast(
+        &self,
+        periods_ahead: u32,
+        granularity: TimeGranularity,
+    ) -> Result<Vec<RevenueForecast>> {
         let conn = self.conn()?;
 
         // Get historical revenue by period

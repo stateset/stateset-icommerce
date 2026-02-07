@@ -2,9 +2,8 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, Result,
-    UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial,
-    WorkOrderTask,
+    AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, Result, UpdateWorkOrder,
+    UpdateWorkOrderTask, WorkOrder, WorkOrderFilter, WorkOrderMaterial, WorkOrderTask,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -183,7 +182,11 @@ impl WorkOrders {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_task(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
+    pub fn add_task(
+        &self,
+        work_order_id: Uuid,
+        task: CreateWorkOrderTask,
+    ) -> Result<WorkOrderTask> {
         self.db.work_orders().add_task(work_order_id, task)
     }
 
@@ -208,7 +211,11 @@ impl WorkOrders {
     }
 
     /// Complete a task with optional actual hours.
-    pub fn complete_task(&self, task_id: Uuid, actual_hours: Option<Decimal>) -> Result<WorkOrderTask> {
+    pub fn complete_task(
+        &self,
+        task_id: Uuid,
+        actual_hours: Option<Decimal>,
+    ) -> Result<WorkOrderTask> {
         self.db.work_orders().complete_task(task_id, actual_hours)
     }
 
@@ -234,15 +241,25 @@ impl WorkOrders {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn add_material(&self, work_order_id: Uuid, material: AddWorkOrderMaterial) -> Result<WorkOrderMaterial> {
+    pub fn add_material(
+        &self,
+        work_order_id: Uuid,
+        material: AddWorkOrderMaterial,
+    ) -> Result<WorkOrderMaterial> {
         self.db.work_orders().add_material(work_order_id, material)
     }
 
     /// Consume material during production.
     ///
     /// Records that a certain quantity of material has been used.
-    pub fn consume_material(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
-        self.db.work_orders().consume_material(material_id, quantity)
+    pub fn consume_material(
+        &self,
+        material_id: Uuid,
+        quantity: Decimal,
+    ) -> Result<WorkOrderMaterial> {
+        self.db
+            .work_orders()
+            .consume_material(material_id, quantity)
     }
 
     /// Get all materials for a work order.

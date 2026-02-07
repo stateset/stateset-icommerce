@@ -42,7 +42,11 @@ CREATE INDEX IF NOT EXISTS idx_memory_search
 
 function defaultDbPath() {
   const dir = join(homedir(), '.stateset');
-  try { mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    /* exists */
+  }
   return join(dir, 'memory.db');
 }
 
@@ -115,7 +119,15 @@ export class MemoryStore {
    * @param {number} [entry.tokenCount=0]
    * @returns {{ id: number }}
    */
-  save({ channel = 'cli', senderId = 'local', sessionId = null, summary, facts = [], agent = null, tokenCount = 0 }) {
+  save({
+    channel = 'cli',
+    senderId = 'local',
+    sessionId = null,
+    summary,
+    facts = [],
+    agent = null,
+    tokenCount = 0,
+  }) {
     const result = this._insertStmt.run(
       channel,
       senderId,
@@ -124,7 +136,7 @@ export class MemoryStore {
       JSON.stringify(facts),
       agent,
       Date.now(),
-      tokenCount
+      tokenCount,
     );
     return { id: Number(result.lastInsertRowid) };
   }

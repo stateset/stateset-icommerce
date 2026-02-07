@@ -29,7 +29,10 @@ const logger = createLogger({ context: { module: 'plugins' } });
  * Plugin schema for validation
  */
 const PluginSchema = z.object({
-  name: z.string().min(1).regex(/^[a-z][a-z0-9_]*$/, 'Name must be lowercase with underscores'),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z][a-z0-9_]*$/, 'Name must be lowercase with underscores'),
   description: z.string().min(1),
   version: z.string().optional().default('1.0.0'),
   inputSchema: z.record(z.any()).optional().default({}),
@@ -39,7 +42,7 @@ const PluginSchema = z.object({
   onUnload: z.function().optional(),
   // Optional metadata
   author: z.string().optional(),
-  tags: z.array(z.string()).optional()
+  tags: z.array(z.string()).optional(),
 });
 
 /**
@@ -117,7 +120,7 @@ export class PluginLoader {
       if (this.plugins.has(validated.name)) {
         logger.warn('Plugin name conflict, skipping', {
           name: validated.name,
-          file: filePath
+          file: filePath,
         });
         return null;
       }
@@ -126,7 +129,7 @@ export class PluginLoader {
       const pluginEntry = {
         ...validated,
         filePath,
-        loadedAt: new Date().toISOString()
+        loadedAt: new Date().toISOString(),
       };
 
       // Call onLoad hook if present
@@ -141,7 +144,7 @@ export class PluginLoader {
     } catch (error) {
       logger.error('Failed to load plugin', {
         file: filePath,
-        error: error.message
+        error: error.message,
       });
       return null;
     }
@@ -219,7 +222,7 @@ export class PluginLoader {
     } catch (error) {
       logger.error('Plugin execution failed', {
         name,
-        error: error.message
+        error: error.message,
       });
       throw error;
     }
@@ -240,20 +243,24 @@ export class PluginLoader {
           try {
             const result = await plugin.handler(input, this.context);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({ success: true, result }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ success: true, result }, null, 2),
+                },
+              ],
             };
           } catch (error) {
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({ error: error.message })
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
             };
           }
-        }
+        },
       });
     }
 
@@ -336,8 +343,7 @@ export async function scaffoldPlugin(name) {
     throw new Error(`Plugin file already exists: ${filePath}`);
   }
 
-  const content = PLUGIN_TEMPLATE.replace(/my_custom_tool/g, name)
-    .replace(/my-plugin/g, name);
+  const content = PLUGIN_TEMPLATE.replace(/my_custom_tool/g, name).replace(/my-plugin/g, name);
 
   fs.writeFileSync(filePath, content);
 

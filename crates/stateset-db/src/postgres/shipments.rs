@@ -200,7 +200,7 @@ impl PgShipmentRepository {
     async fn load_events_async(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
         let rows = sqlx::query_as::<_, ShipmentEventRow>(
             "SELECT id, shipment_id, event_type, location, description, event_time, created_at
-             FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC"
+             FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC",
         )
         .bind(shipment_id)
         .fetch_all(&self.pool)
@@ -345,7 +345,7 @@ impl PgShipmentRepository {
                     shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
                     signature_required, shipped_at, estimated_delivery, delivered_at, notes,
                     created_at, updated_at
-             FROM shipments WHERE id = $1"
+             FROM shipments WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -364,11 +364,12 @@ impl PgShipmentRepository {
 
     /// Get shipment by number (async)
     pub async fn get_by_number_async(&self, shipment_number: &str) -> Result<Option<Shipment>> {
-        let id: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM shipments WHERE shipment_number = $1")
-            .bind(shipment_number)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let id: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM shipments WHERE shipment_number = $1")
+                .bind(shipment_number)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         match id {
             Some((id,)) => self.get_async(id).await,
@@ -378,11 +379,12 @@ impl PgShipmentRepository {
 
     /// Get shipment by tracking number (async)
     pub async fn get_by_tracking_async(&self, tracking_number: &str) -> Result<Option<Shipment>> {
-        let id: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM shipments WHERE tracking_number = $1")
-            .bind(tracking_number)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let id: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM shipments WHERE tracking_number = $1")
+                .bind(tracking_number)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         match id {
             Some((id,)) => self.get_async(id).await,
@@ -464,7 +466,11 @@ impl PgShipmentRepository {
             param_idx += 1;
         }
 
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, (Uuid,)>(&query);
 
@@ -518,12 +524,14 @@ impl PgShipmentRepository {
 
     /// Mark as processing (async)
     pub async fn mark_processing_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::Processing).await
+        self.update_status_async(id, ShipmentStatus::Processing)
+            .await
     }
 
     /// Mark as ready to ship (async)
     pub async fn mark_ready_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::ReadyToShip).await
+        self.update_status_async(id, ShipmentStatus::ReadyToShip)
+            .await
     }
 
     /// Ship the shipment (async)
@@ -553,12 +561,14 @@ impl PgShipmentRepository {
 
     /// Mark as in transit (async)
     pub async fn mark_in_transit_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::InTransit).await
+        self.update_status_async(id, ShipmentStatus::InTransit)
+            .await
     }
 
     /// Mark as out for delivery (async)
     pub async fn mark_out_for_delivery_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::OutForDelivery).await
+        self.update_status_async(id, ShipmentStatus::OutForDelivery)
+            .await
     }
 
     /// Mark as delivered (async)
@@ -588,11 +598,16 @@ impl PgShipmentRepository {
 
     /// Cancel shipment (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<Shipment> {
-        self.update_status_async(id, ShipmentStatus::Cancelled).await
+        self.update_status_async(id, ShipmentStatus::Cancelled)
+            .await
     }
 
     /// Add item to shipment (async)
-    pub async fn add_item_async(&self, shipment_id: Uuid, item: CreateShipmentItem) -> Result<ShipmentItem> {
+    pub async fn add_item_async(
+        &self,
+        shipment_id: Uuid,
+        item: CreateShipmentItem,
+    ) -> Result<ShipmentItem> {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -643,7 +658,11 @@ impl PgShipmentRepository {
     }
 
     /// Add tracking event (async)
-    pub async fn add_event_async(&self, shipment_id: Uuid, event: AddShipmentEvent) -> Result<ShipmentEvent> {
+    pub async fn add_event_async(
+        &self,
+        shipment_id: Uuid,
+        event: AddShipmentEvent,
+    ) -> Result<ShipmentEvent> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let event_time = event.event_time.unwrap_or(now);
@@ -716,7 +735,10 @@ impl PgShipmentRepository {
     // ==================== Batch Operations ====================
 
     /// Create multiple shipments in a batch (async, non-atomic)
-    pub async fn create_batch_async(&self, inputs: Vec<CreateShipment>) -> Result<BatchResult<Shipment>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreateShipment>,
+    ) -> Result<BatchResult<Shipment>> {
         validate_batch_size(&inputs)?;
         let mut result = BatchResult::with_capacity(inputs.len());
 
@@ -731,7 +753,10 @@ impl PgShipmentRepository {
     }
 
     /// Create multiple shipments in a batch atomically (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreateShipment>) -> Result<Vec<Shipment>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreateShipment>,
+    ) -> Result<Vec<Shipment>> {
         validate_batch_size(&inputs)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut shipments = Vec::with_capacity(inputs.len());
@@ -849,7 +874,10 @@ impl PgShipmentRepository {
     }
 
     /// Update multiple shipments in a batch (async, non-atomic)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdateShipment)>,
+    ) -> Result<BatchResult<Shipment>> {
         validate_batch_size(&updates)?;
         let mut result = BatchResult::with_capacity(updates.len());
 
@@ -864,7 +892,10 @@ impl PgShipmentRepository {
     }
 
     /// Update multiple shipments in a batch atomically (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdateShipment)>,
+    ) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut shipments = Vec::with_capacity(updates.len());
@@ -903,18 +934,29 @@ impl PgShipmentRepository {
 
             let new_status = input.status.unwrap_or(existing_status);
             let new_carrier = input.carrier.unwrap_or(existing_carrier);
-            let new_tracking = input.tracking_number.or(existing_row.tracking_number.clone());
+            let new_tracking = input
+                .tracking_number
+                .or(existing_row.tracking_number.clone());
             let new_tracking_url = new_tracking
                 .as_ref()
                 .and_then(|tn| new_carrier.tracking_url(tn));
-            let new_recipient_name = input.recipient_name.unwrap_or(existing_row.recipient_name.clone());
-            let new_recipient_email = input.recipient_email.or(existing_row.recipient_email.clone());
-            let new_recipient_phone = input.recipient_phone.or(existing_row.recipient_phone.clone());
-            let new_shipping_address = input.shipping_address.unwrap_or(existing_row.shipping_address.clone());
+            let new_recipient_name = input
+                .recipient_name
+                .unwrap_or(existing_row.recipient_name.clone());
+            let new_recipient_email = input
+                .recipient_email
+                .or(existing_row.recipient_email.clone());
+            let new_recipient_phone = input
+                .recipient_phone
+                .or(existing_row.recipient_phone.clone());
+            let new_shipping_address = input
+                .shipping_address
+                .unwrap_or(existing_row.shipping_address.clone());
             let new_weight = input.weight_kg.or(existing_row.weight_kg);
             let new_dimensions = input.dimensions.or(existing_row.dimensions.clone());
             let new_shipping_cost = input.shipping_cost.or(existing_row.shipping_cost);
-            let new_estimated_delivery = input.estimated_delivery.or(existing_row.estimated_delivery);
+            let new_estimated_delivery =
+                input.estimated_delivery.or(existing_row.estimated_delivery);
             let new_notes = input.notes.or(existing_row.notes.clone());
 
             sqlx::query(
@@ -968,7 +1010,7 @@ impl PgShipmentRepository {
 
             let event_rows = sqlx::query_as::<_, ShipmentEventRow>(
                 "SELECT id, shipment_id, event_type, location, description, event_time, created_at
-                 FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC"
+                 FROM shipment_events WHERE shipment_id = $1 ORDER BY event_time DESC",
             )
             .bind(id)
             .fetch_all(tx.as_mut())
@@ -976,7 +1018,8 @@ impl PgShipmentRepository {
             .map_err(map_db_error)?;
 
             let items: Vec<ShipmentItem> = item_rows.into_iter().map(Self::row_to_item).collect();
-            let events: Vec<ShipmentEvent> = event_rows.into_iter().map(Self::row_to_event).collect();
+            let events: Vec<ShipmentEvent> =
+                event_rows.into_iter().map(Self::row_to_event).collect();
 
             shipments.push(Self::row_to_shipment(updated_row, items, events)?);
         }
@@ -1020,12 +1063,14 @@ impl PgShipmentRepository {
             .map_err(map_db_error)?;
 
         // Mark shipments as cancelled (soft delete)
-        sqlx::query("UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = ANY($2)")
-            .bind(Utc::now())
-            .bind(&ids)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE shipments SET status = 'cancelled', updated_at = $1 WHERE id = ANY($2)",
+        )
+        .bind(Utc::now())
+        .bind(&ids)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
 
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
@@ -1041,7 +1086,7 @@ impl PgShipmentRepository {
                     shipping_address, weight_kg, dimensions, shipping_cost, insurance_amount,
                     signature_required, shipped_at, estimated_delivery, delivered_at, notes,
                     version, created_at, updated_at
-             FROM shipments WHERE id = ANY($1)"
+             FROM shipments WHERE id = ANY($1)",
         )
         .bind(&ids)
         .fetch_all(&self.pool)
@@ -1071,12 +1116,18 @@ impl PgShipmentRepository {
     }
 
     /// Update multiple shipments in a batch (sync, non-atomic)
-    pub fn update_batch(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<BatchResult<Shipment>> {
+    pub fn update_batch(
+        &self,
+        updates: Vec<(Uuid, UpdateShipment)>,
+    ) -> Result<BatchResult<Shipment>> {
         super::block_on(self.update_batch_async(updates))
     }
 
     /// Update multiple shipments in a batch atomically (sync)
-    pub fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateShipment)>) -> Result<Vec<Shipment>> {
+    pub fn update_batch_atomic(
+        &self,
+        updates: Vec<(Uuid, UpdateShipment)>,
+    ) -> Result<Vec<Shipment>> {
         super::block_on(self.update_batch_atomic_async(updates))
     }
 

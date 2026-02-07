@@ -36,8 +36,8 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     ApplyPromotionsRequest, ApplyPromotionsResult, CouponCode, CouponFilter, CreateCouponCode,
-    CreatePromotion, CreatePromotionCondition, Promotion, PromotionFilter,
-    PromotionUsage, Result, UpdatePromotion,
+    CreatePromotion, CreatePromotionCondition, Promotion, PromotionFilter, PromotionUsage, Result,
+    UpdatePromotion,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -278,6 +278,7 @@ impl Promotions {
     /// Record promotion usage (called after order completion).
     ///
     /// This increments usage counts and creates an audit trail.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_usage(
         &self,
         promotion_id: Uuid,
@@ -321,9 +322,14 @@ impl Promotions {
     }
 
     /// Add a condition to an existing promotion.
-    pub fn add_condition(&self, promotion_id: Uuid, condition: CreatePromotionCondition) -> Result<Promotion> {
+    pub fn add_condition(
+        &self,
+        promotion_id: Uuid,
+        condition: CreatePromotionCondition,
+    ) -> Result<Promotion> {
         // Get current promotion
-        let promo = self.get(promotion_id)?
+        let promo = self
+            .get(promotion_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Re-create with new condition

@@ -1,22 +1,21 @@
 //! SQLite implementation of Quality Control repository
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
-    parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row, parse_uuid_row,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_json_opt_row, parse_json_row, parse_uuid_opt_row,
+    parse_uuid_row,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
+use stateset_core::traits::QualityRepository;
 use stateset_core::{
     CommerceError, CreateDefectCode, CreateInspection, CreateNonConformance, CreateQualityHold,
-    DefectCode, Inspection, InspectionFilter, InspectionItem,
-    InspectionResult, InspectionStatus, NcrStatus, NonConformance,
-    NonConformanceFilter, QualityHold, QualityHoldFilter,
-    RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection,
-    UpdateNonConformance,
+    DefectCode, Inspection, InspectionFilter, InspectionItem, InspectionResult, InspectionStatus,
+    NcrStatus, NonConformance, NonConformanceFilter, QualityHold, QualityHoldFilter,
+    RecordInspectionResult, ReleaseQualityHold, Result, UpdateInspection, UpdateNonConformance,
 };
-use stateset_core::traits::QualityRepository;
 use uuid::Uuid;
 
 pub struct SqliteQualityRepository {
@@ -52,7 +51,11 @@ impl SqliteQualityRepository {
                 "inspection_type",
             )?,
             reference_type: row.get("reference_type")?,
-            reference_id: parse_uuid_row(&row.get::<_, String>("reference_id")?, "inspection", "reference_id")?,
+            reference_id: parse_uuid_row(
+                &row.get::<_, String>("reference_id")?,
+                "inspection",
+                "reference_id",
+            )?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "inspection", "status")?,
             inspector_id: row.get("inspector_id")?,
             scheduled_at: parse_datetime_opt_row(
@@ -72,8 +75,16 @@ impl SqliteQualityRepository {
             )?,
             notes: row.get("notes")?,
             items: vec![],
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "inspection", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "inspection", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "inspection",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "inspection",
+                "updated_at",
+            )?,
         })
     }
 
@@ -113,7 +124,11 @@ impl SqliteQualityRepository {
                 "inspection_item",
                 "measurements",
             )?,
-            result: parse_enum_row(&row.get::<_, String>("result")?, "inspection_item", "result")?,
+            result: parse_enum_row(
+                &row.get::<_, String>("result")?,
+                "inspection_item",
+                "result",
+            )?,
             notes: row.get("notes")?,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
@@ -137,9 +152,21 @@ impl SqliteQualityRepository {
                 "non_conformance",
                 "inspection_id",
             )?,
-            source: parse_enum_row(&row.get::<_, String>("source")?, "non_conformance", "source")?,
-            severity: parse_enum_row(&row.get::<_, String>("severity")?, "non_conformance", "severity")?,
-            status: parse_enum_row(&row.get::<_, String>("status")?, "non_conformance", "status")?,
+            source: parse_enum_row(
+                &row.get::<_, String>("source")?,
+                "non_conformance",
+                "source",
+            )?,
+            severity: parse_enum_row(
+                &row.get::<_, String>("severity")?,
+                "non_conformance",
+                "severity",
+            )?,
+            status: parse_enum_row(
+                &row.get::<_, String>("status")?,
+                "non_conformance",
+                "status",
+            )?,
             sku: row.get("sku")?,
             lot_number: row.get("lot_number")?,
             serial_number: row.get("serial_number")?,
@@ -159,8 +186,16 @@ impl SqliteQualityRepository {
                 "disposition_quantity",
             )?,
             assigned_to: row.get("assigned_to")?,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "non_conformance", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>("updated_at")?, "non_conformance", "updated_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "non_conformance",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>("updated_at")?,
+                "non_conformance",
+                "updated_at",
+            )?,
             closed_at: parse_datetime_opt_row(
                 row.get::<_, Option<String>>("closed_at")?,
                 "non_conformance",
@@ -182,8 +217,16 @@ impl SqliteQualityRepository {
                 "quantity_held",
             )?,
             reason: row.get("reason")?,
-            hold_type: parse_enum_row(&row.get::<_, String>("hold_type")?, "quality_hold", "hold_type")?,
-            ncr_id: parse_uuid_opt_row(row.get::<_, Option<String>>("ncr_id")?, "quality_hold", "ncr_id")?,
+            hold_type: parse_enum_row(
+                &row.get::<_, String>("hold_type")?,
+                "quality_hold",
+                "hold_type",
+            )?,
+            ncr_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>("ncr_id")?,
+                "quality_hold",
+                "ncr_id",
+            )?,
             inspection_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("inspection_id")?,
                 "quality_hold",
@@ -192,7 +235,11 @@ impl SqliteQualityRepository {
             placed_by: row.get("placed_by")?,
             released_by: row.get("released_by")?,
             release_notes: row.get("release_notes")?,
-            placed_at: parse_datetime_row(&row.get::<_, String>("placed_at")?, "quality_hold", "placed_at")?,
+            placed_at: parse_datetime_row(
+                &row.get::<_, String>("placed_at")?,
+                "quality_hold",
+                "placed_at",
+            )?,
             released_at: parse_datetime_opt_row(
                 row.get::<_, Option<String>>("released_at")?,
                 "quality_hold",
@@ -213,9 +260,17 @@ impl SqliteQualityRepository {
             name: row.get("name")?,
             description: row.get("description")?,
             category: row.get("category")?,
-            severity: parse_enum_row(&row.get::<_, String>("severity")?, "defect_code", "severity")?,
+            severity: parse_enum_row(
+                &row.get::<_, String>("severity")?,
+                "defect_code",
+                "severity",
+            )?,
             is_active: row.get::<_, i32>("is_active")? != 0,
-            created_at: parse_datetime_row(&row.get::<_, String>("created_at")?, "defect_code", "created_at")?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>("created_at")?,
+                "defect_code",
+                "created_at",
+            )?,
         })
     }
 
@@ -388,17 +443,13 @@ impl QualityRepository for SqliteQualityRepository {
 
         params.push(Box::new(id.to_string()));
 
-        let sql = format!(
-            "UPDATE inspections SET {} WHERE id = ?",
-            updates.join(", ")
-        );
+        let sql = format!("UPDATE inspections SET {} WHERE id = ?", updates.join(", "));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, params_refs.as_slice())
             .map_err(map_db_error)?;
 
-        self.get_inspection(id)?
-            .ok_or(CommerceError::NotFound)
+        self.get_inspection(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn list_inspections(&self, filter: InspectionFilter) -> Result<Vec<Inspection>> {
@@ -460,11 +511,8 @@ impl QualityRepository for SqliteQualityRepository {
 
     fn delete_inspection(&self, id: Uuid) -> Result<()> {
         let conn = self.conn()?;
-        conn.execute(
-            "DELETE FROM inspections WHERE id = ?",
-            [id.to_string()],
-        )
-        .map_err(map_db_error)?;
+        conn.execute("DELETE FROM inspections WHERE id = ?", [id.to_string()])
+            .map_err(map_db_error)?;
         Ok(())
     }
 
@@ -483,8 +531,7 @@ impl QualityRepository for SqliteQualityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_inspection(id)?
-            .ok_or(CommerceError::NotFound)
+        self.get_inspection(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn complete_inspection(&self, id: Uuid) -> Result<Inspection> {
@@ -492,8 +539,7 @@ impl QualityRepository for SqliteQualityRepository {
         let now = Utc::now();
 
         // Get inspection and calculate overall status
-        let inspection = self.get_inspection(id)?
-            .ok_or(CommerceError::NotFound)?;
+        let inspection = self.get_inspection(id)?.ok_or(CommerceError::NotFound)?;
 
         let overall_status = inspection.calculate_overall_result();
 
@@ -508,8 +554,7 @@ impl QualityRepository for SqliteQualityRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_inspection(id)?
-            .ok_or(CommerceError::NotFound)
+        self.get_inspection(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn record_inspection_result(&self, input: RecordInspectionResult) -> Result<InspectionItem> {
@@ -1047,7 +1092,8 @@ impl QualityRepository for SqliteQualityRepository {
 
         let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(cat) = category {
             (
-                "SELECT * FROM defect_codes WHERE category = ? AND is_active = 1 ORDER BY code".to_string(),
+                "SELECT * FROM defect_codes WHERE category = ? AND is_active = 1 ORDER BY code"
+                    .to_string(),
                 vec![Box::new(cat.to_string())],
             )
         } else {

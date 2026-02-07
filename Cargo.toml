@@ -47,20 +47,25 @@ serde_jcs = "0.1"
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 once_cell = "1.19"
-prometheus = "0.13"
+prometheus = "0.14"
 
 
 # Database (SQLite)
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.24"
+r2d2_sqlite = "0.25"
 
 # Database (PostgreSQL)
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
+# Avoid `sqlx` default features (notably `any`), which pull in MySQL and other
+# unused database stacks. This keeps `cargo audit` green and dependency trees
+# smaller while still supporting PostgreSQL.
+sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio", "postgres", "macros", "json", "uuid", "chrono", "rust_decimal", "tls-none"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # HTTP client (for embeddings service)
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+# Use rustls TLS to avoid a hard runtime dependency on OpenSSL (libssl.so.1.1),
+# which breaks in minimal container images and newer distros.
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 
 # Internal crates
 stateset-core = { path = "crates/stateset-core", version = "0.6.0" }

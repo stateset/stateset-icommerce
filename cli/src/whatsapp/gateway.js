@@ -16,7 +16,6 @@
 import {
   createSessionManager,
   createMessageHandler,
-  BOT_PREFIX,
   RECONNECT_POLICY,
   computeBackoff,
   sleep,
@@ -140,9 +139,7 @@ export async function startWhatsAppGateway({
         const myPhone = jidToPhone(sock.user?.id);
         const remotePhone = jidToPhone(remoteJid);
         const isLidSelfChat = remoteJid?.endsWith('@lid');
-        const isSelfChat = remoteJid === sock.user?.id
-          || remotePhone === myPhone
-          || isLidSelfChat;
+        const isSelfChat = remoteJid === sock.user?.id || remotePhone === myPhone || isLidSelfChat;
         // If it IS a self-chat (messaging yourself), allow it (return false = not "own")
         // If it's NOT a self-chat, it's an outgoing message to someone else → skip
         return !isSelfChat;
@@ -314,8 +311,8 @@ export async function startWhatsAppGateway({
     sessionManager.stopCleanup(cleanupHandle);
     try {
       if (currentSock) currentSock.end(undefined);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('[whatsapp] Socket close error:', err.message);
     }
     console.log('WhatsApp gateway shut down.');
   };
@@ -336,7 +333,9 @@ export async function startWhatsAppGateway({
     setTimeout(() => {
       clearInterval(check);
       if (!currentSock?.user) {
-        reject(new Error('Timed out waiting for WhatsApp connection (120s). Did you scan the QR code?'));
+        reject(
+          new Error('Timed out waiting for WhatsApp connection (120s). Did you scan the QR code?'),
+        );
       }
     }, 120_000);
   });

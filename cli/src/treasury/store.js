@@ -46,7 +46,7 @@ const DIRECTION_SIGNS = {
   withdraw: -1n,
   swap_out: -1n,
   fee: -1n,
-  adjust_out: -1n
+  adjust_out: -1n,
 };
 
 export function defaultTreasuryDir(cwd = process.cwd()) {
@@ -62,19 +62,24 @@ function ensureDirForFile(filePath) {
   mkdirSync(dir, { recursive: true });
 }
 
+/** @type {Record<string, string>} Allowed audit columns and their SQLite types */
+const AUDIT_COLUMNS = {
+  task_id: 'TEXT',
+  session_id: 'TEXT',
+  tool_name: 'TEXT',
+  request_id: 'TEXT',
+};
+
 function ensureAuditColumns(db) {
   const columns = db.prepare('PRAGMA table_info(treasury_transactions)').all();
-  const existing = new Set(columns.map(col => col.name));
-  const addColumn = (name, type) => {
+  const existing = new Set(columns.map((col) => col.name));
+
+  for (const [name, type] of Object.entries(AUDIT_COLUMNS)) {
     if (!existing.has(name)) {
+      // Safe: name and type come from hardcoded AUDIT_COLUMNS whitelist above
       db.exec(`ALTER TABLE treasury_transactions ADD COLUMN ${name} ${type}`);
     }
-  };
-
-  addColumn('task_id', 'TEXT');
-  addColumn('session_id', 'TEXT');
-  addColumn('tool_name', 'TEXT');
-  addColumn('request_id', 'TEXT');
+  }
 }
 
 export class TreasuryStore {
@@ -144,7 +149,7 @@ export class TreasuryStore {
     const payload = {
       ...entry,
       metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
-      created_at: entry.created_at || Date.now()
+      created_at: entry.created_at || Date.now(),
     };
 
     this._insertStmt.run(
@@ -166,7 +171,7 @@ export class TreasuryStore {
       payload.session_id || null,
       payload.tool_name || null,
       payload.request_id || null,
-      payload.created_at
+      payload.created_at,
     );
 
     return payload;
@@ -188,7 +193,7 @@ export class TreasuryStore {
       tokenSymbol = null,
       taskId = null,
       requestId = null,
-      limit = 50
+      limit = 50,
     } = query;
 
     const rows = this._listStmt.all(
@@ -201,12 +206,12 @@ export class TreasuryStore {
       taskId,
       requestId,
       requestId,
-      limit
+      limit,
     );
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       ...row,
-      metadata: row.metadata ? JSON.parse(row.metadata) : null
+      metadata: row.metadata ? JSON.parse(row.metadata) : null,
     }));
   }
 
@@ -233,7 +238,7 @@ export class TreasuryStore {
         chainId: row.chain_id,
         tokenSymbol: row.token_symbol,
         tokenDecimals: row.token_decimals,
-        balanceSmallest: 0n
+        balanceSmallest: 0n,
       };
 
       current.balanceSmallest += amount * sign;
@@ -251,14 +256,14 @@ export class TreasuryStore {
   getBalance(query = {}) {
     const { agentId, chainId, tokenSymbol, tokenDecimals = null } = query;
     const balances = this.getBalances({ agentId, chainId });
-    const match = balances.find(b => b.tokenSymbol === tokenSymbol);
+    const match = balances.find((b) => b.tokenSymbol === tokenSymbol);
     if (!match) {
       return {
         agentId,
         chainId,
         tokenSymbol,
         tokenDecimals,
-        balanceSmallest: 0n
+        balanceSmallest: 0n,
       };
     }
 
@@ -267,7 +272,7 @@ export class TreasuryStore {
       chainId,
       tokenSymbol,
       tokenDecimals: match.tokenDecimals ?? tokenDecimals,
-      balanceSmallest: match.balanceSmallest
+      balanceSmallest: match.balanceSmallest,
     };
   }
 }

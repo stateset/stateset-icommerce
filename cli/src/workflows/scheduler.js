@@ -20,7 +20,9 @@ import path from 'path';
 function parseCron(expression) {
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) {
-    throw new Error(`Invalid cron expression: ${expression}. Expected 5 parts (min hour dom month dow)`);
+    throw new Error(
+      `Invalid cron expression: ${expression}. Expected 5 parts (min hour dom month dow)`,
+    );
   }
 
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
@@ -31,7 +33,7 @@ function parseCron(expression) {
 /**
  * Check if a cron field matches a value
  */
-function cronFieldMatches(field, value, max) {
+function cronFieldMatches(field, value, _max) {
   if (field === '*') return true;
 
   // Handle step values: */5
@@ -42,13 +44,13 @@ function cronFieldMatches(field, value, max) {
 
   // Handle ranges: 1-5
   if (field.includes('-')) {
-    const [start, end] = field.split('-').map(n => parseInt(n, 10));
+    const [start, end] = field.split('-').map((n) => parseInt(n, 10));
     return value >= start && value <= end;
   }
 
   // Handle lists: 1,3,5
   if (field.includes(',')) {
-    const values = field.split(',').map(n => parseInt(n, 10));
+    const values = field.split(',').map((n) => parseInt(n, 10));
     return values.includes(value);
   }
 
@@ -102,7 +104,7 @@ export const JobStatus = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   PAUSED: 'paused',
-  CANCELLED: 'cancelled'
+  CANCELLED: 'cancelled',
 };
 
 /**
@@ -127,7 +129,7 @@ export class Job {
     runCount = 0,
     failCount = 0,
     lastError = null,
-    status = JobStatus.PENDING
+    status = JobStatus.PENDING,
   }) {
     this.id = id;
     this.name = name;
@@ -162,10 +164,11 @@ export class Job {
       case 'interval':
         return new Date(fromDate.getTime() + this.schedule);
 
-      case 'once':
+      case 'once': {
         // One-time jobs: schedule is the target date
         const targetDate = new Date(this.schedule);
         return targetDate > fromDate ? targetDate : null;
+      }
 
       default:
         throw new Error(`Unknown job type: ${this.type}`);
@@ -191,7 +194,7 @@ export class Job {
       runCount: this.runCount,
       failCount: this.failCount,
       lastError: this.lastError,
-      status: this.status
+      status: this.status,
     };
   }
 }
@@ -209,7 +212,7 @@ export class JobResult {
     duration = null,
     output = null,
     error = null,
-    retryCount = 0
+    retryCount = 0,
   }) {
     this.jobId = jobId;
     this.runId = runId;
@@ -233,7 +236,7 @@ export class Scheduler extends EventEmitter {
     storePath = null,
     tickInterval = 60000, // Check every minute
     maxConcurrentJobs = 5,
-    executor = null // Function to execute job actions
+    executor = null, // Function to execute job actions
   }) {
     super();
 
@@ -288,7 +291,7 @@ export class Scheduler extends EventEmitter {
       const jobsFile = path.join(this.storePath, 'jobs.json');
       const historyFile = path.join(this.storePath, 'job-history.json');
 
-      const jobsData = Array.from(this.jobs.values()).map(j => j.toJSON());
+      const jobsData = Array.from(this.jobs.values()).map((j) => j.toJSON());
       fs.writeFileSync(jobsFile, JSON.stringify(jobsData, null, 2));
 
       // Keep last 1000 history entries
@@ -407,11 +410,11 @@ export class Scheduler extends EventEmitter {
     let jobs = Array.from(this.jobs.values());
 
     if (status !== null) {
-      jobs = jobs.filter(j => j.status === status);
+      jobs = jobs.filter((j) => j.status === status);
     }
 
     if (enabled !== null) {
-      jobs = jobs.filter(j => j.enabled === enabled);
+      jobs = jobs.filter((j) => j.enabled === enabled);
     }
 
     return jobs.sort((a, b) => {
@@ -425,7 +428,7 @@ export class Scheduler extends EventEmitter {
    * Get jobs due for execution
    */
   getDueJobs(now = new Date()) {
-    return Array.from(this.jobs.values()).filter(job => {
+    return Array.from(this.jobs.values()).filter((job) => {
       if (!job.enabled) return false;
       if (!job.nextRunAt) return false;
       if (this.runningJobs.has(job.id)) return false;
@@ -463,7 +466,7 @@ export class Scheduler extends EventEmitter {
           jobId: job.id,
           runId,
           signal: abortController.signal,
-          metadata: job.metadata
+          metadata: job.metadata,
         });
       } else {
         throw new Error('No executor configured');
@@ -481,7 +484,7 @@ export class Scheduler extends EventEmitter {
         completedAt: completedAt.toISOString(),
         duration: completedAt - startedAt,
         output,
-        retryCount
+        retryCount,
       });
 
       job.status = JobStatus.COMPLETED;
@@ -498,7 +501,6 @@ export class Scheduler extends EventEmitter {
       }
 
       this.emit('job:completed', { job, result });
-
     } catch (error) {
       const completedAt = new Date();
       const errorMessage = error.name === 'AbortError' ? 'Job timed out' : error.message;
@@ -511,7 +513,7 @@ export class Scheduler extends EventEmitter {
         completedAt: completedAt.toISOString(),
         duration: completedAt - startedAt,
         error: errorMessage,
-        retryCount
+        retryCount,
       });
 
       job.lastError = errorMessage;
@@ -522,10 +524,12 @@ export class Scheduler extends EventEmitter {
         this.emit('job:retry', { job, result, nextRetry: retryCount + 1 });
 
         // Schedule retry
-        setTimeout(() => {
-          this.executeJob(job, retryCount + 1);
-        }, job.retryDelay * Math.pow(2, retryCount)); // Exponential backoff
-
+        setTimeout(
+          () => {
+            this.executeJob(job, retryCount + 1);
+          },
+          job.retryDelay * Math.pow(2, retryCount),
+        ); // Exponential backoff
       } else {
         job.status = JobStatus.FAILED;
         job.lastRunAt = completedAt.toISOString();
@@ -580,14 +584,14 @@ export class Scheduler extends EventEmitter {
 
     for (const job of jobsToRun) {
       // Don't await - run in parallel
-      this.executeJob(job).catch(error => {
+      this.executeJob(job).catch((error) => {
         this.emit('error', { type: 'execution', jobId: job.id, error });
       });
     }
 
     if (dueJobs.length > availableSlots) {
       this.emit('warning', {
-        message: `${dueJobs.length - availableSlots} jobs waiting due to concurrency limit`
+        message: `${dueJobs.length - availableSlots} jobs waiting due to concurrency limit`,
       });
     }
   }
@@ -633,10 +637,10 @@ export class Scheduler extends EventEmitter {
     return {
       isRunning: this.isRunning,
       totalJobs: this.jobs.size,
-      enabledJobs: Array.from(this.jobs.values()).filter(j => j.enabled).length,
+      enabledJobs: Array.from(this.jobs.values()).filter((j) => j.enabled).length,
       runningJobs: this.runningJobs.size,
       pendingJobs: this.getDueJobs().length,
-      recentHistory: this.jobHistory.slice(-10)
+      recentHistory: this.jobHistory.slice(-10),
     };
   }
 
@@ -647,11 +651,11 @@ export class Scheduler extends EventEmitter {
     let history = this.jobHistory;
 
     if (jobId) {
-      history = history.filter(h => h.jobId === jobId);
+      history = history.filter((h) => h.jobId === jobId);
     }
 
     if (status) {
-      history = history.filter(h => h.status === status);
+      history = history.filter((h) => h.status === status);
     }
 
     return history.slice(-limit);
@@ -670,8 +674,8 @@ export const JobTemplates = {
     schedule: '0 * * * *', // Every hour
     action: {
       agent: 'inventory',
-      request: 'Check for low stock items and list any products below their reorder point'
-    }
+      request: 'Check for low stock items and list any products below their reorder point',
+    },
   },
 
   // Order management
@@ -682,8 +686,8 @@ export const JobTemplates = {
     schedule: '0 9 * * *', // Daily at 9 AM
     action: {
       agent: 'checkout',
-      request: 'List abandoned carts from the last 24 hours and summarize recovery opportunities'
-    }
+      request: 'List abandoned carts from the last 24 hours and summarize recovery opportunities',
+    },
   },
 
   // Subscription management
@@ -694,8 +698,8 @@ export const JobTemplates = {
     schedule: '0 0 * * *', // Daily at midnight
     action: {
       agent: 'subscriptions',
-      request: 'List subscriptions due for renewal today and process billing cycles'
-    }
+      request: 'List subscriptions due for renewal today and process billing cycles',
+    },
   },
 
   // Analytics
@@ -706,8 +710,9 @@ export const JobTemplates = {
     schedule: '0 6 * * *', // Daily at 6 AM
     action: {
       agent: 'analytics',
-      request: 'Generate a sales summary for yesterday including revenue, order count, and top products'
-    }
+      request:
+        'Generate a sales summary for yesterday including revenue, order count, and top products',
+    },
   },
 
   // Sync
@@ -718,8 +723,8 @@ export const JobTemplates = {
     schedule: 300000, // Every 5 minutes
     action: {
       agent: 'sync',
-      request: 'Push any pending events to the sequencer and report sync status'
-    }
+      request: 'Push any pending events to the sequencer and report sync status',
+    },
   },
 
   // Promotions
@@ -730,8 +735,9 @@ export const JobTemplates = {
     schedule: '*/15 * * * *', // Every 15 minutes
     action: {
       agent: 'promotions',
-      request: 'Check for promotions that should be activated or deactivated based on their scheduled dates'
-    }
+      request:
+        'Check for promotions that should be activated or deactivated based on their scheduled dates',
+    },
   },
 
   // Invoice management
@@ -742,9 +748,9 @@ export const JobTemplates = {
     schedule: '0 10 * * 1', // Every Monday at 10 AM
     action: {
       agent: 'invoices',
-      request: 'List overdue invoices and summarize accounts receivable status'
-    }
-  }
+      request: 'List overdue invoices and summarize accounts receivable status',
+    },
+  },
 };
 
 export default Scheduler;

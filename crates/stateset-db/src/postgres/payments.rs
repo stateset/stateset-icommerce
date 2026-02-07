@@ -406,7 +406,7 @@ impl PgPaymentRepository {
 
         sqlx::query(
             "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
-             failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7"
+             failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7",
         )
         .bind(input.status.unwrap_or(payment.status).to_string())
         .bind(input.external_id.or(payment.external_id))
@@ -449,7 +449,11 @@ impl PgPaymentRepository {
             param_idx += 1;
         }
 
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, PaymentRow>(&query);
 
@@ -475,17 +479,32 @@ impl PgPaymentRepository {
 
     /// Get payments for order (async)
     pub async fn for_order_async(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        self.list_async(PaymentFilter { order_id: Some(order_id), ..Default::default() }).await
+        self.list_async(PaymentFilter {
+            order_id: Some(order_id),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Get payments for invoice (async)
     pub async fn for_invoice_async(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.list_async(PaymentFilter { invoice_id: Some(invoice_id), ..Default::default() }).await
+        self.list_async(PaymentFilter {
+            invoice_id: Some(invoice_id),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Mark payment as processing (async)
     pub async fn mark_processing_async(&self, id: Uuid) -> Result<Payment> {
-        self.update_async(id, UpdatePayment { status: Some(PaymentTransactionStatus::Processing), ..Default::default() }).await
+        self.update_async(
+            id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Processing),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Mark payment as completed (async)
@@ -505,7 +524,12 @@ impl PgPaymentRepository {
     }
 
     /// Mark payment as failed (async)
-    pub async fn mark_failed_async(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
+    pub async fn mark_failed_async(
+        &self,
+        id: Uuid,
+        reason: &str,
+        code: Option<&str>,
+    ) -> Result<Payment> {
         let now = Utc::now();
 
         sqlx::query("UPDATE payments SET status = $1, failure_reason = $2, failure_code = $3, updated_at = $4 WHERE id = $5")
@@ -523,7 +547,14 @@ impl PgPaymentRepository {
 
     /// Cancel payment (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<Payment> {
-        self.update_async(id, UpdatePayment { status: Some(PaymentTransactionStatus::Cancelled), ..Default::default() }).await
+        self.update_async(
+            id,
+            UpdatePayment {
+                status: Some(PaymentTransactionStatus::Cancelled),
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Create refund (async)
@@ -534,8 +565,13 @@ impl PgPaymentRepository {
             }
         }
 
-        let payment = self.get_async(input.payment_id).await?.ok_or(CommerceError::NotFound)?;
-        let refund_amount = input.amount.unwrap_or(payment.amount - payment.amount_refunded);
+        let payment = self
+            .get_async(input.payment_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        let refund_amount = input
+            .amount
+            .unwrap_or(payment.amount - payment.amount_refunded);
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -561,7 +597,9 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_refund_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Get refund by ID (async)
@@ -614,23 +652,28 @@ impl PgPaymentRepository {
 
     /// Complete refund (async)
     pub async fn complete_refund_async(&self, id: Uuid) -> Result<Refund> {
-        let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let refund = self
+            .get_refund_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
-        sqlx::query("UPDATE refunds SET status = $1, refunded_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(RefundStatus::Completed.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE refunds SET status = $1, refunded_at = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(RefundStatus::Completed.to_string())
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         // Update payment amount_refunded
         sqlx::query(
             "UPDATE payments SET amount_refunded = amount_refunded + $1, status = CASE
              WHEN amount_refunded + $2 >= amount THEN 'refunded' ELSE 'partially_refunded' END,
-             updated_at = $3 WHERE id = $4"
+             updated_at = $3 WHERE id = $4",
         )
         .bind(refund.amount)
         .bind(refund.amount)
@@ -640,27 +683,36 @@ impl PgPaymentRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_refund_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Fail refund (async)
     pub async fn fail_refund_async(&self, id: Uuid, reason: &str) -> Result<Refund> {
         let now = Utc::now();
 
-        sqlx::query("UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 WHERE id = $4")
-            .bind(RefundStatus::Failed.to_string())
-            .bind(reason)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(RefundStatus::Failed.to_string())
+        .bind(reason)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
-        self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_refund_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Create payment method (async)
-    pub async fn create_payment_method_async(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
+    pub async fn create_payment_method_async(
+        &self,
+        input: CreatePaymentMethod,
+    ) -> Result<PaymentMethod> {
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -677,7 +729,7 @@ impl PgPaymentRepository {
             "INSERT INTO payment_methods (id, customer_id, method_type, is_default, card_brand,
              card_last4, card_exp_month, card_exp_year, cardholder_name, bank_name, account_last4,
              external_id, billing_address, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(id)
         .bind(input.customer_id)
@@ -743,19 +795,25 @@ impl PgPaymentRepository {
     }
 
     /// Set default payment method (async)
-    pub async fn set_default_payment_method_async(&self, customer_id: Uuid, method_id: Uuid) -> Result<()> {
+    pub async fn set_default_payment_method_async(
+        &self,
+        customer_id: Uuid,
+        method_id: Uuid,
+    ) -> Result<()> {
         sqlx::query("UPDATE payment_methods SET is_default = false WHERE customer_id = $1")
             .bind(customer_id)
             .execute(&self.pool)
             .await
             .map_err(map_db_error)?;
 
-        sqlx::query("UPDATE payment_methods SET is_default = true WHERE id = $1 AND customer_id = $2")
-            .bind(method_id)
-            .bind(customer_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE payment_methods SET is_default = true WHERE id = $1 AND customer_id = $2",
+        )
+        .bind(method_id)
+        .bind(customer_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -816,7 +874,10 @@ impl PgPaymentRepository {
     // =========================================================================
 
     /// Create multiple payments - partial success allowed (async)
-    pub async fn create_batch_async(&self, inputs: Vec<CreatePayment>) -> Result<BatchResult<Payment>> {
+    pub async fn create_batch_async(
+        &self,
+        inputs: Vec<CreatePayment>,
+    ) -> Result<BatchResult<Payment>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::with_capacity(inputs.len());
@@ -832,7 +893,10 @@ impl PgPaymentRepository {
     }
 
     /// Create multiple payments - atomic (all-or-nothing) (async)
-    pub async fn create_batch_atomic_async(&self, inputs: Vec<CreatePayment>) -> Result<Vec<Payment>> {
+    pub async fn create_batch_atomic_async(
+        &self,
+        inputs: Vec<CreatePayment>,
+    ) -> Result<Vec<Payment>> {
         validate_batch_size(&inputs)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -924,7 +988,10 @@ impl PgPaymentRepository {
     }
 
     /// Update multiple payments - partial success allowed (async)
-    pub async fn update_batch_async(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<BatchResult<Payment>> {
+    pub async fn update_batch_async(
+        &self,
+        updates: Vec<(Uuid, UpdatePayment)>,
+    ) -> Result<BatchResult<Payment>> {
         validate_batch_size(&updates)?;
 
         let mut result = BatchResult::with_capacity(updates.len());
@@ -940,7 +1007,10 @@ impl PgPaymentRepository {
     }
 
     /// Update multiple payments - atomic (all-or-nothing) (async)
-    pub async fn update_batch_atomic_async(&self, updates: Vec<(Uuid, UpdatePayment)>) -> Result<Vec<Payment>> {
+    pub async fn update_batch_atomic_async(
+        &self,
+        updates: Vec<(Uuid, UpdatePayment)>,
+    ) -> Result<Vec<Payment>> {
         validate_batch_size(&updates)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -966,7 +1036,7 @@ impl PgPaymentRepository {
 
             sqlx::query(
                 "UPDATE payments SET status = $1, external_id = $2, failure_reason = $3,
-                 failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7"
+                 failure_code = $4, metadata = $5, updated_at = $6 WHERE id = $7",
             )
             .bind(input.status.unwrap_or(payment.status).to_string())
             .bind(input.external_id.or(payment.external_id))

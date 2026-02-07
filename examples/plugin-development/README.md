@@ -89,11 +89,10 @@ export default function init(api) {
   api.registerHttpRoute({
     method: 'POST',
     path: '/webhook/notify',
-    handler: async (req, res) => {
-      const body = await req.json();
+    level: 'none', // public endpoint (no API key) — validate signatures/tokens inside the handler
+    handler: async ({ body }) => {
       console.log('Webhook received:', body);
-      res.writeHead(200);
-      res.end(JSON.stringify({ received: true }));
+      return { status: 200, body: { received: true } };
     },
   });
 }
@@ -297,7 +296,16 @@ Register an HTTP route.
 interface HttpRouteDefinition {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  level?: 'none' | 'read' | 'preview' | 'write' | 'delete' | 'admin'; // default: 'read'
+  handler: (ctx: {
+    method: string;
+    pathname: string;
+    params: Record<string, string>;
+    body: any;
+    query: Record<string, string>;
+    headers: Record<string, string | string[] | undefined>;
+    identity: { name: string; level: string } | null;
+  }) => Promise<any>;
 }
 ```
 

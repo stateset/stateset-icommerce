@@ -12,21 +12,20 @@
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { DEFAULT_MODEL, THINK_LEVELS } from './config.js';
-import { Commerce } from '@stateset/embedded';
 import { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 import { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';
 import { AgentTelemetry, noOpTelemetry } from './telemetry.js';
 import { createPermissionGate } from './permissions.js';
-import { RichOutput, ICONS } from './output.js';
 import { loadSyncConfig, SyncConfig } from './sync/config.js';
 import { wrapCommerceWithEvents } from './sync/capture.js';
 import { createSyncEngine } from './sync/engine.js';
 
 // v0.4.0: New modules for enhanced reliability
-import { getCommandQueue, CommandQueue } from './command-queue.js';
+import { getCommandQueue } from './command-queue.js';
 import { ContextGuard } from './context-guard.js';
-import { ModelFallback, DEFAULT_FALLBACK_CHAIN } from './model-fallback.js';
+import { ModelFallback } from './model-fallback.js';
 import { getMarkdownMemoryStore } from './memory/markdown-store.js';
 import { getMemoryStore } from './memory/store.js';
 import { loadAgentSettings } from './settings.js';
@@ -38,6 +37,30 @@ import { redactSensitive, redactObject } from './privacy.js';
 // ============================================================================
 // Conversation History Helpers
 // ============================================================================
+
+const require = createRequire(import.meta.url);
+
+/** @type {any} */
+let _CommerceCtor = null;
+
+function getCommerceCtor() {
+  if (_CommerceCtor) return _CommerceCtor;
+  let mod;
+  try {
+    mod = require('@stateset/embedded');
+  } catch (err) {
+    const msg = err && typeof err.message === 'string' ? err.message : String(err);
+    throw new Error(`Failed to load @stateset/embedded. ${msg}`);
+  }
+
+  const CommerceCtor = mod.Commerce || mod.default?.Commerce || mod.default;
+  if (!CommerceCtor) {
+    throw new Error('Failed to resolve Commerce export from @stateset/embedded.');
+  }
+
+  _CommerceCtor = CommerceCtor;
+  return CommerceCtor;
+}
 
 function extractHistoryText(content) {
   if (!content) return '';
@@ -67,7 +90,7 @@ function formatConversationHistory(history) {
     if (!msg) continue;
     const role = (msg.role || msg.type || 'message').toString().toUpperCase();
     const content = extractHistoryText(
-      msg.content ?? msg.message?.content ?? msg.text ?? msg.message ?? ''
+      msg.content ?? msg.message?.content ?? msg.text ?? msg.message ?? '',
     ).trim();
     if (!content) continue;
     lines.push(`${role}: ${content}`);
@@ -117,7 +140,7 @@ function computeRetryDelay(attempt, retrySettings) {
   const base = retrySettings.baseDelayMs || 500;
   const max = retrySettings.maxDelayMs || 8000;
   const jitter = retrySettings.jitter || 0;
-  let delay = base * (2 ** Math.max(0, attempt - 1));
+  let delay = base * 2 ** Math.max(0, attempt - 1);
   delay = Math.min(delay, max);
   if (jitter > 0) {
     const rand = (Math.random() * 2 - 1) * jitter;
@@ -204,11 +227,11 @@ export const AGENTS = {
 3. Document everything - Include reasons for changes
 4. Be concise - Keep responses focused and actionable
 
-When the user asks to create, update, or delete something, first explain what would happen. If --apply is not set, the operation will show a preview instead of executing.`
+When the user asks to create, update, or delete something, first explain what would happen. If --apply is not set, the operation will show a preview instead of executing.`,
   },
 
   // Checkout specialist
-  'checkout': {
+  checkout: {
     name: 'Checkout Agent',
     description: 'Shopping cart and checkout flow specialist (Agentic Commerce Protocol)',
     tools: [
@@ -228,7 +251,7 @@ When the user asks to create, update, or delete something, first explain what wo
       'mcp__stateset-commerce__get_abandoned_carts',
       // Also need customer lookup for checkout
       'mcp__stateset-commerce__get_customer',
-      'mcp__stateset-commerce__list_customers'
+      'mcp__stateset-commerce__list_customers',
     ],
     systemPrompt: `You are a checkout flow specialist for StateSet Commerce implementing the Agentic Commerce Protocol (ACP).
 
@@ -261,11 +284,11 @@ Guide customers through the shopping cart and checkout process.
 2. Verify shipping address looks complete
 3. Explain all charges (subtotal, tax, shipping, discounts)
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Orders specialist
-  'orders': {
+  orders: {
     name: 'Orders Agent',
     description: 'Order lifecycle management specialist',
     tools: [
@@ -276,7 +299,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__ship_order',
       'mcp__stateset-commerce__cancel_order',
       'mcp__stateset-commerce__list_customers',
-      'mcp__stateset-commerce__get_customer'
+      'mcp__stateset-commerce__get_customer',
     ],
     systemPrompt: `You are an order management specialist for StateSet Commerce.
 
@@ -301,11 +324,11 @@ pending → confirmed → processing → shipped → delivered
 3. Only cancel pending/confirmed orders
 4. Check customer exists before creating order
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Inventory specialist
-  'inventory': {
+  inventory: {
     name: 'Inventory Agent',
     description: 'Stock and inventory management specialist',
     tools: [
@@ -314,7 +337,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__adjust_inventory',
       'mcp__stateset-commerce__reserve_inventory',
       'mcp__stateset-commerce__confirm_reservation',
-      'mcp__stateset-commerce__release_reservation'
+      'mcp__stateset-commerce__release_reservation',
     ],
     systemPrompt: `You are an inventory management specialist for StateSet Commerce.
 
@@ -341,11 +364,11 @@ Formula: Available = On-Hand - Allocated
 2. Document reasons for all changes
 3. Warn if adjustment would cause negative stock
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Returns specialist
-  'returns': {
+  returns: {
     name: 'Returns Agent',
     description: 'Return request processing specialist',
     tools: [
@@ -355,7 +378,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__approve_return',
       'mcp__stateset-commerce__reject_return',
       'mcp__stateset-commerce__get_order',
-      'mcp__stateset-commerce__list_orders'
+      'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a returns processing specialist for StateSet Commerce.
 
@@ -384,11 +407,11 @@ requested → approved → received → refunded
 2. Check return eligibility/window
 3. Document rejection reasons clearly
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Analytics specialist
-  'analytics': {
+  analytics: {
     name: 'Analytics Agent',
     description: 'Business intelligence and forecasting specialist',
     tools: [
@@ -401,7 +424,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__get_demand_forecast',
       'mcp__stateset-commerce__get_revenue_forecast',
       'mcp__stateset-commerce__get_order_status_breakdown',
-      'mcp__stateset-commerce__get_return_metrics'
+      'mcp__stateset-commerce__get_return_metrics',
     ],
     systemPrompt: `You are a business intelligence and forecasting specialist for StateSet Commerce.
 
@@ -440,11 +463,11 @@ Provide insights into sales performance, customer behavior, inventory health, an
 3. Highlight trends and insights
 4. Suggest actionable recommendations
 
-Note: All analytics tools are read-only. No --apply flag needed.`
+Note: All analytics tools are read-only. No --apply flag needed.`,
   },
 
   // Promotions specialist
-  'promotions': {
+  promotions: {
     name: 'Promotions Agent',
     description: 'Promotions, discounts, and coupon code management specialist',
     tools: [
@@ -460,7 +483,7 @@ Note: All analytics tools are read-only. No --apply flag needed.`
       'mcp__stateset-commerce__apply_cart_promotions',
       // Also need cart access for applying promotions
       'mcp__stateset-commerce__get_cart',
-      'mcp__stateset-commerce__apply_cart_discount'
+      'mcp__stateset-commerce__apply_cart_discount',
     ],
     systemPrompt: `You are a promotions and discounts specialist for StateSet Commerce.
 
@@ -501,13 +524,14 @@ draft → active → (paused) → expired
 3. Check date ranges for scheduled promotions
 4. Warn about overlapping promotions
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Subscriptions specialist
-  'subscriptions': {
+  subscriptions: {
     name: 'Subscriptions Agent',
-    description: 'Subscription plans, recurring billing, and customer subscription lifecycle management',
+    description:
+      'Subscription plans, recurring billing, and customer subscription lifecycle management',
     tools: [
       'mcp__stateset-commerce__list_subscription_plans',
       'mcp__stateset-commerce__get_subscription_plan',
@@ -526,7 +550,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__get_subscription_events',
       // Also need customer access
       'mcp__stateset-commerce__get_customer',
-      'mcp__stateset-commerce__list_customers'
+      'mcp__stateset-commerce__list_customers',
     ],
     systemPrompt: `You are a subscription management specialist for StateSet Commerce.
 
@@ -583,11 +607,11 @@ pending → trial → active → (paused) → cancelled → expired
 3. Show trial end dates clearly
 4. Warn about billing implications of changes
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Storefront creation specialist
-  'storefront': {
+  storefront: {
     name: 'Storefront Agent',
     description: 'Creates e-commerce storefront websites using StateSet iCommerce',
     tools: [
@@ -603,7 +627,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-scaffold__read_file',
       'mcp__stateset-scaffold__list_files',
       'mcp__stateset-scaffold__run_command',
-      'mcp__stateset-scaffold__seed_database'
+      'mcp__stateset-scaffold__seed_database',
     ],
     systemPrompt: `You are a storefront creation specialist for StateSet iCommerce. You help users create complete, production-ready e-commerce websites.
 
@@ -648,13 +672,14 @@ Create e-commerce storefronts using @stateset/embedded as the commerce backend. 
 ## Safety
 - Preview mode shows what would be created
 - --apply flag enables write operations
-- Never overwrite files without confirmation`
+- Never overwrite files without confirmation`,
   },
 
   // Sync specialist
-  'sync': {
+  sync: {
     name: 'Sync Agent',
-    description: 'Verifiable Event Sync (VES) management - sync local state with production sequencer',
+    description:
+      'Verifiable Event Sync (VES) management - sync local state with production sequencer',
     tools: [
       'mcp__stateset-commerce__sync_status',
       'mcp__stateset-commerce__sync_push',
@@ -662,7 +687,7 @@ Create e-commerce storefronts using @stateset/embedded as the commerce backend. 
       'mcp__stateset-commerce__sync_outbox',
       'mcp__stateset-commerce__sync_retry_failed',
       'mcp__stateset-commerce__sync_entity_history',
-      'mcp__stateset-commerce__sync_full'
+      'mcp__stateset-commerce__sync_full',
     ],
     systemPrompt: `You are a sync management specialist for StateSet Commerce implementing Verifiable Event Sync (VES).
 
@@ -721,11 +746,11 @@ Use sync_entity_history to see all events for an order, customer, etc.
 ## Troubleshooting
 - "Sync not configured" → Run stateset-sync init first
 - High lag → Run sync_pull to catch up
-- Failed events → Check sync_outbox for errors, then sync_retry_failed`
+- Failed events → Check sync_outbox for errors, then sync_retry_failed`,
   },
 
   // Manufacturing specialist
-  'manufacturing': {
+  manufacturing: {
     name: 'Manufacturing Agent',
     description: 'Bill of Materials (BOM) and work order management specialist',
     tools: [
@@ -742,7 +767,7 @@ Use sync_entity_history to see all events for an order, customer, etc.
       'mcp__stateset-commerce__cancel_work_order',
       // Also need inventory for production
       'mcp__stateset-commerce__get_stock',
-      'mcp__stateset-commerce__adjust_inventory'
+      'mcp__stateset-commerce__adjust_inventory',
     ],
     systemPrompt: `You are a manufacturing management specialist for StateSet Commerce.
 
@@ -785,11 +810,11 @@ pending → in_progress → completed
 3. Record actual vs planned quantities
 4. Document reasons for variances
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Payments specialist
-  'payments': {
+  payments: {
     name: 'Payments Agent',
     description: 'Payment processing and refund management specialist',
     tools: [
@@ -800,7 +825,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__create_refund',
       // Also need order context
       'mcp__stateset-commerce__get_order',
-      'mcp__stateset-commerce__list_orders'
+      'mcp__stateset-commerce__list_orders',
     ],
     systemPrompt: `You are a payment processing specialist for StateSet Commerce.
 
@@ -831,11 +856,11 @@ pending → processing → completed → refunded
 3. Document refund reasons
 4. Partial refunds require clear item breakdown
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Shipments specialist
-  'shipments': {
+  shipments: {
     name: 'Shipments Agent',
     description: 'Shipment tracking and delivery management specialist',
     tools: [
@@ -844,7 +869,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__deliver_shipment',
       // Also need order context
       'mcp__stateset-commerce__get_order',
-      'mcp__stateset-commerce__ship_order'
+      'mcp__stateset-commerce__ship_order',
     ],
     systemPrompt: `You are a shipment management specialist for StateSet Commerce.
 
@@ -871,11 +896,11 @@ created → shipped → in_transit → delivered
 3. Check inventory before shipping
 4. Update order status after shipment
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Suppliers specialist
-  'suppliers': {
+  suppliers: {
     name: 'Suppliers Agent',
     description: 'Supplier management and purchase order specialist',
     tools: [
@@ -887,7 +912,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__send_purchase_order',
       // Also need inventory context
       'mcp__stateset-commerce__get_stock',
-      'mcp__stateset-commerce__get_low_stock_items'
+      'mcp__stateset-commerce__get_low_stock_items',
     ],
     systemPrompt: `You are a supplier and procurement specialist for StateSet Commerce.
 
@@ -920,11 +945,11 @@ draft → approved → sent → partially_received → received
 3. Approve POs before sending
 4. Track expected delivery dates
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Invoices specialist
-  'invoices': {
+  invoices: {
     name: 'Invoices Agent',
     description: 'B2B invoice management and accounts receivable specialist',
     tools: [
@@ -935,7 +960,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__get_overdue_invoices',
       // Also need customer/order context
       'mcp__stateset-commerce__get_customer',
-      'mcp__stateset-commerce__get_order'
+      'mcp__stateset-commerce__get_order',
     ],
     systemPrompt: `You are a B2B invoice management specialist for StateSet Commerce.
 
@@ -964,11 +989,11 @@ draft → sent → viewed → partially_paid → paid
 3. Track payment terms and due dates
 4. Flag overdue invoices promptly
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Warranties specialist
-  'warranties': {
+  warranties: {
     name: 'Warranties Agent',
     description: 'Product warranty and claims management specialist',
     tools: [
@@ -978,7 +1003,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__approve_warranty_claim',
       // Also need product/order context
       'mcp__stateset-commerce__get_product',
-      'mcp__stateset-commerce__get_order'
+      'mcp__stateset-commerce__get_order',
     ],
     systemPrompt: `You are a warranty management specialist for StateSet Commerce.
 
@@ -1005,11 +1030,11 @@ pending → approved → processed
 3. Document claim reason and evidence
 4. Process approved claims promptly
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Currency specialist
-  'currency': {
+  currency: {
     name: 'Currency Agent',
     description: 'Multi-currency support and exchange rate management specialist',
     tools: [
@@ -1020,7 +1045,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__get_currency_settings',
       'mcp__stateset-commerce__set_base_currency',
       'mcp__stateset-commerce__enable_currencies',
-      'mcp__stateset-commerce__format_currency'
+      'mcp__stateset-commerce__format_currency',
     ],
     systemPrompt: `You are a multi-currency management specialist for StateSet Commerce.
 
@@ -1053,11 +1078,11 @@ Manage exchange rates, currency conversions, and multi-currency store settings.
 3. Consider rounding for display
 4. Handle currency precision correctly
 
-If --apply is not set, write operations show a preview instead of executing.`
+If --apply is not set, write operations show a preview instead of executing.`,
   },
 
   // Tax specialist
-  'tax': {
+  tax: {
     name: 'Tax Agent',
     description: 'Tax calculation and compliance specialist',
     tools: [
@@ -1069,7 +1094,7 @@ If --apply is not set, write operations show a preview instead of executing.`
       'mcp__stateset-commerce__get_tax_settings',
       'mcp__stateset-commerce__get_us_state_tax_info',
       'mcp__stateset-commerce__get_customer_tax_exemptions',
-      'mcp__stateset-commerce__create_tax_exemption'
+      'mcp__stateset-commerce__create_tax_exemption',
     ],
     systemPrompt: `You are a tax calculation and compliance specialist for StateSet Commerce.
 
@@ -1105,8 +1130,8 @@ Calculate sales tax for orders, manage tax rates, and handle exemptions.
 3. Apply product-specific tax rules
 4. Document exemption certificates
 
-If --apply is not set, write operations show a preview instead of executing.`
-  }
+If --apply is not set, write operations show a preview instead of executing.`,
+  },
 };
 
 // ============================================================================
@@ -1117,10 +1142,10 @@ If --apply is not set, write operations show a preview instead of executing.`
  * Confidence thresholds for routing decisions
  */
 const ROUTING_THRESHOLDS = {
-  HIGH_CONFIDENCE: 0.7,    // Route with high confidence
-  MEDIUM_CONFIDENCE: 0.4,  // Route but note alternatives
-  LOW_CONFIDENCE: 0.2,     // Ambiguous - may need clarification
-  MIN_SCORE: 2             // Minimum weighted score to consider a match
+  HIGH_CONFIDENCE: 0.7, // Route with high confidence
+  MEDIUM_CONFIDENCE: 0.4, // Route but note alternatives
+  LOW_CONFIDENCE: 0.2, // Ambiguous - may need clarification
+  MIN_SCORE: 2, // Minimum weighted score to consider a match
 };
 
 /**
@@ -1133,189 +1158,369 @@ const ROUTING_THRESHOLDS = {
  * Format: { keyword: weight }
  */
 const AGENT_KEYWORDS_WEIGHTED = {
-  'checkout': {
+  checkout: {
     // Strong indicators
-    'checkout': 3, 'shopping cart': 3, 'add to cart': 3, 'complete checkout': 3,
-    'abandoned cart': 3, 'cart recovery': 3,
+    checkout: 3,
+    'shopping cart': 3,
+    'add to cart': 3,
+    'complete checkout': 3,
+    'abandoned cart': 3,
+    'cart recovery': 3,
     // Moderate indicators
-    'cart': 2, 'shopping': 2, 'shipping rate': 2, 'shipping options': 2,
-    'apply discount': 2, 'coupon code': 2,
+    cart: 2,
+    shopping: 2,
+    'shipping rate': 2,
+    'shipping options': 2,
+    'apply discount': 2,
+    'coupon code': 2,
     // Weak indicators
-    'buy': 1, 'purchase': 1
+    buy: 1,
+    purchase: 1,
   },
 
-  'orders': {
+  orders: {
     // Strong indicators
-    'order status': 3, 'order #': 3, 'order number': 3, 'ship order': 3,
-    'cancel order': 3, 'order history': 3, 'update order': 3,
-    'pending orders': 3, 'order tracking': 3, 'fulfill order': 3,
+    'order status': 3,
+    'order #': 3,
+    'order number': 3,
+    'ship order': 3,
+    'cancel order': 3,
+    'order history': 3,
+    'update order': 3,
+    'pending orders': 3,
+    'order tracking': 3,
+    'fulfill order': 3,
     // Moderate indicators
-    'order': 2, 'ship': 2, 'tracking': 2, 'fulfillment': 2, 'deliver': 2,
-    'shipping': 2, 'tracking number': 2, 'shipped': 2
+    order: 2,
+    ship: 2,
+    tracking: 2,
+    fulfillment: 2,
+    deliver: 2,
+    shipping: 2,
+    'tracking number': 2,
+    shipped: 2,
   },
 
-  'inventory': {
+  inventory: {
     // Strong indicators
-    'stock level': 3, 'inventory count': 3, 'adjust inventory': 3,
-    'reserve stock': 3, 'inventory item': 3, 'on-hand': 3, 'allocated': 3,
-    'release reservation': 3, 'confirm reservation': 3,
+    'stock level': 3,
+    'inventory count': 3,
+    'adjust inventory': 3,
+    'reserve stock': 3,
+    'inventory item': 3,
+    'on-hand': 3,
+    allocated: 3,
+    'release reservation': 3,
+    'confirm reservation': 3,
     // Moderate indicators
-    'stock': 2, 'inventory': 2, 'restock': 2, 'warehouse': 2, 'sku': 2,
-    'available quantity': 2, 'stock check': 2,
+    stock: 2,
+    inventory: 2,
+    restock: 2,
+    warehouse: 2,
+    sku: 2,
+    'available quantity': 2,
+    'stock check': 2,
     // Weak indicators
-    'reserve': 1, 'available': 1
+    reserve: 1,
+    available: 1,
   },
 
-  'returns': {
+  returns: {
     // Strong indicators
-    'return request': 3, 'rma': 3, 'return merchandise': 3, 'approve return': 3,
-    'reject return': 3, 'pending returns': 3, 'return status': 3,
+    'return request': 3,
+    rma: 3,
+    'return merchandise': 3,
+    'approve return': 3,
+    'reject return': 3,
+    'pending returns': 3,
+    'return status': 3,
     // Moderate indicators
-    'return': 2, 'refund': 2, 'exchange': 2, 'defective': 2, 'damaged': 2,
-    'return policy': 2, 'return label': 2,
+    return: 2,
+    refund: 2,
+    exchange: 2,
+    defective: 2,
+    damaged: 2,
+    'return policy': 2,
+    'return label': 2,
     // Weak indicators
-    'broken': 1, 'wrong item': 1
+    broken: 1,
+    'wrong item': 1,
   },
 
-  'analytics': {
+  analytics: {
     // Strong indicators
-    'analytics': 3, 'sales report': 3, 'revenue report': 3, 'forecast': 3,
-    'predict demand': 3, 'top products': 3, 'best sellers': 3,
-    'customer metrics': 3, 'top customers': 3, 'inventory health': 3,
-    'low stock report': 3, 'revenue forecast': 3, 'demand forecast': 3,
+    analytics: 3,
+    'sales report': 3,
+    'revenue report': 3,
+    forecast: 3,
+    'predict demand': 3,
+    'top products': 3,
+    'best sellers': 3,
+    'customer metrics': 3,
+    'top customers': 3,
+    'inventory health': 3,
+    'low stock report': 3,
+    'revenue forecast': 3,
+    'demand forecast': 3,
     // Moderate indicators
-    'sales': 2, 'revenue': 2, 'metrics': 2, 'performance': 2, 'trend': 2,
-    'insight': 2, 'dashboard': 2, 'report': 2, 'aov': 2, 'average order': 2,
-    'lifetime value': 2, 'vip customers': 2,
+    sales: 2,
+    revenue: 2,
+    metrics: 2,
+    performance: 2,
+    trend: 2,
+    insight: 2,
+    dashboard: 2,
+    report: 2,
+    aov: 2,
+    'average order': 2,
+    'lifetime value': 2,
+    'vip customers': 2,
     // Weak indicators
-    'how is business': 1, 'how are sales': 1
+    'how is business': 1,
+    'how are sales': 1,
   },
 
-  'promotions': {
+  promotions: {
     // Strong indicators
-    'promotion': 3, 'create promotion': 3, 'activate promotion': 3,
-    'promo code': 3, 'coupon': 3, 'create coupon': 3, 'validate coupon': 3,
-    'percent off': 3, 'percentage off': 3, 'bogo': 3, 'buy one get one': 3,
-    'tiered discount': 3, 'flash sale': 3,
+    promotion: 3,
+    'create promotion': 3,
+    'activate promotion': 3,
+    'promo code': 3,
+    coupon: 3,
+    'create coupon': 3,
+    'validate coupon': 3,
+    'percent off': 3,
+    'percentage off': 3,
+    bogo: 3,
+    'buy one get one': 3,
+    'tiered discount': 3,
+    'flash sale': 3,
     // Moderate indicators
-    'discount': 2, 'sale': 2, 'deal': 2, 'offer': 2, 'campaign': 2,
+    discount: 2,
+    sale: 2,
+    deal: 2,
+    offer: 2,
+    campaign: 2,
     'free shipping promotion': 2,
     // Weak indicators
-    'save': 1
+    save: 1,
   },
 
-  'subscriptions': {
+  subscriptions: {
     // Strong indicators
-    'subscription': 3, 'subscription plan': 3, 'recurring billing': 3,
-    'billing cycle': 3, 'pause subscription': 3, 'cancel subscription': 3,
-    'resume subscription': 3, 'skip billing': 3, 'subscriber': 3,
-    'create subscription': 3, 'subscription events': 3,
+    subscription: 3,
+    'subscription plan': 3,
+    'recurring billing': 3,
+    'billing cycle': 3,
+    'pause subscription': 3,
+    'cancel subscription': 3,
+    'resume subscription': 3,
+    'skip billing': 3,
+    subscriber: 3,
+    'create subscription': 3,
+    'subscription events': 3,
     // Moderate indicators
-    'subscribe': 2, 'recurring': 2, 'trial period': 2, 'monthly plan': 2,
-    'annual plan': 2, 'renewal': 2, 'membership': 2,
+    subscribe: 2,
+    recurring: 2,
+    'trial period': 2,
+    'monthly plan': 2,
+    'annual plan': 2,
+    renewal: 2,
+    membership: 2,
     // Weak indicators
-    'trial': 1, 'plan': 1, 'billing': 1
+    trial: 1,
+    plan: 1,
+    billing: 1,
   },
 
-  'storefront': {
+  storefront: {
     // Strong indicators
-    'create store': 3, 'new store': 3, 'storefront': 3, 'build store': 3,
-    'create website': 3, 'scaffold': 3, 'ecommerce site': 3,
-    'e-commerce site': 3, 'online store': 3, 'shop website': 3,
-    'nextjs store': 3, 'react store': 3,
+    'create store': 3,
+    'new store': 3,
+    storefront: 3,
+    'build store': 3,
+    'create website': 3,
+    scaffold: 3,
+    'ecommerce site': 3,
+    'e-commerce site': 3,
+    'online store': 3,
+    'shop website': 3,
+    'nextjs store': 3,
+    'react store': 3,
     // Moderate indicators
-    'website': 2, 'generate project': 2,
+    website: 2,
+    'generate project': 2,
     // Weak indicators
-    'nextjs': 1, 'react': 1
+    nextjs: 1,
+    react: 1,
   },
 
-  'sync': {
+  sync: {
     // Strong indicators
-    'sync status': 3, 'sync events': 3, 'push events': 3, 'pull events': 3,
-    'outbox': 3, 'sequencer': 3, 'event sync': 3, 'sync lag': 3,
-    'ves': 3, 'verifiable event': 3, 'pending events': 3,
+    'sync status': 3,
+    'sync events': 3,
+    'push events': 3,
+    'pull events': 3,
+    outbox: 3,
+    sequencer: 3,
+    'event sync': 3,
+    'sync lag': 3,
+    ves: 3,
+    'verifiable event': 3,
+    'pending events': 3,
     // Moderate indicators
-    'sync': 2, 'synchronize': 2
+    sync: 2,
+    synchronize: 2,
   },
 
-  'manufacturing': {
+  manufacturing: {
     // Strong indicators
-    'bom': 3, 'bill of materials': 3, 'work order': 3, 'create work order': 3,
-    'start work order': 3, 'complete work order': 3, 'manufacturing': 3,
+    bom: 3,
+    'bill of materials': 3,
+    'work order': 3,
+    'create work order': 3,
+    'start work order': 3,
+    'complete work order': 3,
+    manufacturing: 3,
     // Moderate indicators
-    'production': 2, 'manufacture': 2, 'assembly': 2, 'component': 2, 'yield': 2,
+    production: 2,
+    manufacture: 2,
+    assembly: 2,
+    component: 2,
+    yield: 2,
     // Weak indicators
-    'build product': 1
+    'build product': 1,
   },
 
-  'payments': {
+  payments: {
     // Strong indicators
-    'payment': 3, 'create payment': 3, 'complete payment': 3,
-    'process payment': 3, 'payment status': 3, 'payment method': 3,
+    payment: 3,
+    'create payment': 3,
+    'complete payment': 3,
+    'process payment': 3,
+    'payment status': 3,
+    'payment method': 3,
     // Moderate indicators
-    'pay': 2, 'charge': 2, 'capture': 2, 'credit card': 2, 'ach': 2,
-    'digital wallet': 2, 'transaction': 2,
+    pay: 2,
+    charge: 2,
+    capture: 2,
+    'credit card': 2,
+    ach: 2,
+    'digital wallet': 2,
+    transaction: 2,
     // Weak indicators (overlap with returns for refund)
-    'refund': 1
+    refund: 1,
   },
 
-  'shipments': {
+  shipments: {
     // Strong indicators
-    'shipment': 3, 'create shipment': 3, 'deliver shipment': 3,
-    'shipment status': 3, 'carrier': 3, 'in transit': 3,
+    shipment: 3,
+    'create shipment': 3,
+    'deliver shipment': 3,
+    'shipment status': 3,
+    carrier: 3,
+    'in transit': 3,
     // Moderate indicators
-    'fedex': 2, 'ups': 2, 'usps': 2, 'dhl': 2, 'parcel': 2, 'package': 2,
+    fedex: 2,
+    ups: 2,
+    usps: 2,
+    dhl: 2,
+    parcel: 2,
+    package: 2,
     // Weak indicators (overlap with orders)
-    'delivery': 1
+    delivery: 1,
   },
 
-  'suppliers': {
+  suppliers: {
     // Strong indicators
-    'supplier': 3, 'create supplier': 3, 'purchase order': 3, 'create po': 3,
-    'approve purchase order': 3, 'send purchase order': 3, 'vendor': 3,
+    supplier: 3,
+    'create supplier': 3,
+    'purchase order': 3,
+    'create po': 3,
+    'approve purchase order': 3,
+    'send purchase order': 3,
+    vendor: 3,
     // Moderate indicators
-    'procurement': 2, 'reorder': 2, 'replenish': 2, 'po': 2,
+    procurement: 2,
+    reorder: 2,
+    replenish: 2,
+    po: 2,
     // Weak indicators
-    'supply': 1
+    supply: 1,
   },
 
-  'invoices': {
+  invoices: {
     // Strong indicators
-    'invoice': 3, 'create invoice': 3, 'send invoice': 3, 'overdue invoice': 3,
-    'record payment': 3, 'accounts receivable': 3, 'net 30': 3, 'net 60': 3,
+    invoice: 3,
+    'create invoice': 3,
+    'send invoice': 3,
+    'overdue invoice': 3,
+    'record payment': 3,
+    'accounts receivable': 3,
+    'net 30': 3,
+    'net 60': 3,
     // Moderate indicators
-    'ar': 2, 'payment terms': 2, 'b2b': 2, 'overdue': 2,
+    ar: 2,
+    'payment terms': 2,
+    b2b: 2,
+    overdue: 2,
     // Weak indicators
-    'billing': 1
+    billing: 1,
   },
 
-  'warranties': {
+  warranties: {
     // Strong indicators
-    'warranty': 3, 'create warranty': 3, 'warranty claim': 3,
-    'approve warranty': 3, 'warranty status': 3, 'guarantee': 3,
+    warranty: 3,
+    'create warranty': 3,
+    'warranty claim': 3,
+    'approve warranty': 3,
+    'warranty status': 3,
+    guarantee: 3,
     // Moderate indicators
-    'claim': 2, 'repair': 2, 'replacement': 2
+    claim: 2,
+    repair: 2,
+    replacement: 2,
   },
 
-  'currency': {
+  currency: {
     // Strong indicators
-    'exchange rate': 3, 'currency conversion': 3, 'set exchange rate': 3,
-    'convert currency': 3, 'multi-currency': 3, 'base currency': 3,
-    'enable currencies': 3, 'format currency': 3,
+    'exchange rate': 3,
+    'currency conversion': 3,
+    'set exchange rate': 3,
+    'convert currency': 3,
+    'multi-currency': 3,
+    'base currency': 3,
+    'enable currencies': 3,
+    'format currency': 3,
     // Moderate indicators
-    'currency': 2, 'forex': 2, 'conversion': 2,
+    currency: 2,
+    forex: 2,
+    conversion: 2,
     // Weak indicators (too generic alone)
-    'usd': 1, 'eur': 1, 'gbp': 1, 'jpy': 1
+    usd: 1,
+    eur: 1,
+    gbp: 1,
+    jpy: 1,
   },
 
-  'tax': {
+  tax: {
     // Strong indicators
-    'sales tax': 3, 'calculate tax': 3, 'tax rate': 3, 'tax exempt': 3,
-    'tax exemption': 3, 'vat': 3, 'gst': 3, 'hst': 3, 'pst': 3,
-    'tax jurisdiction': 3, 'nexus': 3, 'cart tax': 3,
+    'sales tax': 3,
+    'calculate tax': 3,
+    'tax rate': 3,
+    'tax exempt': 3,
+    'tax exemption': 3,
+    vat: 3,
+    gst: 3,
+    hst: 3,
+    pst: 3,
+    'tax jurisdiction': 3,
+    nexus: 3,
+    'cart tax': 3,
     // Moderate indicators
-    'tax': 2, 'exemption': 2
-  }
+    tax: 2,
+    exemption: 2,
+  },
 };
 
 /**
@@ -1323,13 +1528,13 @@ const AGENT_KEYWORDS_WEIGHTED = {
  * Helps disambiguate overlapping terms
  */
 const NEGATIVE_KEYWORDS = {
-  'checkout': ['return', 'refund', 'analytics', 'report'],
-  'orders': ['cart', 'checkout', 'warehouse', 'supplier'],
-  'inventory': ['order status', 'checkout', 'return'],
-  'returns': ['checkout', 'cart', 'create order'],
-  'payments': ['subscription', 'billing cycle', 'return'],
-  'shipments': ['order status', 'inventory'],
-  'subscriptions': ['one-time', 'single purchase']
+  checkout: ['return', 'refund', 'analytics', 'report'],
+  orders: ['cart', 'checkout', 'warehouse', 'supplier'],
+  inventory: ['order status', 'checkout', 'return'],
+  returns: ['checkout', 'cart', 'create order'],
+  payments: ['subscription', 'billing cycle', 'return'],
+  shipments: ['order status', 'inventory'],
+  subscriptions: ['one-time', 'single purchase'],
 };
 
 /**
@@ -1398,7 +1603,7 @@ export function routeToAgentWithConfidence(request) {
       confidence,
       level,
       matchedKeywords,
-      maxPossibleScore: agentMaxScore
+      maxPossibleScore: agentMaxScore,
     };
 
     maxPossibleScore = Math.max(maxPossibleScore, agentMaxScore);
@@ -1406,7 +1611,11 @@ export function routeToAgentWithConfidence(request) {
 
   // Rank agents by weighted score, then by confidence
   const ranked = Object.values(scores)
-    .filter(s => s.score >= ROUTING_THRESHOLDS.MIN_SCORE || s.confidence >= ROUTING_THRESHOLDS.LOW_CONFIDENCE)
+    .filter(
+      (s) =>
+        s.score >= ROUTING_THRESHOLDS.MIN_SCORE ||
+        s.confidence >= ROUTING_THRESHOLDS.LOW_CONFIDENCE,
+    )
     .sort((a, b) => {
       // Primary sort by score
       if (b.score !== a.score) return b.score - a.score;
@@ -1420,28 +1629,30 @@ export function routeToAgentWithConfidence(request) {
   const topConfidence = ranked[0]?.confidence || 0;
 
   // Ambiguous if top two have similar scores and neither is high confidence
-  const ambiguous = ranked.length >= 2 &&
+  const ambiguous =
+    ranked.length >= 2 &&
     Math.abs(topScore - secondScore) <= 2 &&
     topConfidence < ROUTING_THRESHOLDS.HIGH_CONFIDENCE;
 
   // Default to customer-service if no good matches
-  const primary = ranked.length > 0 && ranked[0].score >= ROUTING_THRESHOLDS.MIN_SCORE
-    ? ranked[0]
-    : {
-      agent: 'customer-service',
-      score: 0,
-      confidence: 0,
-      level: 'default',
-      matchedKeywords: [],
-      reason: 'No specific agent matched, using general customer service'
-    };
+  const primary =
+    ranked.length > 0 && ranked[0].score >= ROUTING_THRESHOLDS.MIN_SCORE
+      ? ranked[0]
+      : {
+          agent: 'customer-service',
+          score: 0,
+          confidence: 0,
+          level: 'default',
+          matchedKeywords: [],
+          reason: 'No specific agent matched, using general customer service',
+        };
 
   return {
     primary,
     alternatives: ranked.slice(1, 4),
     ambiguous,
     allScores: scores,
-    thresholds: ROUTING_THRESHOLDS
+    thresholds: ROUTING_THRESHOLDS,
   };
 }
 
@@ -1543,14 +1754,14 @@ export async function runAgentLoop({
   enablePlugins = null,
   contextGuardOptions = null,
   onEvent = null,
-  treasury = null
+  treasury = null,
 }) {
   const resolvedSettings = loadAgentSettings(settings || {});
   const retrySettings = { ...resolvedSettings.retry, ...(retry || {}) };
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
-  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
-  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
+  const redactEventValue = (value) => (eventRedact ? redactObject(value, privacySettings) : value);
   const contextSettings = { ...resolvedSettings.contextGuard, ...(contextGuardOptions || {}) };
   const memorySettings = { ...resolvedSettings.memory };
   const effectiveEnableContextGuard = enableContextGuard ?? contextSettings.enabled;
@@ -1558,7 +1769,9 @@ export async function runAgentLoop({
   const effectiveUseMarkdownMemory = useMarkdownMemory ?? memorySettings.useMarkdown;
   const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
   const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
-  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+  const effectiveGuardrails = guardrails
+    ? { ...resolvedSettings.guardrails, ...guardrails }
+    : { ...resolvedSettings.guardrails };
   const envTreasuryEnabled = process.env.TREASURY_BILLING === 'true';
   const envTreasuryChain = process.env.TREASURY_CHAIN || null;
   const envTreasuryToken = process.env.TREASURY_TOKEN || null;
@@ -1575,14 +1788,16 @@ export async function runAgentLoop({
 
   const treasuryConfig = treasury
     ? { ...treasury }
-    : (envTreasuryEnabled ? {
-      enabled: true,
-      chainId: envTreasuryChain || 'set_chain',
-      tokenSymbol: envTreasuryToken || 'USDC',
-      agentId: envTreasuryAgent,
-      dbPath: envTreasuryDb,
-      chargeLlm: envTreasuryLlm || envTreasuryEnabled
-    } : null);
+    : envTreasuryEnabled
+      ? {
+          enabled: true,
+          chainId: envTreasuryChain || 'set_chain',
+          tokenSymbol: envTreasuryToken || 'USDC',
+          agentId: envTreasuryAgent,
+          dbPath: envTreasuryDb,
+          chargeLlm: envTreasuryLlm || envTreasuryEnabled,
+        }
+      : null;
 
   if (treasuryConfig) {
     if (!treasuryConfig.chainId && envTreasuryChain) {
@@ -1618,7 +1833,8 @@ export async function runAgentLoop({
     try {
       sessionStoreInstance = getAgentSessionStore({
         dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
-        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || memorySettings.maxSummaries || 5
+        maxSummaries:
+          resolvedSettings.sessionStore?.maxSummaries || memorySettings.maxSummaries || 5,
       });
     } catch (err) {
       console.warn('[Harness] Session store unavailable:', err.message);
@@ -1639,7 +1855,9 @@ export async function runAgentLoop({
   if (sessionMeta) {
     if (!provider && sessionMeta.provider) effectiveProvider = sessionMeta.provider;
     if (!model && sessionMeta.model) effectiveModel = sessionMeta.model;
-    if (thinkLevel == null && sessionMeta.thinkLevel) effectiveThinkLevel = sessionMeta.thinkLevel;
+    if ((thinkLevel === null || thinkLevel === undefined) && sessionMeta.thinkLevel) {
+      effectiveThinkLevel = sessionMeta.thinkLevel;
+    }
     if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
   }
 
@@ -1664,7 +1882,7 @@ export async function runAgentLoop({
       guardrails: effectiveGuardrails,
       allowApply,
       conversationHistory,
-      systemPrompt: AGENTS[agent]?.systemPrompt
+      systemPrompt: AGENTS[agent]?.systemPrompt,
     });
     if (hookResult?.request) effectiveRequest = hookResult.request;
     if (hookResult?.agent) agent = hookResult.agent;
@@ -1687,14 +1905,19 @@ export async function runAgentLoop({
 
   // Initialize telemetry
   const telem = telemetry || (verbose ? new AgentTelemetry({ verbose }) : noOpTelemetry);
-  const mainSpan = telem.startSpan('agent_run', { request: safeRequestForLogs.slice(0, 100), agent });
+  const mainSpan = telem.startSpan('agent_run', {
+    request: safeRequestForLogs.slice(0, 100),
+    agent,
+  });
 
   // Initialize permission gate
-  const gate = permissionGate || createPermissionGate({
-    apply: allowApply,
-    guardrails: effectiveGuardrails,
-    onConfirmRequired
-  });
+  const gate =
+    permissionGate ||
+    createPermissionGate({
+      apply: allowApply,
+      guardrails: effectiveGuardrails,
+      onConfirmRequired,
+    });
 
   // Emit initial lifecycle events
   emitEvent(onEvent, { type: 'agent_start' });
@@ -1707,14 +1930,18 @@ export async function runAgentLoop({
   // v0.4.0: Context Guard - Check context window before proceeding
   // -------------------------------------------------------------------------
   const sessionSummary = sessionMeta?.summaries?.[0] || null;
-  const baseHistory = conversationHistory.length > 0
-    ? conversationHistory
-    : (sessionSummary
-      ? [
-        { role: 'user', content: sessionSummary },
-        { role: 'assistant', content: 'Understood. I have the context from our earlier conversation.' }
-      ]
-      : []);
+  const baseHistory =
+    conversationHistory.length > 0
+      ? conversationHistory
+      : sessionSummary
+        ? [
+            { role: 'user', content: sessionSummary },
+            {
+              role: 'assistant',
+              content: 'Understood. I have the context from our earlier conversation.',
+            },
+          ]
+        : [];
   let workingHistory = [...baseHistory];
   let contextGuardResult = null;
   let compactionSummary = null;
@@ -1735,18 +1962,18 @@ export async function runAgentLoop({
       warningThreshold: contextSettings.warningThreshold,
       compactThreshold: contextSettings.compactThreshold,
       abortThreshold: contextSettings.abortThreshold,
-      reserveTokens: contextSettings.reserveTokens
+      reserveTokens: contextSettings.reserveTokens,
     });
     contextGuardResult = contextGuard.check(
       workingHistory,
       '', // System prompt will be added by SDK
-      effectiveRequest
+      effectiveRequest,
     );
 
     if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
       telem.logCustomEvent('context_overflow', {
         tokens: contextGuardResult.usage.tokens,
-        percent: contextGuardResult.usage.percent
+        percent: contextGuardResult.usage.percent,
       });
       throw new Error(contextGuardResult.message);
     }
@@ -1757,7 +1984,7 @@ export async function runAgentLoop({
         const hookResult = await hooks.run('before_compaction', {
           history: historyForCompaction,
           usage: contextGuardResult.usage,
-          request: effectiveRequest
+          request: effectiveRequest,
         });
         if (hookResult?.history) {
           historyForCompaction = hookResult.history;
@@ -1766,15 +1993,11 @@ export async function runAgentLoop({
 
       if (historyForCompaction !== workingHistory) {
         workingHistory = historyForCompaction;
-        contextGuardResult = contextGuard.check(
-          workingHistory,
-          '',
-          effectiveRequest
-        );
+        contextGuardResult = contextGuard.check(workingHistory, '', effectiveRequest);
         if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
           telem.logCustomEvent('context_overflow', {
             tokens: contextGuardResult.usage.tokens,
-            percent: contextGuardResult.usage.percent
+            percent: contextGuardResult.usage.percent,
           });
           throw new Error(contextGuardResult.message);
         }
@@ -1788,12 +2011,12 @@ export async function runAgentLoop({
         telem.logCustomEvent('context_compacted', {
           originalTokens: contextGuardResult.usage.tokens,
           compactedTokens: contextGuardResult.usage.afterCompaction?.tokens,
-          tokensSaved: contextGuardResult.usage.afterCompaction?.tokensSaved
+          tokensSaved: contextGuardResult.usage.afterCompaction?.tokensSaved,
         });
         if (hooks?.hasHooks?.('after_compaction')) {
           await hooks.run('after_compaction', {
             summary: compactionSummary,
-            usage: contextGuardResult.usage
+            usage: contextGuardResult.usage,
           });
         }
       }
@@ -1809,9 +2032,9 @@ export async function runAgentLoop({
   const shouldIncludeHistory = workingHistory.length > 0 && !resumeSessionId;
   const requestWithHistory = shouldIncludeHistory
     ? buildPromptWithHistory(effectiveRequest, workingHistory, {
-      redactHistory: privacySettings.redactHistory,
-      redactOptions: privacySettings
-    })
+        redactHistory: privacySettings.redactHistory,
+        redactOptions: privacySettings,
+      })
     : effectiveRequest;
 
   // -------------------------------------------------------------------------
@@ -1825,7 +2048,7 @@ export async function runAgentLoop({
         telem.logCustomEvent('model_fallback', {
           from: info.from.id,
           to: info.to.id,
-          reason: info.reason
+          reason: info.reason,
         });
         if (onFallback) onFallback(info);
       },
@@ -1833,9 +2056,9 @@ export async function runAgentLoop({
         telem.logCustomEvent('model_cooldown', {
           model: info.model.id,
           reason: info.reason,
-          permanent: info.permanent
+          permanent: info.permanent,
         });
-      }
+      },
     });
   }
 
@@ -1857,13 +2080,14 @@ export async function runAgentLoop({
   }
 
   // Initialize commerce instance
+  const Commerce = getCommerceCtor();
   let commerce = new Commerce(dbPath);
   let syncEngine = null;
   let syncConfig = null;
 
   // Check if sync is configured and should be enabled
   const rawSyncConfig = loadSyncConfig();
-  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
 
   if (shouldEnableSync && rawSyncConfig) {
     syncConfig = new SyncConfig(rawSyncConfig);
@@ -1875,7 +2099,7 @@ export async function runAgentLoop({
     telem.logCustomEvent('sync_enabled', {
       tenantId: syncConfig.tenantId,
       storeId: syncConfig.storeId,
-      agentId: syncConfig.agentId
+      agentId: syncConfig.agentId,
     });
 
     // Set up sync event callback if provided
@@ -1907,11 +2131,11 @@ export async function runAgentLoop({
     telemetry: telem,
     permissionGate: gate,
     hookRunner: hooks,
-    treasury: treasuryConfig
+    treasury: treasuryConfig,
   });
 
   const mcpServers = {
-    'stateset-commerce': mcpServer
+    'stateset-commerce': mcpServer,
   };
 
   // Determine which agent to use
@@ -1925,18 +2149,14 @@ export async function runAgentLoop({
   const allowedTools = [...agentConfig.tools];
 
   const shouldEnableX402 = Boolean(
-    enableX402 ||
-    process.env.X402_ENABLE === '1' ||
-    process.env.X402_SEQUENCER_URL
+    enableX402 || process.env.X402_ENABLE === '1' || process.env.X402_SEQUENCER_URL,
   );
 
   if (shouldEnableX402) {
     const configDir = process.env.STATESET_CONFIG_DIR || '.stateset';
     const x402Server = createX402McpServer({ env: process.env, configDir });
     mcpServers['stateset-x402'] = x402Server;
-    allowedTools.push(
-      ...X402_MCP_TOOL_NAMES.map(name => `mcp__stateset-x402__${name}`)
-    );
+    allowedTools.push(...X402_MCP_TOOL_NAMES.map((name) => `mcp__stateset-x402__${name}`));
   }
 
   // Log routing decision
@@ -1944,7 +2164,7 @@ export async function runAgentLoop({
     safeRequestForLogs,
     agentName,
     routingResult.primary.confidence,
-    routingResult.alternatives
+    routingResult.alternatives,
   );
 
   if (treasuryConfig?.enabled) {
@@ -1952,7 +2172,7 @@ export async function runAgentLoop({
       const { loadTreasuryContext, resolveToken } = await import('./treasury/index.js');
       const { fromSmallestUnit } = await import('./chains/config.js');
       const ctx = await loadTreasuryContext({
-        dbPath: treasuryConfig.dbPath || undefined
+        dbPath: treasuryConfig.dbPath || undefined,
       });
       const chainId = treasuryConfig.chainId || 'set_chain';
       const tokenSymbol = treasuryConfig.tokenSymbol || 'USDC';
@@ -1976,7 +2196,7 @@ export async function runAgentLoop({
         agentId,
         chainId,
         tokenSymbol: token.symbol,
-        tokenDecimals: token.decimals
+        tokenDecimals: token.decimals,
       });
       const balanceDisplay = fromSmallestUnit(balance.balanceSmallest, token.decimals);
       const balanceUsd = Number.parseFloat(balanceDisplay);
@@ -1998,14 +2218,20 @@ export async function runAgentLoop({
         balanceUsd,
         requestId: randomUUID(),
         erc8004Registry,
-        erc8004Identity
+        erc8004Identity,
       };
     } catch (error) {
       throw new Error(`Treasury billing failed: ${error.message}`);
     }
   }
 
-  const recordTreasuryLlmCharge = async ({ costUsd, sessionId: chargeSessionId, provider: chargeProvider, model: chargeModel, usage }) => {
+  const recordTreasuryLlmCharge = async ({
+    costUsd,
+    sessionId: chargeSessionId,
+    provider: chargeProvider,
+    model: chargeModel,
+    usage,
+  }) => {
     if (!treasuryState?.enabled || !treasuryState.chargeLlm) return null;
     const amount = Number(costUsd);
     if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -2013,32 +2239,35 @@ export async function runAgentLoop({
       const { recordFee } = await import('./treasury/index.js');
       const erc8004Meta = treasuryState.erc8004Identity
         ? {
-          erc8004: {
-            registry: treasuryState.erc8004Registry,
-            agentId: treasuryState.erc8004Identity.agent_id,
-            wallet: treasuryState.erc8004Identity.agent_wallet,
-            owner: treasuryState.erc8004Identity.owner_address
+            erc8004: {
+              registry: treasuryState.erc8004Registry,
+              agentId: treasuryState.erc8004Identity.agent_id,
+              wallet: treasuryState.erc8004Identity.agent_wallet,
+              owner: treasuryState.erc8004Identity.owner_address,
+            },
           }
-        }
         : {};
-      const entry = await recordFee({
-        agentId: treasuryState.agentId,
-        chainId: treasuryState.chainId,
-        tokenSymbol: treasuryState.token.symbol,
-        amount,
-        source: 'llm',
-        metadata: {
-          provider: chargeProvider,
-          model: chargeModel,
-          usage: usage || null,
-          costUsd: amount,
-          ...erc8004Meta
+      const entry = await recordFee(
+        {
+          agentId: treasuryState.agentId,
+          chainId: treasuryState.chainId,
+          tokenSymbol: treasuryState.token.symbol,
+          amount,
+          source: 'llm',
+          metadata: {
+            provider: chargeProvider,
+            model: chargeModel,
+            usage: usage || null,
+            costUsd: amount,
+            ...erc8004Meta,
+          },
+          taskId: treasuryState.requestId,
+          sessionId: chargeSessionId || null,
+          toolName: 'llm_inference',
+          requestId: treasuryState.requestId,
         },
-        taskId: treasuryState.requestId,
-        sessionId: chargeSessionId || null,
-        toolName: 'llm_inference',
-        requestId: treasuryState.requestId
-      }, treasuryState.ctx);
+        treasuryState.ctx,
+      );
       telem.logCustomEvent('treasury_llm_charge', {
         amount,
         token: treasuryState.token.symbol,
@@ -2046,21 +2275,21 @@ export async function runAgentLoop({
         provider: chargeProvider,
         model: chargeModel,
         sessionId: chargeSessionId || null,
-        requestId: treasuryState.requestId
+        requestId: treasuryState.requestId,
       });
       return {
         eventId: entry.event_id,
         amount: entry.amount_display,
         amountSmallest: entry.amount_smallest,
         token: entry.token_symbol,
-        chainId: entry.chain_id
+        chainId: entry.chain_id,
       };
     } catch (err) {
       telem.logCustomEvent('treasury_llm_charge_failed', {
         error: err.message,
         amount,
         provider: chargeProvider,
-        model: chargeModel
+        model: chargeModel,
       });
       return null;
     }
@@ -2073,9 +2302,8 @@ export async function runAgentLoop({
   if (!apiKeyOverride && typeof getApiKey === 'function' && effectiveProvider === 'claude') {
     apiKeyOverride = await getApiKey(effectiveProvider);
   }
-  const claudeEnv = effectiveProvider === 'claude'
-    ? buildClaudeEnv({ apiKey: apiKeyOverride })
-    : null;
+  const claudeEnv =
+    effectiveProvider === 'claude' ? buildClaudeEnv({ apiKey: apiKeyOverride }) : null;
   const options = {
     model: effectiveModel,
     systemPrompt,
@@ -2117,11 +2345,15 @@ export async function runAgentLoop({
       const { getProviderRegistry } = await import('./providers/base.js');
       const providerInstance = getProviderRegistry().get(effectiveProvider);
       if (!providerInstance) {
-        throw new Error(`Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`);
+        throw new Error(
+          `Unknown provider: ${effectiveProvider}. Available: ${getProviderRegistry().list().join(', ')}`,
+        );
       }
       if (!(await providerInstance.isAvailable())) {
         const providerConfig = (await import('./config.js')).PROVIDERS[effectiveProvider];
-        throw new Error(`Provider "${effectiveProvider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`);
+        throw new Error(
+          `Provider "${effectiveProvider}" is not available. ${providerConfig?.envKey ? `Set ${providerConfig.envKey} environment variable.` : ''}`,
+        );
       }
       const messages = [
         { role: 'system', content: systemPrompt },
@@ -2136,29 +2368,34 @@ export async function runAgentLoop({
       if (treasuryState?.enabled) {
         treasuryBudgetUsd = effectiveMaxBudgetUsd ?? treasuryState.balanceUsd;
         if (!Number.isFinite(treasuryBudgetUsd) || treasuryBudgetUsd <= 0) {
-          throw new Error(`Treasury balance is empty for ${treasuryState.token.symbol} on ${treasuryState.chainId}.`);
+          throw new Error(
+            `Treasury balance is empty for ${treasuryState.token.symbol} on ${treasuryState.chainId}.`,
+          );
         }
 
         if (typeof providerInstance.estimateCost === 'function') {
-          const inputEstimate = estimateTokensFromText(systemPrompt)
-            + estimateTokensFromText(requestWithHistory);
+          const inputEstimate =
+            estimateTokensFromText(systemPrompt) + estimateTokensFromText(requestWithHistory);
           const inputTokensEstimate = Math.ceil(inputEstimate * 1.3) + 32;
           const safetyBudget = treasuryBudgetUsd * 0.95;
           const defaultMaxTokens = 4096;
 
-          const estimateCost = (outputTokens) => providerInstance.estimateCost(
-            { inputTokens: inputTokensEstimate, outputTokens },
-            effectiveModel
-          );
+          const estimateCost = (outputTokens) =>
+            providerInstance.estimateCost(
+              { inputTokens: inputTokensEstimate, outputTokens },
+              effectiveModel,
+            );
 
           const baseCost = estimateCost(0);
-          if (baseCost == null) {
+          if (baseCost === null || baseCost === undefined) {
             telem.logCustomEvent('treasury_llm_estimate_unavailable', {
               provider: effectiveProvider,
-              model: effectiveModel
+              model: effectiveModel,
             });
           } else if (baseCost > safetyBudget) {
-            throw new Error(`Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for estimated input tokens.`);
+            throw new Error(
+              `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for estimated input tokens.`,
+            );
           } else {
             let low = 0;
             let high = defaultMaxTokens;
@@ -2166,7 +2403,7 @@ export async function runAgentLoop({
             while (low <= high) {
               const mid = Math.floor((low + high) / 2);
               const cost = estimateCost(mid);
-              if (cost == null) break;
+              if (cost === null || cost === undefined) break;
               if (cost <= safetyBudget) {
                 best = mid;
                 low = mid + 1;
@@ -2176,10 +2413,16 @@ export async function runAgentLoop({
             }
             if (best <= 0) {
               const oneTokenCost = estimateCost(1);
-              if (oneTokenCost != null && oneTokenCost <= safetyBudget) {
+              if (
+                oneTokenCost !== null &&
+                oneTokenCost !== undefined &&
+                oneTokenCost <= safetyBudget
+              ) {
                 providerMaxTokens = 1;
               } else {
-                throw new Error(`Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for any output tokens.`);
+                throw new Error(
+                  `Treasury balance ${treasuryBudgetUsd.toFixed(4)} is insufficient for any output tokens.`,
+                );
               }
             } else {
               providerMaxTokens = best;
@@ -2188,7 +2431,7 @@ export async function runAgentLoop({
         } else {
           telem.logCustomEvent('treasury_llm_estimate_unavailable', {
             provider: effectiveProvider,
-            model: effectiveModel
+            model: effectiveModel,
           });
         }
       }
@@ -2199,7 +2442,7 @@ export async function runAgentLoop({
           assistantStarted = true;
           emitEvent(onEvent, {
             type: 'message_start',
-            message: { role: 'assistant', content: '' }
+            message: { role: 'assistant', content: '' },
           });
         }
         if (data?.text) {
@@ -2207,7 +2450,7 @@ export async function runAgentLoop({
           emitEvent(onEvent, {
             type: 'message_update',
             message: { role: 'assistant', content: redactEventText(partialText) },
-            delta: redactEventText(data.text)
+            delta: redactEventText(data.text),
           });
         }
         if (onPartialMessage) onPartialMessage(data);
@@ -2219,12 +2462,18 @@ export async function runAgentLoop({
         onPartialMessage: streaming ? handlePartialMessage : onPartialMessage,
         apiKey: providerApiKey,
         signal: effectiveSignal,
-        ...(providerMaxTokens ? { maxTokens: providerMaxTokens } : {})
+        ...(providerMaxTokens ? { maxTokens: providerMaxTokens } : {}),
       });
       process.argv = savedArgv;
       let providerResponse = providerResult.text;
       let budgetExceeded = false;
-      if (treasuryState?.enabled && providerResult.cost != null && treasuryBudgetUsd != null) {
+      if (
+        treasuryState?.enabled &&
+        providerResult.cost !== null &&
+        providerResult.cost !== undefined &&
+        treasuryBudgetUsd !== null &&
+        treasuryBudgetUsd !== undefined
+      ) {
         budgetExceeded = providerResult.cost > treasuryBudgetUsd;
       }
       if (hooks?.hasHooks?.('before_send')) {
@@ -2234,7 +2483,7 @@ export async function runAgentLoop({
           agent: agentName,
           model: effectiveModel,
           provider: effectiveProvider,
-          toolResults: []
+          toolResults: [],
         });
         if (hookResult?.response) {
           providerResponse = hookResult.response;
@@ -2249,17 +2498,17 @@ export async function runAgentLoop({
       if (!assistantStarted) {
         emitEvent(onEvent, {
           type: 'message_start',
-          message: { role: 'assistant', content: '' }
+          message: { role: 'assistant', content: '' },
         });
       }
       emitEvent(onEvent, {
         type: 'message_end',
-        message: { role: 'assistant', content: redactEventText(providerResponse) }
+        message: { role: 'assistant', content: redactEventText(providerResponse) },
       });
       emitEvent(onEvent, {
         type: 'turn_end',
         response: redactEventText(providerResponse),
-        toolResults: []
+        toolResults: [],
       });
       emitEvent(onEvent, {
         type: 'agent_end',
@@ -2270,14 +2519,14 @@ export async function runAgentLoop({
         provider: effectiveProvider,
         model: effectiveModel,
         cost: providerResult.cost || null,
-        budgetExceeded
+        budgetExceeded,
       });
       treasuryCharge = await recordTreasuryLlmCharge({
         costUsd: providerResult.cost,
         sessionId: null,
         provider: effectiveProvider,
         model: providerResult.model || effectiveModel,
-        usage: providerResult.usage
+        usage: providerResult.usage,
       });
       return {
         response: responseForUser,
@@ -2289,11 +2538,13 @@ export async function runAgentLoop({
         cost: providerResult.cost || null,
         thinkLevel: effectiveThinkLevel,
         budgetExceeded,
-        treasury: treasuryState ? {
-          requestId: treasuryState.requestId,
-          charge: treasuryCharge,
-          identity: treasuryState.erc8004Identity
-        } : undefined
+        treasury: treasuryState
+          ? {
+              requestId: treasuryState.requestId,
+              charge: treasuryCharge,
+              identity: treasuryState.erc8004Identity,
+            }
+          : undefined,
       };
     }
 
@@ -2308,7 +2559,15 @@ export async function runAgentLoop({
     // Helper function to run the actual query
     const runQuery = async (queryModel) => {
       const queryOptions = { ...options, model: queryModel };
-      const results = { toolResults: [], response: '', sessionId: null, budgetExceeded: false, totalCost: null, error: null, errorType: null };
+      const results = {
+        toolResults: [],
+        response: '',
+        sessionId: null,
+        budgetExceeded: false,
+        totalCost: null,
+        error: null,
+        errorType: null,
+      };
       const pendingToolCalls = new Map();
       let assistantStarted = false;
       let assistantText = '';
@@ -2327,7 +2586,7 @@ export async function runAgentLoop({
               assistantStarted = true;
               emitEvent(onEvent, {
                 type: 'message_start',
-                message: { role: 'assistant', content: '' }
+                message: { role: 'assistant', content: '' },
               });
             }
             for (const block of content) {
@@ -2336,7 +2595,7 @@ export async function runAgentLoop({
                   id: block.id,
                   name: block.name,
                   input: block.input,
-                  startTime: Date.now()
+                  startTime: Date.now(),
                 };
                 const entry = { toolCall, result: null };
                 results.toolResults.push(entry);
@@ -2347,7 +2606,7 @@ export async function runAgentLoop({
                   type: 'tool_execution_start',
                   toolCallId: toolCall.id,
                   toolName: toolCall.name,
-                  args: redactEventValue(toolCall.input)
+                  args: redactEventValue(toolCall.input),
                 });
                 if (onToolCall) {
                   onToolCall(toolCall);
@@ -2359,7 +2618,7 @@ export async function runAgentLoop({
                   emitEvent(onEvent, {
                     type: 'message_update',
                     message: { role: 'assistant', content: redactEventText(assistantText) },
-                    delta: redactEventText(block.text)
+                    delta: redactEventText(block.text),
                   });
                 }
               } else if (block.type === 'thinking' && onThinkingBlock) {
@@ -2372,7 +2631,7 @@ export async function runAgentLoop({
             results.response = message.result;
             assistantText = message.result;
           }
-          if (message.total_cost_usd != null) {
+          if (message.total_cost_usd !== null && message.total_cost_usd !== undefined) {
             results.totalCost = message.total_cost_usd;
           }
           if (message.subtype === 'error_max_budget_usd') {
@@ -2380,29 +2639,33 @@ export async function runAgentLoop({
           }
           if (message.subtype && message.subtype.startsWith('error_')) {
             results.errorType = message.subtype;
-            results.error = (message.errors && message.errors.length > 0)
-              ? message.errors.join('; ')
-              : message.subtype;
+            results.error =
+              message.errors && message.errors.length > 0
+                ? message.errors.join('; ')
+                : message.subtype;
           }
           if (!assistantStarted) {
             assistantStarted = true;
             emitEvent(onEvent, {
               type: 'message_start',
-              message: { role: 'assistant', content: '' }
+              message: { role: 'assistant', content: '' },
             });
           }
           if (assistantText) {
             emitEvent(onEvent, {
               type: 'message_end',
-              message: { role: 'assistant', content: redactEventText(assistantText) }
+              message: { role: 'assistant', content: redactEventText(assistantText) },
             });
           }
         } else if (message.type === 'user') {
-          const toolUseId = message.parent_tool_use_id
-            || message.tool_use_id
-            || message.tool_use_result?.tool_use_id
-            || message.tool_use_result?.tool_use_id;
-          const pending = toolUseId ? pendingToolCalls.get(toolUseId) : results.toolResults.find(tr => tr.result === null);
+          const toolUseId =
+            message.parent_tool_use_id ||
+            message.tool_use_id ||
+            message.tool_use_result?.tool_use_id ||
+            message.tool_use_result?.tool_use_id;
+          const pending = toolUseId
+            ? pendingToolCalls.get(toolUseId)
+            : results.toolResults.find((tr) => tr.result === null);
           if (pending && message.tool_use_result) {
             pending.result = message.tool_use_result;
             pending.endTime = Date.now();
@@ -2411,26 +2674,25 @@ export async function runAgentLoop({
               const hookResult = await hooks.run('tool_result_persist', {
                 tool: pending.toolCall.name,
                 toolCall: pending.toolCall,
-                result: pending.result
+                result: pending.result,
               });
               if (hookResult?.result) {
                 pending.result = hookResult.result;
               }
             }
-            const logInput = privacySettings.redactLogs ? redactObject(pending.toolCall.input, privacySettings) : pending.toolCall.input;
-            const logResult = privacySettings.redactLogs ? redactObject(pending.result, privacySettings) : pending.result;
-            telem.logToolCall(
-              pending.toolCall.name,
-              logInput,
-              logResult,
-              pending.duration
-            );
+            const logInput = privacySettings.redactLogs
+              ? redactObject(pending.toolCall.input, privacySettings)
+              : pending.toolCall.input;
+            const logResult = privacySettings.redactLogs
+              ? redactObject(pending.result, privacySettings)
+              : pending.result;
+            telem.logToolCall(pending.toolCall.name, logInput, logResult, pending.duration);
             emitEvent(onEvent, {
               type: 'tool_execution_end',
               toolCallId: pending.toolCall.id,
               toolName: pending.toolCall.name,
               result: redactEventValue(pending.result),
-              isError: Boolean(pending.result?.is_error || pending.result?.isError)
+              isError: Boolean(pending.result?.is_error || pending.result?.isError),
             });
             if (toolUseId) {
               pendingToolCalls.delete(toolUseId);
@@ -2438,7 +2700,13 @@ export async function runAgentLoop({
           }
         }
 
-        if (streaming && onPartialMessage && message.type !== 'assistant' && message.type !== 'result' && message.type !== 'user') {
+        if (
+          streaming &&
+          onPartialMessage &&
+          message.type !== 'assistant' &&
+          message.type !== 'result' &&
+          message.type !== 'user'
+        ) {
           onPartialMessage(message);
         }
       }
@@ -2453,7 +2721,7 @@ export async function runAgentLoop({
             usedModel = modelConfig.model;
             return runQuery(modelConfig.model);
           },
-          { preferredModel: effectiveModel }
+          { preferredModel: effectiveModel },
         );
         fallbackAttempts = fallbackResult.attempts;
         return fallbackResult.result;
@@ -2479,10 +2747,11 @@ export async function runAgentLoop({
       } catch (err) {
         const errorType = queryResult?.errorType;
         const nonRetryable = errorType && errorType.startsWith('error_max');
-        const canRetry = retrySettings?.enabled
-          && attempt <= (retrySettings.maxRetries || 0)
-          && !nonRetryable
-          && isRetryableError(err, retrySettings);
+        const canRetry =
+          retrySettings?.enabled &&
+          attempt <= (retrySettings.maxRetries || 0) &&
+          !nonRetryable &&
+          isRetryableError(err, retrySettings);
 
         if (!canRetry) {
           throw err;
@@ -2492,14 +2761,20 @@ export async function runAgentLoop({
         telem.logCustomEvent('auto_retry', {
           attempt,
           delayMs,
-          error: err?.message || String(err)
+          error: err?.message || String(err),
         });
         await sleep(delayMs);
       }
     }
 
     // Extract results
-    const { toolResults: queryToolResults, response: queryResponse, sessionId: querySessionId, budgetExceeded: queryBudgetExceeded, totalCost: queryTotalCost } = queryResult;
+    const {
+      toolResults: queryToolResults,
+      response: queryResponse,
+      sessionId: querySessionId,
+      budgetExceeded: queryBudgetExceeded,
+      totalCost: queryTotalCost,
+    } = queryResult;
     toolResults.push(...queryToolResults);
     response = queryResponse;
     if (querySessionId) sessionId = querySessionId;
@@ -2516,7 +2791,7 @@ export async function runAgentLoop({
         agent: agentName,
         model: usedModel || effectiveModel,
         provider: effectiveProvider,
-        toolResults
+        toolResults,
       });
       if (hookResult?.response) {
         response = hookResult.response;
@@ -2540,7 +2815,7 @@ export async function runAgentLoop({
     emitEvent(onEvent, {
       type: 'turn_end',
       response: redactEventText(response),
-      toolResults: redactEventValue(toolResults)
+      toolResults: redactEventValue(toolResults),
     });
 
     // Auto-push sync events if enabled
@@ -2553,7 +2828,7 @@ export async function runAgentLoop({
           syncResult = await syncEngine.push();
           telem.logCustomEvent('sync_push_complete', {
             pushed: syncResult.pushed,
-            rejected: syncResult.rejected
+            rejected: syncResult.rejected,
           });
         }
       } catch (error) {
@@ -2596,7 +2871,7 @@ export async function runAgentLoop({
           agent: agentName,
           sessionId,
           channel: 'cli',
-          senderId: 'local'
+          senderId: 'local',
         };
 
         // Save to SQLite memory store
@@ -2618,7 +2893,7 @@ export async function runAgentLoop({
             agent: agentName,
             sessionId,
             channel: 'cli',
-            senderId: 'local'
+            senderId: 'local',
           };
           if (memoryStore) memoryStore.save(compactionEntry);
           if (markdownMemory) await markdownMemory.save(compactionEntry);
@@ -2644,7 +2919,7 @@ export async function runAgentLoop({
           thinkLevel: effectiveThinkLevel,
           agent: agentName,
           lastRequest: storedRequest,
-          lastResponse: storedResponse
+          lastResponse: storedResponse,
         });
         if (compactionSummary) {
           sessionStoreInstance.appendSummary(sessionIdToStore, compactionSummary);
@@ -2663,7 +2938,7 @@ export async function runAgentLoop({
         provider: effectiveProvider,
         toolResults,
         cost: totalCost,
-        budgetExceeded
+        budgetExceeded,
       });
     }
 
@@ -2672,7 +2947,7 @@ export async function runAgentLoop({
       sessionId,
       provider: effectiveProvider,
       model: usedModel || effectiveModel,
-      usage: null
+      usage: null,
     });
 
     emitEvent(onEvent, {
@@ -2684,7 +2959,7 @@ export async function runAgentLoop({
       provider: effectiveProvider,
       model: usedModel || effectiveModel,
       cost: totalCost,
-      budgetExceeded
+      budgetExceeded,
     });
 
     // End main span
@@ -2698,11 +2973,13 @@ export async function runAgentLoop({
       routing: routingResult,
       telemetry: telem.getSummary(),
       traceId: telem.traceId,
-      treasury: treasuryState ? {
-        requestId: treasuryState.requestId,
-        charge: treasuryCharge,
-        identity: treasuryState.erc8004Identity
-      } : undefined,
+      treasury: treasuryState
+        ? {
+            requestId: treasuryState.requestId,
+            charge: treasuryCharge,
+            identity: treasuryState.erc8004Identity,
+          }
+        : undefined,
       provider: effectiveProvider,
       cost: totalCost,
       thinkLevel: effectiveThinkLevel,
@@ -2710,27 +2987,37 @@ export async function runAgentLoop({
       // v0.4.0: New result fields
       usedModel,
       fallbackAttempts: fallbackAttempts.length > 1 ? fallbackAttempts : undefined,
-      contextGuard: contextGuardResult ? {
-        action: contextGuardResult.action,
-        usage: contextGuardResult.usage
-      } : undefined,
-      sync: syncResult ? {
-        enabled: true,
-        pushed: syncResult.pushed,
-        rejected: syncResult.rejected,
-        receipt: syncResult.receipt
-      } : (shouldEnableSync ? { enabled: true, pushed: 0 } : null)
+      contextGuard: contextGuardResult
+        ? {
+            action: contextGuardResult.action,
+            usage: contextGuardResult.usage,
+          }
+        : undefined,
+      sync: syncResult
+        ? {
+            enabled: true,
+            pushed: syncResult.pushed,
+            rejected: syncResult.rejected,
+            receipt: syncResult.receipt,
+          }
+        : shouldEnableSync
+          ? { enabled: true, pushed: 0 }
+          : null,
     };
   } catch (error) {
     // Restore process.argv on error
     process.argv = savedArgv;
     // Cleanup sync engine on error
     if (syncEngine) {
-      try { await syncEngine.shutdown(); } catch (e) { /* ignore */ }
+      try {
+        await syncEngine.shutdown();
+      } catch {
+        /* ignore */
+      }
     }
     emitEvent(onEvent, {
       type: 'agent_end',
-      error: error?.message || String(error)
+      error: error?.message || String(error),
     });
     telem.logError(error, { agent: agentName, request: safeRequestForLogs.slice(0, 100) });
     telem.endSpanRef(mainSpan, 'error', { error: error.message });
@@ -2771,18 +3058,20 @@ export async function* runAgentStream({
   getApiKey = null,
   abortController = null,
   signal = null,
-  onEvent = null
+  onEvent = null,
 }) {
   const resolvedSettings = loadAgentSettings(settings || {});
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
-  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
-  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
+  const redactEventValue = (value) => (eventRedact ? redactObject(value, privacySettings) : value);
   const contextSettings = { ...resolvedSettings.contextGuard, ...(contextGuardOptions || {}) };
   const effectiveEnableContextGuard = enableContextGuard ?? contextSettings.enabled;
   const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
   const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
-  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
+  const effectiveGuardrails = guardrails
+    ? { ...resolvedSettings.guardrails, ...guardrails }
+    : { ...resolvedSettings.guardrails };
   let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
   let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
   let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
@@ -2793,7 +3082,8 @@ export async function* runAgentStream({
     try {
       sessionStoreInstance = getAgentSessionStore({
         dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
-        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5
+        maxSummaries:
+          resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5,
       });
     } catch (err) {
       console.warn('[Harness] Session store unavailable:', err.message);
@@ -2812,7 +3102,9 @@ export async function* runAgentStream({
   if (sessionMeta) {
     if (!provider && sessionMeta.provider) effectiveProvider = sessionMeta.provider;
     if (!model && sessionMeta.model) effectiveModel = sessionMeta.model;
-    if (thinkLevel == null && sessionMeta.thinkLevel) effectiveThinkLevel = sessionMeta.thinkLevel;
+    if ((thinkLevel === null || thinkLevel === undefined) && sessionMeta.thinkLevel) {
+      effectiveThinkLevel = sessionMeta.thinkLevel;
+    }
     if (!agent && sessionMeta.agent) agent = sessionMeta.agent;
   }
 
@@ -2835,7 +3127,7 @@ export async function* runAgentStream({
       thinkLevel: effectiveThinkLevel,
       guardrails: effectiveGuardrails,
       allowApply,
-      conversationHistory
+      conversationHistory,
     });
     if (hookResult?.request) effectiveRequest = hookResult.request;
     if (hookResult?.agent) agent = hookResult.agent;
@@ -2848,21 +3140,28 @@ export async function* runAgentStream({
   const effectiveSignal = resolvedAbortController?.signal || signal || null;
 
   if (effectiveProvider !== 'claude') {
-    throw new Error(`runAgentStream supports only claude provider (requested: ${effectiveProvider})`);
+    throw new Error(
+      `runAgentStream supports only claude provider (requested: ${effectiveProvider})`,
+    );
   }
 
+  const Commerce = getCommerceCtor();
   let commerce = new Commerce(dbPath);
 
   // Context guard for streaming path (optional)
   const streamSessionSummary = sessionMeta?.summaries?.[0] || null;
-  const streamBaseHistory = conversationHistory.length > 0
-    ? conversationHistory
-    : (streamSessionSummary
-      ? [
-        { role: 'user', content: streamSessionSummary },
-        { role: 'assistant', content: 'Understood. I have the context from our earlier conversation.' }
-      ]
-      : []);
+  const streamBaseHistory =
+    conversationHistory.length > 0
+      ? conversationHistory
+      : streamSessionSummary
+        ? [
+            { role: 'user', content: streamSessionSummary },
+            {
+              role: 'assistant',
+              content: 'Understood. I have the context from our earlier conversation.',
+            },
+          ]
+        : [];
   let workingHistory = [...streamBaseHistory];
   let contextGuardResult = null;
   let compactionSummary = null;
@@ -2881,12 +3180,12 @@ export async function* runAgentStream({
       warningThreshold: contextSettings.warningThreshold,
       compactThreshold: contextSettings.compactThreshold,
       abortThreshold: contextSettings.abortThreshold,
-      reserveTokens: contextSettings.reserveTokens
+      reserveTokens: contextSettings.reserveTokens,
     });
     contextGuardResult = contextGuard.check(
       workingHistory,
       '', // System prompt will be added by SDK
-      effectiveRequest
+      effectiveRequest,
     );
 
     if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
@@ -2899,7 +3198,7 @@ export async function* runAgentStream({
         const hookResult = await hooks.run('before_compaction', {
           history: historyForCompaction,
           usage: contextGuardResult.usage,
-          request: effectiveRequest
+          request: effectiveRequest,
         });
         if (hookResult?.history) {
           historyForCompaction = hookResult.history;
@@ -2908,11 +3207,7 @@ export async function* runAgentStream({
 
       if (historyForCompaction !== workingHistory) {
         workingHistory = historyForCompaction;
-        contextGuardResult = contextGuard.check(
-          workingHistory,
-          '',
-          effectiveRequest
-        );
+        contextGuardResult = contextGuard.check(workingHistory, '', effectiveRequest);
         if (!contextGuardResult.safe && contextGuardResult.action === 'abort') {
           throw new Error(contextGuardResult.message);
         }
@@ -2926,7 +3221,7 @@ export async function* runAgentStream({
         if (hooks?.hasHooks?.('after_compaction')) {
           await hooks.run('after_compaction', {
             summary: compactionSummary,
-            usage: contextGuardResult.usage
+            usage: contextGuardResult.usage,
           });
         }
       }
@@ -2939,25 +3234,27 @@ export async function* runAgentStream({
 
   // Check if sync is configured
   const rawSyncConfig = loadSyncConfig();
-  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
 
   if (shouldEnableSync && rawSyncConfig) {
     const syncConfig = new SyncConfig(rawSyncConfig);
     commerce = wrapCommerceWithEvents(commerce, syncConfig);
   }
 
-  const gate = permissionGate || createPermissionGate({
-    apply: allowApply,
-    guardrails: effectiveGuardrails,
-    onConfirmRequired
-  });
+  const gate =
+    permissionGate ||
+    createPermissionGate({
+      apply: allowApply,
+      guardrails: effectiveGuardrails,
+      onConfirmRequired,
+    });
 
   const mcpServer = createStatesetMcpServer({
     commerce,
     dbPath,
     allowApply,
     permissionGate: gate,
-    hookRunner: hooks
+    hookRunner: hooks,
   });
 
   // Determine which agent to use
@@ -2971,9 +3268,9 @@ export async function* runAgentStream({
   const shouldIncludeHistory = workingHistory.length > 0 && !resumeSessionId;
   const requestWithHistory = shouldIncludeHistory
     ? buildPromptWithHistory(effectiveRequest, workingHistory, {
-      redactHistory: privacySettings.redactHistory,
-      redactOptions: privacySettings
-    })
+        redactHistory: privacySettings.redactHistory,
+        redactOptions: privacySettings,
+      })
     : effectiveRequest;
 
   const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
@@ -2986,7 +3283,7 @@ export async function* runAgentStream({
     model: effectiveModel,
     systemPrompt: agentConfig.systemPrompt,
     mcpServers: {
-      'stateset-commerce': mcpServer
+      'stateset-commerce': mcpServer,
     },
     allowedTools: agentConfig.tools,
     maxTurns,
@@ -2995,7 +3292,7 @@ export async function* runAgentStream({
     allowDangerouslySkipPermissions: true,
     ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
     ...(claudeEnv ? { env: claudeEnv } : {}),
-    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {})
+    ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
   };
 
   const input = resumeSessionId
@@ -3019,7 +3316,7 @@ export async function* runAgentStream({
             assistantStarted = true;
             emitEvent(onEvent, {
               type: 'message_start',
-              message: { role: 'assistant', content: '' }
+              message: { role: 'assistant', content: '' },
             });
           }
           for (const block of content) {
@@ -3028,38 +3325,42 @@ export async function* runAgentStream({
                 type: 'tool_execution_start',
                 toolCallId: block.id,
                 toolName: block.name,
-                args: redactEventValue(block.input)
+                args: redactEventValue(block.input),
               });
             } else if (block.type === 'text') {
               assistantText += block.text;
               emitEvent(onEvent, {
                 type: 'message_update',
                 message: { role: 'assistant', content: redactEventText(assistantText) },
-                delta: redactEventText(block.text)
+                delta: redactEventText(block.text),
               });
             }
           }
         }
-    } else if (message.type === 'user' && message.tool_use_result) {
-      let toolResult = message.tool_use_result;
-      if (hooks?.hasHooks?.('tool_result_persist')) {
-        const hookResult = await hooks.run('tool_result_persist', {
-          tool: toolResult?.name,
-          toolCall: { id: toolResult?.tool_use_id, name: toolResult?.name, input: toolResult?.content },
-          result: toolResult
-        });
-        if (hookResult?.result) {
-          toolResult = hookResult.result;
+      } else if (message.type === 'user' && message.tool_use_result) {
+        let toolResult = message.tool_use_result;
+        if (hooks?.hasHooks?.('tool_result_persist')) {
+          const hookResult = await hooks.run('tool_result_persist', {
+            tool: toolResult?.name,
+            toolCall: {
+              id: toolResult?.tool_use_id,
+              name: toolResult?.name,
+              input: toolResult?.content,
+            },
+            result: toolResult,
+          });
+          if (hookResult?.result) {
+            toolResult = hookResult.result;
+          }
         }
+        emitEvent(onEvent, {
+          type: 'tool_execution_end',
+          toolCallId: toolResult?.tool_use_id,
+          toolName: toolResult?.name,
+          result: redactEventValue(toolResult),
+          isError: Boolean(toolResult?.is_error || toolResult?.isError),
+        });
       }
-      emitEvent(onEvent, {
-        type: 'tool_execution_end',
-        toolCallId: toolResult?.tool_use_id,
-        toolName: toolResult?.name,
-        result: redactEventValue(toolResult),
-        isError: Boolean(toolResult?.is_error || toolResult?.isError)
-      });
-    }
       if (message.type === 'result' && message.result) {
         lastResponse = message.result;
         assistantText = message.result;
@@ -3070,7 +3371,7 @@ export async function* runAgentStream({
             agent: agentName,
             model: effectiveModel,
             provider: effectiveProvider,
-            toolResults: []
+            toolResults: [],
           });
           if (hookResult?.response) {
             lastResponse = hookResult.response;
@@ -3080,17 +3381,17 @@ export async function* runAgentStream({
           assistantStarted = true;
           emitEvent(onEvent, {
             type: 'message_start',
-            message: { role: 'assistant', content: '' }
+            message: { role: 'assistant', content: '' },
           });
         }
         emitEvent(onEvent, {
           type: 'message_end',
-          message: { role: 'assistant', content: redactEventText(lastResponse) }
+          message: { role: 'assistant', content: redactEventText(lastResponse) },
         });
         emitEvent(onEvent, {
           type: 'turn_end',
           response: redactEventText(lastResponse),
-          toolResults: []
+          toolResults: [],
         });
       }
       yield message;
@@ -3100,9 +3401,10 @@ export async function* runAgentStream({
       const storedRequest = privacySettings.redactMemory
         ? redactSensitive(effectiveRequest, privacySettings)
         : effectiveRequest;
-      const storedResponse = privacySettings.redactMemory && lastResponse
-        ? redactSensitive(lastResponse, privacySettings)
-        : lastResponse;
+      const storedResponse =
+        privacySettings.redactMemory && lastResponse
+          ? redactSensitive(lastResponse, privacySettings)
+          : lastResponse;
       try {
         sessionStoreInstance.upsert(streamSessionId, {
           provider: effectiveProvider,
@@ -3110,7 +3412,7 @@ export async function* runAgentStream({
           thinkLevel: effectiveThinkLevel,
           agent: agentName,
           lastRequest: storedRequest,
-          lastResponse: storedResponse
+          lastResponse: storedResponse,
         });
         if (compactionSummary) {
           sessionStoreInstance.appendSummary(streamSessionId, compactionSummary);
@@ -3129,7 +3431,7 @@ export async function* runAgentStream({
         provider: effectiveProvider,
         toolResults: [],
         cost: null,
-        budgetExceeded: false
+        budgetExceeded: false,
       });
     }
 
@@ -3142,12 +3444,12 @@ export async function* runAgentStream({
       provider: effectiveProvider,
       model: effectiveModel,
       cost: null,
-      budgetExceeded: false
+      budgetExceeded: false,
     });
   } catch (error) {
     emitEvent(onEvent, {
       type: 'agent_end',
-      error: error?.message || String(error)
+      error: error?.message || String(error),
     });
     throw error;
   }
@@ -3176,27 +3478,29 @@ export function createAgentStreamSession(options = {}) {
     hookRunner = null,
     enablePlugins = null,
     sessionStore = null,
-    contextGuardOptions = null,
+    contextGuardOptions: _contextGuardOptions = null,
     provider,
     thinkLevel,
     apiKey = null,
     getApiKey = null,
     abortController = null,
     signal = null,
-    onEvent = null
+    onEvent = null,
   } = options;
 
   const resolvedSettings = loadAgentSettings(settings || {});
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
-  const redactEventText = (text) => eventRedact ? redactSensitive(text, privacySettings) : text;
-  const redactEventValue = (value) => eventRedact ? redactObject(value, privacySettings) : value;
+  const redactEventText = (text) => (eventRedact ? redactSensitive(text, privacySettings) : text);
+  const redactEventValue = (value) => (eventRedact ? redactObject(value, privacySettings) : value);
   const pluginsEnabled = enablePlugins ?? resolvedSettings.plugins?.enabled ?? false;
   const pluginsVerbose = resolvedSettings.plugins?.verbose ?? false;
-  const effectiveGuardrails = guardrails ? { ...resolvedSettings.guardrails, ...guardrails } : { ...resolvedSettings.guardrails };
-  let effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
-  let effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
-  let effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
+  const effectiveGuardrails = guardrails
+    ? { ...resolvedSettings.guardrails, ...guardrails }
+    : { ...resolvedSettings.guardrails };
+  const effectiveProvider = provider || resolvedSettings.provider?.default || 'claude';
+  const effectiveModel = model || resolvedSettings.model?.default || DEFAULT_MODEL;
+  const effectiveThinkLevel = thinkLevel ?? resolvedSettings.thinkLevel?.default ?? 'off';
 
   if (pluginsEnabled) {
     ensureHarnessPluginsLoaded({ verbose: pluginsVerbose }).catch((err) => {
@@ -3205,7 +3509,9 @@ export function createAgentStreamSession(options = {}) {
   }
 
   if (effectiveProvider !== 'claude') {
-    throw new Error(`createAgentStreamSession supports only claude provider (requested: ${effectiveProvider})`);
+    throw new Error(
+      `createAgentStreamSession supports only claude provider (requested: ${effectiveProvider})`,
+    );
   }
 
   const hooks = hookRunner || getHarnessHookRunner();
@@ -3215,7 +3521,8 @@ export function createAgentStreamSession(options = {}) {
     try {
       sessionStoreInstance = getAgentSessionStore({
         dbPath: resolvedSettings.sessionStore?.dbPath || undefined,
-        maxSummaries: resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5
+        maxSummaries:
+          resolvedSettings.sessionStore?.maxSummaries || resolvedSettings.memory?.maxSummaries || 5,
       });
     } catch (err) {
       console.warn('[Harness] Session store unavailable:', err.message);
@@ -3224,18 +3531,22 @@ export function createAgentStreamSession(options = {}) {
   }
 
   const routingResult = routeToAgentWithConfidence('');
-  let agentName = agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
+  const agentName =
+    agent || resolvedSettings.agent?.default || routingResult.primary.agent || 'customer-service';
   const agentConfig = AGENTS[agentName] || AGENTS['customer-service'];
 
-  const gate = permissionGate || createPermissionGate({
-    apply: allowApply,
-    guardrails: effectiveGuardrails,
-    onConfirmRequired
-  });
+  const gate =
+    permissionGate ||
+    createPermissionGate({
+      apply: allowApply,
+      guardrails: effectiveGuardrails,
+      onConfirmRequired,
+    });
 
+  const Commerce = getCommerceCtor();
   let commerce = new Commerce(dbPath);
   const rawSyncConfig = loadSyncConfig();
-  const shouldEnableSync = enableSync !== null ? enableSync : (rawSyncConfig !== null);
+  const shouldEnableSync = enableSync !== null ? enableSync : rawSyncConfig !== null;
   if (shouldEnableSync && rawSyncConfig) {
     const syncConfig = new SyncConfig(rawSyncConfig);
     commerce = wrapCommerceWithEvents(commerce, syncConfig);
@@ -3246,23 +3557,22 @@ export function createAgentStreamSession(options = {}) {
     dbPath,
     allowApply,
     permissionGate: gate,
-    hookRunner: hooks
+    hookRunner: hooks,
   });
 
   const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;
   const resolvedAbortController = normalizeAbortController({ abortController, signal });
-  const effectiveSignal = resolvedAbortController?.signal || signal || null;
   const baseOptionsForQuery = {
     model: effectiveModel,
     systemPrompt: agentConfig.systemPrompt,
     mcpServers: {
-      'stateset-commerce': mcpServer
+      'stateset-commerce': mcpServer,
     },
     allowedTools: agentConfig.tools,
     maxTurns,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
-    ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {})
+    ...(streamThinkTokens > 0 ? { maxThinkingTokens: streamThinkTokens } : {}),
   };
 
   const queue = [];
@@ -3300,7 +3610,9 @@ export function createAgentStreamSession(options = {}) {
       if (steerQueue.length > 0 && !inTurn) return steerQueue.shift();
       if (!inTurn && followUpQueue.length > 0) return followUpQueue.shift();
       if (!inTurn && queue.length > 0) return queue.shift();
-      await new Promise((resolve) => { wakeInput = resolve; });
+      await new Promise((resolve) => {
+        wakeInput = resolve;
+      });
     }
     return null;
   };
@@ -3325,21 +3637,22 @@ export function createAgentStreamSession(options = {}) {
         session_id: sessionId || '',
         message: {
           role: 'user',
-          content: [{ type: 'text', text: next }]
+          content: [{ type: 'text', text: next }],
         },
-        parent_tool_use_id: null
+        parent_tool_use_id: null,
       };
     }
   }
 
   async function* stream() {
     let lastResponse = null;
-    const apiKeyOverride = typeof getApiKey === 'function' ? await getApiKey(effectiveProvider) : apiKey;
+    const apiKeyOverride =
+      typeof getApiKey === 'function' ? await getApiKey(effectiveProvider) : apiKey;
     const claudeEnv = buildClaudeEnv({ apiKey: apiKeyOverride });
     const optionsForQuery = {
       ...baseOptionsForQuery,
       ...(claudeEnv ? { env: claudeEnv } : {}),
-      ...(resolvedAbortController ? { abortController: resolvedAbortController } : {})
+      ...(resolvedAbortController ? { abortController: resolvedAbortController } : {}),
     };
 
     try {
@@ -3354,7 +3667,7 @@ export function createAgentStreamSession(options = {}) {
               assistantStarted = true;
               emitEvent(onEvent, {
                 type: 'message_start',
-                message: { role: 'assistant', content: '' }
+                message: { role: 'assistant', content: '' },
               });
             }
             for (const block of content) {
@@ -3363,14 +3676,14 @@ export function createAgentStreamSession(options = {}) {
                   type: 'tool_execution_start',
                   toolCallId: block.id,
                   toolName: block.name,
-                  args: redactEventValue(block.input)
+                  args: redactEventValue(block.input),
                 });
               } else if (block.type === 'text') {
                 assistantText += block.text;
                 emitEvent(onEvent, {
                   type: 'message_update',
                   message: { role: 'assistant', content: redactEventText(assistantText) },
-                  delta: redactEventText(block.text)
+                  delta: redactEventText(block.text),
                 });
               }
             }
@@ -3380,8 +3693,12 @@ export function createAgentStreamSession(options = {}) {
           if (hooks?.hasHooks?.('tool_result_persist')) {
             const hookResult = await hooks.run('tool_result_persist', {
               tool: toolResult?.name,
-              toolCall: { id: toolResult?.tool_use_id, name: toolResult?.name, input: toolResult?.content },
-              result: toolResult
+              toolCall: {
+                id: toolResult?.tool_use_id,
+                name: toolResult?.name,
+                input: toolResult?.content,
+              },
+              result: toolResult,
             });
             if (hookResult?.result) {
               toolResult = hookResult.result;
@@ -3392,7 +3709,7 @@ export function createAgentStreamSession(options = {}) {
             toolCallId: toolResult?.tool_use_id,
             toolName: toolResult?.name,
             result: redactEventValue(toolResult),
-            isError: Boolean(toolResult?.is_error || toolResult?.isError)
+            isError: Boolean(toolResult?.is_error || toolResult?.isError),
           });
         }
         if (message.type === 'result') {
@@ -3405,7 +3722,7 @@ export function createAgentStreamSession(options = {}) {
               agent: agentName,
               model: effectiveModel,
               provider: effectiveProvider,
-              toolResults: []
+              toolResults: [],
             });
             if (hookResult?.response) {
               lastResponse = hookResult.response;
@@ -3415,18 +3732,18 @@ export function createAgentStreamSession(options = {}) {
             assistantStarted = true;
             emitEvent(onEvent, {
               type: 'message_start',
-              message: { role: 'assistant', content: '' }
+              message: { role: 'assistant', content: '' },
             });
           }
-          if (lastResponse != null) {
+          if (lastResponse !== null && lastResponse !== undefined) {
             emitEvent(onEvent, {
               type: 'message_end',
-              message: { role: 'assistant', content: redactEventText(lastResponse) }
+              message: { role: 'assistant', content: redactEventText(lastResponse) },
             });
             emitEvent(onEvent, {
               type: 'turn_end',
               response: redactEventText(lastResponse),
-              toolResults: []
+              toolResults: [],
             });
           }
           notify();
@@ -3435,9 +3752,10 @@ export function createAgentStreamSession(options = {}) {
       }
 
       if (sessionStoreInstance && sessionId) {
-        const storedResponse = privacySettings.redactMemory && lastResponse
-          ? redactSensitive(lastResponse, privacySettings)
-          : lastResponse;
+        const storedResponse =
+          privacySettings.redactMemory && lastResponse
+            ? redactSensitive(lastResponse, privacySettings)
+            : lastResponse;
         try {
           sessionStoreInstance.upsert(sessionId, {
             provider: effectiveProvider,
@@ -3445,7 +3763,7 @@ export function createAgentStreamSession(options = {}) {
             thinkLevel: effectiveThinkLevel,
             agent: agentName,
             lastRequest: null,
-            lastResponse: storedResponse
+            lastResponse: storedResponse,
           });
         } catch (err) {
           console.warn('[Harness] Session store write failed:', err.message);
@@ -3461,12 +3779,12 @@ export function createAgentStreamSession(options = {}) {
         provider: effectiveProvider,
         model: effectiveModel,
         cost: null,
-        budgetExceeded: false
+        budgetExceeded: false,
       });
     } catch (error) {
       emitEvent(onEvent, {
         type: 'agent_end',
-        error: error?.message || String(error)
+        error: error?.message || String(error),
       });
       throw error;
     }
@@ -3484,11 +3802,15 @@ export function createAgentStreamSession(options = {}) {
     abort: (reason) => {
       closed = true;
       if (resolvedAbortController) {
-        try { resolvedAbortController.abort(reason); } catch { /* ignore */ }
+        try {
+          resolvedAbortController.abort(reason);
+        } catch (err) {
+          console.warn('[harness] Abort controller error:', err.message);
+        }
       }
       notify();
     },
-    getSessionId: () => sessionId
+    getSessionId: () => sessionId,
   };
 }
 
@@ -3522,7 +3844,7 @@ export function createAgentSession({
         onToolCall,
         onMessage: onText,
         conversationHistory: history,
-        ...rest
+        ...rest,
       });
 
       // Update session ID for subsequent queries
@@ -3567,7 +3889,7 @@ export function createAgentSession({
 
     clearHistory() {
       history = [];
-    }
+    },
   };
 }
 
@@ -3579,7 +3901,7 @@ export function listAgents() {
     id,
     name: config.name,
     description: config.description,
-    toolCount: config.tools.length
+    toolCount: config.tools.length,
   }));
 }
 
@@ -3610,12 +3932,16 @@ export async function runAgentLoopQueued(options) {
   const queue = getCommandQueue();
 
   // Enqueue the operation in the appropriate lane
-  return queue.enqueue(effectiveLaneId, async () => {
-    return runAgentLoop(loopOptions);
-  }, {
-    request: options.request?.slice(0, 50),
-    agent: options.agent
-  });
+  return queue.enqueue(
+    effectiveLaneId,
+    async () => {
+      return runAgentLoop(loopOptions);
+    },
+    {
+      request: options.request?.slice(0, 50),
+      agent: options.agent,
+    },
+  );
 }
 
 /**
@@ -3630,10 +3956,14 @@ export async function runAgentLoopParallel(requests) {
 
   return Promise.all(
     requests.map((options, index) =>
-      queue.enqueueParallel('parallel', async () => {
-        return runAgentLoop(options);
-      }, { index })
-    )
+      queue.enqueueParallel(
+        'parallel',
+        async () => {
+          return runAgentLoop(options);
+        },
+        { index },
+      ),
+    ),
   );
 }
 
@@ -3650,7 +3980,12 @@ export function getQueueStats() {
 // ============================================================================
 
 export { AgentTelemetry, noOpTelemetry } from './telemetry.js';
-export { PermissionGate, createPermissionGate, PERMISSION_LEVELS, TOOL_PERMISSIONS } from './permissions.js';
+export {
+  PermissionGate,
+  createPermissionGate,
+  PERMISSION_LEVELS,
+  TOOL_PERMISSIONS,
+} from './permissions.js';
 export { RichOutput, ICONS, createOutput } from './output.js';
 
 // Sync (Verifiable Event Sync)
@@ -3662,7 +3997,13 @@ export { createSequencerClient, SequencerClient } from './sync/client.js';
 
 // v0.4.0: New modules for enhanced reliability
 export { CommandQueue, getCommandQueue, resetCommandQueue } from './command-queue.js';
-export { ContextGuard, ConversationSummarizer, estimateTokens, estimateHistoryTokens, guardContext } from './context-guard.js';
+export {
+  ContextGuard,
+  ConversationSummarizer,
+  estimateTokens,
+  estimateHistoryTokens,
+  guardContext,
+} from './context-guard.js';
 export { ModelFallback, DEFAULT_FALLBACK_CHAIN, createFallbackCaller } from './model-fallback.js';
 export { MarkdownMemoryStore, getMarkdownMemoryStore } from './memory/markdown-store.js';
 export { MemoryStore, getMemoryStore } from './memory/store.js';

@@ -90,23 +90,23 @@ impl PgAgentCardRepository {
 
     fn to_i64_opt(value: Option<u64>, field: &str) -> Result<Option<i64>> {
         match value {
-            Some(val) => i64::try_from(val)
-                .map(Some)
-                .map_err(|_| CommerceError::ValidationError(format!("{} exceeds i64 range", field))),
+            Some(val) => i64::try_from(val).map(Some).map_err(|_| {
+                CommerceError::ValidationError(format!("{} exceeds i64 range", field))
+            }),
             None => Ok(None),
         }
     }
 
     fn row_to_agent_card(row: AgentCardRow) -> Result<AgentCard> {
-        let supported_networks: Vec<X402Network> =
-            serde_json::from_value(row.supported_networks).map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid JSON for agent_card.supported_networks: {}",
-                    e
-                ))
-            })?;
-        let supported_assets: Vec<X402Asset> =
-            serde_json::from_value(row.supported_assets).map_err(|e| {
+        let supported_networks: Vec<X402Network> = serde_json::from_value(row.supported_networks)
+            .map_err(|e| {
+            CommerceError::DatabaseError(format!(
+                "Invalid JSON for agent_card.supported_networks: {}",
+                e
+            ))
+        })?;
+        let supported_assets: Vec<X402Asset> = serde_json::from_value(row.supported_assets)
+            .map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid JSON for agent_card.supported_assets: {}",
                     e
@@ -258,7 +258,9 @@ impl PgAgentCardRepository {
 
         let name = input.name.unwrap_or(existing.name);
         let description = input.description.or(existing.description);
-        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
+        let supported_networks = input
+            .supported_networks
+            .unwrap_or(existing.supported_networks);
         let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
         let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
         let trust_level = input.trust_level.unwrap_or(existing.trust_level);
@@ -312,10 +314,7 @@ impl PgAgentCardRepository {
             max_transaction_amount,
             "max_transaction_amount",
         )?)
-        .bind(Self::to_i64_opt(
-            daily_volume_limit,
-            "daily_volume_limit",
-        )?)
+        .bind(Self::to_i64_opt(daily_volume_limit, "daily_volume_limit")?)
         .bind(requires_kyc)
         .bind(active)
         .bind(&metadata)
@@ -348,7 +347,9 @@ impl PgAgentCardRepository {
             builder.push(" AND wallet_address = ").push_bind(wallet);
         }
         if let Some(trust) = filter.trust_level {
-            builder.push(" AND trust_level = ").push_bind(trust.to_string());
+            builder
+                .push(" AND trust_level = ")
+                .push_bind(trust.to_string());
         }
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);
@@ -383,7 +384,9 @@ impl PgAgentCardRepository {
 
         let limit = filter.limit.unwrap_or(100).min(1000);
         let offset = filter.offset.unwrap_or(0);
-        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit as i64);
+        builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
         let rows: Vec<AgentCardRow> = builder
@@ -402,7 +405,9 @@ impl PgAgentCardRepository {
             builder.push(" AND wallet_address = ").push_bind(wallet);
         }
         if let Some(trust) = filter.trust_level {
-            builder.push(" AND trust_level = ").push_bind(trust.to_string());
+            builder
+                .push(" AND trust_level = ")
+                .push_bind(trust.to_string());
         }
         if let Some(min_trust) = filter.min_trust_level {
             let levels = Self::trust_levels_at_or_above(min_trust);

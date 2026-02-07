@@ -27,6 +27,7 @@ export class SessionManager {
     this.sessionDir = options.sessionDir || DEFAULT_SESSION_DIR;
     this.maxSessions = options.maxSessions || 100;
     this.maxAge = options.maxAge || 7 * 24 * 60 * 60 * 1000; // 7 days
+    this._lastTimestampMs = 0;
 
     // Ensure session directory exists
     this.ensureDirectory();
@@ -50,16 +51,24 @@ export class SessionManager {
     return `${timestamp}-${random}`;
   }
 
+  _nextIsoTimestamp() {
+    let now = Date.now();
+    if (now <= this._lastTimestampMs) now = this._lastTimestampMs + 1;
+    this._lastTimestampMs = now;
+    return new Date(now).toISOString();
+  }
+
   /**
    * Create a new session
    */
   create(options = {}) {
     const id = this.generateId();
+    const now = this._nextIsoTimestamp();
     const session = {
       id,
       version: SESSION_VERSION,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       database: options.database || null,
       agent: options.agent || null,
       model: options.model || null,
@@ -68,8 +77,8 @@ export class SessionManager {
       metadata: {
         operationCount: 0,
         lastOperation: null,
-        totalDuration: 0
-      }
+        totalDuration: 0,
+      },
     };
 
     this.save(session);
@@ -87,7 +96,7 @@ export class SessionManager {
    * Save session to disk
    */
   save(session) {
-    session.updatedAt = new Date().toISOString();
+    session.updatedAt = this._nextIsoTimestamp();
     const filePath = this.getPath(session.id);
     fs.writeFileSync(filePath, JSON.stringify(session, null, 2));
     return session;
@@ -144,7 +153,7 @@ export class SessionManager {
       response: operation.response,
       toolCalls: operation.toolCalls || [],
       duration: operation.duration || 0,
-      success: operation.success !== false
+      success: operation.success !== false,
     };
 
     session.operations.push(entry);
@@ -179,34 +188,33 @@ export class SessionManager {
   list(options = {}) {
     const { limit = 20, sortBy = 'updatedAt', order = 'desc' } = options;
 
-    const files = fs.readdirSync(this.sessionDir)
-      .filter(f => f.endsWith('.json'));
+    const files = fs.readdirSync(this.sessionDir).filter((f) => f.endsWith('.json'));
 
-    const sessions = files.map(f => {
-      try {
-        const data = fs.readFileSync(path.join(this.sessionDir, f), 'utf-8');
-        const session = JSON.parse(data);
-        return {
-          id: session.id,
-          createdAt: session.createdAt,
-          updatedAt: session.updatedAt,
-          database: session.database,
-          agent: session.agent,
-          operationCount: session.metadata?.operationCount || 0,
-          lastOperation: session.metadata?.lastOperation
-        };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
+    const sessions = files
+      .map((f) => {
+        try {
+          const data = fs.readFileSync(path.join(this.sessionDir, f), 'utf-8');
+          const session = JSON.parse(data);
+          return {
+            id: session.id,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            database: session.database,
+            agent: session.agent,
+            operationCount: session.metadata?.operationCount || 0,
+            lastOperation: session.metadata?.lastOperation,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
 
     // Sort
     sessions.sort((a, b) => {
       const aVal = a[sortBy] || '';
       const bVal = b[sortBy] || '';
-      return order === 'desc'
-        ? bVal.localeCompare(aVal)
-        : aVal.localeCompare(bVal);
+      return order === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
     });
 
     return sessions.slice(0, limit);
@@ -218,7 +226,7 @@ export class SessionManager {
   find(criteria = {}) {
     const sessions = this.list({ limit: this.maxSessions });
 
-    return sessions.filter(s => {
+    return sessions.filter((s) => {
       if (criteria.database && s.database !== criteria.database) return false;
       if (criteria.agent && s.agent !== criteria.agent) return false;
       if (criteria.since && new Date(s.updatedAt) < new Date(criteria.since)) return false;
@@ -332,10 +340,10 @@ export class SessionManager {
       totalOperations: sessions.reduce((sum, s) => sum + (s.operationCount || 0), 0),
       byAgent: {},
       byDatabase: {},
-      recentActivity: sessions.filter(s => {
+      recentActivity: sessions.filter((s) => {
         const age = Date.now() - new Date(s.updatedAt).getTime();
         return age < 24 * 60 * 60 * 1000; // Last 24 hours
-      }).length
+      }).length,
     };
 
     for (const session of sessions) {
@@ -362,8 +370,7 @@ export function createSessionManager(options = {}) {
  */
 export class CommandHistory {
   constructor(options = {}) {
-    this.historyFile = options.historyFile ||
-      path.join(os.homedir(), '.stateset', 'history');
+    this.historyFile = options.historyFile || path.join(os.homedir(), '.stateset', 'history');
     this.maxEntries = options.maxEntries || 1000;
 
     this.ensureFile();
@@ -395,13 +402,16 @@ export class CommandHistory {
     const content = fs.readFileSync(this.historyFile, 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
 
-    return lines.slice(-count).map(line => {
-      const [timestamp, ...parts] = line.split('\t');
-      return {
-        timestamp,
-        command: parts.join('\t')
-      };
-    }).reverse();
+    return lines
+      .slice(-count)
+      .map((line) => {
+        const [timestamp, ...parts] = line.split('\t');
+        return {
+          timestamp,
+          command: parts.join('\t'),
+        };
+      })
+      .reverse();
   }
 
   /**
@@ -413,13 +423,13 @@ export class CommandHistory {
     const lowerQuery = query.toLowerCase();
 
     const matches = lines
-      .filter(line => line.toLowerCase().includes(lowerQuery))
+      .filter((line) => line.toLowerCase().includes(lowerQuery))
       .slice(-limit)
-      .map(line => {
+      .map((line) => {
         const [timestamp, ...parts] = line.split('\t');
         return {
           timestamp,
-          command: parts.join('\t')
+          command: parts.join('\t'),
         };
       });
 
@@ -459,5 +469,5 @@ export default {
   createSessionManager,
   CommandHistory,
   createCommandHistory,
-  DEFAULT_SESSION_DIR
+  DEFAULT_SESSION_DIR,
 };

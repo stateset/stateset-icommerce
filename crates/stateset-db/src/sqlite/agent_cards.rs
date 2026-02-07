@@ -1,17 +1,16 @@
 //! SQLite agent cards repository implementation
 
 use super::{
-    build_in_clause, map_db_error, params_refs, uuid_params, with_immediate_transaction,
-    parse_uuid_row, parse_datetime_row, parse_datetime_opt_row, parse_enum_row,
+    build_in_clause, map_db_error, params_refs, parse_datetime_opt_row, parse_datetime_row,
+    parse_enum_row, parse_uuid_row, uuid_params,
 };
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use stateset_core::{
-    validate_batch_size, A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository,
-    BatchResult, CommerceError, CreateAgentCard, Result, TrustLevel, UpdateAgentCard,
-    X402Asset, X402Network,
+    validate_batch_size, A2ASkill, AgentCard, AgentCardFilter, AgentCardRepository, BatchResult,
+    CommerceError, CreateAgentCard, Result, TrustLevel, UpdateAgentCard, X402Asset, X402Network,
 };
 use uuid::Uuid;
 
@@ -88,8 +87,12 @@ impl SqliteAgentCardRepository {
             merchant_id: row.get("merchant_id")?,
             merchant_name: row.get("merchant_name")?,
             business_category: row.get("business_category")?,
-            max_transaction_amount: row.get::<_, Option<i64>>("max_transaction_amount")?.map(|n| n as u64),
-            daily_volume_limit: row.get::<_, Option<i64>>("daily_volume_limit")?.map(|n| n as u64),
+            max_transaction_amount: row
+                .get::<_, Option<i64>>("max_transaction_amount")?
+                .map(|n| n as u64),
+            daily_volume_limit: row
+                .get::<_, Option<i64>>("daily_volume_limit")?
+                .map(|n| n as u64),
             requires_kyc: row.get::<_, i32>("requires_kyc")? == 1,
             active: row.get::<_, i32>("active")? == 1,
             suspended_at: parse_datetime_opt_row(
@@ -207,7 +210,9 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         let name = input.name.unwrap_or(existing.name);
         let description = input.description.or(existing.description);
-        let supported_networks = input.supported_networks.unwrap_or(existing.supported_networks);
+        let supported_networks = input
+            .supported_networks
+            .unwrap_or(existing.supported_networks);
         let supported_assets = input.supported_assets.unwrap_or(existing.supported_assets);
         let a2a_skills = input.a2a_skills.unwrap_or(existing.a2a_skills);
         let trust_level = input.trust_level.unwrap_or(existing.trust_level);
@@ -216,7 +221,9 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let merchant_id = input.merchant_id.or(existing.merchant_id);
         let merchant_name = input.merchant_name.or(existing.merchant_name);
         let business_category = input.business_category.or(existing.business_category);
-        let max_transaction_amount = input.max_transaction_amount.or(existing.max_transaction_amount);
+        let max_transaction_amount = input
+            .max_transaction_amount
+            .or(existing.max_transaction_amount);
         let daily_volume_limit = input.daily_volume_limit.or(existing.daily_volume_limit);
         let requires_kyc = input.requires_kyc.unwrap_or(existing.requires_kyc);
         let active = input.active.unwrap_or(existing.active);
@@ -305,7 +312,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         if let Some(ref network) = filter.network {
             // Search in JSON array
             conditions.push("supported_networks LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", network.to_string())));
+            params.push(Box::new(format!("%\"{}%", network)));
         }
         if let Some(ref asset) = filter.asset {
             let asset_value = serde_json::to_value(asset)
@@ -345,7 +352,12 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), Self::row_to_agent_card).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(param_refs),
+                Self::row_to_agent_card,
+            )
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);
@@ -376,7 +388,7 @@ impl AgentCardRepository for SqliteAgentCardRepository {
         }
         if let Some(ref network) = filter.network {
             conditions.push("supported_networks LIKE ?".to_string());
-            params.push(Box::new(format!("%\"{}%", network.to_string())));
+            params.push(Box::new(format!("%\"{}%", network)));
         }
         if let Some(ref asset) = filter.asset {
             let asset_value = serde_json::to_value(asset)
@@ -410,7 +422,9 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         let param_refs = params_refs(&params);
         let count: i64 = conn
-            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| row.get(0))
+            .query_row(&sql, rusqlite::params_from_iter(param_refs), |row| {
+                row.get(0)
+            })
             .map_err(map_db_error)?;
 
         Ok(count as u64)
@@ -557,7 +571,8 @@ impl AgentCardRepository for SqliteAgentCardRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(map_db_error)?;
+            )
+            .map_err(map_db_error)?;
 
             ids.push(id);
         }
@@ -577,16 +592,18 @@ impl AgentCardRepository for SqliteAgentCardRepository {
 
         let conn = self.conn()?;
         let placeholders = build_in_clause(ids.len());
-        let sql = format!(
-            "SELECT * FROM agent_cards WHERE id IN ({})",
-            placeholders
-        );
+        let sql = format!("SELECT * FROM agent_cards WHERE id IN ({})", placeholders);
 
         let params = uuid_params(&ids);
         let param_refs = params_refs(&params);
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), Self::row_to_agent_card).map_err(map_db_error)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(param_refs),
+                Self::row_to_agent_card,
+            )
+            .map_err(map_db_error)?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row.map_err(map_db_error)?);

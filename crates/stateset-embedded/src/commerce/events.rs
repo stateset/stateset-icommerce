@@ -1,7 +1,7 @@
 use super::Commerce;
 
 #[cfg(feature = "events")]
-use crate::events::{EventSystem, EventSubscription, Webhook};
+use crate::events::{EventSubscription, EventSystem, Webhook};
 
 impl Commerce {
     /// Access the event system for pub/sub and webhook management.
@@ -112,5 +112,4 @@ impl Commerce {
     pub fn emit_event(&self, event: stateset_core::CommerceEvent) {
         self.event_system.emit(event);
     }
-
 }

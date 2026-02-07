@@ -41,8 +41,8 @@
 use crate::Database;
 use stateset_core::{
     CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrder,
-    PurchaseOrderFilter, PurchaseOrderItem, ReceivePurchaseOrderItems,
-    Result, Supplier, SupplierFilter, UpdatePurchaseOrder, UpdateSupplier,
+    PurchaseOrderFilter, PurchaseOrderItem, ReceivePurchaseOrderItems, Result, Supplier,
+    SupplierFilter, UpdatePurchaseOrder, UpdateSupplier,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -202,7 +202,9 @@ impl PurchaseOrders {
     /// * `id` - Purchase order ID
     /// * `supplier_reference` - Optional reference number from supplier
     pub fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().acknowledge(id, supplier_reference)
+        self.db
+            .purchase_orders()
+            .acknowledge(id, supplier_reference)
     }
 
     /// Put a purchase order on hold
@@ -223,7 +225,11 @@ impl PurchaseOrders {
     // === Line Item Operations ===
 
     /// Add an item to a purchase order
-    pub fn add_item(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    pub fn add_item(
+        &self,
+        po_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         self.db.purchase_orders().add_item(po_id, item)
     }
 

@@ -170,7 +170,11 @@ impl Customers {
     }
 
     /// Update an address.
-    pub fn update_address(&self, address_id: Uuid, input: CreateCustomerAddress) -> Result<CustomerAddress> {
+    pub fn update_address(
+        &self,
+        address_id: Uuid,
+        input: CreateCustomerAddress,
+    ) -> Result<CustomerAddress> {
         self.db.customers().update_address(address_id, input)
     }
 

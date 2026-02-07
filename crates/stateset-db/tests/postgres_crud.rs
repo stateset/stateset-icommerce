@@ -2,8 +2,8 @@
 use rust_decimal_macros::dec;
 #[cfg(feature = "postgres")]
 use stateset_core::{
-    AdjustInventory, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, CreateProduct,
-    OrderStatus, UpdateCustomer, UpdateOrder, UpdateProduct,
+    AdjustInventory, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem,
+    CreateProduct, OrderStatus, UpdateCustomer, UpdateOrder, UpdateProduct,
 };
 #[cfg(feature = "postgres")]
 use stateset_db::PostgresDatabase;

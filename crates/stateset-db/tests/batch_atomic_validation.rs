@@ -1,10 +1,10 @@
 use rust_decimal_macros::dec;
-use stateset_db::SqliteDatabase;
 use stateset_core::{
     AdjustInventory, CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder,
-    CreateOrderItem, OrderRepository, CustomerRepository, InventoryRepository,
-    OrderStatus, PaymentStatus, UpdateCustomer, UpdateOrder,
+    CreateOrderItem, CustomerRepository, InventoryRepository, OrderRepository, OrderStatus,
+    PaymentStatus, UpdateCustomer, UpdateOrder,
 };
+use stateset_db::SqliteDatabase;
 use uuid::Uuid;
 
 fn setup_db() -> SqliteDatabase {

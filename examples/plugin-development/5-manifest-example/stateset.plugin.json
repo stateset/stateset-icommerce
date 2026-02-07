@@ -1,0 +1,36 @@
+{
+  "id": "manifest-example-plugin",
+  "name": "Manifest Example Plugin",
+  "version": "0.1.0",
+  "description": "A complete example plugin with manifest + config (demo)",
+  "author": "StateSet",
+  "license": "MIT",
+  "entry": "index.js",
+  "kind": "general",
+  "provides": ["commands", "hooks", "services", "httpRoutes"],
+  "enabledByDefault": false,
+  "configDefaults": {
+    "enabled": true,
+    "logLevel": "info",
+    "maxRetries": 3,
+    "apiKey": ""
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "logLevel": {
+        "type": "string",
+        "enum": ["debug", "info", "warn", "error"],
+        "default": "info"
+      },
+      "maxRetries": { "type": "number", "default": 3, "minimum": 0 },
+      "apiKey": { "type": "string" }
+    },
+    "additionalProperties": true
+  },
+  "configHints": [
+    { "field": "apiKey", "label": "API Key", "help": "External service API key", "sensitive": true }
+  ]
+}
+

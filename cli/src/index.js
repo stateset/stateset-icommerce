@@ -13,22 +13,14 @@ export {
   routeToAgent,
   routeToAgentWithConfidence,
   listAgents,
-  AGENTS
+  AGENTS,
 } from './claude-harness.js';
 
 // MCP Server
-export {
-  createStatesetMcpServer,
-  TOOL_NAMES
-} from './mcp-server.js';
+export { createStatesetMcpServer, TOOL_NAMES } from './mcp-server.js';
 
 // Telemetry & Observability
-export {
-  AgentTelemetry,
-  noOpTelemetry,
-  createTelemetry,
-  Span
-} from './telemetry.js';
+export { AgentTelemetry, noOpTelemetry, createTelemetry, Span } from './telemetry.js';
 
 // Permissions & Guardrails
 export {
@@ -37,28 +29,17 @@ export {
   PERMISSION_LEVELS,
   TOOL_PERMISSIONS,
   DEFAULT_GUARDRAILS,
-  getLevelFromFlags
+  getLevelFromFlags,
 } from './permissions.js';
 
 // Output Formatting
-export {
-  RichOutput,
-  createOutput,
-  ICONS,
-  formatStructuredOutput
-} from './output.js';
+export { RichOutput, createOutput, ICONS, formatStructuredOutput } from './output.js';
 
 // Scaffolding Server (Storefront Creation)
-export {
-  createScaffoldMcpServer,
-  SCAFFOLD_TOOL_NAMES
-} from './scaffold-server.js';
+export { createScaffoldMcpServer, SCAFFOLD_TOOL_NAMES } from './scaffold-server.js';
 
 // x402 MCP Server
-export {
-  createX402McpServer,
-  X402_MCP_TOOL_NAMES
-} from './x402-mcp-server.js';
+export { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';
 
 // ERC-8004 Identity Registry
 export {
@@ -66,7 +47,7 @@ export {
   setAgentWallet as setErc8004Wallet,
   getIdentity as getErc8004Identity,
   getIdentityByWallet as getErc8004IdentityByWallet,
-  listIdentities as listErc8004Identities
+  listIdentities as listErc8004Identities,
 } from './erc8004/index.js';
 
 // Treasury
@@ -85,7 +66,7 @@ export {
   recordFee as recordTreasuryFee,
   buyTokens as buyTreasuryTokens,
   syncOnChainBalance as syncTreasuryOnChainBalance,
-  ensureAgentWallet as ensureTreasuryAgentWallet
+  ensureAgentWallet as ensureTreasuryAgentWallet,
 } from './treasury/index.js';
 
 // Sync (Verifiable Event Sync)
@@ -100,7 +81,7 @@ export {
   SyncEngine,
   createSyncEngine,
   wrapCommerceWithEvents,
-  EventCapture
+  EventCapture,
 } from './sync/index.js';
 
 // ============================================================================
@@ -108,13 +89,7 @@ export {
 // ============================================================================
 
 // Structured Logging
-export {
-  Logger,
-  createLogger,
-  LOG_LEVELS,
-  ToolCallLogger,
-  createRequestLogger
-} from './logger.js';
+export { Logger, createLogger, LOG_LEVELS, ToolCallLogger, createRequestLogger } from './logger.js';
 
 // Interactive Prompts
 export {
@@ -124,7 +99,7 @@ export {
   promptSchema,
   InteractivePrompts,
   isInteractive,
-  interactiveOr
+  interactiveOr,
 } from './prompts.js';
 
 // Plugin System
@@ -132,38 +107,28 @@ export {
   PluginLoader,
   createPluginLoader,
   scaffoldPlugin,
-  PLUGIN_TEMPLATE
+  PLUGIN_TEMPLATE,
 } from './plugins/loader.js';
 
 // Harness Settings & Persistence
-export {
-  DEFAULT_AGENT_SETTINGS,
-  loadAgentSettings,
-  resetAgentSettingsCache
-} from './settings.js';
+export { DEFAULT_AGENT_SETTINGS, loadAgentSettings, resetAgentSettingsCache } from './settings.js';
 
 export {
   CredentialStore,
   getCredentialStore,
   resolveProviderApiKey,
-  resetCredentialStore
+  resetCredentialStore,
 } from './credentials.js';
 
 export {
   AgentSessionStore,
   getAgentSessionStore,
-  resetAgentSessionStore
+  resetAgentSessionStore,
 } from './agent-session-store.js';
 
-export {
-  getHarnessHookRunner,
-  ensureHarnessPluginsLoaded
-} from './harness-hooks.js';
+export { getHarnessHookRunner, ensureHarnessPluginsLoaded } from './harness-hooks.js';
 
-export {
-  redactSensitive,
-  redactObject
-} from './privacy.js';
+export { redactSensitive, redactObject } from './privacy.js';
 
 // Offline Support
 export {
@@ -171,7 +136,7 @@ export {
   OfflineManager,
   createOfflineManager,
   showOfflineWarning,
-  OfflineCache
+  OfflineCache,
 } from './offline.js';
 
 // Dry Run Mode
@@ -180,7 +145,7 @@ export {
   createDryRunManager,
   formatDryRunResult,
   parseDryRunFlag,
-  PREVIEWABLE_OPERATIONS
+  PREVIEWABLE_OPERATIONS,
 } from './dry-run.js';
 
 // Modular Commands
@@ -193,7 +158,7 @@ export {
   getCommand,
   executeCommand,
   generateHelp,
-  getCompletions
+  getCompletions,
 } from './commands/index.js';
 
 // Modular Tools
@@ -201,7 +166,7 @@ export {
   ToolRegistry,
   createToolRegistry,
   getToolsForAgent,
-  AGENT_TOOL_CATEGORIES
+  AGENT_TOOL_CATEGORIES,
 } from './tools/index.js';
 
 // Configuration
@@ -213,7 +178,7 @@ export {
   getModelForAgent,
   getParseArgsOptions,
   MODEL_FOR_TASK,
-  AGENT_MODELS
+  AGENT_MODELS,
 } from './config.js';
 
 // ============================================================================
@@ -234,7 +199,7 @@ export {
   ErrorHandler,
   createErrorHandler,
   withRetry,
-  EXIT_CODES
+  EXIT_CODES,
 } from './errors.js';
 
 // Smart Suggestions
@@ -243,7 +208,7 @@ export {
   createSuggestionEngine,
   formatSuggestion,
   INTENT_PATTERNS,
-  COMMAND_ALIASES
+  COMMAND_ALIASES,
 } from './suggestions.js';
 
 // Session Persistence
@@ -252,7 +217,7 @@ export {
   createSessionManager,
   CommandHistory,
   createCommandHistory,
-  DEFAULT_SESSION_DIR
+  DEFAULT_SESSION_DIR,
 } from './session.js';
 
 // Database Management
@@ -260,7 +225,7 @@ export {
   DatabaseManager,
   createDatabaseManager,
   getGlobalManager,
-  getCommerce
+  getCommerce,
 } from './database.js';
 
 // x402 Payments
@@ -280,7 +245,7 @@ export {
   createX402Agent,
   decodePaymentHeader,
   decodeReceiptHeader,
-  verifyPaymentHeader
+  verifyPaymentHeader,
 } from './x402/index.js';
 
 // Tutorial System
@@ -289,13 +254,13 @@ export {
   TutorialRunner,
   createTutorialRunner,
   checkFirstRun,
-  showWelcome
+  showWelcome,
 } from './tutorial.js';
 
 // Request Context
 export {
   RequestContext,
-  Span,
+  Span as ContextSpan,
   runWithContext,
   getContext,
   getOrCreateContext,
@@ -304,5 +269,5 @@ export {
   withSpan,
   ContextLogger,
   createContextLogger,
-  createContextMiddleware
+  createContextMiddleware,
 } from './context.js';

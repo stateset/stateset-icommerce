@@ -3,25 +3,22 @@
 use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_decimal::Decimal;
 use rusqlite::OptionalExtension;
+use rust_decimal::Decimal;
 use stateset_core::{
-    BillingCycle, BillingCycleFilter, BillingCycleStatus, BillingInterval,
-    CancelSubscription, CreateBillingCycle, CreateSubscription, CreateSubscriptionItem,
-    CreateSubscriptionPlan, CreateSubscriptionPlanItem,
-    PauseSubscription, PlanStatus, Result, SkipBillingCycle, Subscription,
-    SubscriptionEvent, SubscriptionEventType, SubscriptionFilter, SubscriptionItem,
-    SubscriptionPlan, SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository,
-    SubscriptionStatus, UpdateSubscription, UpdateSubscriptionPlan, generate_plan_code,
-    generate_subscription_number,
+    generate_plan_code, generate_subscription_number, BillingCycle, BillingCycleFilter,
+    BillingCycleStatus, BillingInterval, CancelSubscription, CreateBillingCycle,
+    CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan, CreateSubscriptionPlanItem,
+    PauseSubscription, PlanStatus, Result, SkipBillingCycle, Subscription, SubscriptionEvent,
+    SubscriptionEventType, SubscriptionFilter, SubscriptionItem, SubscriptionPlan,
+    SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus,
+    UpdateSubscription, UpdateSubscriptionPlan,
 };
 use uuid::Uuid;
 
 use super::{
-    parse_uuid_row, parse_uuid_opt_row,
-    parse_datetime_row, parse_datetime_opt_row,
-    parse_decimal_row, parse_decimal_opt_row,
-    parse_enum_row, parse_json_opt_row,
+    parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
+    parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
 };
 
 pub struct SqliteSubscriptionRepository {
@@ -39,7 +36,10 @@ impl SqliteSubscriptionRepository {
 
     pub fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
         let id = Uuid::new_v4();
-        let code = input.code.clone().unwrap_or_else(|| generate_plan_code(&input.name));
+        let code = input
+            .code
+            .clone()
+            .unwrap_or_else(|| generate_plan_code(&input.name));
         let now = Utc::now();
         let items = input.items.clone();
 
@@ -82,11 +82,17 @@ impl SqliteSubscriptionRepository {
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
-                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input
+                        .metadata
+                        .as_ref()
+                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e))
+            })?;
         } // Connection is dropped here
 
         // Create plan items (each gets its own connection)
@@ -96,8 +102,9 @@ impl SqliteSubscriptionRepository {
             }
         }
 
-        self.get_plan(id)?
-            .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created plan".into()))
+        self.get_plan(id)?.ok_or_else(|| {
+            stateset_core::CommerceError::DatabaseError("Failed to retrieve created plan".into())
+        })
     }
 
     pub fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>> {
@@ -107,13 +114,13 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
 
-            let mut stmt = conn.prepare(
-                "SELECT * FROM subscription_plans WHERE id = ?1"
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM subscription_plans WHERE id = ?1")
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            stmt.query_row([id.to_string()], |row| {
-                self.row_to_plan(row)
-            }).optional().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
+            stmt.query_row([id.to_string()], |row| self.row_to_plan(row))
+                .optional()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
         }; // Connection dropped here
 
         if let Some(mut p) = plan {
@@ -131,13 +138,13 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
 
-            let mut stmt = conn.prepare(
-                "SELECT * FROM subscription_plans WHERE code = ?1"
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM subscription_plans WHERE code = ?1")
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            stmt.query_row([code], |row| {
-                self.row_to_plan(row)
-            }).optional().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
+            stmt.query_row([code], |row| self.row_to_plan(row))
+                .optional()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
         }; // Connection dropped here
 
         if let Some(mut p) = plan {
@@ -185,18 +192,20 @@ impl SqliteSubscriptionRepository {
                 sql.push_str(&format!(" OFFSET {}", offset));
             }
 
-            let mut stmt = conn.prepare(&sql)
+            let mut stmt = conn
+                .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
             let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-            let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                self.row_to_plan(row)
-            }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| self.row_to_plan(row))
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
             let mut result = Vec::new();
             for row in rows {
-                let plan = row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                let plan =
+                    row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
                 result.push(plan);
             }
             result
@@ -247,11 +256,17 @@ impl SqliteSubscriptionRepository {
                     input.max_cycles,
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
-                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input
+                        .metadata
+                        .as_ref()
+                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
         self.get_plan(id)?
@@ -259,20 +274,30 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.update_plan(id, UpdateSubscriptionPlan {
-            status: Some(PlanStatus::Active),
-            ..Default::default()
-        })
+        self.update_plan(
+            id,
+            UpdateSubscriptionPlan {
+                status: Some(PlanStatus::Active),
+                ..Default::default()
+            },
+        )
     }
 
     pub fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.update_plan(id, UpdateSubscriptionPlan {
-            status: Some(PlanStatus::Archived),
-            ..Default::default()
-        })
+        self.update_plan(
+            id,
+            UpdateSubscriptionPlan {
+                status: Some(PlanStatus::Archived),
+                ..Default::default()
+            },
+        )
     }
 
-    fn create_plan_item(&self, plan_id: Uuid, input: CreateSubscriptionPlanItem) -> Result<SubscriptionPlanItem> {
+    fn create_plan_item(
+        &self,
+        plan_id: Uuid,
+        input: CreateSubscriptionPlanItem,
+    ) -> Result<SubscriptionPlanItem> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -322,21 +347,39 @@ impl SqliteSubscriptionRepository {
              FROM subscription_plan_items WHERE plan_id = ?1"
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let rows = stmt.query_map([plan_id.to_string()], |row| {
-            Ok(SubscriptionPlanItem {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan_item", "id")?,
-                plan_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_plan_item", "plan_id")?,
-                product_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription_plan_item", "product_id")?,
-                variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "subscription_plan_item", "variant_id")?,
-                sku: row.get(4)?,
-                name: row.get(5)?,
-                quantity: row.get(6)?,
-                min_quantity: row.get(7)?,
-                max_quantity: row.get(8)?,
-                is_required: row.get::<_, i32>(9)? != 0,
-                unit_price: parse_decimal_opt_row(row.get::<_, Option<String>>(10)?, "subscription_plan_item", "unit_price")?,
+        let rows = stmt
+            .query_map([plan_id.to_string()], |row| {
+                Ok(SubscriptionPlanItem {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_plan_item", "id")?,
+                    plan_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "subscription_plan_item",
+                        "plan_id",
+                    )?,
+                    product_id: parse_uuid_row(
+                        &row.get::<_, String>(2)?,
+                        "subscription_plan_item",
+                        "product_id",
+                    )?,
+                    variant_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(3)?,
+                        "subscription_plan_item",
+                        "variant_id",
+                    )?,
+                    sku: row.get(4)?,
+                    name: row.get(5)?,
+                    quantity: row.get(6)?,
+                    min_quantity: row.get(7)?,
+                    max_quantity: row.get(8)?,
+                    is_required: row.get::<_, i32>(9)? != 0,
+                    unit_price: parse_decimal_opt_row(
+                        row.get::<_, Option<String>>(10)?,
+                        "subscription_plan_item",
+                        "unit_price",
+                    )?,
+                })
             })
-        }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
@@ -348,11 +391,14 @@ impl SqliteSubscriptionRepository {
 
     pub fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
         // Get the plan first (uses its own connection)
-        let plan = self.get_plan(input.plan_id)?
+        let plan = self
+            .get_plan(input.plan_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if plan.status != PlanStatus::Active {
-            return Err(stateset_core::CommerceError::ValidationError("Plan is not active".into()));
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Plan is not active".into(),
+            ));
         }
 
         let id = Uuid::new_v4();
@@ -394,18 +440,22 @@ impl SqliteSubscriptionRepository {
         let price = input.price.unwrap_or(plan.price);
 
         // Prepare items to create
-        let items_to_create: Vec<CreateSubscriptionItem> = if let Some(custom_items) = input.items.clone() {
-            custom_items
-        } else {
-            plan.items.iter().map(|pi| CreateSubscriptionItem {
-                product_id: pi.product_id,
-                variant_id: pi.variant_id,
-                sku: pi.sku.clone(),
-                name: pi.name.clone(),
-                quantity: pi.quantity,
-                unit_price: pi.unit_price,
-            }).collect()
-        };
+        let items_to_create: Vec<CreateSubscriptionItem> =
+            if let Some(custom_items) = input.items.clone() {
+                custom_items
+            } else {
+                plan.items
+                    .iter()
+                    .map(|pi| CreateSubscriptionItem {
+                        product_id: pi.product_id,
+                        variant_id: pi.variant_id,
+                        sku: pi.sku.clone(),
+                        name: pi.name.clone(),
+                        quantity: pi.quantity,
+                        unit_price: pi.unit_price,
+                    })
+                    .collect()
+            };
 
         {
             let mut conn = self.pool.get().map_err(|e| {
@@ -511,8 +561,11 @@ impl SqliteSubscriptionRepository {
             period_end: current_period_end,
         })?;
 
-        self.get_subscription(id)?
-            .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created subscription".into()))
+        self.get_subscription(id)?.ok_or_else(|| {
+            stateset_core::CommerceError::DatabaseError(
+                "Failed to retrieve created subscription".into(),
+            )
+        })
     }
 
     pub fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
@@ -522,13 +575,13 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
 
-            let mut stmt = conn.prepare(
-                "SELECT * FROM subscriptions WHERE id = ?1"
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM subscriptions WHERE id = ?1")
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            stmt.query_row([id.to_string()], |row| {
-                self.row_to_subscription(row)
-            }).optional().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
+            stmt.query_row([id.to_string()], |row| self.row_to_subscription(row))
+                .optional()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
         }; // Connection dropped here
 
         if let Some(mut sub) = subscription {
@@ -546,13 +599,13 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
             })?;
 
-            let mut stmt = conn.prepare(
-                "SELECT * FROM subscriptions WHERE subscription_number = ?1"
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM subscriptions WHERE subscription_number = ?1")
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-            stmt.query_row([number], |row| {
-                self.row_to_subscription(row)
-            }).optional().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
+            stmt.query_row([number], |row| self.row_to_subscription(row))
+                .optional()
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?
         }; // Connection dropped here
 
         if let Some(mut sub) = subscription {
@@ -614,18 +667,20 @@ impl SqliteSubscriptionRepository {
                 sql.push_str(&format!(" OFFSET {}", offset));
             }
 
-            let mut stmt = conn.prepare(&sql)
+            let mut stmt = conn
+                .prepare(&sql)
                 .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
             let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-            let rows = stmt.query_map(param_refs.as_slice(), |row| {
-                self.row_to_subscription(row)
-            }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| self.row_to_subscription(row))
+                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
             let mut result = Vec::new();
             for row in rows {
-                let sub = row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+                let sub =
+                    row.map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
                 result.push(sub);
             }
             result
@@ -666,17 +721,29 @@ impl SqliteSubscriptionRepository {
                     input.status.map(|s| format!("{}", s)),
                     input.price.map(|d| d.to_string()),
                     input.payment_method_id,
-                    input.shipping_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
-                    input.billing_address.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()),
+                    input
+                        .shipping_address
+                        .as_ref()
+                        .map(|a| serde_json::to_string(a).unwrap_or_default()),
+                    input
+                        .billing_address
+                        .as_ref()
+                        .map(|a| serde_json::to_string(a).unwrap_or_default()),
                     input.next_billing_date.map(|d| d.to_rfc3339()),
                     input.discount_percent.map(|d| d.to_string()),
                     input.discount_amount.map(|d| d.to_string()),
                     input.coupon_code,
-                    input.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    input
+                        .metadata
+                        .as_ref()
+                        .map(|m| serde_json::to_string(m).unwrap_or_default()),
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
         self.get_subscription(id)?
@@ -688,13 +755,15 @@ impl SqliteSubscriptionRepository {
     // ========================================================================
 
     pub fn pause_subscription(&self, id: Uuid, input: PauseSubscription) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?
+        let sub = self
+            .get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_pause() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                format!("Cannot pause subscription in {} status", sub.status)
-            ));
+            return Err(stateset_core::CommerceError::ValidationError(format!(
+                "Cannot pause subscription in {} status",
+                sub.status
+            )));
         }
 
         let description = match input.reason.clone() {
@@ -723,7 +792,10 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
         self.record_event(id, SubscriptionEventType::Paused, &description, None, None)?;
@@ -733,13 +805,15 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?
+        let sub = self
+            .get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_resume() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                format!("Cannot resume subscription in {} status", sub.status)
-            ));
+            return Err(stateset_core::CommerceError::ValidationError(format!(
+                "Cannot resume subscription in {} status",
+                sub.status
+            )));
         }
 
         // Update subscription - connection scoped to this block
@@ -776,27 +850,44 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
-        self.record_event(id, SubscriptionEventType::Resumed, "Subscription resumed", None, None)?;
+        self.record_event(
+            id,
+            SubscriptionEventType::Resumed,
+            "Subscription resumed",
+            None,
+            None,
+        )?;
 
         self.get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)
     }
 
     pub fn cancel_subscription(&self, id: Uuid, input: CancelSubscription) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?
+        let sub = self
+            .get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if !sub.can_cancel() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                format!("Cannot cancel subscription in {} status", sub.status)
-            ));
+            return Err(stateset_core::CommerceError::ValidationError(format!(
+                "Cannot cancel subscription in {} status",
+                sub.status
+            )));
         }
 
-        let reason = input.reason.clone().unwrap_or_else(|| "Cancelled by customer".to_string());
-        let data = input.feedback.clone().map(|f| serde_json::json!({"feedback": f}));
+        let reason = input
+            .reason
+            .clone()
+            .unwrap_or_else(|| "Cancelled by customer".to_string());
+        let data = input
+            .feedback
+            .clone()
+            .map(|f| serde_json::json!({"feedback": f}));
 
         // Update subscription - connection scoped to this block
         {
@@ -828,7 +919,10 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
         self.record_event(id, SubscriptionEventType::Cancelled, &reason, data, None)?;
@@ -838,12 +932,13 @@ impl SqliteSubscriptionRepository {
     }
 
     pub fn skip_billing_cycle(&self, id: Uuid, input: SkipBillingCycle) -> Result<Subscription> {
-        let sub = self.get_subscription(id)?
+        let sub = self
+            .get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         if sub.status != SubscriptionStatus::Active {
             return Err(stateset_core::CommerceError::ValidationError(
-                "Can only skip billing for active subscriptions".into()
+                "Can only skip billing for active subscriptions".into(),
             ));
         }
 
@@ -858,10 +953,8 @@ impl SqliteSubscriptionRepository {
             sub.billing_interval.days()
         };
 
-        let new_billing_date = sub
-            .next_billing_date
-            .unwrap_or(sub.current_period_end)
-            + Duration::days(interval_days);
+        let new_billing_date =
+            sub.next_billing_date.unwrap_or(sub.current_period_end) + Duration::days(interval_days);
 
         {
             let conn = self.pool.get().map_err(|e| {
@@ -882,16 +975,13 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
-        self.record_event(
-            id,
-            SubscriptionEventType::Skipped,
-            &reason,
-            None,
-            None,
-        )?;
+        self.record_event(id, SubscriptionEventType::Skipped, &reason, None, None)?;
 
         self.get_subscription(id)?
             .ok_or(stateset_core::CommerceError::NotFound)
@@ -909,7 +999,9 @@ impl SqliteSubscriptionRepository {
         plan: &SubscriptionPlan,
     ) -> Result<SubscriptionItem> {
         let id = Uuid::new_v4();
-        let unit_price = input.unit_price.unwrap_or(plan.price / Decimal::from(plan.items.len().max(1)));
+        let unit_price = input
+            .unit_price
+            .unwrap_or(plan.price / Decimal::from(plan.items.len().max(1)));
         let line_total = unit_price * Decimal::from(input.quantity);
 
         conn.execute(
@@ -951,19 +1043,41 @@ impl SqliteSubscriptionRepository {
              FROM subscription_items WHERE subscription_id = ?1"
         ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let rows = stmt.query_map([subscription_id.to_string()], |row| {
-            Ok(SubscriptionItem {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
-                subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_item", "subscription_id")?,
-                product_id: parse_uuid_row(&row.get::<_, String>(2)?, "subscription_item", "product_id")?,
-                variant_id: parse_uuid_opt_row(row.get::<_, Option<String>>(3)?, "subscription_item", "variant_id")?,
-                sku: row.get(4)?,
-                name: row.get(5)?,
-                quantity: row.get(6)?,
-                unit_price: parse_decimal_row(&row.get::<_, String>(7)?, "subscription_item", "unit_price")?,
-                line_total: parse_decimal_row(&row.get::<_, String>(8)?, "subscription_item", "line_total")?,
+        let rows = stmt
+            .query_map([subscription_id.to_string()], |row| {
+                Ok(SubscriptionItem {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_item", "id")?,
+                    subscription_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "subscription_item",
+                        "subscription_id",
+                    )?,
+                    product_id: parse_uuid_row(
+                        &row.get::<_, String>(2)?,
+                        "subscription_item",
+                        "product_id",
+                    )?,
+                    variant_id: parse_uuid_opt_row(
+                        row.get::<_, Option<String>>(3)?,
+                        "subscription_item",
+                        "variant_id",
+                    )?,
+                    sku: row.get(4)?,
+                    name: row.get(5)?,
+                    quantity: row.get(6)?,
+                    unit_price: parse_decimal_row(
+                        &row.get::<_, String>(7)?,
+                        "subscription_item",
+                        "unit_price",
+                    )?,
+                    line_total: parse_decimal_row(
+                        &row.get::<_, String>(8)?,
+                        "subscription_item",
+                        "line_total",
+                    )?,
+                })
             })
-        }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
@@ -981,7 +1095,8 @@ impl SqliteSubscriptionRepository {
             period_end,
         } = input;
         // Get subscription first (uses its own connection)
-        let sub = self.get_subscription(subscription_id)?
+        let sub = self
+            .get_subscription(subscription_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
@@ -1024,11 +1139,17 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     now.to_rfc3339(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Insert error: {}", e))
+            })?;
         } // Connection dropped here
 
-        self.get_billing_cycle(id)?
-            .ok_or_else(|| stateset_core::CommerceError::DatabaseError("Failed to retrieve created billing cycle".into()))
+        self.get_billing_cycle(id)?.ok_or_else(|| {
+            stateset_core::CommerceError::DatabaseError(
+                "Failed to retrieve created billing cycle".into(),
+            )
+        })
     }
 
     pub fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
@@ -1036,13 +1157,13 @@ impl SqliteSubscriptionRepository {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM billing_cycles WHERE id = ?1"
-        ).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM billing_cycles WHERE id = ?1")
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        stmt.query_row([id.to_string()], |row| {
-            self.row_to_billing_cycle(row)
-        }).optional().map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
+        stmt.query_row([id.to_string()], |row| self.row_to_billing_cycle(row))
+            .optional()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
 
     pub fn list_billing_cycles(&self, filter: BillingCycleFilter) -> Result<Vec<BillingCycle>> {
@@ -1072,20 +1193,27 @@ impl SqliteSubscriptionRepository {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut stmt = conn.prepare(&sql)
+        let mut stmt = conn
+            .prepare(&sql)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-        let rows = stmt.query_map(param_refs.as_slice(), |row| {
-            self.row_to_billing_cycle(row)
-        }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| self.row_to_billing_cycle(row))
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
     }
 
-    pub fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus, payment_id: Option<String>, failure_reason: Option<String>) -> Result<BillingCycle> {
+    pub fn update_billing_cycle_status(
+        &self,
+        id: Uuid,
+        status: BillingCycleStatus,
+        payment_id: Option<String>,
+        failure_reason: Option<String>,
+    ) -> Result<BillingCycle> {
         // Update billing cycle - connection scoped to this block
         {
             let conn = self.pool.get().map_err(|e| {
@@ -1093,11 +1221,12 @@ impl SqliteSubscriptionRepository {
             })?;
 
             let now = Utc::now();
-            let billed_at = if status == BillingCycleStatus::Paid || status == BillingCycleStatus::Failed {
-                Some(now)
-            } else {
-                None
-            };
+            let billed_at =
+                if status == BillingCycleStatus::Paid || status == BillingCycleStatus::Failed {
+                    Some(now)
+                } else {
+                    None
+                };
 
             conn.execute(
                 "UPDATE billing_cycles SET
@@ -1116,7 +1245,10 @@ impl SqliteSubscriptionRepository {
                     now.to_rfc3339(),
                     id.to_string(),
                 ],
-            ).map_err(|e| stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e)))?;
+            )
+            .map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!("Update error: {}", e))
+            })?;
         } // Connection dropped here
 
         self.get_billing_cycle(id)?
@@ -1127,12 +1259,26 @@ impl SqliteSubscriptionRepository {
     // Events
     // ========================================================================
 
-    pub fn record_event(&self, subscription_id: Uuid, event_type: SubscriptionEventType, description: &str, data: Option<serde_json::Value>, triggered_by: Option<&str>) -> Result<SubscriptionEvent> {
+    pub fn record_event(
+        &self,
+        subscription_id: Uuid,
+        event_type: SubscriptionEventType,
+        description: &str,
+        data: Option<serde_json::Value>,
+        triggered_by: Option<&str>,
+    ) -> Result<SubscriptionEvent> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
 
-        self.record_event_with_conn(&conn, subscription_id, event_type, description, data, triggered_by)
+        self.record_event_with_conn(
+            &conn,
+            subscription_id,
+            event_type,
+            description,
+            data,
+            triggered_by,
+        )
     }
 
     fn record_event_with_conn(
@@ -1172,7 +1318,11 @@ impl SqliteSubscriptionRepository {
         })
     }
 
-    pub fn get_subscription_events(&self, subscription_id: Uuid, limit: Option<u32>) -> Result<Vec<SubscriptionEvent>> {
+    pub fn get_subscription_events(
+        &self,
+        subscription_id: Uuid,
+        limit: Option<u32>,
+    ) -> Result<Vec<SubscriptionEvent>> {
         let conn = self.pool.get().map_err(|e| {
             stateset_core::CommerceError::DatabaseError(format!("Connection error: {}", e))
         })?;
@@ -1184,20 +1334,39 @@ impl SqliteSubscriptionRepository {
             sql.push_str(&format!(" LIMIT {}", l));
         }
 
-        let mut stmt = conn.prepare(&sql)
+        let mut stmt = conn
+            .prepare(&sql)
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
-        let rows = stmt.query_map([subscription_id.to_string()], |row| {
-            Ok(SubscriptionEvent {
-                id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_event", "id")?,
-                subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "subscription_event", "subscription_id")?,
-                event_type: parse_enum_row(&row.get::<_, String>(2)?, "subscription_event", "event_type")?,
-                description: row.get(3)?,
-                data: parse_json_opt_row(row.get::<_, Option<String>>(4)?, "subscription_event", "data")?,
-                triggered_by: row.get(5)?,
-                created_at: parse_datetime_row(&row.get::<_, String>(6)?, "subscription_event", "created_at")?,
+        let rows = stmt
+            .query_map([subscription_id.to_string()], |row| {
+                Ok(SubscriptionEvent {
+                    id: parse_uuid_row(&row.get::<_, String>(0)?, "subscription_event", "id")?,
+                    subscription_id: parse_uuid_row(
+                        &row.get::<_, String>(1)?,
+                        "subscription_event",
+                        "subscription_id",
+                    )?,
+                    event_type: parse_enum_row(
+                        &row.get::<_, String>(2)?,
+                        "subscription_event",
+                        "event_type",
+                    )?,
+                    description: row.get(3)?,
+                    data: parse_json_opt_row(
+                        row.get::<_, Option<String>>(4)?,
+                        "subscription_event",
+                        "data",
+                    )?,
+                    triggered_by: row.get(5)?,
+                    created_at: parse_datetime_row(
+                        &row.get::<_, String>(6)?,
+                        "subscription_event",
+                        "created_at",
+                    )?,
+                })
             })
-        }).map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))
@@ -1214,20 +1383,48 @@ impl SqliteSubscriptionRepository {
             name: row.get(2)?,
             description: row.get(3)?,
             status: parse_enum_row(&row.get::<_, String>(4)?, "subscription_plan", "status")?,
-            billing_interval: parse_enum_row(&row.get::<_, String>(5)?, "subscription_plan", "billing_interval")?,
+            billing_interval: parse_enum_row(
+                &row.get::<_, String>(5)?,
+                "subscription_plan",
+                "billing_interval",
+            )?,
             custom_interval_days: row.get(6)?,
             price: parse_decimal_row(&row.get::<_, String>(7)?, "subscription_plan", "price")?,
-            setup_fee: parse_decimal_opt_row(row.get::<_, Option<String>>(8)?, "subscription_plan", "setup_fee")?,
+            setup_fee: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(8)?,
+                "subscription_plan",
+                "setup_fee",
+            )?,
             currency: row.get(9)?,
             trial_days: row.get(10)?,
             trial_requires_payment_method: row.get::<_, i32>(11)? != 0,
             min_cycles: row.get(12)?,
             max_cycles: row.get(13)?,
-            discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(14)?, "subscription_plan", "discount_percent")?,
-            discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(15)?, "subscription_plan", "discount_amount")?,
-            metadata: parse_json_opt_row(row.get::<_, Option<String>>(16)?, "subscription_plan", "metadata")?,
-            created_at: parse_datetime_row(&row.get::<_, String>(17)?, "subscription_plan", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>(18)?, "subscription_plan", "updated_at")?,
+            discount_percent: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(14)?,
+                "subscription_plan",
+                "discount_percent",
+            )?,
+            discount_amount: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(15)?,
+                "subscription_plan",
+                "discount_amount",
+            )?,
+            metadata: parse_json_opt_row(
+                row.get::<_, Option<String>>(16)?,
+                "subscription_plan",
+                "metadata",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(17)?,
+                "subscription_plan",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(18)?,
+                "subscription_plan",
+                "updated_at",
+            )?,
             items: Vec::new(), // Loaded separately
         })
     }
@@ -1240,30 +1437,98 @@ impl SqliteSubscriptionRepository {
             plan_id: parse_uuid_row(&row.get::<_, String>(3)?, "subscription", "plan_id")?,
             plan_name: row.get(4)?,
             status: parse_enum_row(&row.get::<_, String>(5)?, "subscription", "status")?,
-            billing_interval: parse_enum_row(&row.get::<_, String>(6)?, "subscription", "billing_interval")?,
+            billing_interval: parse_enum_row(
+                &row.get::<_, String>(6)?,
+                "subscription",
+                "billing_interval",
+            )?,
             custom_interval_days: row.get(7)?,
             price: parse_decimal_row(&row.get::<_, String>(8)?, "subscription", "price")?,
             currency: row.get(9)?,
             payment_method_id: row.get(10)?,
-            started_at: parse_datetime_row(&row.get::<_, String>(11)?, "subscription", "started_at")?,
-            current_period_start: parse_datetime_row(&row.get::<_, String>(12)?, "subscription", "current_period_start")?,
-            current_period_end: parse_datetime_row(&row.get::<_, String>(13)?, "subscription", "current_period_end")?,
-            next_billing_date: parse_datetime_opt_row(row.get::<_, Option<String>>(14)?, "subscription", "next_billing_date")?,
-            trial_ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(15)?, "subscription", "trial_ends_at")?,
-            cancelled_at: parse_datetime_opt_row(row.get::<_, Option<String>>(16)?, "subscription", "cancelled_at")?,
-            ends_at: parse_datetime_opt_row(row.get::<_, Option<String>>(17)?, "subscription", "ends_at")?,
-            paused_at: parse_datetime_opt_row(row.get::<_, Option<String>>(18)?, "subscription", "paused_at")?,
-            resume_at: parse_datetime_opt_row(row.get::<_, Option<String>>(19)?, "subscription", "resume_at")?,
+            started_at: parse_datetime_row(
+                &row.get::<_, String>(11)?,
+                "subscription",
+                "started_at",
+            )?,
+            current_period_start: parse_datetime_row(
+                &row.get::<_, String>(12)?,
+                "subscription",
+                "current_period_start",
+            )?,
+            current_period_end: parse_datetime_row(
+                &row.get::<_, String>(13)?,
+                "subscription",
+                "current_period_end",
+            )?,
+            next_billing_date: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(14)?,
+                "subscription",
+                "next_billing_date",
+            )?,
+            trial_ends_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(15)?,
+                "subscription",
+                "trial_ends_at",
+            )?,
+            cancelled_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(16)?,
+                "subscription",
+                "cancelled_at",
+            )?,
+            ends_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(17)?,
+                "subscription",
+                "ends_at",
+            )?,
+            paused_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(18)?,
+                "subscription",
+                "paused_at",
+            )?,
+            resume_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(19)?,
+                "subscription",
+                "resume_at",
+            )?,
             billing_cycle_count: row.get(20)?,
             failed_payment_attempts: row.get(21)?,
-            shipping_address: parse_json_opt_row(row.get::<_, Option<String>>(22)?, "subscription", "shipping_address")?,
-            billing_address: parse_json_opt_row(row.get::<_, Option<String>>(23)?, "subscription", "billing_address")?,
-            discount_percent: parse_decimal_opt_row(row.get::<_, Option<String>>(24)?, "subscription", "discount_percent")?,
-            discount_amount: parse_decimal_opt_row(row.get::<_, Option<String>>(25)?, "subscription", "discount_amount")?,
+            shipping_address: parse_json_opt_row(
+                row.get::<_, Option<String>>(22)?,
+                "subscription",
+                "shipping_address",
+            )?,
+            billing_address: parse_json_opt_row(
+                row.get::<_, Option<String>>(23)?,
+                "subscription",
+                "billing_address",
+            )?,
+            discount_percent: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(24)?,
+                "subscription",
+                "discount_percent",
+            )?,
+            discount_amount: parse_decimal_opt_row(
+                row.get::<_, Option<String>>(25)?,
+                "subscription",
+                "discount_amount",
+            )?,
             coupon_code: row.get(26)?,
-            metadata: parse_json_opt_row(row.get::<_, Option<String>>(27)?, "subscription", "metadata")?,
-            created_at: parse_datetime_row(&row.get::<_, String>(28)?, "subscription", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>(29)?, "subscription", "updated_at")?,
+            metadata: parse_json_opt_row(
+                row.get::<_, Option<String>>(27)?,
+                "subscription",
+                "metadata",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(28)?,
+                "subscription",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(29)?,
+                "subscription",
+                "updated_at",
+            )?,
             items: Vec::new(), // Loaded separately
         })
     }
@@ -1271,25 +1536,61 @@ impl SqliteSubscriptionRepository {
     fn row_to_billing_cycle(&self, row: &rusqlite::Row) -> rusqlite::Result<BillingCycle> {
         Ok(BillingCycle {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "billing_cycle", "id")?,
-            subscription_id: parse_uuid_row(&row.get::<_, String>(1)?, "billing_cycle", "subscription_id")?,
+            subscription_id: parse_uuid_row(
+                &row.get::<_, String>(1)?,
+                "billing_cycle",
+                "subscription_id",
+            )?,
             cycle_number: row.get(2)?,
             status: parse_enum_row(&row.get::<_, String>(3)?, "billing_cycle", "status")?,
-            period_start: parse_datetime_row(&row.get::<_, String>(4)?, "billing_cycle", "period_start")?,
-            period_end: parse_datetime_row(&row.get::<_, String>(5)?, "billing_cycle", "period_end")?,
-            billed_at: parse_datetime_opt_row(row.get::<_, Option<String>>(6)?, "billing_cycle", "billed_at")?,
+            period_start: parse_datetime_row(
+                &row.get::<_, String>(4)?,
+                "billing_cycle",
+                "period_start",
+            )?,
+            period_end: parse_datetime_row(
+                &row.get::<_, String>(5)?,
+                "billing_cycle",
+                "period_end",
+            )?,
+            billed_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(6)?,
+                "billing_cycle",
+                "billed_at",
+            )?,
             subtotal: parse_decimal_row(&row.get::<_, String>(7)?, "billing_cycle", "subtotal")?,
             discount: parse_decimal_row(&row.get::<_, String>(8)?, "billing_cycle", "discount")?,
             tax: parse_decimal_row(&row.get::<_, String>(9)?, "billing_cycle", "tax")?,
             total: parse_decimal_row(&row.get::<_, String>(10)?, "billing_cycle", "total")?,
             currency: row.get(11)?,
             payment_id: row.get(12)?,
-            order_id: parse_uuid_opt_row(row.get::<_, Option<String>>(13)?, "billing_cycle", "order_id")?,
-            invoice_id: parse_uuid_opt_row(row.get::<_, Option<String>>(14)?, "billing_cycle", "invoice_id")?,
+            order_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(13)?,
+                "billing_cycle",
+                "order_id",
+            )?,
+            invoice_id: parse_uuid_opt_row(
+                row.get::<_, Option<String>>(14)?,
+                "billing_cycle",
+                "invoice_id",
+            )?,
             failure_reason: row.get(15)?,
             retry_count: row.get(16)?,
-            next_retry_at: parse_datetime_opt_row(row.get::<_, Option<String>>(17)?, "billing_cycle", "next_retry_at")?,
-            created_at: parse_datetime_row(&row.get::<_, String>(18)?, "billing_cycle", "created_at")?,
-            updated_at: parse_datetime_row(&row.get::<_, String>(19)?, "billing_cycle", "updated_at")?,
+            next_retry_at: parse_datetime_opt_row(
+                row.get::<_, Option<String>>(17)?,
+                "billing_cycle",
+                "next_retry_at",
+            )?,
+            created_at: parse_datetime_row(
+                &row.get::<_, String>(18)?,
+                "billing_cycle",
+                "created_at",
+            )?,
+            updated_at: parse_datetime_row(
+                &row.get::<_, String>(19)?,
+                "billing_cycle",
+                "updated_at",
+            )?,
         })
     }
 }
@@ -1371,7 +1672,11 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         SqliteSubscriptionRepository::list_billing_cycles(self, filter)
     }
 
-    fn update_billing_cycle_status(&self, id: Uuid, status: BillingCycleStatus) -> Result<BillingCycle> {
+    fn update_billing_cycle_status(
+        &self,
+        id: Uuid,
+        status: BillingCycleStatus,
+    ) -> Result<BillingCycle> {
         SqliteSubscriptionRepository::update_billing_cycle_status(self, id, status, None, None)
     }
 
@@ -1386,7 +1691,14 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
         let description = notes.as_deref().unwrap_or("");
-        SqliteSubscriptionRepository::record_event(self, subscription_id, event_type, description, None, None)
+        SqliteSubscriptionRepository::record_event(
+            self,
+            subscription_id,
+            event_type,
+            description,
+            None,
+            None,
+        )
     }
 
     fn get_subscription_events(&self, subscription_id: Uuid) -> Result<Vec<SubscriptionEvent>> {

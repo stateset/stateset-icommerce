@@ -49,7 +49,7 @@ export class ChannelSessionStore {
     this._get = this.db.prepare(
       `SELECT session_id, agent, last_active, context
        FROM channel_sessions
-       WHERE channel = ? AND sender_id = ?`
+       WHERE channel = ? AND sender_id = ?`,
     );
 
     this._upsert = this.db.prepare(
@@ -60,12 +60,10 @@ export class ChannelSessionStore {
          session_id  = excluded.session_id,
          agent       = excluded.agent,
          last_active = excluded.last_active,
-         context     = excluded.context`
+         context     = excluded.context`,
     );
 
-    this._deleteExpired = this.db.prepare(
-      `DELETE FROM channel_sessions WHERE last_active < ?`
-    );
+    this._deleteExpired = this.db.prepare(`DELETE FROM channel_sessions WHERE last_active < ?`);
   }
 
   /**

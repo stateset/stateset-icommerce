@@ -262,8 +262,7 @@ pub struct SerialReservation {
 // ============================================================================
 
 /// Input for creating a serial number
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateSerialNumber {
     pub serial: Option<String>,
     pub sku: String,
@@ -275,10 +274,8 @@ pub struct CreateSerialNumber {
     pub attributes: Option<serde_json::Value>,
 }
 
-
 /// Input for creating multiple serial numbers in bulk
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateSerialNumbersBulk {
     pub sku: String,
     pub quantity: i32,
@@ -288,7 +285,6 @@ pub struct CreateSerialNumbersBulk {
     pub location_id: Option<i32>,
     pub manufactured_at: Option<DateTime<Utc>>,
 }
-
 
 /// Input for updating a serial number
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -490,7 +486,10 @@ impl SerialNumber {
 
     /// Check if serial can be shipped
     pub fn can_ship(&self) -> bool {
-        matches!(self.status, SerialStatus::Available | SerialStatus::Reserved)
+        matches!(
+            self.status,
+            SerialStatus::Available | SerialStatus::Reserved
+        )
     }
 
     /// Check if serial can be returned
@@ -500,7 +499,10 @@ impl SerialNumber {
 
     /// Check if serial can be scrapped
     pub fn can_scrap(&self) -> bool {
-        !matches!(self.status, SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped)
+        !matches!(
+            self.status,
+            SerialStatus::Sold | SerialStatus::Shipped | SerialStatus::Scrapped
+        )
     }
 
     /// Check if serial has been activated
@@ -510,7 +512,8 @@ impl SerialNumber {
 
     /// Get age in days since manufacture
     pub fn age_days(&self) -> Option<i64> {
-        self.manufactured_at.map(|mfg| (Utc::now() - mfg).num_days())
+        self.manufactured_at
+            .map(|mfg| (Utc::now() - mfg).num_days())
     }
 
     /// Get days since sold

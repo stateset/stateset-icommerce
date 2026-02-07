@@ -253,39 +253,6 @@ pub struct ReturnFilter {
     pub offset: Option<u32>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_return_status_from_str() {
-        assert_eq!(ReturnStatus::from_str("in_transit").unwrap(), ReturnStatus::InTransit);
-        assert_eq!(ReturnStatus::from_str("intransit").unwrap(), ReturnStatus::InTransit);
-        assert_eq!(ReturnStatus::from_str("canceled").unwrap(), ReturnStatus::Cancelled);
-    }
-
-    #[test]
-    fn test_return_reason_from_str() {
-        assert_eq!(ReturnReason::from_str("wrong_item").unwrap(), ReturnReason::WrongItem);
-        assert_eq!(ReturnReason::from_str("wrongitem").unwrap(), ReturnReason::WrongItem);
-        assert_eq!(
-            ReturnReason::from_str("notasdescribed").unwrap(),
-            ReturnReason::NotAsDescribed
-        );
-        assert_eq!(
-            ReturnReason::from_str("no_longer_needed").unwrap(),
-            ReturnReason::NoLongerNeeded
-        );
-    }
-
-    #[test]
-    fn test_item_condition_from_str() {
-        assert_eq!(ItemCondition::from_str("opened").unwrap(), ItemCondition::Opened);
-        assert_eq!(ItemCondition::from_str("damaged").unwrap(), ItemCondition::Damaged);
-    }
-}
-
 impl Return {
     /// Calculate total refund amount from items
     pub fn calculate_refund_total(&self) -> Decimal {
@@ -314,5 +281,59 @@ impl Return {
                 | ReturnReason::NotAsDescribed
                 | ReturnReason::Damaged
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_return_status_from_str() {
+        assert_eq!(
+            ReturnStatus::from_str("in_transit").unwrap(),
+            ReturnStatus::InTransit
+        );
+        assert_eq!(
+            ReturnStatus::from_str("intransit").unwrap(),
+            ReturnStatus::InTransit
+        );
+        assert_eq!(
+            ReturnStatus::from_str("canceled").unwrap(),
+            ReturnStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_return_reason_from_str() {
+        assert_eq!(
+            ReturnReason::from_str("wrong_item").unwrap(),
+            ReturnReason::WrongItem
+        );
+        assert_eq!(
+            ReturnReason::from_str("wrongitem").unwrap(),
+            ReturnReason::WrongItem
+        );
+        assert_eq!(
+            ReturnReason::from_str("notasdescribed").unwrap(),
+            ReturnReason::NotAsDescribed
+        );
+        assert_eq!(
+            ReturnReason::from_str("no_longer_needed").unwrap(),
+            ReturnReason::NoLongerNeeded
+        );
+    }
+
+    #[test]
+    fn test_item_condition_from_str() {
+        assert_eq!(
+            ItemCondition::from_str("opened").unwrap(),
+            ItemCondition::Opened
+        );
+        assert_eq!(
+            ItemCondition::from_str("damaged").unwrap(),
+            ItemCondition::Damaged
+        );
     }
 }

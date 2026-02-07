@@ -16,7 +16,7 @@ import { execSync, spawn } from 'node:child_process';
 // ============================================================================
 
 const TEMPLATES = {
-  'nextjs': {
+  nextjs: {
     name: 'Next.js 14 Storefront',
     description: 'Full-stack React storefront with App Router, SSR, and Tailwind CSS',
     framework: 'next',
@@ -34,7 +34,7 @@ const TEMPLATES = {
     framework: 'vite',
     features: ['wasm', 'tailwind', 'typescript'],
   },
-  'astro': {
+  astro: {
     name: 'Astro Storefront',
     description: 'Static-first storefront with Islands architecture',
     framework: 'astro',
@@ -53,22 +53,22 @@ const PAGE_TEMPLATES = {
     description: 'Single product view with add to cart',
     path: 'app/products/[slug]/page.tsx',
   },
-  'cart': {
+  cart: {
     name: 'Shopping Cart Page',
     description: 'Cart with items, quantities, and totals',
     path: 'app/cart/page.tsx',
   },
-  'checkout': {
+  checkout: {
     name: 'Checkout Page',
     description: 'Multi-step checkout flow',
     path: 'app/checkout/page.tsx',
   },
-  'account': {
+  account: {
     name: 'Account Dashboard',
     description: 'Customer account overview',
     path: 'app/account/page.tsx',
   },
-  'orders': {
+  orders: {
     name: 'Order History',
     description: 'List of customer orders',
     path: 'app/account/orders/page.tsx',
@@ -101,12 +101,12 @@ const COMPONENT_TEMPLATES = {
     description: 'Multi-step checkout form',
     path: 'components/commerce/CheckoutForm.tsx',
   },
-  'header': {
+  header: {
     name: 'Header',
     description: 'Site header with navigation and cart',
     path: 'components/layout/Header.tsx',
   },
-  'footer': {
+  footer: {
     name: 'Footer',
     description: 'Site footer with links',
     path: 'components/layout/Footer.tsx',
@@ -139,14 +139,14 @@ function readFileSync(filePath) {
 // Helper to create MCP CallToolResult
 function result(data) {
   return {
-    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }]
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
   };
 }
 
 function errorResult(message) {
   return {
     content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }, null, 2) }],
-    isError: true
+    isError: true,
   };
 }
 
@@ -169,65 +169,55 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
       // Project Management Tools
       // ========================================
 
-      tool(
-        'list_templates',
-        'List available storefront project templates',
-        {},
-        async () => {
-          return result({
-            success: true,
-            templates: Object.entries(TEMPLATES).map(([id, t]) => ({
-              id,
-              name: t.name,
-              description: t.description,
-              framework: t.framework,
-              features: t.features,
-            })),
-          });
-        }
-      ),
+      tool('list_templates', 'List available storefront project templates', {}, async () => {
+        return result({
+          success: true,
+          templates: Object.entries(TEMPLATES).map(([id, t]) => ({
+            id,
+            name: t.name,
+            description: t.description,
+            framework: t.framework,
+            features: t.features,
+          })),
+        });
+      }),
 
-      tool(
-        'list_page_templates',
-        'List available page templates',
-        {},
-        async () => {
-          return result({
-            success: true,
-            pages: Object.entries(PAGE_TEMPLATES).map(([id, p]) => ({
-              id,
-              name: p.name,
-              description: p.description,
-              path: p.path,
-            })),
-          });
-        }
-      ),
+      tool('list_page_templates', 'List available page templates', {}, async () => {
+        return result({
+          success: true,
+          pages: Object.entries(PAGE_TEMPLATES).map(([id, p]) => ({
+            id,
+            name: p.name,
+            description: p.description,
+            path: p.path,
+          })),
+        });
+      }),
 
-      tool(
-        'list_component_templates',
-        'List available component templates',
-        {},
-        async () => {
-          return result({
-            success: true,
-            components: Object.entries(COMPONENT_TEMPLATES).map(([id, c]) => ({
-              id,
-              name: c.name,
-              description: c.description,
-              path: c.path,
-            })),
-          });
-        }
-      ),
+      tool('list_component_templates', 'List available component templates', {}, async () => {
+        return result({
+          success: true,
+          components: Object.entries(COMPONENT_TEMPLATES).map(([id, c]) => ({
+            id,
+            name: c.name,
+            description: c.description,
+            path: c.path,
+          })),
+        });
+      }),
 
       tool(
         'create_project',
         'Create a new storefront project with the specified template. This initializes the full project structure.',
         {
           name: z.string().describe('Project name (used for directory and package name)'),
-          template: z.enum(['nextjs', 'nextjs-minimal', 'vite-react', 'astro']).describe('Project template to use'),
-          directory: z.string().optional().describe('Directory to create project in (defaults to current directory)'),
+          template: z
+            .enum(['nextjs', 'nextjs-minimal', 'vite-react', 'astro'])
+            .describe('Project template to use'),
+          directory: z
+            .string()
+            .optional()
+            .describe('Directory to create project in (defaults to current directory)'),
         },
         async ({ name, template, directory }) => {
           if (!allowWrite) {
@@ -249,7 +239,10 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
 
           // Create package.json
           const packageJson = createPackageJson(name, template, []);
-          writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify(packageJson, null, 2));
+          writeFileSync(
+            path.join(projectDir, 'package.json'),
+            JSON.stringify(packageJson, null, 2),
+          );
 
           // Create TypeScript config
           writeFileSync(path.join(projectDir, 'tsconfig.json'), createTsConfig(template));
@@ -299,22 +292,34 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             success: true,
             message: `Created ${template} project "${name}"`,
             projectDir,
-            nextSteps: [
-              `cd ${name}`,
-              'npm install',
-              'npm run dev',
-            ],
+            nextSteps: [`cd ${name}`, 'npm install', 'npm run dev'],
           });
-        }
+        },
       ),
 
       tool(
         'add_page',
         'Add a page to the storefront project',
         {
-          pageType: z.enum(['product-listing', 'product-detail', 'cart', 'checkout', 'account', 'orders', 'custom']).describe('Type of page to add'),
-          customPath: z.string().optional().describe('Custom path for the page (only for custom type)'),
-          customName: z.string().optional().describe('Custom name for the page (only for custom type)'),
+          pageType: z
+            .enum([
+              'product-listing',
+              'product-detail',
+              'cart',
+              'checkout',
+              'account',
+              'orders',
+              'custom',
+            ])
+            .describe('Type of page to add'),
+          customPath: z
+            .string()
+            .optional()
+            .describe('Custom path for the page (only for custom type)'),
+          customName: z
+            .string()
+            .optional()
+            .describe('Custom name for the page (only for custom type)'),
         },
         async ({ pageType, customPath, customName }) => {
           const template = PAGE_TEMPLATES[pageType];
@@ -343,16 +348,33 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             message: `Created ${template?.name || customName} page`,
             path: pagePath,
           });
-        }
+        },
       ),
 
       tool(
         'add_component',
         'Add a component to the storefront project',
         {
-          componentType: z.enum(['product-card', 'product-grid', 'cart-drawer', 'add-to-cart', 'checkout-form', 'header', 'footer', 'custom']).describe('Type of component to add'),
-          customPath: z.string().optional().describe('Custom path for the component (only for custom type)'),
-          customName: z.string().optional().describe('Custom name for the component (only for custom type)'),
+          componentType: z
+            .enum([
+              'product-card',
+              'product-grid',
+              'cart-drawer',
+              'add-to-cart',
+              'checkout-form',
+              'header',
+              'footer',
+              'custom',
+            ])
+            .describe('Type of component to add'),
+          customPath: z
+            .string()
+            .optional()
+            .describe('Custom path for the component (only for custom type)'),
+          customName: z
+            .string()
+            .optional()
+            .describe('Custom name for the component (only for custom type)'),
         },
         async ({ componentType, customPath, customName }) => {
           const template = COMPONENT_TEMPLATES[componentType];
@@ -381,14 +403,16 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             message: `Created ${template?.name || customName} component`,
             path: componentPath,
           });
-        }
+        },
       ),
 
       tool(
         'add_hook',
         'Add a React hook to the storefront project',
         {
-          hookName: z.enum(['useCart', 'useProducts', 'useCheckout', 'useCustomer', 'custom']).describe('Name of the hook to add'),
+          hookName: z
+            .enum(['useCart', 'useProducts', 'useCheckout', 'useCustomer', 'custom'])
+            .describe('Name of the hook to add'),
           customName: z.string().optional().describe('Custom hook name (only for custom type)'),
         },
         async ({ hookName, customName }) => {
@@ -417,7 +441,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             message: `Created ${name} hook`,
             path: hookPath,
           });
-        }
+        },
       ),
 
       tool(
@@ -425,7 +449,9 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
         'Add an API route to the storefront project',
         {
           routePath: z.string().describe('API route path (e.g., "products", "cart", "checkout")'),
-          methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])).describe('HTTP methods to support'),
+          methods: z
+            .array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']))
+            .describe('HTTP methods to support'),
         },
         async ({ routePath, methods }) => {
           const apiPath = `app/api/${routePath}/route.ts`;
@@ -450,7 +476,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             path: apiPath,
             methods,
           });
-        }
+        },
       ),
 
       tool(
@@ -483,7 +509,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             message: `Wrote ${content.length} characters to ${filePath}`,
             path: filePath,
           });
-        }
+        },
       ),
 
       tool(
@@ -507,7 +533,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             content,
             size: content.length,
           });
-        }
+        },
       ),
 
       tool(
@@ -529,10 +555,10 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           return result({
             success: true,
             directory,
-            files: files.map(f => path.relative(workDir, f)),
+            files: files.map((f) => path.relative(workDir, f)),
             count: files.length,
           });
-        }
+        },
       ),
 
       tool(
@@ -551,9 +577,38 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
+          // Allowlist: only permit safe scaffold commands
+          const ALLOWED_PREFIXES = [
+            'npm install',
+            'npm ci',
+            'npm run',
+            'npm test',
+            'npm start',
+            'npx ',
+            'node ',
+            'git init',
+            'git add',
+            'git commit',
+            'ls',
+            'cat ',
+            'mkdir ',
+          ];
+          const trimmed = command.trim();
+          const isAllowed = ALLOWED_PREFIXES.some((p) => trimmed.startsWith(p));
+          if (!isAllowed) {
+            return errorResult(
+              `Command not allowed. Permitted prefixes: ${ALLOWED_PREFIXES.join(', ')}`,
+            );
+          }
+
           try {
             if (background) {
-              const child = spawn(command, { shell: true, cwd: workDir, detached: true, stdio: 'ignore' });
+              const child = spawn(command, {
+                shell: true,
+                cwd: workDir,
+                detached: true,
+                stdio: 'ignore',
+              });
               child.unref();
               return result({
                 success: true,
@@ -571,7 +626,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           } catch (error) {
             return errorResult(error.message);
           }
-        }
+        },
       ),
 
       tool(
@@ -600,7 +655,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             message: `Created seed script at scripts/seed.js`,
             nextSteps: ['Run: node scripts/seed.js'],
           });
-        }
+        },
       ),
     ],
   });
@@ -645,28 +700,32 @@ function createPackageJson(name, template, features) {
   return base;
 }
 
-function createTsConfig(template) {
-  return JSON.stringify({
-    compilerOptions: {
-      target: 'es5',
-      lib: ['dom', 'dom.iterable', 'esnext'],
-      allowJs: true,
-      skipLibCheck: true,
-      strict: true,
-      noEmit: true,
-      esModuleInterop: true,
-      module: 'esnext',
-      moduleResolution: 'bundler',
-      resolveJsonModule: true,
-      isolatedModules: true,
-      jsx: 'preserve',
-      incremental: true,
-      plugins: [{ name: 'next' }],
-      paths: { '@/*': ['./*'] },
+function createTsConfig(_template) {
+  return JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'es5',
+        lib: ['dom', 'dom.iterable', 'esnext'],
+        allowJs: true,
+        skipLibCheck: true,
+        strict: true,
+        noEmit: true,
+        esModuleInterop: true,
+        module: 'esnext',
+        moduleResolution: 'bundler',
+        resolveJsonModule: true,
+        isolatedModules: true,
+        jsx: 'preserve',
+        incremental: true,
+        plugins: [{ name: 'next' }],
+        paths: { '@/*': ['./*'] },
+      },
+      include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+      exclude: ['node_modules'],
     },
-    include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
-    exclude: ['node_modules'],
-  }, null, 2);
+    null,
+    2,
+  );
 }
 
 function createNextConfig() {
@@ -1014,7 +1073,7 @@ export default async function ProductPage({ params }: Props) {
   );
 }
 `,
-    'cart': `'use client';
+    cart: `'use client';
 
 export default function CartPage() {
   return (
@@ -1025,7 +1084,7 @@ export default function CartPage() {
   );
 }
 `,
-    'checkout': `'use client';
+    checkout: `'use client';
 
 export default function CheckoutPage() {
   return (
@@ -1036,7 +1095,7 @@ export default function CheckoutPage() {
   );
 }
 `,
-    'account': `export default function AccountPage() {
+    account: `export default function AccountPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">My Account</h1>
@@ -1044,7 +1103,7 @@ export default function CheckoutPage() {
   );
 }
 `,
-    'orders': `export default function OrdersPage() {
+    orders: `export default function OrdersPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">Order History</h1>
@@ -1054,14 +1113,17 @@ export default function CheckoutPage() {
 `,
   };
 
-  return templates[pageType] || `export default function ${customName || 'Page'}() {
+  return (
+    templates[pageType] ||
+    `export default function ${customName || 'Page'}() {
   return (
     <div className="container mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-8">${customName || 'Page'}</h1>
     </div>
   );
 }
-`;
+`
+  );
 }
 
 function generateComponentContent(componentType, customName) {
@@ -1132,7 +1194,7 @@ export function AddToCartButton({ productId, variantId, className }: AddToCartBu
   );
 }
 `,
-    'header': `import Link from 'next/link';
+    header: `import Link from 'next/link';
 
 export function Header() {
   return (
@@ -1148,7 +1210,7 @@ export function Header() {
   );
 }
 `,
-    'footer': `export function Footer() {
+    footer: `export function Footer() {
   return (
     <footer className="border-t mt-16">
       <div className="container mx-auto px-4 py-8 text-center text-gray-500">
@@ -1160,7 +1222,9 @@ export function Header() {
 `,
   };
 
-  return templates[componentType] || `interface ${customName || 'Component'}Props {}
+  return (
+    templates[componentType] ||
+    `interface ${customName || 'Component'}Props {}
 
 export function ${customName || 'Component'}({}: ${customName || 'Component'}Props) {
   return (
@@ -1169,12 +1233,13 @@ export function ${customName || 'Component'}({}: ${customName || 'Component'}Pro
     </div>
   );
 }
-`;
+`
+  );
 }
 
 function generateHookContent(hookName, customName) {
   const templates = {
-    'useCart': `'use client';
+    useCart: `'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -1222,7 +1287,7 @@ export function useCart() {
   };
 }
 `,
-    'useProducts': `'use client';
+    useProducts: `'use client';
 
 import { useState, useEffect } from 'react';
 
@@ -1252,7 +1317,9 @@ export function useProducts(options?: { limit?: number }) {
 `,
   };
 
-  return templates[hookName] || `'use client';
+  return (
+    templates[hookName] ||
+    `'use client';
 
 import { useState } from 'react';
 
@@ -1261,12 +1328,14 @@ export function ${customName || hookName}() {
 
   return { state };
 }
-`;
+`
+  );
 }
 
 function generateApiRouteContent(routePath, methods) {
-  const handlers = methods.map(method => {
-    return `export async function ${method}(request: NextRequest) {
+  const handlers = methods
+    .map((method) => {
+      return `export async function ${method}(request: NextRequest) {
   const commerce = getCommerce();
 
   try {
@@ -1279,7 +1348,8 @@ function generateApiRouteContent(routePath, methods) {
     );
   }
 }`;
-  }).join('\n\n');
+    })
+    .join('\n\n');
 
   return `import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';

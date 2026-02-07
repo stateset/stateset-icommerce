@@ -144,7 +144,7 @@ export class ConflictResolver {
       local.tenantId,
       local.storeId,
       local.entityType,
-      local.entityId
+      local.entityId,
     );
 
     if (currentVersion === null) {
@@ -224,7 +224,9 @@ export class ConflictResolver {
       invariant: 'manual',
     };
 
-    return entityStrategies[localEvent.entityType] || typeDefaults[conflictType] || this.defaultStrategy;
+    return (
+      entityStrategies[localEvent.entityType] || typeDefaults[conflictType] || this.defaultStrategy
+    );
   }
 
   /**
@@ -249,7 +251,7 @@ export class ConflictResolver {
       conflict.entityId,
       conflict.description,
       conflict.suggestedStrategy,
-      conflict.detectedAt.toISOString()
+      conflict.detectedAt.toISOString(),
     );
   }
 
@@ -267,7 +269,7 @@ export class ConflictResolver {
     `);
 
     const rows = stmt.all();
-    return rows.map(row => this._rowToConflict(row));
+    return rows.map((row) => this._rowToConflict(row));
   }
 
   /**
@@ -292,9 +294,13 @@ export class ConflictResolver {
    * @returns {number}
    */
   getConflictCount() {
-    const result = this.outbox.db.prepare(`
+    const result = this.outbox.db
+      .prepare(
+        `
       SELECT COUNT(*) as count FROM _ves_conflicts WHERE status = 'unresolved'
-    `).get();
+    `,
+      )
+      .get();
     return result.count;
   }
 
@@ -305,9 +311,8 @@ export class ConflictResolver {
    * @returns {Promise<Resolution>}
    */
   async resolve(conflictOrId, strategy) {
-    const conflict = typeof conflictOrId === 'string'
-      ? this.getConflict(conflictOrId)
-      : conflictOrId;
+    const conflict =
+      typeof conflictOrId === 'string' ? this.getConflict(conflictOrId) : conflictOrId;
 
     if (!conflict) {
       return {
@@ -371,7 +376,7 @@ export class ConflictResolver {
     // Mark local event as rejected
     this.outbox.markRejected(
       conflict.localEvent.localSeq,
-      `Conflict resolved: remote-wins (${conflict.description})`
+      `Conflict resolved: remote-wins (${conflict.description})`,
     );
 
     // If we have the remote event, update local entity version
@@ -383,7 +388,7 @@ export class ConflictResolver {
           conflict.localEvent.storeId,
           conflict.entityType,
           conflict.entityId,
-          remoteVersion + 1
+          remoteVersion + 1,
         );
       }
     }
@@ -402,12 +407,13 @@ export class ConflictResolver {
    */
   async _resolveLocalWins(conflict) {
     // Get current entity version
-    const currentVersion = this.outbox.getEntityVersion(
-      conflict.localEvent.tenantId,
-      conflict.localEvent.storeId,
-      conflict.entityType,
-      conflict.entityId
-    ) || 0;
+    const currentVersion =
+      this.outbox.getEntityVersion(
+        conflict.localEvent.tenantId,
+        conflict.localEvent.storeId,
+        conflict.entityType,
+        conflict.entityId,
+      ) || 0;
 
     // Create a new event with updated base version
     const newEventId = crypto.randomUUID();
@@ -427,7 +433,7 @@ export class ConflictResolver {
     // Mark original event as rejected
     this.outbox.markRejected(
       conflict.localEvent.localSeq,
-      `Conflict resolved: local-wins, rebased as event ${newEventId}`
+      `Conflict resolved: local-wins, rebased as event ${newEventId}`,
     );
 
     return {
@@ -455,12 +461,13 @@ export class ConflictResolver {
 
     // Create merged event
     const mergedEventId = crypto.randomUUID();
-    const currentVersion = this.outbox.getEntityVersion(
-      conflict.localEvent.tenantId,
-      conflict.localEvent.storeId,
-      conflict.entityType,
-      conflict.entityId
-    ) || 0;
+    const currentVersion =
+      this.outbox.getEntityVersion(
+        conflict.localEvent.tenantId,
+        conflict.localEvent.storeId,
+        conflict.entityType,
+        conflict.entityId,
+      ) || 0;
 
     const newSeq = this.outbox.append({
       eventId: mergedEventId,
@@ -478,7 +485,7 @@ export class ConflictResolver {
     // Mark original as rejected
     this.outbox.markRejected(
       conflict.localEvent.localSeq,
-      `Conflict resolved: merge, combined as event ${mergedEventId}`
+      `Conflict resolved: merge, combined as event ${mergedEventId}`,
     );
 
     return {
@@ -497,9 +504,9 @@ export class ConflictResolver {
   _mergeChanges(conflict) {
     const local = conflict.localEvent.payload;
     const remote = conflict.remoteEvent?.payload
-      ? (typeof conflict.remoteEvent.payload === 'string'
+      ? typeof conflict.remoteEvent.payload === 'string'
         ? JSON.parse(conflict.remoteEvent.payload)
-        : conflict.remoteEvent.payload)
+        : conflict.remoteEvent.payload
       : null;
 
     if (!remote) {

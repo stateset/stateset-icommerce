@@ -30,29 +30,35 @@ export function createAutonomousTools(engine) {
             const enabled = status === 'enabled' ? true : status === 'disabled' ? false : null;
             const jobs = engine.scheduler.listJobs({ enabled });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: jobs.length,
-                  jobs: jobs.map(j => ({
-                    id: j.id,
-                    name: j.name,
-                    type: j.type,
-                    schedule: j.schedule,
-                    enabled: j.enabled,
-                    status: j.status,
-                    nextRunAt: j.nextRunAt,
-                    lastRunAt: j.lastRunAt,
-                    runCount: j.runCount
-                  }))
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      count: jobs.length,
+                      jobs: jobs.map((j) => ({
+                        id: j.id,
+                        name: j.name,
+                        type: j.type,
+                        schedule: j.schedule,
+                        enabled: j.enabled,
+                        status: j.status,
+                        nextRunAt: j.nextRunAt,
+                        lastRunAt: j.lastRunAt,
+                        runCount: j.runCount,
+                      })),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -62,10 +68,12 @@ export function createAutonomousTools(engine) {
           name: z.string().describe('Job name'),
           description: z.string().optional().describe('Job description'),
           type: z.enum(['cron', 'interval', 'once']).describe('Schedule type'),
-          schedule: z.string().describe('Cron expression (e.g., "0 * * * *"), interval in ms, or ISO date for once'),
+          schedule: z
+            .string()
+            .describe('Cron expression (e.g., "0 * * * *"), interval in ms, or ISO date for once'),
           agent: z.string().describe('Agent to execute (e.g., "inventory", "analytics")'),
           request: z.string().describe('Request to send to the agent'),
-          enabled: z.boolean().optional().default(true).describe('Whether job is enabled')
+          enabled: z.boolean().optional().default(true).describe('Whether job is enabled'),
         },
         async ({ name, description, type, schedule, agent, request, enabled }) => {
           try {
@@ -76,56 +84,68 @@ export function createAutonomousTools(engine) {
               type,
               schedule: scheduleValue,
               action: { agent, request },
-              enabled
+              enabled,
             });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: `Job "${name}" created`,
-                  job: {
-                    id: job.id,
-                    name: job.name,
-                    nextRunAt: job.nextRunAt
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: `Job "${name}" created`,
+                      job: {
+                        id: job.id,
+                        name: job.name,
+                        nextRunAt: job.nextRunAt,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
         'run_job_now',
         'Manually trigger a scheduled job to run immediately.',
         {
-          jobId: z.string().describe('Job ID to run')
+          jobId: z.string().describe('Job ID to run'),
         },
         async ({ jobId }) => {
           try {
             const result = await engine.scheduler.runNow(jobId);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: 'Job executed',
-                  result: {
-                    runId: result.runId,
-                    status: result.status,
-                    duration: result.duration,
-                    output: result.output
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: 'Job executed',
+                      result: {
+                        runId: result.runId,
+                        status: result.status,
+                        duration: result.duration,
+                        output: result.output,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -133,7 +153,7 @@ export function createAutonomousTools(engine) {
         'Enable or disable a scheduled job.',
         {
           jobId: z.string().describe('Job ID'),
-          enabled: z.boolean().describe('Whether to enable the job')
+          enabled: z.boolean().describe('Whether to enable the job'),
         },
         async ({ jobId, enabled }) => {
           try {
@@ -141,19 +161,25 @@ export function createAutonomousTools(engine) {
               ? engine.scheduler.resumeJob(jobId)
               : engine.scheduler.pauseJob(jobId);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: `Job ${enabled ? 'enabled' : 'disabled'}`,
-                  job: { id: job.id, name: job.name, enabled: job.enabled }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: `Job ${enabled ? 'enabled' : 'disabled'}`,
+                      job: { id: job.id, name: job.name, enabled: job.enabled },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -164,16 +190,18 @@ export function createAutonomousTools(engine) {
           try {
             const status = engine.scheduler.getStatus();
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({ success: true, status }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ success: true, status }, null, 2),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
-      )
+        },
+      ),
     );
   }
 
@@ -183,65 +211,72 @@ export function createAutonomousTools(engine) {
 
   if (engine.workflows) {
     tools.push(
-      tool(
-        'list_workflows',
-        'List all registered workflow definitions.',
-        {},
-        async () => {
-          try {
-            const workflows = engine.workflows.listWorkflows();
-            return {
-              content: [{
+      tool('list_workflows', 'List all registered workflow definitions.', {}, async () => {
+        try {
+          const workflows = engine.workflows.listWorkflows();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: workflows.length,
-                  workflows: workflows.map(w => ({
-                    id: w.id,
-                    name: w.name,
-                    description: w.description,
-                    initialState: w.initialState,
-                    stateCount: w.states.length,
-                    finalStates: w.finalStates
-                  }))
-                }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    count: workflows.length,
+                    workflows: workflows.map((w) => ({
+                      id: w.id,
+                      name: w.name,
+                      description: w.description,
+                      initialState: w.initialState,
+                      stateCount: w.states.length,
+                      finalStates: w.finalStates,
+                    })),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      ),
+      }),
 
       tool(
         'start_workflow',
         'Start a new workflow instance.',
         {
           workflowId: z.string().describe('Workflow definition ID'),
-          context: z.record(z.any()).optional().describe('Initial context data')
+          context: z.record(z.any()).optional().describe('Initial context data'),
         },
         async ({ workflowId, context }) => {
           try {
             const instance = await engine.workflows.startWorkflow(workflowId, { context });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: 'Workflow started',
-                  instance: {
-                    id: instance.id,
-                    workflowName: instance.workflowName,
-                    currentState: instance.currentState,
-                    status: instance.status
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: 'Workflow started',
+                      instance: {
+                        id: instance.id,
+                        workflowName: instance.workflowName,
+                        currentState: instance.currentState,
+                        status: instance.status,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -250,30 +285,36 @@ export function createAutonomousTools(engine) {
         {
           instanceId: z.string().describe('Workflow instance ID'),
           targetState: z.string().describe('Target state name'),
-          context: z.record(z.any()).optional().describe('Additional context for transition')
+          context: z.record(z.any()).optional().describe('Additional context for transition'),
         },
         async ({ instanceId, targetState, context }) => {
           try {
             const instance = await engine.workflows.transition(instanceId, targetState, context);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: `Transitioned to ${targetState}`,
-                  instance: {
-                    id: instance.id,
-                    currentState: instance.currentState,
-                    status: instance.status,
-                    history: instance.history.slice(-3)
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: `Transitioned to ${targetState}`,
+                      instance: {
+                        id: instance.id,
+                        currentState: instance.currentState,
+                        status: instance.status,
+                        history: instance.history.slice(-3),
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -282,29 +323,35 @@ export function createAutonomousTools(engine) {
         {
           instanceId: z.string().describe('Workflow instance ID'),
           event: z.string().describe('Event/transition name'),
-          context: z.record(z.any()).optional().describe('Event context')
+          context: z.record(z.any()).optional().describe('Event context'),
         },
         async ({ instanceId, event, context }) => {
           try {
             const instance = await engine.workflows.trigger(instanceId, event, context);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: `Event "${event}" triggered`,
-                  instance: {
-                    id: instance.id,
-                    currentState: instance.currentState,
-                    status: instance.status
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: `Event "${event}" triggered`,
+                      instance: {
+                        id: instance.id,
+                        currentState: instance.currentState,
+                        status: instance.status,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -312,51 +359,57 @@ export function createAutonomousTools(engine) {
         'List workflow instances.',
         {
           workflowId: z.string().optional().describe('Filter by workflow ID'),
-          status: z.enum(['running', 'completed', 'failed', 'paused', 'cancelled']).optional().describe('Filter by status')
+          status: z
+            .enum(['running', 'completed', 'failed', 'paused', 'cancelled'])
+            .optional()
+            .describe('Filter by status'),
         },
         async ({ workflowId, status }) => {
           try {
             const instances = engine.workflows.listInstances({ workflowId, status });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: instances.length,
-                  instances: instances.map(i => ({
-                    id: i.id,
-                    workflowName: i.workflowName,
-                    currentState: i.currentState,
-                    status: i.status,
-                    updatedAt: i.updatedAt
-                  }))
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      count: instances.length,
+                      instances: instances.map((i) => ({
+                        id: i.id,
+                        workflowName: i.workflowName,
+                        currentState: i.currentState,
+                        status: i.status,
+                        updatedAt: i.updatedAt,
+                      })),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
-      tool(
-        'get_workflow_status',
-        'Get overall workflow engine status.',
-        {},
-        async () => {
-          try {
-            const status = engine.workflows.getStatus();
-            return {
-              content: [{
+      tool('get_workflow_status', 'Get overall workflow engine status.', {}, async () => {
+        try {
+          const status = engine.workflows.getStatus();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({ success: true, status }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify({ success: true, status }, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      )
+      }),
     );
   }
 
@@ -366,82 +419,86 @@ export function createAutonomousTools(engine) {
 
   if (engine.policies) {
     tools.push(
-      tool(
-        'list_policies',
-        'List all registered policy sets.',
-        {},
-        async () => {
-          try {
-            const policies = engine.policies.listPolicySets();
-            return {
-              content: [{
+      tool('list_policies', 'List all registered policy sets.', {}, async () => {
+        try {
+          const policies = engine.policies.listPolicySets();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: policies.length,
-                  policies: policies.map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    domain: p.domain,
-                    ruleCount: p.rules.length,
-                    version: p.version
-                  }))
-                }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    count: policies.length,
+                    policies: policies.map((p) => ({
+                      id: p.id,
+                      name: p.name,
+                      domain: p.domain,
+                      ruleCount: p.rules.length,
+                      version: p.version,
+                    })),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      ),
+      }),
 
       tool(
         'evaluate_policy',
         'Evaluate policies for a domain with given context.',
         {
           domain: z.string().describe('Policy domain (e.g., "orders", "returns", "inventory")'),
-          context: z.record(z.any()).describe('Context for evaluation')
+          context: z.record(z.any()).describe('Context for evaluation'),
         },
         async ({ domain, context }) => {
           try {
             const result = await engine.policies.evaluate(domain, context);
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  domain,
-                  shouldAllow: result.shouldAllow,
-                  shouldDeny: result.shouldDeny,
-                  matchedRules: result.results.flatMap(r => r.rules),
-                  actions: result.actions.map(a => a.type)
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      domain,
+                      shouldAllow: result.shouldAllow,
+                      shouldDeny: result.shouldDeny,
+                      matchedRules: result.results.flatMap((r) => r.rules),
+                      actions: result.actions.map((a) => a.type),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
-      tool(
-        'get_policy_status',
-        'Get policy engine status.',
-        {},
-        async () => {
-          try {
-            const status = engine.policies.getStatus();
-            return {
-              content: [{
+      tool('get_policy_status', 'Get policy engine status.', {}, async () => {
+        try {
+          const status = engine.policies.getStatus();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({ success: true, status }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify({ success: true, status }, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      )
+      }),
     );
   }
 
@@ -455,35 +512,41 @@ export function createAutonomousTools(engine) {
         'list_pending_approvals',
         'List pending approval requests.',
         {
-          domain: z.string().optional().describe('Filter by domain')
+          domain: z.string().optional().describe('Filter by domain'),
         },
         async ({ domain }) => {
           try {
             const requests = engine.approvals.listPending({ domain });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: requests.length,
-                  requests: requests.map(r => ({
-                    id: r.id,
-                    title: r.title,
-                    domain: r.domain,
-                    entityType: r.entityType,
-                    entityId: r.entityId,
-                    amount: r.amount,
-                    currentTier: r.currentTier,
-                    status: r.status,
-                    createdAt: r.createdAt
-                  }))
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      count: requests.length,
+                      requests: requests.map((r) => ({
+                        id: r.id,
+                        title: r.title,
+                        domain: r.domain,
+                        entityType: r.entityType,
+                        entityId: r.entityId,
+                        amount: r.amount,
+                        currentTier: r.currentTier,
+                        status: r.status,
+                        createdAt: r.createdAt,
+                      })),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -496,7 +559,7 @@ export function createAutonomousTools(engine) {
           title: z.string().describe('Request title'),
           description: z.string().optional().describe('Request description'),
           amount: z.number().optional().describe('Amount for threshold-based routing'),
-          requestedBy: z.string().describe('Requester ID')
+          requestedBy: z.string().describe('Requester ID'),
         },
         async ({ domain, entityType, entityId, title, description, amount, requestedBy }) => {
           try {
@@ -507,41 +570,53 @@ export function createAutonomousTools(engine) {
               title,
               description,
               amount,
-              requestedBy
+              requestedBy,
             });
 
             if (!result.required) {
               return {
-                content: [{
-                  type: 'text',
-                  text: JSON.stringify({
-                    success: true,
-                    approvalRequired: false,
-                    message: 'No approval chain configured for this domain'
-                  }, null, 2)
-                }]
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        success: true,
+                        approvalRequired: false,
+                        message: 'No approval chain configured for this domain',
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
               };
             }
 
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  approvalRequired: true,
-                  request: {
-                    id: result.request.id,
-                    title: result.request.title,
-                    currentTier: result.request.currentTier,
-                    status: result.request.status
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      approvalRequired: true,
+                      request: {
+                        id: result.request.id,
+                        title: result.request.title,
+                        currentTier: result.request.currentTier,
+                        status: result.request.status,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -550,29 +625,36 @@ export function createAutonomousTools(engine) {
         {
           requestId: z.string().describe('Approval request ID'),
           approverId: z.string().describe('Approver ID'),
-          reason: z.string().optional().describe('Approval reason')
+          reason: z.string().optional().describe('Approval reason'),
         },
         async ({ requestId, approverId, reason }) => {
           try {
             const request = await engine.approvals.approve(requestId, approverId, { reason });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: request.status === 'approved' ? 'Request approved' : 'Approval recorded',
-                  request: {
-                    id: request.id,
-                    status: request.status,
-                    currentTier: request.currentTier
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message:
+                        request.status === 'approved' ? 'Request approved' : 'Approval recorded',
+                      request: {
+                        id: request.id,
+                        status: request.status,
+                        currentTier: request.currentTier,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
       tool(
@@ -581,48 +663,51 @@ export function createAutonomousTools(engine) {
         {
           requestId: z.string().describe('Approval request ID'),
           approverId: z.string().describe('Approver ID'),
-          reason: z.string().optional().describe('Rejection reason')
+          reason: z.string().optional().describe('Rejection reason'),
         },
         async ({ requestId, approverId, reason }) => {
           try {
             const request = await engine.approvals.reject(requestId, approverId, { reason });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  message: 'Request rejected',
-                  request: {
-                    id: request.id,
-                    status: request.status
-                  }
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      message: 'Request rejected',
+                      request: {
+                        id: request.id,
+                        status: request.status,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
-      tool(
-        'get_approval_status',
-        'Get approval queue status.',
-        {},
-        async () => {
-          try {
-            const status = engine.approvals.getStatus();
-            return {
-              content: [{
+      tool('get_approval_status', 'Get approval queue status.', {}, async () => {
+        try {
+          const status = engine.approvals.getStatus();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({ success: true, status }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify({ success: true, status }, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      )
+      }),
     );
   }
 
@@ -632,112 +717,117 @@ export function createAutonomousTools(engine) {
 
   if (engine.webhooks) {
     tools.push(
-      tool(
-        'list_webhook_sources',
-        'List registered webhook sources.',
-        {},
-        async () => {
-          try {
-            const sources = engine.webhooks.listSources();
-            return {
-              content: [{
+      tool('list_webhook_sources', 'List registered webhook sources.', {}, async () => {
+        try {
+          const sources = engine.webhooks.listSources();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: sources.length,
-                  sources: sources.map(s => ({
-                    id: s.id,
-                    name: s.name,
-                    path: s.path,
-                    enabled: s.enabled
-                  }))
-                }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    count: sources.length,
+                    sources: sources.map((s) => ({
+                      id: s.id,
+                      name: s.name,
+                      path: s.path,
+                      enabled: s.enabled,
+                    })),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      ),
+      }),
 
-      tool(
-        'list_webhook_handlers',
-        'List registered webhook handlers.',
-        {},
-        async () => {
-          try {
-            const handlers = engine.webhooks.listHandlers();
-            return {
-              content: [{
+      tool('list_webhook_handlers', 'List registered webhook handlers.', {}, async () => {
+        try {
+          const handlers = engine.webhooks.listHandlers();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: handlers.length,
-                  handlers: handlers.map(h => ({
-                    id: h.id,
-                    name: h.name,
-                    sourceId: h.sourceId,
-                    eventTypes: h.eventTypes,
-                    enabled: h.enabled
-                  }))
-                }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    count: handlers.length,
+                    handlers: handlers.map((h) => ({
+                      id: h.id,
+                      name: h.name,
+                      sourceId: h.sourceId,
+                      eventTypes: h.eventTypes,
+                      enabled: h.enabled,
+                    })),
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      ),
+      }),
 
       tool(
         'get_webhook_history',
         'Get recent webhook event history.',
         {
-          limit: z.number().optional().default(20).describe('Number of events to return')
+          limit: z.number().optional().default(20).describe('Number of events to return'),
         },
         async ({ limit }) => {
           try {
             const history = engine.webhooks.getHistory({ limit });
             return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  count: history.length,
-                  events: history.map(e => ({
-                    id: e.id,
-                    sourceName: e.sourceName,
-                    eventType: e.eventType,
-                    status: e.status,
-                    receivedAt: e.receivedAt
-                  }))
-                }, null, 2)
-              }]
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      success: true,
+                      count: history.length,
+                      events: history.map((e) => ({
+                        id: e.id,
+                        sourceName: e.sourceName,
+                        eventType: e.eventType,
+                        status: e.status,
+                        receivedAt: e.receivedAt,
+                      })),
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
             };
           } catch (error) {
             return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
           }
-        }
+        },
       ),
 
-      tool(
-        'get_webhook_status',
-        'Get webhook server status.',
-        {},
-        async () => {
-          try {
-            const status = engine.webhooks.getStatus();
-            return {
-              content: [{
+      tool('get_webhook_status', 'Get webhook server status.', {}, async () => {
+        try {
+          const status = engine.webhooks.getStatus();
+          return {
+            content: [
+              {
                 type: 'text',
-                text: JSON.stringify({ success: true, status }, null, 2)
-              }]
-            };
-          } catch (error) {
-            return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
-          }
+                text: JSON.stringify({ success: true, status }, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      )
+      }),
     );
   }
 
@@ -754,15 +844,17 @@ export function createAutonomousTools(engine) {
         try {
           const status = engine.getStatus();
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({ success: true, status }, null, 2)
-            }]
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: true, status }, null, 2),
+              },
+            ],
           };
         } catch (error) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      }
+      },
     ),
 
     tool(
@@ -770,27 +862,33 @@ export function createAutonomousTools(engine) {
       'Run policy and approval check before an operation.',
       {
         domain: z.string().describe('Operation domain'),
-        context: z.record(z.any()).describe('Operation context')
+        context: z.record(z.any()).describe('Operation context'),
       },
       async ({ domain, context }) => {
         try {
           const result = await engine.preOperationCheck(domain, context);
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                success: true,
-                allowed: result.allowed,
-                reason: result.reason,
-                details: result
-              }, null, 2)
-            }]
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    allowed: result.allowed,
+                    reason: result.reason,
+                    details: result,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
           };
         } catch (error) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }] };
         }
-      }
-    )
+      },
+    ),
   );
 
   return tools;

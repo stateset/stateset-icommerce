@@ -39,7 +39,8 @@ class Lane {
     this.processing = false;
     this.maxQueueSize = options.maxQueueSize || 100;
     this.timeout = options.timeout || 300000; // 5 minutes default
-    this.onError = options.onError || ((err, task) => console.error(`[Lane ${id}] Error:`, err.message));
+    this.onError =
+      options.onError || ((err, _task) => console.error(`[Lane ${id}] Error:`, err.message));
 
     // Metrics
     this.stats = {
@@ -48,7 +49,7 @@ class Lane {
       avgDuration: 0,
       maxDuration: 0,
       lastActivity: null,
-      queueHighWaterMark: 0
+      queueHighWaterMark: 0,
     };
   }
 
@@ -69,7 +70,7 @@ class Lane {
         meta,
         resolve,
         reject,
-        enqueuedAt: Date.now()
+        enqueuedAt: Date.now(),
       };
 
       this.queue.push(entry);
@@ -140,11 +141,11 @@ class Lane {
       }, timeout);
 
       Promise.resolve(task())
-        .then(result => {
+        .then((result) => {
           clearTimeout(timer);
           resolve(result);
         })
-        .catch(err => {
+        .catch((err) => {
           clearTimeout(timer);
           reject(err);
         });
@@ -161,7 +162,8 @@ class Lane {
 
     // Rolling average
     const prevTotal = this.stats.totalProcessed - 1;
-    this.stats.avgDuration = (this.stats.avgDuration * prevTotal + duration) / this.stats.totalProcessed;
+    this.stats.avgDuration =
+      (this.stats.avgDuration * prevTotal + duration) / this.stats.totalProcessed;
     this.stats.maxDuration = Math.max(this.stats.maxDuration, duration);
   }
 
@@ -172,7 +174,7 @@ class Lane {
     return {
       ...this.stats,
       currentQueueLength: this.queue.length,
-      isProcessing: this.processing
+      isProcessing: this.processing,
     };
   }
 }
@@ -206,7 +208,7 @@ class ParallelLane extends Lane {
         this.waitingQueue.push(entry);
         this.stats.queueHighWaterMark = Math.max(
           this.stats.queueHighWaterMark,
-          this.waitingQueue.length + this.activeTasks
+          this.waitingQueue.length + this.activeTasks,
         );
       }
     });
@@ -280,7 +282,7 @@ export class CommandQueue {
       laneTimeout: options.laneTimeout || 300000,
       maxQueueSize: options.maxQueueSize || 100,
       idleCleanupMs: options.idleCleanupMs || 3600000,
-      parallelConcurrency: options.parallelConcurrency || 5
+      parallelConcurrency: options.parallelConcurrency || 5,
     };
 
     /** @type {Map<string, Lane>} */
@@ -335,7 +337,7 @@ export class CommandQueue {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       if (lane.idle) return;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     throw new Error(`Timeout waiting for lane ${laneId} to become idle`);
@@ -364,7 +366,7 @@ export class CommandQueue {
         }
       }
       if (allIdle) return;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     throw new Error('Timeout waiting for all lanes to become idle');
@@ -382,7 +384,7 @@ export class CommandQueue {
       }
       lane = new Lane(laneId, {
         timeout: this.options.laneTimeout,
-        maxQueueSize: this.options.maxQueueSize
+        maxQueueSize: this.options.maxQueueSize,
       });
       this.lanes.set(laneId, lane);
     }
@@ -399,7 +401,7 @@ export class CommandQueue {
       lane = new ParallelLane(laneId, {
         timeout: this.options.laneTimeout,
         maxQueueSize: this.options.maxQueueSize,
-        maxConcurrency: this.options.parallelConcurrency
+        maxConcurrency: this.options.parallelConcurrency,
       });
       this.parallelLanes.set(laneId, lane);
     }
@@ -472,14 +474,15 @@ export class CommandQueue {
     return {
       serialLanes: {
         count: this.lanes.size,
-        lanes: serialLanes
+        lanes: serialLanes,
       },
       parallelLanes: {
         count: this.parallelLanes.size,
-        lanes: parallelLanesStats
+        lanes: parallelLanesStats,
       },
-      totalPending: serialLanes.reduce((sum, l) => sum + l.currentQueueLength, 0) +
-                    parallelLanesStats.reduce((sum, l) => sum + l.currentQueueLength, 0)
+      totalPending:
+        serialLanes.reduce((sum, l) => sum + l.currentQueueLength, 0) +
+        parallelLanesStats.reduce((sum, l) => sum + l.currentQueueLength, 0),
     };
   }
 
@@ -538,5 +541,5 @@ export default {
   Lane,
   ParallelLane,
   getCommandQueue,
-  resetCommandQueue
+  resetCommandQueue,
 };

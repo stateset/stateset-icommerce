@@ -13,7 +13,7 @@
 // Suppress logging early if --json/--output is present to prevent stdout pollution
 const argv = process.argv;
 const hasJsonFlag = argv.includes('--json');
-const hasOutputFlag = argv.includes('--output') || argv.some(arg => arg.startsWith('--output='));
+const hasOutputFlag = argv.includes('--output') || argv.some((arg) => arg.startsWith('--output='));
 if (hasJsonFlag || hasOutputFlag) {
   process.env.LOG_LEVEL = 'silent';
 }
@@ -21,7 +21,6 @@ if (hasJsonFlag || hasOutputFlag) {
 import { parseArgs } from 'node:util';
 import { RichOutput, ICONS } from '../src/claude-harness.js';
 import { CLI_VERSION, DEFAULT_MODEL, FEATURES } from '../src/config.js';
-import { Commerce } from '@stateset/embedded';
 import { checkApiAvailability } from '../src/offline.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -43,7 +42,7 @@ OPTIONS:
   --help, -h         Show this help message
 
 CHECKS:
-  ✓ api             Validates ANTHROPIC_API_KEY and API connectivity
+  ✓ api             Validates ANTHROPIC_API_KEY (use --verbose to test connectivity)
   ✓ db              Tests database connectivity and schema
   ✓ node            Checks Node.js version compatibility
   ✓ permissions     Verifies file system permissions
@@ -68,7 +67,7 @@ async function checkSync() {
       return {
         status: 'info',
         message: 'Sync not configured (optional)',
-        hint: 'Run stateset-sync init to enable event synchronization'
+        hint: 'Run stateset-sync init to enable event synchronization',
       };
     }
 
@@ -78,14 +77,14 @@ async function checkSync() {
       message: 'Sync configured',
       stats: {
         endpoint: config.sequencerEndpoint,
-        configured: true
-      }
+        configured: true,
+      },
     };
   } catch (error) {
     return {
       status: 'warning',
       message: `Sync check failed: ${error.message}`,
-      hint: 'Sync may not be available'
+      hint: 'Sync may not be available',
     };
   }
 }
@@ -100,7 +99,7 @@ async function checkPlugins() {
       return {
         status: 'info',
         message: 'No plugins installed (optional)',
-        hint: 'Add plugins to ~/.stateset/plugins/ to extend functionality'
+        hint: 'Add plugins to ~/.stateset/plugins/ to extend functionality',
       };
     }
 
@@ -109,13 +108,13 @@ async function checkPlugins() {
       message: `${plugins.length} plugin(s) loaded`,
       stats: {
         count: plugins.length,
-        plugins: plugins.map(p => p.name)
-      }
+        plugins: plugins.map((p) => p.name),
+      },
     };
   } catch (error) {
     return {
       status: 'warning',
-      message: `Plugin check failed: ${error.message}`
+      message: `Plugin check failed: ${error.message}`,
     };
   }
 }
@@ -134,20 +133,20 @@ async function checkConfig() {
   // Check profiles
   const profilesDir = path.join(configDir, 'profiles');
   if (fs.existsSync(profilesDir)) {
-    const profiles = fs.readdirSync(profilesDir).filter(f => f.endsWith('.json'));
+    const profiles = fs.readdirSync(profilesDir).filter((f) => f.endsWith('.json'));
     checks.push({ name: 'profiles', ok: true, count: profiles.length });
   } else {
     checks.push({ name: 'profiles', ok: true, count: 0 });
   }
 
-  const allOk = checks.every(c => c.ok);
+  const allOk = checks.every((c) => c.ok);
   return {
     status: allOk ? 'ok' : 'warning',
     message: allOk ? 'Configuration directory OK' : 'Configuration needs setup',
     stats: {
       configDir: configDir,
-      checks
-    }
+      checks,
+    },
   };
 }
 
@@ -156,29 +155,26 @@ async function checkDiskSpace(dbPath) {
     const stats = fs.statSync(dbPath);
     const dbSizeMB = (stats.size / 1024 / 1024).toFixed(2);
 
-    // Check available space in the directory
-    const dir = path.dirname(path.resolve(dbPath));
-
     return {
       status: 'ok',
       message: `Database size: ${dbSizeMB} MB`,
       stats: {
         sizeBytes: stats.size,
         sizeMB: parseFloat(dbSizeMB),
-        path: dbPath
-      }
+        path: dbPath,
+      },
     };
   } catch (error) {
     if (error.code === 'ENOENT') {
       return {
         status: 'info',
         message: 'Database file does not exist yet',
-        hint: 'Will be created on first use'
+        hint: 'Will be created on first use',
       };
     }
     return {
       status: 'warning',
-      message: `Could not check database: ${error.message}`
+      message: `Could not check database: ${error.message}`,
     };
   }
 }
@@ -192,26 +188,27 @@ async function checkDatabase(dbPath) {
         return {
           status: 'error',
           message: `Directory does not exist: ${dir}`,
-          hint: `Create the directory: mkdir -p ${dir}`
+          hint: `Create the directory: mkdir -p ${dir}`,
         };
       }
     }
 
     // Try to connect
+    const mod = await import('@stateset/embedded');
+    const Commerce = mod.Commerce || mod.default?.Commerce || mod.default;
+    if (!Commerce) {
+      throw new Error('Failed to resolve Commerce export from @stateset/embedded.');
+    }
     const commerce = new Commerce(dbPath);
-
-    // Get some basic stats
-    const customers = commerce.customers().list({ limit: 1 });
-    const orders = commerce.orders().list({ limit: 1 });
 
     // Get counts (if tables exist)
     let stats = {};
     try {
       stats = {
-        customers: commerce.customers().list({}).length,
-        orders: commerce.orders().list({}).length,
-        products: commerce.products().list({}).length,
-        inventory: 'connected'
+        customers: await commerce.customers.count(),
+        orders: await commerce.orders.count(),
+        products: await commerce.products.count(),
+        inventory: 'connected',
       };
     } catch {
       stats = { note: 'Could not fetch stats' };
@@ -220,13 +217,13 @@ async function checkDatabase(dbPath) {
     return {
       status: 'ok',
       message: `Database connected: ${dbPath}`,
-      stats
+      stats,
     };
   } catch (error) {
     return {
       status: 'error',
       message: `Database error: ${error.message}`,
-      hint: 'Ensure the database file exists and is readable'
+      hint: 'Ensure the database file exists and is readable',
     };
   }
 }
@@ -239,19 +236,19 @@ async function checkNodeVersion() {
     return {
       status: 'error',
       message: `Node.js ${version} is too old`,
-      hint: 'Upgrade to Node.js 18 or later'
+      hint: 'Upgrade to Node.js 18 or later',
     };
   }
   if (major < 20) {
     return {
       status: 'warning',
       message: `Node.js ${version} works but 20+ recommended`,
-      hint: 'Consider upgrading to Node.js 20 LTS'
+      hint: 'Consider upgrading to Node.js 20 LTS',
     };
   }
   return {
     status: 'ok',
-    message: `Node.js ${version}`
+    message: `Node.js ${version}`,
   };
 }
 
@@ -270,13 +267,13 @@ async function checkPermissions(dbPath) {
 
     return {
       status: 'ok',
-      message: 'File permissions OK'
+      message: 'File permissions OK',
     };
   } catch (error) {
     return {
       status: 'error',
       message: `Permission denied: ${error.message}`,
-      hint: 'Check file and directory permissions'
+      hint: 'Check file and directory permissions',
     };
   }
 }
@@ -297,12 +294,12 @@ async function checkDependencies() {
     return {
       status: 'error',
       message: `Missing packages: ${missing.join(', ')}`,
-      hint: 'Run: npm install'
+      hint: 'Run: npm install',
     };
   }
   return {
     status: 'ok',
-    message: 'All dependencies installed'
+    message: 'All dependencies installed',
   };
 }
 
@@ -316,8 +313,9 @@ async function checkSystem() {
       memory: `${Math.round(os.totalmem() / 1024 / 1024 / 1024)}GB`,
       cpus: os.cpus().length,
       cliVersion: CLI_VERSION,
-      defaultModel: DEFAULT_MODEL
-    }
+      defaultModel: DEFAULT_MODEL,
+      features: FEATURES,
+    },
   };
 }
 
@@ -330,9 +328,9 @@ async function main() {
       output: { type: 'string' },
       checks: { type: 'string', default: '' },
       fix: { type: 'boolean', default: false },
-      help: { type: 'boolean', short: 'h', default: false }
+      help: { type: 'boolean', short: 'h', default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -361,7 +359,7 @@ async function main() {
     const providers = [
       { name: 'Anthropic', env: 'ANTHROPIC_API_KEY', prefix: 'sk-ant-', required: true },
       { name: 'OpenAI', env: 'OPENAI_API_KEY', prefix: 'sk-', required: false },
-      { name: 'Gemini', env: 'GEMINI_API_KEY', prefix: '', required: false }
+      { name: 'Gemini', env: 'GEMINI_API_KEY', prefix: '', required: false },
     ];
 
     const results = [];
@@ -374,13 +372,13 @@ async function main() {
         results.push({
           provider: provider.name,
           configured: true,
-          masked: key.slice(0, 10) + '...' + key.slice(-4)
+          masked: key.slice(0, 10) + '...' + key.slice(-4),
         });
       } else if (provider.required) {
         results.push({
           provider: provider.name,
           configured: false,
-          required: true
+          required: true,
         });
       }
     }
@@ -389,18 +387,51 @@ async function main() {
       return {
         status: 'error',
         message: 'No API keys configured (Anthropic required)',
-        hint: 'Run: stateset-config set-key anthropic\n' +
-              '   Or: export ANTHROPIC_API_KEY="sk-ant-..."\n' +
-              '   Get key: https://console.anthropic.com/',
-        stats: { providers: results }
+        hint:
+          'Run: stateset-config set-key anthropic\n' +
+          '   Or: export ANTHROPIC_API_KEY="sk-ant-..."\n' +
+          '   Get key: https://console.anthropic.com/',
+        stats: { providers: results },
       };
     }
 
-    const configured = results.filter(r => r.configured).map(r => r.provider);
+    const configured = results.filter((r) => r.configured).map((r) => r.provider);
+
+    // Keep the default doctor check deterministic and offline-friendly. When verbose, add a
+    // best-effort live connectivity probe so users can quickly diagnose network/key issues.
+    let anthropicApi = null;
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (values.verbose && anthropicKey) {
+      anthropicApi = await checkApiAvailability(anthropicKey, { timeout: 2500 });
+    }
+
+    if (anthropicApi && !anthropicApi.available) {
+      if (anthropicApi.reason === 'invalid_api_key') {
+        return {
+          status: 'warning',
+          message: 'Anthropic API key appears invalid',
+          hint:
+            'Run: stateset-config set-key anthropic\n' +
+            '   Or: export ANTHROPIC_API_KEY="sk-ant-..."\n' +
+            '   Get key: https://console.anthropic.com/',
+          stats: { providers: results, anthropicApi },
+        };
+      }
+
+      return {
+        status: 'warning',
+        message: `Anthropic API unreachable (${anthropicApi.reason})`,
+        hint:
+          'Check network connectivity, firewall/proxy settings, and Anthropic status.\n' +
+          'If needed, use offline/direct mode for local-only workflows.',
+        stats: { providers: results, anthropicApi },
+      };
+    }
+
     return {
       status: 'ok',
       message: `API keys configured: ${configured.join(', ')}`,
-      stats: { providers: results }
+      stats: { providers: results, anthropicApi },
     };
   }
 
@@ -408,37 +439,35 @@ async function main() {
   const allChecks = {
     'API Key': checkAllApiKeys,
     'Node.js': checkNodeVersion,
-    'Database': () => checkDatabase(values.db),
-    'Permissions': () => checkPermissions(values.db),
-    'Dependencies': checkDependencies,
-    'System': checkSystem,
-    'Sync': checkSync,
-    'Plugins': checkPlugins,
-    'Config': checkConfig,
-    'Disk Space': () => checkDiskSpace(values.db)
+    Database: () => checkDatabase(values.db),
+    Permissions: () => checkPermissions(values.db),
+    Dependencies: checkDependencies,
+    System: checkSystem,
+    Sync: checkSync,
+    Plugins: checkPlugins,
+    Config: checkConfig,
+    'Disk Space': () => checkDiskSpace(values.db),
   };
 
   // Filter checks if specified
   let checksToRun = Object.keys(allChecks);
   if (values.checks) {
-    const requested = values.checks.split(',').map(c => c.trim().toLowerCase());
+    const requested = values.checks.split(',').map((c) => c.trim().toLowerCase());
     const checkMap = {
-      'api': 'API Key',
-      'node': 'Node.js',
-      'db': 'Database',
-      'database': 'Database',
-      'permissions': 'Permissions',
-      'deps': 'Dependencies',
-      'dependencies': 'Dependencies',
-      'system': 'System',
-      'sync': 'Sync',
-      'plugins': 'Plugins',
-      'config': 'Config',
-      'disk': 'Disk Space'
+      api: 'API Key',
+      node: 'Node.js',
+      db: 'Database',
+      database: 'Database',
+      permissions: 'Permissions',
+      deps: 'Dependencies',
+      dependencies: 'Dependencies',
+      system: 'System',
+      sync: 'Sync',
+      plugins: 'Plugins',
+      config: 'Config',
+      disk: 'Disk Space',
     };
-    checksToRun = requested
-      .map(r => checkMap[r])
-      .filter(Boolean);
+    checksToRun = requested.map((r) => checkMap[r]).filter(Boolean);
   }
 
   // Run selected checks
@@ -452,9 +481,9 @@ async function main() {
 
   if (wantsJsonOutput) {
     writeJson({
-      healthy: Object.values(checks).every(c => c.status !== 'error'),
+      healthy: Object.values(checks).every((c) => c.status !== 'error'),
       checks,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
     process.exit(0);
   }
@@ -467,20 +496,17 @@ async function main() {
   let hasWarnings = false;
 
   for (const [name, result] of Object.entries(checks)) {
-    let icon, color;
+    let icon;
     switch (result.status) {
       case 'ok':
         icon = output.green('✓');
-        color = 'green';
         break;
       case 'warning':
         icon = output.yellow('⚠');
-        color = 'yellow';
         hasWarnings = true;
         break;
       case 'error':
         icon = output.red('✗');
-        color = 'red';
         hasErrors = true;
         break;
     }
@@ -512,7 +538,5 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error('Doctor check failed:', error.message);
-  process.exit(1);
-});
+import { runMain } from '../src/graceful-shutdown.js';
+runMain('stateset-doctor', main);

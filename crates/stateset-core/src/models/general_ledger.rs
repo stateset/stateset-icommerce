@@ -60,13 +60,18 @@ impl AccountType {
     pub fn normal_balance(&self) -> BalanceSide {
         match self {
             AccountType::Asset | AccountType::Expense => BalanceSide::Debit,
-            AccountType::Liability | AccountType::Equity | AccountType::Revenue => BalanceSide::Credit,
+            AccountType::Liability | AccountType::Equity | AccountType::Revenue => {
+                BalanceSide::Credit
+            }
         }
     }
 
     /// Returns true if this account type appears on the Balance Sheet
     pub fn is_balance_sheet(&self) -> bool {
-        matches!(self, AccountType::Asset | AccountType::Liability | AccountType::Equity)
+        matches!(
+            self,
+            AccountType::Asset | AccountType::Liability | AccountType::Equity
+        )
     }
 
     /// Returns true if this account type appears on the Income Statement
@@ -527,9 +532,7 @@ impl JournalEntry {
 
     /// Returns true if entry can be posted
     pub fn can_post(&self) -> bool {
-        self.status == JournalEntryStatus::Draft
-            && self.is_balanced
-            && !self.lines.is_empty()
+        self.status == JournalEntryStatus::Draft && self.is_balanced && !self.lines.is_empty()
     }
 
     /// Returns true if entry can be voided

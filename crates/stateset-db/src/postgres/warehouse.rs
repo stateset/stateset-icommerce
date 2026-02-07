@@ -3,14 +3,14 @@
 use super::{block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{FromRow, Postgres, QueryBuilder};
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AdjustLocationInventory, BatchResult, CommerceError, CreateLocation, CreateWarehouse, CreateZone,
-    Location, LocationFilter, LocationInventory, LocationInventoryFilter, LocationMovement,
-    LocationType, MoveInventory, MovementFilter, MovementType, Result, UpdateLocation,
-    UpdateWarehouse, UpdateZone, Warehouse, WarehouseAddress, WarehouseFilter, WarehouseRepository,
-    WarehouseType, Zone, validate_batch_size,
+    validate_batch_size, AdjustLocationInventory, BatchResult, CommerceError, CreateLocation,
+    CreateWarehouse, CreateZone, Location, LocationFilter, LocationInventory,
+    LocationInventoryFilter, LocationMovement, LocationType, MoveInventory, MovementFilter,
+    MovementType, Result, UpdateLocation, UpdateWarehouse, UpdateZone, Warehouse, WarehouseAddress,
+    WarehouseFilter, WarehouseRepository, WarehouseType, Zone,
 };
 use uuid::Uuid;
 
@@ -116,10 +116,7 @@ impl PgWarehouseRepository {
             ))
         })?;
         let address: WarehouseAddress = serde_json::from_value(address_json).map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid warehouse.address_json: {}",
-                e
-            ))
+            CommerceError::DatabaseError(format!("Invalid warehouse.address_json: {}", e))
         })?;
 
         Ok(Warehouse {
@@ -199,7 +196,11 @@ impl PgWarehouseRepository {
     }
 
     fn row_to_location_inventory(row: LocationInventoryRow) -> LocationInventory {
-        let lot_id = if row.lot_id == Uuid::nil() { None } else { Some(row.lot_id) };
+        let lot_id = if row.lot_id == Uuid::nil() {
+            None
+        } else {
+            Some(row.lot_id)
+        };
         let available = row.quantity_on_hand - row.quantity_reserved;
         LocationInventory {
             location_id: row.location_id,
@@ -328,7 +329,11 @@ impl PgWarehouseRepository {
         Ok(row.map(Self::row_to_warehouse).transpose()?)
     }
 
-    pub async fn update_warehouse_async(&self, id: i32, input: UpdateWarehouse) -> Result<Warehouse> {
+    pub async fn update_warehouse_async(
+        &self,
+        id: i32,
+        input: UpdateWarehouse,
+    ) -> Result<Warehouse> {
         let now = Utc::now();
         let address_json = input
             .address
@@ -367,7 +372,9 @@ impl PgWarehouseRepository {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM warehouses WHERE 1=1");
 
         if let Some(warehouse_type) = filter.warehouse_type {
-            builder.push(" AND warehouse_type = ").push_bind(warehouse_type.to_string());
+            builder
+                .push(" AND warehouse_type = ")
+                .push_bind(warehouse_type.to_string());
         }
         if let Some(active) = filter.is_active {
             builder.push(" AND is_active = ").push_bind(active);
@@ -388,15 +395,19 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_warehouse).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_warehouse)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_warehouse_async(&self, id: i32) -> Result<()> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE warehouse_id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM locations WHERE warehouse_id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         if count.0 > 0 {
             return Err(CommerceError::ValidationError(
@@ -414,10 +425,13 @@ impl PgWarehouseRepository {
     }
 
     pub async fn count_warehouses_async(&self, filter: WarehouseFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM warehouses WHERE 1=1");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM warehouses WHERE 1=1");
 
         if let Some(warehouse_type) = filter.warehouse_type {
-            builder.push(" AND warehouse_type = ").push_bind(warehouse_type.to_string());
+            builder
+                .push(" AND warehouse_type = ")
+                .push_bind(warehouse_type.to_string());
         }
         if let Some(active) = filter.is_active {
             builder.push(" AND is_active = ").push_bind(active);
@@ -501,7 +515,9 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_zone_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_zone_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn delete_zone_async(&self, id: i32) -> Result<()> {
@@ -582,7 +598,11 @@ impl PgWarehouseRepository {
         Ok(row.map(Self::row_to_location).transpose()?)
     }
 
-    pub async fn get_location_by_code_async(&self, warehouse_id: i32, code: &str) -> Result<Option<Location>> {
+    pub async fn get_location_by_code_async(
+        &self,
+        warehouse_id: i32,
+        code: &str,
+    ) -> Result<Option<Location>> {
         let row = sqlx::query_as::<_, LocationRow>(
             "SELECT * FROM locations WHERE warehouse_id = $1 AND code = $2",
         )
@@ -633,7 +653,9 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_location_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_location_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_locations_async(&self, filter: LocationFilter) -> Result<Vec<Location>> {
@@ -643,7 +665,9 @@ impl PgWarehouseRepository {
             builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
         }
         if let Some(location_type) = filter.location_type {
-            builder.push(" AND location_type = ").push_bind(location_type.to_string());
+            builder
+                .push(" AND location_type = ")
+                .push_bind(location_type.to_string());
         }
         if let Some(zone) = filter.zone {
             builder.push(" AND zone = ").push_bind(zone);
@@ -676,7 +700,10 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
@@ -710,7 +737,9 @@ impl PgWarehouseRepository {
             builder.push(" AND warehouse_id = ").push_bind(warehouse_id);
         }
         if let Some(location_type) = filter.location_type {
-            builder.push(" AND location_type = ").push_bind(location_type.to_string());
+            builder
+                .push(" AND location_type = ")
+                .push_bind(location_type.to_string());
         }
         if let Some(zone) = filter.zone {
             builder.push(" AND zone = ").push_bind(zone);
@@ -737,16 +766,22 @@ impl PgWarehouseRepository {
         Ok(row.0 as u64)
     }
 
-    pub async fn get_locations_for_warehouse_async(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self
-            .list_locations_async(LocationFilter {
-                warehouse_id: Some(warehouse_id),
-                ..Default::default()
-            })
-            .await
+    pub async fn get_locations_for_warehouse_async(
+        &self,
+        warehouse_id: i32,
+    ) -> Result<Vec<Location>> {
+        self.list_locations_async(LocationFilter {
+            warehouse_id: Some(warehouse_id),
+            ..Default::default()
+        })
+        .await
     }
 
-    pub async fn get_pickable_locations_async(&self, warehouse_id: i32, sku: &str) -> Result<Vec<Location>> {
+    pub async fn get_pickable_locations_async(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<Location>> {
         let rows = sqlx::query_as::<_, LocationRow>(
             r#"
             SELECT l.* FROM locations l
@@ -762,21 +797,26 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn get_receivable_locations_async(&self, warehouse_id: i32) -> Result<Vec<Location>> {
-        self
-            .list_locations_async(LocationFilter {
-                warehouse_id: Some(warehouse_id),
-                is_receivable: Some(true),
-                is_active: Some(true),
-                ..Default::default()
-            })
-            .await
+        self.list_locations_async(LocationFilter {
+            warehouse_id: Some(warehouse_id),
+            is_receivable: Some(true),
+            is_active: Some(true),
+            ..Default::default()
+        })
+        .await
     }
 
-    pub async fn get_location_inventory_async(&self, location_id: i32) -> Result<Vec<LocationInventory>> {
+    pub async fn get_location_inventory_async(
+        &self,
+        location_id: i32,
+    ) -> Result<Vec<LocationInventory>> {
         let rows = sqlx::query_as::<_, LocationInventoryRow>(
             "SELECT * FROM location_inventory WHERE location_id = $1 AND quantity_on_hand > 0",
         )
@@ -785,10 +825,17 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location_inventory).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location_inventory)
+            .collect())
     }
 
-    pub async fn get_inventory_for_sku_async(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
+    pub async fn get_inventory_for_sku_async(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<LocationInventory>> {
         let rows = sqlx::query_as::<_, LocationInventoryRow>(
             r#"
             SELECT li.* FROM location_inventory li
@@ -803,10 +850,16 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location_inventory).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location_inventory)
+            .collect())
     }
 
-    pub async fn adjust_inventory_async(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
+    pub async fn adjust_inventory_async(
+        &self,
+        input: AdjustLocationInventory,
+    ) -> Result<LocationInventory> {
         let now = Utc::now();
         let lot_key = Self::lot_key(input.lot_id);
 
@@ -994,7 +1047,10 @@ impl PgWarehouseRepository {
         })
     }
 
-    pub async fn list_location_inventory_async(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
+    pub async fn list_location_inventory_async(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT li.* FROM location_inventory li");
 
         if filter.warehouse_id.is_some() {
@@ -1004,10 +1060,14 @@ impl PgWarehouseRepository {
         builder.push(" WHERE 1=1");
 
         if let Some(location_id) = filter.location_id {
-            builder.push(" AND li.location_id = ").push_bind(location_id);
+            builder
+                .push(" AND li.location_id = ")
+                .push_bind(location_id);
         }
         if let Some(warehouse_id) = filter.warehouse_id {
-            builder.push(" AND l.warehouse_id = ").push_bind(warehouse_id);
+            builder
+                .push(" AND l.warehouse_id = ")
+                .push_bind(warehouse_id);
         }
         if let Some(sku) = filter.sku {
             builder.push(" AND li.sku = ").push_bind(sku);
@@ -1032,10 +1092,16 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location_inventory).collect())
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location_inventory)
+            .collect())
     }
 
-    pub async fn get_movements_async(&self, filter: MovementFilter) -> Result<Vec<LocationMovement>> {
+    pub async fn get_movements_async(
+        &self,
+        filter: MovementFilter,
+    ) -> Result<Vec<LocationMovement>> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT m.* FROM inventory_movements m");
 
         if filter.warehouse_id.is_some() {
@@ -1048,13 +1114,21 @@ impl PgWarehouseRepository {
         builder.push(" WHERE 1=1");
 
         if let Some(warehouse_id) = filter.warehouse_id {
-            builder.push(" AND (l_from.warehouse_id = ").push_bind(warehouse_id);
-            builder.push(" OR l_to.warehouse_id = ").push_bind(warehouse_id);
+            builder
+                .push(" AND (l_from.warehouse_id = ")
+                .push_bind(warehouse_id);
+            builder
+                .push(" OR l_to.warehouse_id = ")
+                .push_bind(warehouse_id);
             builder.push(")");
         }
         if let Some(location_id) = filter.location_id {
-            builder.push(" AND (m.from_location_id = ").push_bind(location_id);
-            builder.push(" OR m.to_location_id = ").push_bind(location_id);
+            builder
+                .push(" AND (m.from_location_id = ")
+                .push_bind(location_id);
+            builder
+                .push(" OR m.to_location_id = ")
+                .push_bind(location_id);
             builder.push(")");
         }
         if let Some(sku) = filter.sku {
@@ -1064,7 +1138,9 @@ impl PgWarehouseRepository {
             builder.push(" AND m.lot_id = ").push_bind(lot_id);
         }
         if let Some(movement_type) = filter.movement_type {
-            builder.push(" AND m.movement_type = ").push_bind(movement_type.to_string());
+            builder
+                .push(" AND m.movement_type = ")
+                .push_bind(movement_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
             builder.push(" AND m.created_at >= ").push_bind(from_date);
@@ -1088,11 +1164,15 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_movement).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_movement)
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn count_movements_async(&self, filter: MovementFilter) -> Result<u64> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM inventory_movements m");
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM inventory_movements m");
 
         if filter.warehouse_id.is_some() {
             builder.push(
@@ -1104,13 +1184,19 @@ impl PgWarehouseRepository {
         builder.push(" WHERE 1=1");
 
         if let Some(warehouse_id) = filter.warehouse_id {
-            builder.push(" AND (l_from.warehouse_id = ").push_bind(warehouse_id);
-            builder.push(" OR l_to.warehouse_id = ").push_bind(warehouse_id);
+            builder
+                .push(" AND (l_from.warehouse_id = ")
+                .push_bind(warehouse_id);
+            builder
+                .push(" OR l_to.warehouse_id = ")
+                .push_bind(warehouse_id);
             builder.push(")");
         }
 
         if let Some(movement_type) = filter.movement_type {
-            builder.push(" AND m.movement_type = ").push_bind(movement_type.to_string());
+            builder
+                .push(" AND m.movement_type = ")
+                .push_bind(movement_type.to_string());
         }
 
         let row = builder
@@ -1122,7 +1208,10 @@ impl PgWarehouseRepository {
         Ok(row.0 as u64)
     }
 
-    pub async fn create_locations_batch_async(&self, inputs: Vec<CreateLocation>) -> Result<BatchResult<Location>> {
+    pub async fn create_locations_batch_async(
+        &self,
+        inputs: Vec<CreateLocation>,
+    ) -> Result<BatchResult<Location>> {
         validate_batch_size(&inputs)?;
 
         let mut result = BatchResult::new();
@@ -1157,7 +1246,10 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows.into_iter().map(Self::row_to_location).collect::<Result<Vec<_>>>()?)
+        Ok(rows
+            .into_iter()
+            .map(Self::row_to_location)
+            .collect::<Result<Vec<_>>>()?)
     }
 }
 
@@ -1254,7 +1346,11 @@ impl WarehouseRepository for PgWarehouseRepository {
         block_on(self.get_location_inventory_async(location_id))
     }
 
-    fn get_inventory_for_sku(&self, warehouse_id: i32, sku: &str) -> Result<Vec<LocationInventory>> {
+    fn get_inventory_for_sku(
+        &self,
+        warehouse_id: i32,
+        sku: &str,
+    ) -> Result<Vec<LocationInventory>> {
         block_on(self.get_inventory_for_sku_async(warehouse_id, sku))
     }
 
@@ -1266,7 +1362,10 @@ impl WarehouseRepository for PgWarehouseRepository {
         block_on(self.move_inventory_async(input))
     }
 
-    fn list_location_inventory(&self, filter: LocationInventoryFilter) -> Result<Vec<LocationInventory>> {
+    fn list_location_inventory(
+        &self,
+        filter: LocationInventoryFilter,
+    ) -> Result<Vec<LocationInventory>> {
         block_on(self.list_location_inventory_async(filter))
     }
 

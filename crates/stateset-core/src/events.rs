@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::models::{
     CustomerStatus, FulfillmentStatus, OrderStatus, PaymentStatus, ReturnReason, ReturnStatus,
-    X402Asset, X402IntentStatus, X402Network, PurchaseStatus, QuoteStatus, TrustLevel,
+    TrustLevel, X402Asset, X402Network,
 };
 
 /// Commerce domain event
@@ -434,10 +434,18 @@ pub trait EventStore {
     fn append(&self, event: &CommerceEvent) -> crate::errors::Result<u64>;
 
     /// Get events since sequence number
-    fn get_events_since(&self, sequence: u64, limit: u32) -> crate::errors::Result<Vec<(u64, CommerceEvent)>>;
+    fn get_events_since(
+        &self,
+        sequence: u64,
+        limit: u32,
+    ) -> crate::errors::Result<Vec<(u64, CommerceEvent)>>;
 
     /// Get events for aggregate
-    fn get_events_for_aggregate(&self, aggregate_type: &str, aggregate_id: &str) -> crate::errors::Result<Vec<CommerceEvent>>;
+    fn get_events_for_aggregate(
+        &self,
+        aggregate_type: &str,
+        aggregate_id: &str,
+    ) -> crate::errors::Result<Vec<CommerceEvent>>;
 
     /// Get latest sequence number
     fn latest_sequence(&self) -> crate::errors::Result<u64>;

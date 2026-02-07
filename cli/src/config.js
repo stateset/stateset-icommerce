@@ -56,13 +56,13 @@ export const MODEL_FOR_TASK = {
  * Set to null to use DEFAULT_MODEL
  */
 export const AGENT_MODELS = {
-  'customer-service': null,  // Uses DEFAULT_MODEL
-  'checkout': null,
-  'orders': null,
-  'inventory': null,
-  'returns': null,
-  'analytics': null,
-  'storefront': null,
+  'customer-service': null, // Uses DEFAULT_MODEL
+  checkout: null,
+  orders: null,
+  inventory: null,
+  returns: null,
+  analytics: null,
+  storefront: null,
 };
 
 /**
@@ -154,7 +154,7 @@ export const PROVIDERS = {
     models: {
       'gpt-4o': 'gpt-4o',
       'gpt-4': 'gpt-4',
-      'o1': 'o1',
+      o1: 'o1',
       'o1-mini': 'o1-mini',
     },
     default: 'gpt-4o',
@@ -196,7 +196,7 @@ export const MEMORY_DEFAULTS = {
 export const HEARTBEAT_DEFAULTS = {
   enabled: false,
   verbose: false,
-  checks: null,  // null = use built-in defaults
+  checks: null, // null = use built-in defaults
 };
 
 // =============================================================================
@@ -207,8 +207,13 @@ export const HTTP_GATEWAY_DEFAULTS = {
   enabled: true,
   port: 8080,
   host: '127.0.0.1',
-  apiKeys: [],       // empty = auth disabled
-  sandbox: null,     // null = no restrictions
+  apiKeys: [], // when empty, protected routes return 401 (health/ready still public)
+  allowAnonymous: false, // insecure: allow requests without keys (see http-auth.js)
+  anonymousIdentity: { name: 'anonymous', level: 'admin' },
+  allowQueryParamAuth: false, // insecure: allow ?api_key=... auth
+  corsOrigins: ['loopback'], // allow browser requests from localhost/127.0.0.1 origins
+  allowRemoteAdminEndpoints: false, // restrict /daemon and /remote-access to loopback by default
+  sandbox: null, // null = no restrictions
 };
 
 // =============================================================================

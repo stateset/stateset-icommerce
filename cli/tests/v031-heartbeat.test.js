@@ -12,6 +12,9 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'http';
 
+const API_KEY = 'test-admin-key-heartbeat';
+const AUTH_HEADERS = { Authorization: `Bearer ${API_KEY}` };
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -359,7 +362,10 @@ describe('v0.6.0 — HTTP Gateway heartbeat routes (no subsystem)', () => {
 
   before(async () => {
     const { createHttpGateway } = await import('../src/channels/http-gateway.js');
-    gw = createHttpGateway({ port: 0 });
+    gw = createHttpGateway({
+      port: 0,
+      apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+    });
     const addr = await gw.start();
     port = addr.port;
   });
@@ -369,18 +375,18 @@ describe('v0.6.0 — HTTP Gateway heartbeat routes (no subsystem)', () => {
   });
 
   it('GET /heartbeat/status returns 501 when heartbeat not enabled', async () => {
-    const res = await request(port, 'GET', '/heartbeat/status');
+    const res = await request(port, 'GET', '/heartbeat/status', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
     assert.ok(res.body.error.toLowerCase().includes('heartbeat'));
   });
 
   it('GET /heartbeat/checks returns 501 when heartbeat not enabled', async () => {
-    const res = await request(port, 'GET', '/heartbeat/checks');
+    const res = await request(port, 'GET', '/heartbeat/checks', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 
   it('POST /heartbeat/checks/low-stock/run returns 501', async () => {
-    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/run');
+    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/run', null, AUTH_HEADERS);
     assert.equal(res.status, 501);
   });
 });
@@ -394,7 +400,10 @@ describe('v0.6.0 — HTTP Gateway heartbeat routes (with subsystem)', () => {
 
     const hb = new HeartbeatMonitor({ commerce: mockCommerce() });
 
-    gw = createHttpGateway({ port: 0 });
+    gw = createHttpGateway({
+      port: 0,
+      apiKeys: [{ key: API_KEY, name: 'test-admin', level: 'admin' }],
+    });
     const addr = await gw.start();
     port = addr.port;
 
@@ -406,40 +415,52 @@ describe('v0.6.0 — HTTP Gateway heartbeat routes (with subsystem)', () => {
   });
 
   it('GET /heartbeat/status returns monitor status', async () => {
-    const res = await request(port, 'GET', '/heartbeat/status');
+    const res = await request(port, 'GET', '/heartbeat/status', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.equal(typeof res.body.running, 'boolean');
     assert.equal(typeof res.body.checkCount, 'number');
   });
 
   it('GET /heartbeat/checks returns all checks', async () => {
-    const res = await request(port, 'GET', '/heartbeat/checks');
+    const res = await request(port, 'GET', '/heartbeat/checks', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.checks));
     assert.equal(res.body.checks.length, 6);
   });
 
   it('POST /heartbeat/checks/low-stock/run executes check', async () => {
-    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/run');
+    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/run', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.equal(typeof res.body.triggered, 'boolean');
     assert.ok(res.body.summary);
   });
 
   it('POST /heartbeat/checks/low-stock/enable enables check', async () => {
-    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/enable');
+    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/enable', null, AUTH_HEADERS);
     assert.equal(res.status, 200);
     assert.equal(res.body.enabled, true);
   });
 
   it('POST /heartbeat/checks/low-stock/disable disables check', async () => {
-    const res = await request(port, 'POST', '/heartbeat/checks/low-stock/disable');
+    const res = await request(
+      port,
+      'POST',
+      '/heartbeat/checks/low-stock/disable',
+      null,
+      AUTH_HEADERS,
+    );
     assert.equal(res.status, 200);
     assert.equal(res.body.enabled, false);
   });
 
   it('POST /heartbeat/checks/nonexistent/run returns 404', async () => {
-    const res = await request(port, 'POST', '/heartbeat/checks/nonexistent/run');
+    const res = await request(
+      port,
+      'POST',
+      '/heartbeat/checks/nonexistent/run',
+      null,
+      AUTH_HEADERS,
+    );
     assert.equal(res.status, 404);
   });
 });

@@ -28,7 +28,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       const order = await commerce.orders.get(id);
 
       if (!order) {
-        throw new Error(`Order not found: ${idArg}\n\nTry 'stateset-direct orders list' to see all orders.`);
+        throw new Error(
+          `Order not found: ${idArg}\n\nTry 'stateset-direct orders list' to see all orders.`,
+        );
       }
 
       return formatOrderDetail(order, { output, jsonOutput });
@@ -37,7 +39,9 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     case 'ship': {
       const [orderIdArg, trackingNumber] = args;
       if (!orderIdArg) {
-        throw new Error('Usage: orders ship <id> [tracking]\n\nExample: stateset-direct orders ship abc123 FEDEX12345');
+        throw new Error(
+          'Usage: orders ship <id> [tracking]\n\nExample: stateset-direct orders ship abc123 FEDEX12345',
+        );
       }
 
       const orderId = await resolveId(orderIdArg, 'orders');
@@ -68,13 +72,23 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
       if (!orderIdArg || !newStatus) {
         throw new Error(
           'Usage: orders status <id> <status>\n\n' +
-          'Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded'
+            'Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded',
         );
       }
 
-      const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'];
+      const validStatuses = [
+        'pending',
+        'confirmed',
+        'processing',
+        'shipped',
+        'delivered',
+        'cancelled',
+        'refunded',
+      ];
       if (!validStatuses.includes(newStatus)) {
-        throw new Error(`Invalid status: ${newStatus}\n\nValid statuses: ${validStatuses.join(', ')}`);
+        throw new Error(
+          `Invalid status: ${newStatus}\n\nValid statuses: ${validStatuses.join(', ')}`,
+        );
       }
 
       const orderId = await resolveId(orderIdArg, 'orders');
@@ -82,13 +96,13 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
 
       return {
         order,
-        formatted: `Order ${order.orderNumber} status updated to: ${newStatus}`
+        formatted: `Order ${order.orderNumber} status updated to: ${newStatus}`,
       };
     }
 
     case 'pending': {
       const orders = await commerce.orders.list();
-      const pending = orders.filter(o => o.status === 'pending' || o.status === 'confirmed');
+      const pending = orders.filter((o) => o.status === 'pending' || o.status === 'confirmed');
       return formatOrderList(pending, { output, jsonOutput });
     }
 
@@ -104,15 +118,15 @@ export async function execute(action, args, { commerce, output, jsonOutput, reso
     default:
       throw new Error(
         `Unknown action: orders ${action}\n\n` +
-        'Available actions:\n' +
-        '  list              List all orders\n' +
-        '  get <id>          Get order details\n' +
-        '  ship <id> [tracking]  Ship an order\n' +
-        '  cancel <id>       Cancel an order\n' +
-        '  status <id> <status>  Update order status\n' +
-        '  count             Count orders\n' +
-        '  pending           List pending orders\n' +
-        '  recent [n]        List n most recent orders'
+          'Available actions:\n' +
+          '  list              List all orders\n' +
+          '  get <id>          Get order details\n' +
+          '  ship <id> [tracking]  Ship an order\n' +
+          '  cancel <id>       Cancel an order\n' +
+          '  status <id> <status>  Update order status\n' +
+          '  count             Count orders\n' +
+          '  pending           List pending orders\n' +
+          '  recent [n]        List n most recent orders',
       );
   }
 }
@@ -130,20 +144,20 @@ function formatOrderList(orders, { output, jsonOutput }) {
   }
 
   const formatted = output.table(
-    orders.map(o => ({
+    orders.map((o) => ({
       id: o.id.slice(0, 8) + '...',
       number: o.orderNumber,
       status: o.status,
       total: `${o.currency} ${o.totalAmount.toFixed(2)}`,
-      items: o.items?.length || 0
+      items: o.items?.length || 0,
     })),
     [
       { key: 'id', header: 'ID' },
       { key: 'number', header: 'Order #' },
       { key: 'status', header: 'Status' },
       { key: 'total', header: 'Total', align: 'right' },
-      { key: 'items', header: 'Items', align: 'right' }
-    ]
+      { key: 'items', header: 'Items', align: 'right' },
+    ],
   );
 
   return { orders, formatted };
@@ -152,14 +166,18 @@ function formatOrderList(orders, { output, jsonOutput }) {
 /**
  * Format single order detail
  */
-function formatOrderDetail(order, { output, jsonOutput }) {
+function formatOrderDetail(order, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return order;
   }
 
-  const itemLines = order.items?.map(i =>
-    `  - ${i.name} (${i.sku}) x${i.quantity} @ ${order.currency} ${i.unitPrice.toFixed(2)}`
-  ).join('\n') || '  (no items)';
+  const itemLines =
+    order.items
+      ?.map(
+        (i) =>
+          `  - ${i.name} (${i.sku}) x${i.quantity} @ ${order.currency} ${i.unitPrice.toFixed(2)}`,
+      )
+      .join('\n') || '  (no items)';
 
   const formatted = `
 Order: ${order.orderNumber}
@@ -182,7 +200,7 @@ ${itemLines}
 /**
  * Format order shipped response
  */
-function formatOrderShipped(order, trackingNumber, { output, jsonOutput }) {
+function formatOrderShipped(order, trackingNumber, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, order };
   }
@@ -190,21 +208,21 @@ function formatOrderShipped(order, trackingNumber, { output, jsonOutput }) {
   const trackingInfo = trackingNumber ? ` with tracking: ${trackingNumber}` : '';
   return {
     order,
-    formatted: `Order ${order.orderNumber} shipped${trackingInfo}`
+    formatted: `Order ${order.orderNumber} shipped${trackingInfo}`,
   };
 }
 
 /**
  * Format order cancelled response
  */
-function formatOrderCancelled(order, { output, jsonOutput }) {
+function formatOrderCancelled(order, { output: _output, jsonOutput }) {
   if (jsonOutput) {
     return { success: true, order };
   }
 
   return {
     order,
-    formatted: `Order ${order.orderNumber} cancelled`
+    formatted: `Order ${order.orderNumber} cancelled`,
   };
 }
 
@@ -223,8 +241,8 @@ export const metadata = {
     status: { description: 'Update order status', args: ['<id>', '<status>'] },
     count: { description: 'Count orders', args: [] },
     pending: { description: 'List pending orders', args: [] },
-    recent: { description: 'List recent orders', args: ['[count]'] }
-  }
+    recent: { description: 'List recent orders', args: ['[count]'] },
+  },
 };
 
 export default { execute, metadata };

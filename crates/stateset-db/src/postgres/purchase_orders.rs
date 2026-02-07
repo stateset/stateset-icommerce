@@ -261,7 +261,7 @@ impl PgPurchaseOrderRepository {
 
     async fn load_items_async(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
         let rows = sqlx::query_as::<_, PurchaseOrderItemRow>(
-            "SELECT * FROM purchase_order_items WHERE purchase_order_id = $1"
+            "SELECT * FROM purchase_order_items WHERE purchase_order_id = $1",
         )
         .bind(po_id)
         .fetch_all(&self.pool)
@@ -292,14 +292,16 @@ impl PgPurchaseOrderRepository {
 
         let total = subtotal + tax_amount + shipping_cost - discount_amount;
 
-        sqlx::query("UPDATE purchase_orders SET subtotal = $1, total = $2, updated_at = $3 WHERE id = $4")
-            .bind(subtotal)
-            .bind(total)
-            .bind(Utc::now())
-            .bind(po_id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE purchase_orders SET subtotal = $1, total = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(subtotal)
+        .bind(total)
+        .bind(Utc::now())
+        .bind(po_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         Ok(())
     }
@@ -341,7 +343,9 @@ impl PgPurchaseOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_supplier_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_supplier_async(&self, id: Uuid) -> Result<Option<Supplier>> {
@@ -355,17 +359,21 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn get_supplier_by_code_async(&self, code: &str) -> Result<Option<Supplier>> {
-        let row = sqlx::query_as::<_, SupplierRow>("SELECT * FROM suppliers WHERE supplier_code = $1")
-            .bind(code)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, SupplierRow>("SELECT * FROM suppliers WHERE supplier_code = $1")
+                .bind(code)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         row.map(Self::row_to_supplier).transpose()
     }
 
     pub async fn update_supplier_async(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        let supplier = self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)?;
+        let supplier = self
+            .get_supplier_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -397,7 +405,9 @@ impl PgPurchaseOrderRepository {
         .await
         .map_err(map_db_error)?;
 
-        self.get_supplier_async(id).await?.ok_or(CommerceError::NotFound)
+        self.get_supplier_async(id)
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn list_suppliers_async(&self, filter: SupplierFilter) -> Result<Vec<Supplier>> {
@@ -434,7 +444,10 @@ impl PgPurchaseOrderRepository {
 
     // Purchase Order methods
     pub async fn create_async(&self, input: CreatePurchaseOrder) -> Result<PurchaseOrder> {
-        let supplier = self.get_supplier_async(input.supplier_id).await?.ok_or(CommerceError::NotFound)?;
+        let supplier = self
+            .get_supplier_async(input.supplier_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -479,7 +492,8 @@ impl PgPurchaseOrderRepository {
 
         for item in &input.items {
             let item_id = Uuid::new_v4();
-            let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
+            let line_total = item.quantity * item.unit_cost
+                - item.discount_amount.unwrap_or_default()
                 + item.tax_amount.unwrap_or_default();
 
             sqlx::query(
@@ -517,11 +531,12 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn get_async(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        let row = sqlx::query_as::<_, PurchaseOrderRow>("SELECT * FROM purchase_orders WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row =
+            sqlx::query_as::<_, PurchaseOrderRow>("SELECT * FROM purchase_orders WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         match row {
             Some(row) => {
@@ -533,11 +548,13 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn get_by_number_async(&self, po_number: &str) -> Result<Option<PurchaseOrder>> {
-        let row = sqlx::query_as::<_, PurchaseOrderRow>("SELECT * FROM purchase_orders WHERE po_number = $1")
-            .bind(po_number)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PurchaseOrderRow>(
+            "SELECT * FROM purchase_orders WHERE po_number = $1",
+        )
+        .bind(po_number)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         match row {
             Some(row) => {
@@ -548,7 +565,11 @@ impl PgPurchaseOrderRepository {
         }
     }
 
-    pub async fn update_async(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
+    pub async fn update_async(
+        &self,
+        id: Uuid,
+        input: UpdatePurchaseOrder,
+    ) -> Result<PurchaseOrder> {
         let po = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
         let now = Utc::now();
 
@@ -597,7 +618,11 @@ impl PgPurchaseOrderRepository {
             param_idx += 1;
         }
 
-        query.push_str(&format!(" ORDER BY order_date DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+        query.push_str(&format!(
+            " ORDER BY order_date DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
+        ));
 
         let mut q = sqlx::query_as::<_, PurchaseOrderRow>(&query);
 
@@ -621,7 +646,11 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn for_supplier_async(&self, supplier_id: Uuid) -> Result<Vec<PurchaseOrder>> {
-        self.list_async(PurchaseOrderFilter { supplier_id: Some(supplier_id), ..Default::default() }).await
+        self.list_async(PurchaseOrderFilter {
+            supplier_id: Some(supplier_id),
+            ..Default::default()
+        })
+        .await
     }
 
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -638,7 +667,9 @@ impl PgPurchaseOrderRepository {
             ))
         })?;
         if parsed_status != PurchaseOrderStatus::Draft {
-            return Err(CommerceError::ValidationError("Can only delete draft purchase orders".to_string()));
+            return Err(CommerceError::ValidationError(
+                "Can only delete draft purchase orders".to_string(),
+            ));
         }
 
         sqlx::query("DELETE FROM purchase_order_items WHERE purchase_order_id = $1")
@@ -656,7 +687,11 @@ impl PgPurchaseOrderRepository {
         Ok(())
     }
 
-    async fn update_status_async(&self, id: Uuid, status: PurchaseOrderStatus) -> Result<PurchaseOrder> {
+    async fn update_status_async(
+        &self,
+        id: Uuid,
+        status: PurchaseOrderStatus,
+    ) -> Result<PurchaseOrder> {
         sqlx::query("UPDATE purchase_orders SET status = $1, updated_at = $2 WHERE id = $3")
             .bind(status.to_string())
             .bind(Utc::now())
@@ -669,7 +704,8 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn submit_for_approval_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::PendingApproval).await
+        self.update_status_async(id, PurchaseOrderStatus::PendingApproval)
+            .await
     }
 
     pub async fn approve_async(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
@@ -689,19 +725,25 @@ impl PgPurchaseOrderRepository {
 
     pub async fn send_async(&self, id: Uuid) -> Result<PurchaseOrder> {
         let now = Utc::now();
-        sqlx::query("UPDATE purchase_orders SET status = $1, sent_at = $2, updated_at = $3 WHERE id = $4")
-            .bind(PurchaseOrderStatus::Sent.to_string())
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        sqlx::query(
+            "UPDATE purchase_orders SET status = $1, sent_at = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(PurchaseOrderStatus::Sent.to_string())
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn acknowledge_async(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
+    pub async fn acknowledge_async(
+        &self,
+        id: Uuid,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder> {
         let now = Utc::now();
         sqlx::query("UPDATE purchase_orders SET status = $1, supplier_reference = COALESCE($2, supplier_reference), updated_at = $3 WHERE id = $4")
             .bind(PurchaseOrderStatus::Acknowledged.to_string())
@@ -716,14 +758,20 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn hold_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::OnHold).await
+        self.update_status_async(id, PurchaseOrderStatus::OnHold)
+            .await
     }
 
     pub async fn cancel_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::Cancelled).await
+        self.update_status_async(id, PurchaseOrderStatus::Cancelled)
+            .await
     }
 
-    pub async fn receive_async(&self, id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
+    pub async fn receive_async(
+        &self,
+        id: Uuid,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder> {
         let now = Utc::now();
 
         for item in items.items {
@@ -738,7 +786,9 @@ impl PgPurchaseOrderRepository {
 
         // Check receipt status
         let items = self.load_items_async(id).await?;
-        let all_received = items.iter().all(|i| i.quantity_received >= i.quantity_ordered);
+        let all_received = items
+            .iter()
+            .all(|i| i.quantity_received >= i.quantity_ordered);
         let any_received = items.iter().any(|i| i.quantity_received > Decimal::ZERO);
 
         let new_status = if all_received {
@@ -764,19 +814,25 @@ impl PgPurchaseOrderRepository {
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.update_status_async(id, PurchaseOrderStatus::Completed).await
+        self.update_status_async(id, PurchaseOrderStatus::Completed)
+            .await
     }
 
-    pub async fn add_item_async(&self, po_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    pub async fn add_item_async(
+        &self,
+        po_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default() + item.tax_amount.unwrap_or_default();
+        let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
+            + item.tax_amount.unwrap_or_default();
 
         sqlx::query(
             "INSERT INTO purchase_order_items (id, purchase_order_id, product_id, sku, name,
              supplier_sku, quantity_ordered, quantity_received, unit_of_measure, unit_cost,
              line_total, tax_amount, discount_amount, expected_date, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(id)
         .bind(po_id)
@@ -801,24 +857,32 @@ impl PgPurchaseOrderRepository {
 
         self.recalculate_totals_async(po_id).await?;
 
-        let row = sqlx::query_as::<_, PurchaseOrderItemRow>("SELECT * FROM purchase_order_items WHERE id = $1")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PurchaseOrderItemRow>(
+            "SELECT * FROM purchase_order_items WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         Ok(Self::row_to_item(row))
     }
 
-    pub async fn update_item_async(&self, item_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    pub async fn update_item_async(
+        &self,
+        item_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         let now = Utc::now();
-        let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default() + item.tax_amount.unwrap_or_default();
+        let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
+            + item.tax_amount.unwrap_or_default();
 
-        let po_id: Uuid = sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
-            .bind(item_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let po_id: Uuid =
+            sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
+                .bind(item_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         sqlx::query(
             "UPDATE purchase_order_items SET sku = $1, name = $2, supplier_sku = $3,
@@ -843,21 +907,24 @@ impl PgPurchaseOrderRepository {
 
         self.recalculate_totals_async(po_id).await?;
 
-        let row = sqlx::query_as::<_, PurchaseOrderItemRow>("SELECT * FROM purchase_order_items WHERE id = $1")
-            .bind(item_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PurchaseOrderItemRow>(
+            "SELECT * FROM purchase_order_items WHERE id = $1",
+        )
+        .bind(item_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         Ok(Self::row_to_item(row))
     }
 
     pub async fn remove_item_async(&self, item_id: Uuid) -> Result<()> {
-        let po_id: Uuid = sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
-            .bind(item_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+        let po_id: Uuid =
+            sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
+                .bind(item_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_db_error)?;
 
         sqlx::query("DELETE FROM purchase_order_items WHERE id = $1")
             .bind(item_id)
@@ -1259,12 +1326,13 @@ impl PgPurchaseOrderRepository {
     pub async fn get_batch_async(&self, ids: Vec<Uuid>) -> Result<Vec<PurchaseOrder>> {
         validate_batch_size(&ids)?;
 
-        let rows =
-            sqlx::query_as::<_, PurchaseOrderRow>("SELECT * FROM purchase_orders WHERE id = ANY($1)")
-                .bind(&ids)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_db_error)?;
+        let rows = sqlx::query_as::<_, PurchaseOrderRow>(
+            "SELECT * FROM purchase_orders WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
 
         let mut orders = Vec::with_capacity(rows.len());
         for row in rows {
@@ -1365,7 +1433,11 @@ impl PurchaseOrderRepository for PgPurchaseOrderRepository {
         super::block_on(self.add_item_async(po_id, item))
     }
 
-    fn update_item(&self, item_id: Uuid, item: CreatePurchaseOrderItem) -> Result<PurchaseOrderItem> {
+    fn update_item(
+        &self,
+        item_id: Uuid,
+        item: CreatePurchaseOrderItem,
+    ) -> Result<PurchaseOrderItem> {
         super::block_on(self.update_item_async(item_id, item))
     }
 

@@ -375,9 +375,7 @@ impl Customers {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<CustomerOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let customer = commerce
             .customers()
@@ -560,9 +558,7 @@ impl Orders {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<OrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -586,9 +582,7 @@ impl Orders {
     #[napi]
     pub async fn update_status(&self, id: String, status: String) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let order_status = match status.to_lowercase().as_str() {
             "pending" => stateset_core::OrderStatus::Pending,
@@ -612,9 +606,7 @@ impl Orders {
     #[napi]
     pub async fn ship(&self, id: String, tracking_number: Option<String>) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -627,9 +619,7 @@ impl Orders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<OrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let order = commerce
             .orders()
@@ -741,9 +731,7 @@ impl Products {
                     sku: v.sku,
                     name: v.name,
                     price: Decimal::from_f64_retain(v.price).unwrap_or_default(),
-                    compare_at_price: v
-                        .compare_at_price
-                        .and_then(Decimal::from_f64_retain),
+                    compare_at_price: v.compare_at_price.and_then(Decimal::from_f64_retain),
                     ..Default::default()
                 })
                 .collect()
@@ -765,9 +753,7 @@ impl Products {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ProductOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let product = commerce
             .products()
@@ -899,7 +885,10 @@ pub struct Inventory {
 #[napi]
 impl Inventory {
     #[napi]
-    pub async fn create_item(&self, input: CreateInventoryItemInput) -> Result<InventoryItemOutput> {
+    pub async fn create_item(
+        &self,
+        input: CreateInventoryItemInput,
+    ) -> Result<InventoryItemOutput> {
         let commerce = self.commerce.lock().await;
 
         let item = commerce
@@ -908,9 +897,7 @@ impl Inventory {
                 sku: input.sku,
                 name: input.name,
                 description: input.description,
-                initial_quantity: input
-                    .initial_quantity
-                    .and_then(Decimal::from_f64_retain),
+                initial_quantity: input.initial_quantity.and_then(Decimal::from_f64_retain),
                 reorder_point: input.reorder_point.and_then(Decimal::from_f64_retain),
                 ..Default::default()
             })
@@ -959,7 +946,13 @@ impl Inventory {
 
         let reservation = commerce
             .inventory()
-            .reserve(&sku, qty, &reference_type, &reference_id, expires_in_seconds)
+            .reserve(
+                &sku,
+                qty,
+                &reference_type,
+                &reference_id,
+                expires_in_seconds,
+            )
             .map_err(|e| Error::from_reason(format!("Failed to reserve inventory: {}", e)))?;
 
         Ok(reservation.into())
@@ -1101,9 +1094,7 @@ impl Returns {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ReturnOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -1116,9 +1107,7 @@ impl Returns {
     #[napi]
     pub async fn approve(&self, id: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -1131,9 +1120,7 @@ impl Returns {
     #[napi]
     pub async fn reject(&self, id: String, reason: String) -> Result<ReturnOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let ret = commerce
             .returns()
@@ -1284,18 +1271,21 @@ impl Payments {
             .transpose()
             .map_err(|_| Error::from_reason("Invalid invoice UUID"))?;
 
-        let payment_method = input.payment_method.map(|m| match m.to_lowercase().as_str() {
-            "credit_card" => stateset_core::PaymentMethodType::CreditCard,
-            "debit_card" => stateset_core::PaymentMethodType::DebitCard,
-            "bank_transfer" => stateset_core::PaymentMethodType::BankTransfer,
-            "paypal" => stateset_core::PaymentMethodType::PayPal,
-            "applepay" | "apple_pay" => stateset_core::PaymentMethodType::ApplePay,
-            "googlepay" | "google_pay" => stateset_core::PaymentMethodType::GooglePay,
-            "crypto" => stateset_core::PaymentMethodType::Crypto,
-            "storecredit" | "store_credit" => stateset_core::PaymentMethodType::StoreCredit,
-            "giftcard" | "gift_card" => stateset_core::PaymentMethodType::GiftCard,
-            _ => stateset_core::PaymentMethodType::CreditCard,
-        }).unwrap_or(stateset_core::PaymentMethodType::CreditCard);
+        let payment_method = input
+            .payment_method
+            .map(|m| match m.to_lowercase().as_str() {
+                "credit_card" => stateset_core::PaymentMethodType::CreditCard,
+                "debit_card" => stateset_core::PaymentMethodType::DebitCard,
+                "bank_transfer" => stateset_core::PaymentMethodType::BankTransfer,
+                "paypal" => stateset_core::PaymentMethodType::PayPal,
+                "applepay" | "apple_pay" => stateset_core::PaymentMethodType::ApplePay,
+                "googlepay" | "google_pay" => stateset_core::PaymentMethodType::GooglePay,
+                "crypto" => stateset_core::PaymentMethodType::Crypto,
+                "storecredit" | "store_credit" => stateset_core::PaymentMethodType::StoreCredit,
+                "giftcard" | "gift_card" => stateset_core::PaymentMethodType::GiftCard,
+                _ => stateset_core::PaymentMethodType::CreditCard,
+            })
+            .unwrap_or(stateset_core::PaymentMethodType::CreditCard);
 
         let payment = commerce
             .payments()
@@ -1317,9 +1307,7 @@ impl Payments {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<PaymentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -1343,9 +1331,7 @@ impl Payments {
     #[napi]
     pub async fn mark_completed(&self, id: String) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -1356,11 +1342,14 @@ impl Payments {
     }
 
     #[napi]
-    pub async fn mark_failed(&self, id: String, reason: String, code: Option<String>) -> Result<PaymentOutput> {
+    pub async fn mark_failed(
+        &self,
+        id: String,
+        reason: String,
+        code: Option<String>,
+    ) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -1373,9 +1362,7 @@ impl Payments {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<PaymentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let payment = commerce
             .payments()
@@ -1498,17 +1485,19 @@ impl Shipments {
             _ => stateset_core::ShippingCarrier::Other,
         });
 
-        let shipping_method = input.shipping_method.map(|m| match m.to_lowercase().as_str() {
-            "standard" => stateset_core::ShippingMethod::Standard,
-            "express" => stateset_core::ShippingMethod::Express,
-            "overnight" => stateset_core::ShippingMethod::Overnight,
-            "ground" => stateset_core::ShippingMethod::Ground,
-            "twoday" | "two_day" => stateset_core::ShippingMethod::TwoDay,
-            "sameday" | "same_day" => stateset_core::ShippingMethod::SameDay,
-            "international" => stateset_core::ShippingMethod::International,
-            "freight" => stateset_core::ShippingMethod::Freight,
-            _ => stateset_core::ShippingMethod::Standard,
-        });
+        let shipping_method = input
+            .shipping_method
+            .map(|m| match m.to_lowercase().as_str() {
+                "standard" => stateset_core::ShippingMethod::Standard,
+                "express" => stateset_core::ShippingMethod::Express,
+                "overnight" => stateset_core::ShippingMethod::Overnight,
+                "ground" => stateset_core::ShippingMethod::Ground,
+                "twoday" | "two_day" => stateset_core::ShippingMethod::TwoDay,
+                "sameday" | "same_day" => stateset_core::ShippingMethod::SameDay,
+                "international" => stateset_core::ShippingMethod::International,
+                "freight" => stateset_core::ShippingMethod::Freight,
+                _ => stateset_core::ShippingMethod::Standard,
+            });
 
         let shipment = commerce
             .shipments()
@@ -1531,9 +1520,7 @@ impl Shipments {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<ShipmentOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -1555,11 +1542,13 @@ impl Shipments {
     }
 
     #[napi]
-    pub async fn ship(&self, id: String, tracking_number: Option<String>) -> Result<ShipmentOutput> {
+    pub async fn ship(
+        &self,
+        id: String,
+        tracking_number: Option<String>,
+    ) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -1572,9 +1561,7 @@ impl Shipments {
     #[napi]
     pub async fn deliver(&self, id: String) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -1587,9 +1574,7 @@ impl Shipments {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<ShipmentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let shipment = commerce
             .shipments()
@@ -1721,13 +1706,15 @@ impl Warranties {
             .transpose()
             .map_err(|_| Error::from_reason("Invalid order UUID"))?;
 
-        let warranty_type = input.warranty_type.and_then(|t| match t.to_lowercase().as_str() {
-            "standard" => Some(stateset_core::WarrantyType::Standard),
-            "extended" => Some(stateset_core::WarrantyType::Extended),
-            "limited" => Some(stateset_core::WarrantyType::Limited),
-            "lifetime" => Some(stateset_core::WarrantyType::Lifetime),
-            _ => None,
-        });
+        let warranty_type = input
+            .warranty_type
+            .and_then(|t| match t.to_lowercase().as_str() {
+                "standard" => Some(stateset_core::WarrantyType::Standard),
+                "extended" => Some(stateset_core::WarrantyType::Extended),
+                "limited" => Some(stateset_core::WarrantyType::Limited),
+                "lifetime" => Some(stateset_core::WarrantyType::Lifetime),
+                _ => None,
+            });
 
         let warranty = commerce
             .warranties()
@@ -1748,9 +1735,7 @@ impl Warranties {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<WarrantyOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let warranty = commerce
             .warranties()
@@ -1772,7 +1757,10 @@ impl Warranties {
     }
 
     #[napi]
-    pub async fn create_claim(&self, input: CreateWarrantyClaimInput) -> Result<WarrantyClaimOutput> {
+    pub async fn create_claim(
+        &self,
+        input: CreateWarrantyClaimInput,
+    ) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
         let warranty_id = input
             .warranty_id
@@ -1796,9 +1784,7 @@ impl Warranties {
     #[napi]
     pub async fn approve_claim(&self, id: String) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -1811,9 +1797,7 @@ impl Warranties {
     #[napi]
     pub async fn deny_claim(&self, id: String, reason: String) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let claim = commerce
             .warranties()
@@ -1824,11 +1808,13 @@ impl Warranties {
     }
 
     #[napi]
-    pub async fn complete_claim(&self, id: String, resolution: String) -> Result<WarrantyClaimOutput> {
+    pub async fn complete_claim(
+        &self,
+        id: String,
+        resolution: String,
+    ) -> Result<WarrantyClaimOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let res = match resolution.to_lowercase().as_str() {
             "repair" => stateset_core::ClaimResolution::Repair,
@@ -1971,9 +1957,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn get_supplier(&self, id: String) -> Result<Option<SupplierOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let supplier = commerce
             .purchase_orders()
@@ -2031,9 +2015,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<PurchaseOrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -2057,9 +2039,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn submit(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -2072,9 +2052,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn approve(&self, id: String, approved_by: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -2087,9 +2065,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn send(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -2102,9 +2078,7 @@ impl PurchaseOrders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let po = commerce
             .purchase_orders()
@@ -2247,9 +2221,7 @@ impl Invoices {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<InvoiceOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -2273,9 +2245,7 @@ impl Invoices {
     #[napi]
     pub async fn send(&self, id: String) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -2288,9 +2258,7 @@ impl Invoices {
     #[napi]
     pub async fn void(&self, id: String) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
@@ -2301,20 +2269,25 @@ impl Invoices {
     }
 
     #[napi]
-    pub async fn record_payment(&self, id: String, input: RecordPaymentInput) -> Result<InvoiceOutput> {
+    pub async fn record_payment(
+        &self,
+        id: String,
+        input: RecordPaymentInput,
+    ) -> Result<InvoiceOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let invoice = commerce
             .invoices()
-            .record_payment(uuid, stateset_core::RecordInvoicePayment {
-                amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
-                payment_method: input.payment_method,
-                reference: input.reference,
-                ..Default::default()
-            })
+            .record_payment(
+                uuid,
+                stateset_core::RecordInvoicePayment {
+                    amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
+                    payment_method: input.payment_method,
+                    reference: input.reference,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to record payment: {}", e)))?;
 
         Ok(invoice.into())
@@ -2450,9 +2423,7 @@ impl Bom {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<BomOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let bom = commerce
             .bom()
@@ -2474,7 +2445,11 @@ impl Bom {
     }
 
     #[napi]
-    pub async fn add_component(&self, bom_id: String, input: CreateBomComponentInput) -> Result<BomComponentOutput> {
+    pub async fn add_component(
+        &self,
+        bom_id: String,
+        input: CreateBomComponentInput,
+    ) -> Result<BomComponentOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = bom_id
             .parse()
@@ -2482,13 +2457,16 @@ impl Bom {
 
         let component = commerce
             .bom()
-            .add_component(uuid, stateset_core::CreateBomComponent {
-                component_sku: input.component_sku,
-                name: input.name,
-                quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
-                unit_of_measure: input.unit_of_measure,
-                ..Default::default()
-            })
+            .add_component(
+                uuid,
+                stateset_core::CreateBomComponent {
+                    component_sku: input.component_sku,
+                    name: input.name,
+                    quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
+                    unit_of_measure: input.unit_of_measure,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to add component: {}", e)))?;
 
         Ok(component.into())
@@ -2512,9 +2490,7 @@ impl Bom {
     #[napi]
     pub async fn activate(&self, id: String) -> Result<BomOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let bom = commerce
             .bom()
@@ -2606,20 +2582,23 @@ impl WorkOrders {
             .transpose()
             .map_err(|_| Error::from_reason("Invalid BOM UUID"))?;
 
-        let priority = input.priority.and_then(|p| match p.to_lowercase().as_str() {
-            "low" => Some(stateset_core::WorkOrderPriority::Low),
-            "normal" => Some(stateset_core::WorkOrderPriority::Normal),
-            "high" => Some(stateset_core::WorkOrderPriority::High),
-            "urgent" => Some(stateset_core::WorkOrderPriority::Urgent),
-            _ => None,
-        });
+        let priority = input
+            .priority
+            .and_then(|p| match p.to_lowercase().as_str() {
+                "low" => Some(stateset_core::WorkOrderPriority::Low),
+                "normal" => Some(stateset_core::WorkOrderPriority::Normal),
+                "high" => Some(stateset_core::WorkOrderPriority::High),
+                "urgent" => Some(stateset_core::WorkOrderPriority::Urgent),
+                _ => None,
+            });
 
         let wo = commerce
             .work_orders()
             .create(stateset_core::CreateWorkOrder {
                 product_id,
                 bom_id,
-                quantity_to_build: Decimal::from_f64_retain(input.quantity_to_build).unwrap_or_default(),
+                quantity_to_build: Decimal::from_f64_retain(input.quantity_to_build)
+                    .unwrap_or_default(),
                 priority,
                 notes: input.notes,
                 ..Default::default()
@@ -2632,9 +2611,7 @@ impl WorkOrders {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<WorkOrderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -2658,9 +2635,7 @@ impl WorkOrders {
     #[napi]
     pub async fn start(&self, id: String) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -2673,13 +2648,14 @@ impl WorkOrders {
     #[napi]
     pub async fn complete(&self, id: String, quantity_completed: f64) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
-            .complete(uuid, Decimal::from_f64_retain(quantity_completed).unwrap_or_default())
+            .complete(
+                uuid,
+                Decimal::from_f64_retain(quantity_completed).unwrap_or_default(),
+            )
             .map_err(|e| Error::from_reason(format!("Failed to complete work order: {}", e)))?;
 
         Ok(wo.into())
@@ -2688,9 +2664,7 @@ impl WorkOrders {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<WorkOrderOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let wo = commerce
             .work_orders()
@@ -3051,9 +3025,7 @@ impl Carts {
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<CartOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3080,21 +3052,22 @@ impl Carts {
     #[napi]
     pub async fn update(&self, id: String, input: UpdateCartInput) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .update(uuid, stateset_core::UpdateCart {
-                customer_email: input.customer_email,
-                customer_phone: input.customer_phone,
-                customer_name: input.customer_name,
-                shipping_method: input.shipping_method,
-                coupon_code: input.coupon_code,
-                notes: input.notes,
-                ..Default::default()
-            })
+            .update(
+                uuid,
+                stateset_core::UpdateCart {
+                    customer_email: input.customer_email,
+                    customer_phone: input.customer_phone,
+                    customer_name: input.customer_name,
+                    shipping_method: input.shipping_method,
+                    coupon_code: input.coupon_code,
+                    notes: input.notes,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to update cart: {}", e)))?;
 
         Ok(cart.into())
@@ -3132,9 +3105,7 @@ impl Carts {
     #[napi]
     pub async fn delete(&self, id: String) -> Result<()> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         commerce
             .carts()
@@ -3146,7 +3117,11 @@ impl Carts {
 
     /// Add an item to the cart
     #[napi]
-    pub async fn add_item(&self, cart_id: String, item: AddCartItemInput) -> Result<CartItemOutput> {
+    pub async fn add_item(
+        &self,
+        cart_id: String,
+        item: AddCartItemInput,
+    ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = cart_id
             .parse()
@@ -3166,20 +3141,27 @@ impl Carts {
 
         let cart_item = commerce
             .carts()
-            .add_item(uuid, stateset_core::AddCartItem {
-                product_id,
-                variant_id,
-                sku: item.sku,
-                name: item.name,
-                description: item.description,
-                image_url: item.image_url,
-                quantity: item.quantity,
-                unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
-                original_price: item.original_price.map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
-                weight: item.weight.map(|w| Decimal::from_f64_retain(w).unwrap_or_default()),
-                requires_shipping: item.requires_shipping,
-                ..Default::default()
-            })
+            .add_item(
+                uuid,
+                stateset_core::AddCartItem {
+                    product_id,
+                    variant_id,
+                    sku: item.sku,
+                    name: item.name,
+                    description: item.description,
+                    image_url: item.image_url,
+                    quantity: item.quantity,
+                    unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
+                    original_price: item
+                        .original_price
+                        .map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
+                    weight: item
+                        .weight
+                        .map(|w| Decimal::from_f64_retain(w).unwrap_or_default()),
+                    requires_shipping: item.requires_shipping,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to add item: {}", e)))?;
 
         Ok(cart_item.into())
@@ -3187,7 +3169,11 @@ impl Carts {
 
     /// Update a cart item
     #[napi]
-    pub async fn update_item(&self, item_id: String, input: UpdateCartItemInput) -> Result<CartItemOutput> {
+    pub async fn update_item(
+        &self,
+        item_id: String,
+        input: UpdateCartItemInput,
+    ) -> Result<CartItemOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = item_id
             .parse()
@@ -3195,11 +3181,16 @@ impl Carts {
 
         let cart_item = commerce
             .carts()
-            .update_item(uuid, stateset_core::UpdateCartItem {
-                quantity: input.quantity,
-                unit_price: input.unit_price.map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
-                ..Default::default()
-            })
+            .update_item(
+                uuid,
+                stateset_core::UpdateCartItem {
+                    quantity: input.quantity,
+                    unit_price: input
+                        .unit_price
+                        .map(|p| Decimal::from_f64_retain(p).unwrap_or_default()),
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to update item: {}", e)))?;
 
         Ok(cart_item.into())
@@ -3255,11 +3246,13 @@ impl Carts {
 
     /// Set the shipping address
     #[napi]
-    pub async fn set_shipping_address(&self, id: String, address: CartAddressInput) -> Result<CartOutput> {
+    pub async fn set_shipping_address(
+        &self,
+        id: String,
+        address: CartAddressInput,
+    ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3271,11 +3264,13 @@ impl Carts {
 
     /// Set shipping selection (address + method/carrier/amount)
     #[napi]
-    pub async fn set_shipping(&self, id: String, input: SetCartShippingInput) -> Result<CartOutput> {
+    pub async fn set_shipping(
+        &self,
+        id: String,
+        input: SetCartShippingInput,
+    ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let shipping_amount = match input.shipping_amount {
             Some(amount) => Some(
@@ -3287,12 +3282,15 @@ impl Carts {
 
         let cart = commerce
             .carts()
-            .set_shipping(uuid, stateset_core::SetCartShipping {
-                shipping_address: input_to_cart_address(input.shipping_address),
-                shipping_method: input.shipping_method,
-                shipping_carrier: input.shipping_carrier,
-                shipping_amount,
-            })
+            .set_shipping(
+                uuid,
+                stateset_core::SetCartShipping {
+                    shipping_address: input_to_cart_address(input.shipping_address),
+                    shipping_method: input.shipping_method,
+                    shipping_carrier: input.shipping_carrier,
+                    shipping_amount,
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to set shipping: {}", e)))?;
 
         Ok(cart.into())
@@ -3300,11 +3298,13 @@ impl Carts {
 
     /// Set the billing address
     #[napi]
-    pub async fn set_billing_address(&self, id: String, address: CartAddressInput) -> Result<CartOutput> {
+    pub async fn set_billing_address(
+        &self,
+        id: String,
+        address: CartAddressInput,
+    ) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3318,9 +3318,7 @@ impl Carts {
     #[napi]
     pub async fn get_shipping_rates(&self, id: String) -> Result<Vec<ShippingRateOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let rates = commerce
             .carts()
@@ -3334,17 +3332,18 @@ impl Carts {
     #[napi]
     pub async fn set_payment(&self, id: String, input: SetCartPaymentInput) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .set_payment(uuid, stateset_core::SetCartPayment {
-                payment_method: input.payment_method,
-                payment_token: input.payment_token,
-                ..Default::default()
-            })
+            .set_payment(
+                uuid,
+                stateset_core::SetCartPayment {
+                    payment_method: input.payment_method,
+                    payment_token: input.payment_token,
+                    ..Default::default()
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to set payment: {}", e)))?;
 
         Ok(cart.into())
@@ -3354,9 +3353,7 @@ impl Carts {
     #[napi]
     pub async fn apply_discount(&self, id: String, coupon_code: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3370,9 +3367,7 @@ impl Carts {
     #[napi]
     pub async fn remove_discount(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3386,9 +3381,7 @@ impl Carts {
     #[napi]
     pub async fn mark_ready_for_payment(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3402,9 +3395,7 @@ impl Carts {
     #[napi]
     pub async fn begin_checkout(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3418,9 +3409,7 @@ impl Carts {
     #[napi]
     pub async fn complete(&self, id: String) -> Result<CheckoutResultOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let result = commerce
             .carts()
@@ -3434,9 +3423,7 @@ impl Carts {
     #[napi]
     pub async fn cancel(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3450,9 +3437,7 @@ impl Carts {
     #[napi]
     pub async fn abandon(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3466,9 +3451,7 @@ impl Carts {
     #[napi]
     pub async fn expire(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3482,9 +3465,7 @@ impl Carts {
     #[napi]
     pub async fn reserve_inventory(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3498,9 +3479,7 @@ impl Carts {
     #[napi]
     pub async fn release_inventory(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3514,9 +3493,7 @@ impl Carts {
     #[napi]
     pub async fn recalculate(&self, id: String) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
@@ -3530,13 +3507,14 @@ impl Carts {
     #[napi]
     pub async fn set_tax(&self, id: String, tax_amount: f64) -> Result<CartOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id
-            .parse()
-            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
 
         let cart = commerce
             .carts()
-            .set_tax(uuid, Decimal::from_f64_retain(tax_amount).unwrap_or_default())
+            .set_tax(
+                uuid,
+                Decimal::from_f64_retain(tax_amount).unwrap_or_default(),
+            )
             .map_err(|e| Error::from_reason(format!("Failed to set tax: {}", e)))?;
 
         Ok(cart.into())
@@ -3790,7 +3768,10 @@ fn parse_granularity(granularity: &str) -> stateset_embedded::TimeGranularity {
 impl Analytics {
     /// Get sales summary for a time period
     #[napi]
-    pub async fn sales_summary(&self, query: Option<AnalyticsQueryInput>) -> Result<SalesSummaryOutput> {
+    pub async fn sales_summary(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<SalesSummaryOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3819,7 +3800,10 @@ impl Analytics {
 
     /// Get revenue broken down by time periods
     #[napi]
-    pub async fn revenue_by_period(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<RevenueByPeriodOutput>> {
+    pub async fn revenue_by_period(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<Vec<RevenueByPeriodOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3837,17 +3821,23 @@ impl Analytics {
             .revenue_by_period(q)
             .map_err(|e| Error::from_reason(format!("Failed to get revenue: {}", e)))?;
 
-        Ok(revenue.into_iter().map(|r| RevenueByPeriodOutput {
-            period: r.period,
-            revenue: to_f64_or_nan(r.revenue),
-            order_count: r.order_count as u32,
-            period_start: r.period_start.to_rfc3339(),
-        }).collect())
+        Ok(revenue
+            .into_iter()
+            .map(|r| RevenueByPeriodOutput {
+                period: r.period,
+                revenue: to_f64_or_nan(r.revenue),
+                order_count: r.order_count as u32,
+                period_start: r.period_start.to_rfc3339(),
+            })
+            .collect())
     }
 
     /// Get top selling products
     #[napi]
-    pub async fn top_products(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<TopProductOutput>> {
+    pub async fn top_products(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<Vec<TopProductOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3865,19 +3855,25 @@ impl Analytics {
             .top_products(q)
             .map_err(|e| Error::from_reason(format!("Failed to get top products: {}", e)))?;
 
-        Ok(products.into_iter().map(|p| TopProductOutput {
-            product_id: p.product_id.map(|id| id.to_string()),
-            sku: p.sku,
-            name: p.name,
-            units_sold: p.units_sold as u32,
-            revenue: to_f64_or_nan(p.revenue),
-            order_count: p.order_count as u32,
-        }).collect())
+        Ok(products
+            .into_iter()
+            .map(|p| TopProductOutput {
+                product_id: p.product_id.map(|id| id.to_string()),
+                sku: p.sku,
+                name: p.name,
+                units_sold: p.units_sold as u32,
+                revenue: to_f64_or_nan(p.revenue),
+                order_count: p.order_count as u32,
+            })
+            .collect())
     }
 
     /// Get product performance with period comparison
     #[napi]
-    pub async fn product_performance(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<ProductPerformanceOutput>> {
+    pub async fn product_performance(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<Vec<ProductPerformanceOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3913,7 +3909,10 @@ impl Analytics {
 
     /// Get customer metrics
     #[napi]
-    pub async fn customer_metrics(&self, query: Option<AnalyticsQueryInput>) -> Result<CustomerMetricsOutput> {
+    pub async fn customer_metrics(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<CustomerMetricsOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3939,7 +3938,10 @@ impl Analytics {
 
     /// Get top customers by spend
     #[napi]
-    pub async fn top_customers(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<TopCustomerOutput>> {
+    pub async fn top_customers(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<Vec<TopCustomerOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -3957,14 +3959,17 @@ impl Analytics {
             .top_customers(q)
             .map_err(|e| Error::from_reason(format!("Failed to get top customers: {}", e)))?;
 
-        Ok(customers.into_iter().map(|c| TopCustomerOutput {
-            customer_id: c.customer_id.to_string(),
-            name: c.name,
-            email: c.email,
-            order_count: c.order_count as u32,
-            total_spent: to_f64_or_nan(c.total_spent),
-            average_order_value: to_f64_or_nan(c.average_order_value),
-        }).collect())
+        Ok(customers
+            .into_iter()
+            .map(|c| TopCustomerOutput {
+                customer_id: c.customer_id.to_string(),
+                name: c.name,
+                email: c.email,
+                order_count: c.order_count as u32,
+                total_spent: to_f64_or_nan(c.total_spent),
+                average_order_value: to_f64_or_nan(c.average_order_value),
+            })
+            .collect())
     }
 
     /// Get inventory health summary
@@ -3998,21 +4003,27 @@ impl Analytics {
             .low_stock_items(threshold_dec)
             .map_err(|e| Error::from_reason(format!("Failed to get low stock items: {}", e)))?;
 
-        Ok(items.into_iter().map(|i| LowStockItemOutput {
-            sku: i.sku,
-            name: i.name,
-            on_hand: to_f64_or_nan(i.on_hand),
-            allocated: to_f64_or_nan(i.allocated),
-            available: to_f64_or_nan(i.available),
-            reorder_point: i.reorder_point.map(|d| to_f64_or_nan(d)),
-            average_daily_sales: i.average_daily_sales.map(|d| to_f64_or_nan(d)),
-            days_of_stock: i.days_of_stock.map(|d| to_f64_or_nan(d)),
-        }).collect())
+        Ok(items
+            .into_iter()
+            .map(|i| LowStockItemOutput {
+                sku: i.sku,
+                name: i.name,
+                on_hand: to_f64_or_nan(i.on_hand),
+                allocated: to_f64_or_nan(i.allocated),
+                available: to_f64_or_nan(i.available),
+                reorder_point: i.reorder_point.map(|d| to_f64_or_nan(d)),
+                average_daily_sales: i.average_daily_sales.map(|d| to_f64_or_nan(d)),
+                days_of_stock: i.days_of_stock.map(|d| to_f64_or_nan(d)),
+            })
+            .collect())
     }
 
     /// Get inventory movement summary
     #[napi]
-    pub async fn inventory_movement(&self, query: Option<AnalyticsQueryInput>) -> Result<Vec<InventoryMovementOutput>> {
+    pub async fn inventory_movement(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<Vec<InventoryMovementOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -4043,7 +4054,11 @@ impl Analytics {
 
     /// Get demand forecast for inventory items
     #[napi]
-    pub async fn demand_forecast(&self, skus: Option<Vec<String>>, days_ahead: Option<u32>) -> Result<Vec<DemandForecastOutput>> {
+    pub async fn demand_forecast(
+        &self,
+        skus: Option<Vec<String>>,
+        days_ahead: Option<u32>,
+    ) -> Result<Vec<DemandForecastOutput>> {
         let commerce = self.commerce.lock().await;
 
         let forecasts = commerce
@@ -4051,44 +4066,59 @@ impl Analytics {
             .demand_forecast(skus, days_ahead.unwrap_or(30))
             .map_err(|e| Error::from_reason(format!("Failed to get demand forecast: {}", e)))?;
 
-        Ok(forecasts.into_iter().map(|f| DemandForecastOutput {
-            sku: f.sku,
-            name: f.name,
-            average_daily_demand: to_f64_or_nan(f.average_daily_demand),
-            forecasted_demand: to_f64_or_nan(f.forecasted_demand),
-            confidence: to_f64_or_nan(f.confidence),
-            current_stock: to_f64_or_nan(f.current_stock),
-            days_until_stockout: f.days_until_stockout,
-            recommended_reorder_qty: f.recommended_reorder_qty.map(|d| to_f64_or_nan(d)),
-            trend: format!("{:?}", f.trend),
-        }).collect())
+        Ok(forecasts
+            .into_iter()
+            .map(|f| DemandForecastOutput {
+                sku: f.sku,
+                name: f.name,
+                average_daily_demand: to_f64_or_nan(f.average_daily_demand),
+                forecasted_demand: to_f64_or_nan(f.forecasted_demand),
+                confidence: to_f64_or_nan(f.confidence),
+                current_stock: to_f64_or_nan(f.current_stock),
+                days_until_stockout: f.days_until_stockout,
+                recommended_reorder_qty: f.recommended_reorder_qty.map(|d| to_f64_or_nan(d)),
+                trend: format!("{:?}", f.trend),
+            })
+            .collect())
     }
 
     /// Get revenue forecast
     #[napi]
-    pub async fn revenue_forecast(&self, periods_ahead: Option<u32>, granularity: Option<String>) -> Result<Vec<RevenueForecastOutput>> {
+    pub async fn revenue_forecast(
+        &self,
+        periods_ahead: Option<u32>,
+        granularity: Option<String>,
+    ) -> Result<Vec<RevenueForecastOutput>> {
         let commerce = self.commerce.lock().await;
 
-        let gran = granularity.map(|g| parse_granularity(&g)).unwrap_or(stateset_embedded::TimeGranularity::Month);
+        let gran = granularity
+            .map(|g| parse_granularity(&g))
+            .unwrap_or(stateset_embedded::TimeGranularity::Month);
 
         let forecasts = commerce
             .analytics()
             .revenue_forecast(periods_ahead.unwrap_or(3), gran)
             .map_err(|e| Error::from_reason(format!("Failed to get revenue forecast: {}", e)))?;
 
-        Ok(forecasts.into_iter().map(|f| RevenueForecastOutput {
-            period: f.period,
-            forecasted_revenue: to_f64_or_nan(f.forecasted_revenue),
-            lower_bound: to_f64_or_nan(f.lower_bound),
-            upper_bound: to_f64_or_nan(f.upper_bound),
-            confidence_level: to_f64_or_nan(f.confidence_level),
-            based_on_periods: f.based_on_periods,
-        }).collect())
+        Ok(forecasts
+            .into_iter()
+            .map(|f| RevenueForecastOutput {
+                period: f.period,
+                forecasted_revenue: to_f64_or_nan(f.forecasted_revenue),
+                lower_bound: to_f64_or_nan(f.lower_bound),
+                upper_bound: to_f64_or_nan(f.upper_bound),
+                confidence_level: to_f64_or_nan(f.confidence_level),
+                based_on_periods: f.based_on_periods,
+            })
+            .collect())
     }
 
     /// Get order status breakdown
     #[napi]
-    pub async fn order_status_breakdown(&self, query: Option<AnalyticsQueryInput>) -> Result<OrderStatusBreakdownOutput> {
+    pub async fn order_status_breakdown(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<OrderStatusBreakdownOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -4101,7 +4131,9 @@ impl Analytics {
         let breakdown = commerce
             .analytics()
             .order_status_breakdown(q)
-            .map_err(|e| Error::from_reason(format!("Failed to get order status breakdown: {}", e)))?;
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to get order status breakdown: {}", e))
+            })?;
 
         Ok(OrderStatusBreakdownOutput {
             pending: breakdown.pending as u32,
@@ -4116,7 +4148,10 @@ impl Analytics {
 
     /// Get fulfillment metrics
     #[napi]
-    pub async fn fulfillment_metrics(&self, query: Option<AnalyticsQueryInput>) -> Result<FulfillmentMetricsOutput> {
+    pub async fn fulfillment_metrics(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<FulfillmentMetricsOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -4132,18 +4167,10 @@ impl Analytics {
             .map_err(|e| Error::from_reason(format!("Failed to get fulfillment metrics: {}", e)))?;
 
         Ok(FulfillmentMetricsOutput {
-            avg_time_to_ship_hours: metrics
-                .avg_time_to_ship_hours
-                .map(|d| to_f64_or_nan(d)),
-            avg_time_to_deliver_hours: metrics
-                .avg_time_to_deliver_hours
-                .map(|d| to_f64_or_nan(d)),
-            on_time_shipping_percent: metrics
-                .on_time_shipping_percent
-                .map(|d| to_f64_or_nan(d)),
-            on_time_delivery_percent: metrics
-                .on_time_delivery_percent
-                .map(|d| to_f64_or_nan(d)),
+            avg_time_to_ship_hours: metrics.avg_time_to_ship_hours.map(|d| to_f64_or_nan(d)),
+            avg_time_to_deliver_hours: metrics.avg_time_to_deliver_hours.map(|d| to_f64_or_nan(d)),
+            on_time_shipping_percent: metrics.on_time_shipping_percent.map(|d| to_f64_or_nan(d)),
+            on_time_delivery_percent: metrics.on_time_delivery_percent.map(|d| to_f64_or_nan(d)),
             shipped_today: metrics.shipped_today as u32,
             awaiting_shipment: metrics.awaiting_shipment as u32,
         })
@@ -4151,7 +4178,10 @@ impl Analytics {
 
     /// Get return metrics
     #[napi]
-    pub async fn return_metrics(&self, query: Option<AnalyticsQueryInput>) -> Result<ReturnMetricsOutput> {
+    pub async fn return_metrics(
+        &self,
+        query: Option<AnalyticsQueryInput>,
+    ) -> Result<ReturnMetricsOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut q = stateset_embedded::AnalyticsQuery::new();
@@ -4336,7 +4366,10 @@ impl CurrencyOperations {
 
     /// List exchange rates with optional filtering
     #[napi]
-    pub async fn list_rates(&self, filter: Option<ExchangeRateFilterInput>) -> Result<Vec<ExchangeRateOutput>> {
+    pub async fn list_rates(
+        &self,
+        filter: Option<ExchangeRateFilterInput>,
+    ) -> Result<Vec<ExchangeRateOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut f = stateset_embedded::ExchangeRateFilter::default();
@@ -4378,7 +4411,10 @@ impl CurrencyOperations {
 
     /// Set multiple exchange rates at once
     #[napi]
-    pub async fn set_rates(&self, inputs: Vec<SetExchangeRateInput>) -> Result<Vec<ExchangeRateOutput>> {
+    pub async fn set_rates(
+        &self,
+        inputs: Vec<SetExchangeRateInput>,
+    ) -> Result<Vec<ExchangeRateOutput>> {
         let commerce = self.commerce.lock().await;
 
         let mut rates = Vec::new();
@@ -4453,7 +4489,11 @@ impl CurrencyOperations {
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
-            enabled_currencies: settings.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
+            enabled_currencies: settings
+                .enabled_currencies
+                .iter()
+                .map(|c| c.code().to_string())
+                .collect(),
             auto_convert: settings.auto_convert,
             rounding_mode: rounding_mode_to_string(&settings.rounding_mode),
         })
@@ -4461,7 +4501,10 @@ impl CurrencyOperations {
 
     /// Update store currency settings
     #[napi]
-    pub async fn update_settings(&self, input: StoreCurrencySettingsInput) -> Result<StoreCurrencySettingsOutput> {
+    pub async fn update_settings(
+        &self,
+        input: StoreCurrencySettingsInput,
+    ) -> Result<StoreCurrencySettingsOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut enabled = Vec::new();
@@ -4475,13 +4518,21 @@ impl CurrencyOperations {
                 base_currency: parse_currency(&input.base_currency)?,
                 enabled_currencies: enabled,
                 auto_convert: input.auto_convert.unwrap_or(true),
-                rounding_mode: input.rounding_mode.as_deref().map(parse_rounding_mode).unwrap_or_default(),
+                rounding_mode: input
+                    .rounding_mode
+                    .as_deref()
+                    .map(parse_rounding_mode)
+                    .unwrap_or_default(),
             })
             .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
-            enabled_currencies: settings.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
+            enabled_currencies: settings
+                .enabled_currencies
+                .iter()
+                .map(|c| c.code().to_string())
+                .collect(),
             auto_convert: settings.auto_convert,
             rounding_mode: rounding_mode_to_string(&settings.rounding_mode),
         })
@@ -4489,7 +4540,10 @@ impl CurrencyOperations {
 
     /// Set the store's base currency
     #[napi]
-    pub async fn set_base_currency(&self, currency_code: String) -> Result<StoreCurrencySettingsOutput> {
+    pub async fn set_base_currency(
+        &self,
+        currency_code: String,
+    ) -> Result<StoreCurrencySettingsOutput> {
         let commerce = self.commerce.lock().await;
         let currency = parse_currency(&currency_code)?;
 
@@ -4500,7 +4554,11 @@ impl CurrencyOperations {
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
-            enabled_currencies: settings.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
+            enabled_currencies: settings
+                .enabled_currencies
+                .iter()
+                .map(|c| c.code().to_string())
+                .collect(),
             auto_convert: settings.auto_convert,
             rounding_mode: rounding_mode_to_string(&settings.rounding_mode),
         })
@@ -4508,7 +4566,10 @@ impl CurrencyOperations {
 
     /// Enable currencies for the store
     #[napi]
-    pub async fn enable_currencies(&self, currency_codes: Vec<String>) -> Result<StoreCurrencySettingsOutput> {
+    pub async fn enable_currencies(
+        &self,
+        currency_codes: Vec<String>,
+    ) -> Result<StoreCurrencySettingsOutput> {
         let commerce = self.commerce.lock().await;
 
         let mut currencies = Vec::new();
@@ -4523,7 +4584,11 @@ impl CurrencyOperations {
 
         Ok(StoreCurrencySettingsOutput {
             base_currency: settings.base_currency.code().to_string(),
-            enabled_currencies: settings.enabled_currencies.iter().map(|c| c.code().to_string()).collect(),
+            enabled_currencies: settings
+                .enabled_currencies
+                .iter()
+                .map(|c| c.code().to_string())
+                .collect(),
             auto_convert: settings.auto_convert,
             rounding_mode: rounding_mode_to_string(&settings.rounding_mode),
         })
@@ -4618,8 +4683,7 @@ pub struct UpdateSubscriptionPlanInput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SubscriptionPlanFilterInput {
     pub status: Option<String>,
     pub billing_interval: Option<String>,
@@ -4701,8 +4765,7 @@ pub struct UpdateSubscriptionInput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SubscriptionFilterInput {
     pub customer_id: Option<String>,
     pub plan_id: Option<String>,
@@ -4781,16 +4844,14 @@ impl From<stateset_core::Subscription> for SubscriptionOutput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct PauseSubscriptionInput {
     pub reason: Option<String>,
     pub resume_at: Option<String>,
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct CancelSubscriptionInput {
     pub reason: Option<String>,
     pub immediate: Option<bool>,
@@ -4798,15 +4859,13 @@ pub struct CancelSubscriptionInput {
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SkipBillingCycleInput {
     pub reason: Option<String>,
 }
 
 #[napi(object)]
-#[derive(Serialize, Deserialize, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct BillingCycleFilterInput {
     pub subscription_id: Option<String>,
     pub status: Option<String>,
@@ -4881,7 +4940,9 @@ impl From<stateset_core::SubscriptionEvent> for SubscriptionEventOutput {
             subscription_id: e.subscription_id.to_string(),
             event_type: format!("{:?}", e.event_type).to_lowercase(),
             description: e.description,
-            data: e.data.map(|d| serde_json::to_string(&d).unwrap_or_default()),
+            data: e
+                .data
+                .map(|d| serde_json::to_string(&d).unwrap_or_default()),
             triggered_by: e.triggered_by,
             created_at: e.created_at.to_rfc3339(),
         }
@@ -4898,7 +4959,10 @@ fn parse_billing_interval(s: &str) -> Result<stateset_core::BillingInterval> {
         "semiannual" => Ok(stateset_core::BillingInterval::Semiannual),
         "annual" => Ok(stateset_core::BillingInterval::Annual),
         "custom" => Ok(stateset_core::BillingInterval::Custom),
-        _ => Err(Error::from_reason(format!("Invalid billing interval: {}", s))),
+        _ => Err(Error::from_reason(format!(
+            "Invalid billing interval: {}",
+            s
+        ))),
     }
 }
 
@@ -4920,7 +4984,10 @@ fn parse_subscription_status(s: &str) -> Result<stateset_core::SubscriptionStatu
         "past_due" => Ok(stateset_core::SubscriptionStatus::PastDue),
         "cancelled" => Ok(stateset_core::SubscriptionStatus::Cancelled),
         "expired" => Ok(stateset_core::SubscriptionStatus::Expired),
-        _ => Err(Error::from_reason(format!("Invalid subscription status: {}", s))),
+        _ => Err(Error::from_reason(format!(
+            "Invalid subscription status: {}",
+            s
+        ))),
     }
 }
 
@@ -4933,7 +5000,10 @@ fn parse_billing_cycle_status(s: &str) -> Result<stateset_core::BillingCycleStat
         "skipped" => Ok(stateset_core::BillingCycleStatus::Skipped),
         "refunded" => Ok(stateset_core::BillingCycleStatus::Refunded),
         "voided" => Ok(stateset_core::BillingCycleStatus::Voided),
-        _ => Err(Error::from_reason(format!("Invalid billing cycle status: {}", s))),
+        _ => Err(Error::from_reason(format!(
+            "Invalid billing cycle status: {}",
+            s
+        ))),
     }
 }
 
@@ -4950,7 +5020,10 @@ impl Subscriptions {
 
     /// Create a new subscription plan
     #[napi]
-    pub async fn create_plan(&self, input: CreateSubscriptionPlanInput) -> Result<SubscriptionPlanOutput> {
+    pub async fn create_plan(
+        &self,
+        input: CreateSubscriptionPlanInput,
+    ) -> Result<SubscriptionPlanOutput> {
         let commerce = self.commerce.lock().await;
         let billing_interval = parse_billing_interval(&input.billing_interval)?;
 
@@ -4964,14 +5037,20 @@ impl Subscriptions {
                 custom_interval_days: input.custom_interval_days,
                 price: Decimal::try_from(input.price)
                     .map_err(|e| Error::from_reason(format!("Invalid price: {}", e)))?,
-                setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
+                setup_fee: input
+                    .setup_fee
+                    .map(|f| Decimal::try_from(f).unwrap_or_default()),
                 currency: input.currency,
                 trial_days: input.trial_days,
                 trial_requires_payment_method: input.trial_requires_payment_method,
                 min_cycles: input.min_cycles,
                 max_cycles: input.max_cycles,
-                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
-                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_percent: input
+                    .discount_percent
+                    .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                discount_amount: input
+                    .discount_amount
+                    .map(|d| Decimal::try_from(d).unwrap_or_default()),
                 items: None,
                 metadata: None,
             })
@@ -5010,7 +5089,10 @@ impl Subscriptions {
 
     /// List subscription plans
     #[napi]
-    pub async fn list_plans(&self, filter: Option<SubscriptionPlanFilterInput>) -> Result<Vec<SubscriptionPlanOutput>> {
+    pub async fn list_plans(
+        &self,
+        filter: Option<SubscriptionPlanFilterInput>,
+    ) -> Result<Vec<SubscriptionPlanOutput>> {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
@@ -5018,7 +5100,10 @@ impl Subscriptions {
             .subscriptions()
             .list_plans(stateset_core::SubscriptionPlanFilter {
                 status: f.status.as_ref().and_then(|s| parse_plan_status(s).ok()),
-                billing_interval: f.billing_interval.as_ref().and_then(|s| parse_billing_interval(s).ok()),
+                billing_interval: f
+                    .billing_interval
+                    .as_ref()
+                    .and_then(|s| parse_billing_interval(s).ok()),
                 search: f.search,
                 limit: f.limit.map(|v| v as u32),
                 offset: f.offset.map(|v| v as u32),
@@ -5030,27 +5115,42 @@ impl Subscriptions {
 
     /// Update a subscription plan
     #[napi]
-    pub async fn update_plan(&self, id: String, input: UpdateSubscriptionPlanInput) -> Result<SubscriptionPlanOutput> {
+    pub async fn update_plan(
+        &self,
+        id: String,
+        input: UpdateSubscriptionPlanInput,
+    ) -> Result<SubscriptionPlanOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
         let plan = commerce
             .subscriptions()
-            .update_plan(uuid, stateset_core::UpdateSubscriptionPlan {
-                name: input.name,
-                description: input.description,
-                status: None,
-                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
-                setup_fee: input.setup_fee.map(|f| Decimal::try_from(f).unwrap_or_default()),
-                trial_days: input.trial_days,
-                trial_requires_payment_method: input.trial_requires_payment_method,
-                min_cycles: input.min_cycles,
-                max_cycles: input.max_cycles,
-                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
-                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
-                metadata: None,
-            })
+            .update_plan(
+                uuid,
+                stateset_core::UpdateSubscriptionPlan {
+                    name: input.name,
+                    description: input.description,
+                    status: None,
+                    price: input
+                        .price
+                        .map(|p| Decimal::try_from(p).unwrap_or_default()),
+                    setup_fee: input
+                        .setup_fee
+                        .map(|f| Decimal::try_from(f).unwrap_or_default()),
+                    trial_days: input.trial_days,
+                    trial_requires_payment_method: input.trial_requires_payment_method,
+                    min_cycles: input.min_cycles,
+                    max_cycles: input.max_cycles,
+                    discount_percent: input
+                        .discount_percent
+                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    discount_amount: input
+                        .discount_amount
+                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    metadata: None,
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to update plan: {}", e)))?;
 
         Ok(plan.into())
@@ -5100,7 +5200,9 @@ impl Subscriptions {
             .map_err(|e| Error::from_reason(format!("Invalid plan UUID: {}", e)))?;
 
         let start_date = input.start_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
 
         let subscription = commerce
@@ -5110,7 +5212,9 @@ impl Subscriptions {
                 plan_id,
                 payment_method_id: input.payment_method_id,
                 skip_trial: input.skip_trial,
-                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
+                price: input
+                    .price
+                    .map(|p| Decimal::try_from(p).unwrap_or_default()),
                 coupon_code: input.coupon_code,
                 start_date,
                 items: None,
@@ -5153,17 +5257,30 @@ impl Subscriptions {
 
     /// List subscriptions
     #[napi]
-    pub async fn list(&self, filter: Option<SubscriptionFilterInput>) -> Result<Vec<SubscriptionOutput>> {
+    pub async fn list(
+        &self,
+        filter: Option<SubscriptionFilterInput>,
+    ) -> Result<Vec<SubscriptionOutput>> {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
-        let customer_id = f.customer_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
-        let plan_id = f.plan_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let customer_id = f
+            .customer_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let plan_id = f
+            .plan_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
         let from_date = f.from_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
         let to_date = f.to_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
 
         let subscriptions = commerce
@@ -5171,7 +5288,10 @@ impl Subscriptions {
             .list(stateset_core::SubscriptionFilter {
                 customer_id,
                 plan_id,
-                status: f.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
+                status: f
+                    .status
+                    .as_ref()
+                    .and_then(|s| parse_subscription_status(s).ok()),
                 from_date,
                 to_date,
                 search: f.search,
@@ -5185,29 +5305,47 @@ impl Subscriptions {
 
     /// Update a subscription
     #[napi]
-    pub async fn update(&self, id: String, input: UpdateSubscriptionInput) -> Result<SubscriptionOutput> {
+    pub async fn update(
+        &self,
+        id: String,
+        input: UpdateSubscriptionInput,
+    ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
         let next_billing_date = input.next_billing_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
 
         let subscription = commerce
             .subscriptions()
-            .update(uuid, stateset_core::UpdateSubscription {
-                status: input.status.as_ref().and_then(|s| parse_subscription_status(s).ok()),
-                price: input.price.map(|p| Decimal::try_from(p).unwrap_or_default()),
-                payment_method_id: input.payment_method_id,
-                next_billing_date,
-                discount_percent: input.discount_percent.map(|d| Decimal::try_from(d).unwrap_or_default()),
-                discount_amount: input.discount_amount.map(|d| Decimal::try_from(d).unwrap_or_default()),
-                coupon_code: input.coupon_code,
-                shipping_address: None,
-                billing_address: None,
-                metadata: None,
-            })
+            .update(
+                uuid,
+                stateset_core::UpdateSubscription {
+                    status: input
+                        .status
+                        .as_ref()
+                        .and_then(|s| parse_subscription_status(s).ok()),
+                    price: input
+                        .price
+                        .map(|p| Decimal::try_from(p).unwrap_or_default()),
+                    payment_method_id: input.payment_method_id,
+                    next_billing_date,
+                    discount_percent: input
+                        .discount_percent
+                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    discount_amount: input
+                        .discount_amount
+                        .map(|d| Decimal::try_from(d).unwrap_or_default()),
+                    coupon_code: input.coupon_code,
+                    shipping_address: None,
+                    billing_address: None,
+                    metadata: None,
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to update subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -5215,22 +5353,31 @@ impl Subscriptions {
 
     /// Pause a subscription
     #[napi]
-    pub async fn pause(&self, id: String, input: Option<PauseSubscriptionInput>) -> Result<SubscriptionOutput> {
+    pub async fn pause(
+        &self,
+        id: String,
+        input: Option<PauseSubscriptionInput>,
+    ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
         let i = input.unwrap_or_default();
         let resume_at = i.resume_at.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
 
         let subscription = commerce
             .subscriptions()
-            .pause(uuid, stateset_core::PauseSubscription {
-                reason: i.reason,
-                resume_at,
-            })
+            .pause(
+                uuid,
+                stateset_core::PauseSubscription {
+                    reason: i.reason,
+                    resume_at,
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to pause subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -5253,7 +5400,11 @@ impl Subscriptions {
 
     /// Cancel a subscription
     #[napi]
-    pub async fn cancel(&self, id: String, input: Option<CancelSubscriptionInput>) -> Result<SubscriptionOutput> {
+    pub async fn cancel(
+        &self,
+        id: String,
+        input: Option<CancelSubscriptionInput>,
+    ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
@@ -5262,11 +5413,14 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .cancel(uuid, stateset_core::CancelSubscription {
-                reason: i.reason,
-                immediate: i.immediate,
-                feedback: i.feedback,
-            })
+            .cancel(
+                uuid,
+                stateset_core::CancelSubscription {
+                    reason: i.reason,
+                    immediate: i.immediate,
+                    feedback: i.feedback,
+                },
+            )
             .map_err(|e| Error::from_reason(format!("Failed to cancel subscription: {}", e)))?;
 
         Ok(subscription.into())
@@ -5274,7 +5428,11 @@ impl Subscriptions {
 
     /// Skip the next billing cycle
     #[napi]
-    pub async fn skip_billing(&self, id: String, input: Option<SkipBillingCycleInput>) -> Result<SubscriptionOutput> {
+    pub async fn skip_billing(
+        &self,
+        id: String,
+        input: Option<SkipBillingCycleInput>,
+    ) -> Result<SubscriptionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
@@ -5283,9 +5441,7 @@ impl Subscriptions {
 
         let subscription = commerce
             .subscriptions()
-            .skip_next_cycle(uuid, stateset_core::SkipBillingCycle {
-                reason: i.reason,
-            })
+            .skip_next_cycle(uuid, stateset_core::SkipBillingCycle { reason: i.reason })
             .map_err(|e| Error::from_reason(format!("Failed to skip billing: {}", e)))?;
 
         Ok(subscription.into())
@@ -5297,23 +5453,36 @@ impl Subscriptions {
 
     /// List billing cycles for a subscription
     #[napi]
-    pub async fn list_billing_cycles(&self, filter: Option<BillingCycleFilterInput>) -> Result<Vec<BillingCycleOutput>> {
+    pub async fn list_billing_cycles(
+        &self,
+        filter: Option<BillingCycleFilterInput>,
+    ) -> Result<Vec<BillingCycleOutput>> {
         let commerce = self.commerce.lock().await;
         let f = filter.unwrap_or_default();
 
-        let subscription_id = f.subscription_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let subscription_id = f
+            .subscription_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
         let from_date = f.from_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
         let to_date = f.to_date.as_ref().and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+            chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.with_timezone(&chrono::Utc))
         });
 
         let cycles = commerce
             .subscriptions()
             .list_billing_cycles(stateset_core::BillingCycleFilter {
                 subscription_id,
-                status: f.status.as_ref().and_then(|s| parse_billing_cycle_status(s).ok()),
+                status: f
+                    .status
+                    .as_ref()
+                    .and_then(|s| parse_billing_cycle_status(s).ok()),
                 from_date,
                 to_date,
                 limit: f.limit.map(|v| v as u32),
@@ -5345,7 +5514,10 @@ impl Subscriptions {
 
     /// Get events for a subscription
     #[napi]
-    pub async fn get_events(&self, subscription_id: String) -> Result<Vec<SubscriptionEventOutput>> {
+    pub async fn get_events(
+        &self,
+        subscription_id: String,
+    ) -> Result<Vec<SubscriptionEventOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&subscription_id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
@@ -5358,12 +5530,6 @@ impl Subscriptions {
         Ok(events.into_iter().map(|e| e.into()).collect())
     }
 }
-
-
-
-
-
-
 
 // ============================================================================
 // Promotions
@@ -5681,13 +5847,17 @@ impl From<stateset_core::ApplyPromotionsResult> for ApplyPromotionsOutput {
             shipping_discount: to_f64_or_nan(r.shipping_discount),
             final_shipping: to_f64_or_nan(r.final_shipping),
             grand_total: to_f64_or_nan(r.grand_total),
-            applied_promotions: r.applied_promotions.into_iter().map(|a| AppliedPromotionOutput {
-                promotion_id: a.promotion_id.to_string(),
-                promotion_name: a.promotion_name,
-                coupon_code: a.coupon_code,
-                discount_amount: to_f64_or_nan(a.discount_amount),
-                discount_type: format!("{:?}", a.discount_type).to_lowercase(),
-            }).collect(),
+            applied_promotions: r
+                .applied_promotions
+                .into_iter()
+                .map(|a| AppliedPromotionOutput {
+                    promotion_id: a.promotion_id.to_string(),
+                    promotion_name: a.promotion_name,
+                    coupon_code: a.coupon_code,
+                    discount_amount: to_f64_or_nan(a.discount_amount),
+                    discount_type: format!("{:?}", a.discount_type).to_lowercase(),
+                })
+                .collect(),
         }
     }
 }
@@ -5729,7 +5899,9 @@ fn parse_promotion_type(s: &str) -> stateset_core::PromotionType {
         "buy_x_get_y" | "buyxgety" | "bogo" => stateset_core::PromotionType::BuyXGetY,
         "free_shipping" | "freeshipping" => stateset_core::PromotionType::FreeShipping,
         "tiered_discount" | "tiereddiscount" => stateset_core::PromotionType::TieredDiscount,
-        "bundle" | "bundle_discount" | "bundlediscount" => stateset_core::PromotionType::BundleDiscount,
+        "bundle" | "bundle_discount" | "bundlediscount" => {
+            stateset_core::PromotionType::BundleDiscount
+        }
         _ => stateset_core::PromotionType::PercentageOff,
     }
 }
@@ -5797,41 +5969,83 @@ impl Promotions {
             name: input.name,
             description: input.description,
             internal_notes: input.internal_notes,
-            promotion_type: input.promotion_type.map(|s| parse_promotion_type(&s)).unwrap_or_default(),
-            trigger: input.trigger.map(|s| parse_promotion_trigger(&s)).unwrap_or_default(),
-            target: input.target.map(|s| parse_promotion_target(&s)).unwrap_or_default(),
-            stacking: input.stacking.map(|s| parse_stacking_behavior(&s)).unwrap_or_default(),
-            percentage_off: input.percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount_off: input.fixed_amount_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            max_discount_amount: input.max_discount_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            promotion_type: input
+                .promotion_type
+                .map(|s| parse_promotion_type(&s))
+                .unwrap_or_default(),
+            trigger: input
+                .trigger
+                .map(|s| parse_promotion_trigger(&s))
+                .unwrap_or_default(),
+            target: input
+                .target
+                .map(|s| parse_promotion_target(&s))
+                .unwrap_or_default(),
+            stacking: input
+                .stacking
+                .map(|s| parse_stacking_behavior(&s))
+                .unwrap_or_default(),
+            percentage_off: input
+                .percentage_off
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount_off: input
+                .fixed_amount_off
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            max_discount_amount: input
+                .max_discount_amount
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             buy_quantity: input.buy_quantity,
             get_quantity: input.get_quantity,
-            get_discount_percent: input.get_discount_percent.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            get_discount_percent: input
+                .get_discount_percent
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             tiers: input.tiers.and_then(|s| serde_json::from_str(&s).ok()),
             bundle_product_ids: input.bundle_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
-            bundle_discount: input.bundle_discount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            bundle_discount: input
+                .bundle_discount
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            starts_at: input.starts_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
+            ends_at: input.ends_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
             total_usage_limit: input.total_usage_limit,
             per_customer_limit: input.per_customer_limit,
             conditions: None,
             applicable_product_ids: input.applicable_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
             applicable_category_ids: input.applicable_category_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
             applicable_skus: input.applicable_skus,
             excluded_product_ids: input.excluded_product_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
             excluded_category_ids: input.excluded_category_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
             eligible_customer_ids: input.eligible_customer_ids.map(|ids| {
-                ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect()
+                ids.into_iter()
+                    .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                    .collect()
             }),
             eligible_customer_groups: input.eligible_customer_groups,
             currency: input.currency,
@@ -5839,7 +6053,9 @@ impl Promotions {
             metadata: input.metadata.and_then(|s| serde_json::from_str(&s).ok()),
         };
 
-        let promo = commerce.promotions().create(create)
+        let promo = commerce
+            .promotions()
+            .create(create)
             .map_err(|e| Error::from_reason(format!("Failed to create promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -5852,7 +6068,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let promo = commerce.promotions().get(uuid)
+        let promo = commerce
+            .promotions()
+            .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promo.map(|p| p.into()))
@@ -5862,7 +6080,9 @@ impl Promotions {
     #[napi]
     pub async fn get_by_code(&self, code: String) -> Result<Option<PromotionOutput>> {
         let commerce = self.commerce.lock().await;
-        let promo = commerce.promotions().get_by_code(&code)
+        let promo = commerce
+            .promotions()
+            .get_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promo.map(|p| p.into()))
@@ -5884,7 +6104,9 @@ impl Promotions {
             offset: filter.offset.map(|v| v as u32),
         };
 
-        let promos = commerce.promotions().list(core_filter)
+        let promos = commerce
+            .promotions()
+            .list(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list promotions: {}", e)))?;
 
         Ok(promos.into_iter().map(|p| p.into()).collect())
@@ -5902,18 +6124,34 @@ impl Promotions {
             description: input.description,
             internal_notes: input.internal_notes,
             status: input.status.map(|s| parse_promotion_status(&s)),
-            percentage_off: input.percentage_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount_off: input.fixed_amount_off.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            max_discount_amount: input.max_discount_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            percentage_off: input
+                .percentage_off
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount_off: input
+                .fixed_amount_off
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            max_discount_amount: input
+                .max_discount_amount
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            starts_at: input.starts_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
+            ends_at: input.ends_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
             total_usage_limit: input.total_usage_limit,
             per_customer_limit: input.per_customer_limit,
             priority: input.priority,
             metadata: None,
         };
 
-        let promo = commerce.promotions().update(uuid, update)
+        let promo = commerce
+            .promotions()
+            .update(uuid, update)
             .map_err(|e| Error::from_reason(format!("Failed to update promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -5926,7 +6164,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        commerce.promotions().delete(uuid)
+        commerce
+            .promotions()
+            .delete(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to delete promotion: {}", e)))?;
 
         Ok(())
@@ -5939,7 +6179,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let promo = commerce.promotions().activate(uuid)
+        let promo = commerce
+            .promotions()
+            .activate(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to activate promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -5952,7 +6194,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let promo = commerce.promotions().deactivate(uuid)
+        let promo = commerce
+            .promotions()
+            .deactivate(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to deactivate promotion: {}", e)))?;
 
         Ok(promo.into())
@@ -5962,7 +6206,9 @@ impl Promotions {
     #[napi]
     pub async fn get_active(&self) -> Result<Vec<PromotionOutput>> {
         let commerce = self.commerce.lock().await;
-        let promos = commerce.promotions().get_active()
+        let promos = commerce
+            .promotions()
+            .get_active()
             .map_err(|e| Error::from_reason(format!("Failed to get active promotions: {}", e)))?;
 
         Ok(promos.into_iter().map(|p| p.into()).collect())
@@ -5975,8 +6221,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let valid = commerce.promotions().is_valid(uuid)
-            .map_err(|e| Error::from_reason(format!("Failed to check promotion validity: {}", e)))?;
+        let valid = commerce.promotions().is_valid(uuid).map_err(|e| {
+            Error::from_reason(format!("Failed to check promotion validity: {}", e))
+        })?;
 
         Ok(valid)
     }
@@ -5997,12 +6244,22 @@ impl Promotions {
             code: input.code,
             usage_limit: input.usage_limit,
             per_customer_limit: input.per_customer_limit,
-            starts_at: input.starts_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            ends_at: input.ends_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
+            starts_at: input.starts_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
+            ends_at: input.ends_at.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|d| d.with_timezone(&chrono::Utc))
+            }),
             metadata: input.metadata.and_then(|s| serde_json::from_str(&s).ok()),
         };
 
-        let coupon = commerce.promotions().create_coupon(create)
+        let coupon = commerce
+            .promotions()
+            .create_coupon(create)
             .map_err(|e| Error::from_reason(format!("Failed to create coupon: {}", e)))?;
 
         Ok(coupon.into())
@@ -6015,7 +6272,9 @@ impl Promotions {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let coupon = commerce.promotions().get_coupon(uuid)
+        let coupon = commerce
+            .promotions()
+            .get_coupon(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
 
         Ok(coupon.map(|c| c.into()))
@@ -6025,7 +6284,9 @@ impl Promotions {
     #[napi]
     pub async fn get_coupon_by_code(&self, code: String) -> Result<Option<CouponOutput>> {
         let commerce = self.commerce.lock().await;
-        let coupon = commerce.promotions().get_coupon_by_code(&code)
+        let coupon = commerce
+            .promotions()
+            .get_coupon_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get coupon: {}", e)))?;
 
         Ok(coupon.map(|c| c.into()))
@@ -6033,19 +6294,26 @@ impl Promotions {
 
     /// List coupons with optional filtering
     #[napi]
-    pub async fn list_coupons(&self, filter: Option<CouponFilterInput>) -> Result<Vec<CouponOutput>> {
+    pub async fn list_coupons(
+        &self,
+        filter: Option<CouponFilterInput>,
+    ) -> Result<Vec<CouponOutput>> {
         let commerce = self.commerce.lock().await;
         let filter = filter.unwrap_or_default();
 
         let core_filter = stateset_core::CouponFilter {
-            promotion_id: filter.promotion_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            promotion_id: filter
+                .promotion_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok()),
             status: filter.status.map(|s| parse_coupon_status(&s)),
             search: filter.search,
             limit: filter.limit.map(|v| v as u32),
             offset: filter.offset.map(|v| v as u32),
         };
 
-        let coupons = commerce.promotions().list_coupons(core_filter)
+        let coupons = commerce
+            .promotions()
+            .list_coupons(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list coupons: {}", e)))?;
 
         Ok(coupons.into_iter().map(|c| c.into()).collect())
@@ -6055,7 +6323,9 @@ impl Promotions {
     #[napi]
     pub async fn validate_coupon(&self, code: String) -> Result<Option<CouponOutput>> {
         let commerce = self.commerce.lock().await;
-        let coupon = commerce.promotions().validate_coupon(&code)
+        let coupon = commerce
+            .promotions()
+            .validate_coupon(&code)
             .map_err(|e| Error::from_reason(format!("Failed to validate coupon: {}", e)))?;
 
         Ok(coupon.map(|c| c.into()))
@@ -6071,31 +6341,43 @@ impl Promotions {
         let commerce = self.commerce.lock().await;
         let request = stateset_core::ApplyPromotionsRequest {
             cart_id: input.cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            customer_id: input
+                .customer_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok()),
             coupon_codes: input.coupon_codes.unwrap_or_default(),
-            line_items: input.line_items.into_iter().map(|item| {
-                stateset_core::PromotionLineItem {
+            line_items: input
+                .line_items
+                .into_iter()
+                .map(|item| stateset_core::PromotionLineItem {
                     id: item.id,
                     product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
                     variant_id: item.variant_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
                     sku: item.sku,
-                    category_ids: item.category_ids
-                        .map(|ids| ids.into_iter().filter_map(|s| uuid::Uuid::parse_str(&s).ok()).collect())
+                    category_ids: item
+                        .category_ids
+                        .map(|ids| {
+                            ids.into_iter()
+                                .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     quantity: item.quantity,
                     unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
                     line_total: Decimal::from_f64_retain(item.line_total).unwrap_or_default(),
-                }
-            }).collect(),
+                })
+                .collect(),
             subtotal: Decimal::from_f64_retain(input.subtotal).unwrap_or_default(),
-            shipping_amount: Decimal::from_f64_retain(input.shipping_amount.unwrap_or(0.0)).unwrap_or_default(),
+            shipping_amount: Decimal::from_f64_retain(input.shipping_amount.unwrap_or(0.0))
+                .unwrap_or_default(),
             shipping_country: input.shipping_country,
             shipping_state: input.shipping_state,
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
             is_first_order: false,
         };
 
-        let result = commerce.promotions().apply(request)
+        let result = commerce
+            .promotions()
+            .apply(request)
             .map_err(|e| Error::from_reason(format!("Failed to apply promotions: {}", e)))?;
 
         Ok(result.into())
@@ -6118,15 +6400,18 @@ impl Promotions {
         let promotion_uuid = uuid::Uuid::parse_str(&promotion_id)
             .map_err(|e| Error::from_reason(format!("Invalid promotion UUID: {}", e)))?;
 
-        let usage = commerce.promotions().record_usage(
-            promotion_uuid,
-            coupon_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
-            &currency,
-        ).map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
+        let usage = commerce
+            .promotions()
+            .record_usage(
+                promotion_uuid,
+                coupon_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                order_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                cart_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                Decimal::from_f64_retain(discount_amount).unwrap_or_default(),
+                &currency,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to record usage: {}", e)))?;
 
         Ok(usage.into())
     }
@@ -6372,7 +6657,11 @@ impl From<stateset_core::TaxExemption> for TaxExemptionOutput {
             certificate_number: e.certificate_number,
             issuing_authority: e.issuing_authority,
             jurisdiction_ids: e.jurisdiction_ids.iter().map(|u| u.to_string()).collect(),
-            exempt_categories: e.exempt_categories.iter().map(|c| c.as_str().to_string()).collect(),
+            exempt_categories: e
+                .exempt_categories
+                .iter()
+                .map(|c| c.as_str().to_string())
+                .collect(),
             effective_from: e.effective_from.to_string(),
             expires_at: e.expires_at.map(|d| d.to_string()),
             verified: e.verified,
@@ -6756,19 +7045,25 @@ impl Tax {
     pub async fn calculate(&self, input: TaxCalculationInput) -> Result<TaxCalculationOutput> {
         let commerce = self.commerce.lock().await;
 
-        let line_items: Vec<stateset_core::TaxLineItem> = input.line_items.into_iter().map(|item| {
-            stateset_core::TaxLineItem {
+        let line_items: Vec<stateset_core::TaxLineItem> = input
+            .line_items
+            .into_iter()
+            .map(|item| stateset_core::TaxLineItem {
                 id: item.id,
                 sku: item.sku,
                 product_id: item.product_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
                 quantity: Decimal::from_f64_retain(item.quantity).unwrap_or(Decimal::ONE),
                 unit_price: Decimal::from_f64_retain(item.unit_price).unwrap_or_default(),
-                discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0)).unwrap_or_default(),
-                tax_category: item.tax_category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+                discount_amount: Decimal::from_f64_retain(item.discount_amount.unwrap_or(0.0))
+                    .unwrap_or_default(),
+                tax_category: item
+                    .tax_category
+                    .map(|s| parse_product_tax_category(&s))
+                    .unwrap_or_default(),
                 tax_code: item.tax_code,
                 description: item.description,
-            }
-        }).collect();
+            })
+            .collect();
 
         let shipping_address = stateset_core::TaxAddress {
             line1: input.shipping_address.line1,
@@ -6792,14 +7087,22 @@ impl Tax {
             line_items,
             shipping_address,
             billing_address,
-            customer_id: input.customer_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
-            shipping_amount: input.shipping_amount.map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
+            customer_id: input
+                .customer_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            shipping_amount: input
+                .shipping_amount
+                .map(|a| Decimal::from_f64_retain(a).unwrap_or_default()),
             currency: input.currency.unwrap_or_else(|| "USD".to_string()),
-            transaction_date: input.transaction_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            transaction_date: input
+                .transaction_date
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
             prices_include_tax: input.prices_include_tax.unwrap_or(false),
         };
 
-        let result = commerce.tax().calculate(request)
+        let result = commerce
+            .tax()
+            .calculate(request)
             .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
 
         Ok(result.into())
@@ -6825,12 +7128,17 @@ impl Tax {
             country: shipping_address.country,
         };
 
-        let tax = commerce.tax().calculate_for_item(
-            Decimal::from_f64_retain(unit_price).unwrap_or_default(),
-            Decimal::from_f64_retain(quantity).unwrap_or(Decimal::ONE),
-            category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
-            &address,
-        ).map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
+        let tax = commerce
+            .tax()
+            .calculate_for_item(
+                Decimal::from_f64_retain(unit_price).unwrap_or_default(),
+                Decimal::from_f64_retain(quantity).unwrap_or(Decimal::ONE),
+                category
+                    .map(|s| parse_product_tax_category(&s))
+                    .unwrap_or_default(),
+                &address,
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to calculate tax: {}", e)))?;
 
         Ok(to_f64_or_nan(tax))
     }
@@ -6853,10 +7161,15 @@ impl Tax {
             country: address.country,
         };
 
-        let rate = commerce.tax().get_effective_rate(
-            &tax_address,
-            category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
-        ).map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
+        let rate = commerce
+            .tax()
+            .get_effective_rate(
+                &tax_address,
+                category
+                    .map(|s| parse_product_tax_category(&s))
+                    .unwrap_or_default(),
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
 
         Ok(to_f64_or_nan(rate))
     }
@@ -6872,7 +7185,9 @@ impl Tax {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let jurisdiction = commerce.tax().get_jurisdiction(uuid)
+        let jurisdiction = commerce
+            .tax()
+            .get_jurisdiction(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
 
         Ok(jurisdiction.map(|j| j.into()))
@@ -6880,10 +7195,15 @@ impl Tax {
 
     /// Get a jurisdiction by code
     #[napi]
-    pub async fn get_jurisdiction_by_code(&self, code: String) -> Result<Option<TaxJurisdictionOutput>> {
+    pub async fn get_jurisdiction_by_code(
+        &self,
+        code: String,
+    ) -> Result<Option<TaxJurisdictionOutput>> {
         let commerce = self.commerce.lock().await;
 
-        let jurisdiction = commerce.tax().get_jurisdiction_by_code(&code)
+        let jurisdiction = commerce
+            .tax()
+            .get_jurisdiction_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get jurisdiction: {}", e)))?;
 
         Ok(jurisdiction.map(|j| j.into()))
@@ -6891,7 +7211,10 @@ impl Tax {
 
     /// List jurisdictions with optional filtering
     #[napi]
-    pub async fn list_jurisdictions(&self, filter: Option<JurisdictionFilterInput>) -> Result<Vec<TaxJurisdictionOutput>> {
+    pub async fn list_jurisdictions(
+        &self,
+        filter: Option<JurisdictionFilterInput>,
+    ) -> Result<Vec<TaxJurisdictionOutput>> {
         let commerce = self.commerce.lock().await;
 
         let f = filter.unwrap_or_default();
@@ -6902,7 +7225,9 @@ impl Tax {
             active_only: f.active_only.unwrap_or(false),
         };
 
-        let jurisdictions = commerce.tax().list_jurisdictions(core_filter)
+        let jurisdictions = commerce
+            .tax()
+            .list_jurisdictions(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list jurisdictions: {}", e)))?;
 
         Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
@@ -6910,14 +7235,20 @@ impl Tax {
 
     /// Create a new jurisdiction
     #[napi]
-    pub async fn create_jurisdiction(&self, input: CreateJurisdictionInput) -> Result<TaxJurisdictionOutput> {
+    pub async fn create_jurisdiction(
+        &self,
+        input: CreateJurisdictionInput,
+    ) -> Result<TaxJurisdictionOutput> {
         let commerce = self.commerce.lock().await;
 
         let create = stateset_core::CreateTaxJurisdiction {
             parent_id: input.parent_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
             name: input.name,
             code: input.code,
-            level: input.level.map(|s| parse_jurisdiction_level(&s)).unwrap_or_default(),
+            level: input
+                .level
+                .map(|s| parse_jurisdiction_level(&s))
+                .unwrap_or_default(),
             country_code: input.country_code,
             state_code: input.state_code,
             county: input.county,
@@ -6925,7 +7256,9 @@ impl Tax {
             postal_codes: input.postal_codes.unwrap_or_default(),
         };
 
-        let jurisdiction = commerce.tax().create_jurisdiction(create)
+        let jurisdiction = commerce
+            .tax()
+            .create_jurisdiction(create)
             .map_err(|e| Error::from_reason(format!("Failed to create jurisdiction: {}", e)))?;
 
         Ok(jurisdiction.into())
@@ -6942,7 +7275,9 @@ impl Tax {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let rate = commerce.tax().get_rate(uuid)
+        let rate = commerce
+            .tax()
+            .get_rate(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get rate: {}", e)))?;
 
         Ok(rate.map(|r| r.into()))
@@ -6950,19 +7285,28 @@ impl Tax {
 
     /// List tax rates with optional filtering
     #[napi]
-    pub async fn list_rates(&self, filter: Option<TaxRateFilterInput>) -> Result<Vec<TaxRateOutput>> {
+    pub async fn list_rates(
+        &self,
+        filter: Option<TaxRateFilterInput>,
+    ) -> Result<Vec<TaxRateOutput>> {
         let commerce = self.commerce.lock().await;
 
         let f = filter.unwrap_or_default();
         let core_filter = stateset_core::TaxRateFilter {
-            jurisdiction_id: f.jurisdiction_id.and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            jurisdiction_id: f
+                .jurisdiction_id
+                .and_then(|s| uuid::Uuid::parse_str(&s).ok()),
             tax_type: f.tax_type.map(|s| parse_tax_type(&s)),
             product_category: f.product_category.map(|s| parse_product_tax_category(&s)),
             active_only: f.active_only.unwrap_or(false),
-            effective_date: f.effective_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            effective_date: f
+                .effective_date
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
         };
 
-        let rates = commerce.tax().list_rates(core_filter)
+        let rates = commerce
+            .tax()
+            .list_rates(core_filter)
             .map_err(|e| Error::from_reason(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
@@ -6976,26 +7320,43 @@ impl Tax {
         let jurisdiction_id = uuid::Uuid::parse_str(&input.jurisdiction_id)
             .map_err(|e| Error::from_reason(format!("Invalid jurisdiction UUID: {}", e)))?;
 
-        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
-            .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+        let effective_from =
+            chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+                .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
 
         let create = stateset_core::CreateTaxRate {
             jurisdiction_id,
-            tax_type: input.tax_type.map(|s| parse_tax_type(&s)).unwrap_or_default(),
-            product_category: input.product_category.map(|s| parse_product_tax_category(&s)).unwrap_or_default(),
+            tax_type: input
+                .tax_type
+                .map(|s| parse_tax_type(&s))
+                .unwrap_or_default(),
+            product_category: input
+                .product_category
+                .map(|s| parse_product_tax_category(&s))
+                .unwrap_or_default(),
             rate: Decimal::from_f64_retain(input.rate).unwrap_or_default(),
             name: input.name,
             description: input.description,
             is_compound: input.is_compound.unwrap_or(false),
             priority: input.priority.unwrap_or(0),
-            threshold_min: input.threshold_min.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            threshold_max: input.threshold_max.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            fixed_amount: input.fixed_amount.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            threshold_min: input
+                .threshold_min
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            threshold_max: input
+                .threshold_max
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+            fixed_amount: input
+                .fixed_amount
+                .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
             effective_from,
-            effective_to: input.effective_to.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            effective_to: input
+                .effective_to
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
         };
 
-        let rate = commerce.tax().create_rate(create)
+        let rate = commerce
+            .tax()
+            .create_rate(create)
             .map_err(|e| Error::from_reason(format!("Failed to create rate: {}", e)))?;
 
         Ok(rate.into())
@@ -7012,7 +7373,9 @@ impl Tax {
         let uuid = uuid::Uuid::parse_str(&id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let exemption = commerce.tax().get_exemption(uuid)
+        let exemption = commerce
+            .tax()
+            .get_exemption(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get exemption: {}", e)))?;
 
         Ok(exemption.map(|e| e.into()))
@@ -7020,12 +7383,17 @@ impl Tax {
 
     /// Get exemptions for a customer
     #[napi]
-    pub async fn get_customer_exemptions(&self, customer_id: String) -> Result<Vec<TaxExemptionOutput>> {
+    pub async fn get_customer_exemptions(
+        &self,
+        customer_id: String,
+    ) -> Result<Vec<TaxExemptionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = uuid::Uuid::parse_str(&customer_id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let exemptions = commerce.tax().get_customer_exemptions(uuid)
+        let exemptions = commerce
+            .tax()
+            .get_customer_exemptions(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get exemptions: {}", e)))?;
 
         Ok(exemptions.into_iter().map(|e| e.into()).collect())
@@ -7033,36 +7401,46 @@ impl Tax {
 
     /// Create a tax exemption
     #[napi]
-    pub async fn create_exemption(&self, input: CreateExemptionInput) -> Result<TaxExemptionOutput> {
+    pub async fn create_exemption(
+        &self,
+        input: CreateExemptionInput,
+    ) -> Result<TaxExemptionOutput> {
         let commerce = self.commerce.lock().await;
 
         let customer_id = uuid::Uuid::parse_str(&input.customer_id)
             .map_err(|e| Error::from_reason(format!("Invalid customer UUID: {}", e)))?;
 
-        let effective_from = chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
-            .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
+        let effective_from =
+            chrono::NaiveDate::parse_from_str(&input.effective_from, "%Y-%m-%d")
+                .map_err(|e| Error::from_reason(format!("Invalid date format: {}", e)))?;
 
         let create = stateset_core::CreateTaxExemption {
             customer_id,
             exemption_type: parse_exemption_type(&input.exemption_type),
             certificate_number: input.certificate_number,
             issuing_authority: input.issuing_authority,
-            jurisdiction_ids: input.jurisdiction_ids
+            jurisdiction_ids: input
+                .jurisdiction_ids
                 .unwrap_or_default()
                 .into_iter()
                 .filter_map(|s| uuid::Uuid::parse_str(&s).ok())
                 .collect(),
-            exempt_categories: input.exempt_categories
+            exempt_categories: input
+                .exempt_categories
                 .unwrap_or_default()
                 .into_iter()
                 .map(|s| parse_product_tax_category(&s))
                 .collect(),
             effective_from,
-            expires_at: input.expires_at.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+            expires_at: input
+                .expires_at
+                .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
             notes: input.notes,
         };
 
-        let exemption = commerce.tax().create_exemption(create)
+        let exemption = commerce
+            .tax()
+            .create_exemption(create)
             .map_err(|e| Error::from_reason(format!("Failed to create exemption: {}", e)))?;
 
         Ok(exemption.into())
@@ -7075,7 +7453,9 @@ impl Tax {
         let uuid = uuid::Uuid::parse_str(&customer_id)
             .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
 
-        let is_exempt = commerce.tax().customer_is_exempt(uuid)
+        let is_exempt = commerce
+            .tax()
+            .customer_is_exempt(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to check exemption: {}", e)))?;
 
         Ok(is_exempt)
@@ -7090,7 +7470,9 @@ impl Tax {
     pub async fn get_settings(&self) -> Result<TaxSettingsOutput> {
         let commerce = self.commerce.lock().await;
 
-        let settings = commerce.tax().get_settings()
+        let settings = commerce
+            .tax()
+            .get_settings()
             .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
 
         Ok(settings.into())
@@ -7101,7 +7483,9 @@ impl Tax {
     pub async fn update_settings(&self, input: TaxSettingsInput) -> Result<TaxSettingsOutput> {
         let commerce = self.commerce.lock().await;
 
-        let mut settings = commerce.tax().get_settings()
+        let mut settings = commerce
+            .tax()
+            .get_settings()
             .map_err(|e| Error::from_reason(format!("Failed to get settings: {}", e)))?;
 
         if let Some(enabled) = input.enabled {
@@ -7138,7 +7522,9 @@ impl Tax {
             settings.tax_provider = Some(provider);
         }
 
-        let updated = commerce.tax().update_settings(settings)
+        let updated = commerce
+            .tax()
+            .update_settings(settings)
             .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
 
         Ok(updated.into())
@@ -7149,7 +7535,9 @@ impl Tax {
     pub async fn set_enabled(&self, enabled: bool) -> Result<TaxSettingsOutput> {
         let commerce = self.commerce.lock().await;
 
-        let settings = commerce.tax().set_enabled(enabled)
+        let settings = commerce
+            .tax()
+            .set_enabled(enabled)
             .map_err(|e| Error::from_reason(format!("Failed to update settings: {}", e)))?;
 
         Ok(settings.into())
@@ -7160,7 +7548,9 @@ impl Tax {
     pub async fn is_enabled(&self) -> Result<bool> {
         let commerce = self.commerce.lock().await;
 
-        let enabled = commerce.tax().is_enabled()
+        let enabled = commerce
+            .tax()
+            .is_enabled()
             .map_err(|e| Error::from_reason(format!("Failed to check settings: {}", e)))?;
 
         Ok(enabled)
@@ -7314,7 +7704,11 @@ impl From<stateset_core::QualityHold> for QualityHoldOutput {
             quantity_held: to_f64_or_nan(h.quantity_held),
             reason: h.reason,
             hold_type: format!("{:?}", h.hold_type),
-            status: if h.released_at.is_some() { "released".to_string() } else { "held".to_string() },
+            status: if h.released_at.is_some() {
+                "released".to_string()
+            } else {
+                "held".to_string()
+            },
             placed_at: h.placed_at.to_rfc3339(),
         }
     }
@@ -7375,20 +7769,28 @@ pub struct Quality {
 impl Quality {
     /// Create a new inspection
     #[napi]
-    pub async fn create_inspection(&self, input: CreateInspectionInput) -> Result<InspectionOutput> {
+    pub async fn create_inspection(
+        &self,
+        input: CreateInspectionInput,
+    ) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
-        let reference_id = input.reference_id.parse()
+        let reference_id = input
+            .reference_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid reference UUID"))?;
 
-        let inspection = commerce.quality().create_inspection(stateset_core::CreateInspection {
-            inspection_type: parse_inspection_type(&input.inspection_type),
-            reference_type: input.reference_type,
-            reference_id,
-            inspector_id: input.assigned_to,
-            scheduled_at: None,
-            notes: input.notes,
-            items: vec![],
-        }).map_err(|e| Error::from_reason(format!("Failed to create inspection: {}", e)))?;
+        let inspection = commerce
+            .quality()
+            .create_inspection(stateset_core::CreateInspection {
+                inspection_type: parse_inspection_type(&input.inspection_type),
+                reference_type: input.reference_type,
+                reference_id,
+                inspector_id: input.assigned_to,
+                scheduled_at: None,
+                notes: input.notes,
+                items: vec![],
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create inspection: {}", e)))?;
 
         Ok(inspection.into())
     }
@@ -7398,7 +7800,9 @@ impl Quality {
     pub async fn get_inspection(&self, id: String) -> Result<Option<InspectionOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let inspection = commerce.quality().get_inspection(uuid)
+        let inspection = commerce
+            .quality()
+            .get_inspection(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get inspection: {}", e)))?;
         Ok(inspection.map(|i| i.into()))
     }
@@ -7407,7 +7811,9 @@ impl Quality {
     #[napi]
     pub async fn list_inspections(&self) -> Result<Vec<InspectionOutput>> {
         let commerce = self.commerce.lock().await;
-        let inspections = commerce.quality().list_inspections(Default::default())
+        let inspections = commerce
+            .quality()
+            .list_inspections(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list inspections: {}", e)))?;
         Ok(inspections.into_iter().map(|i| i.into()).collect())
     }
@@ -7417,7 +7823,9 @@ impl Quality {
     pub async fn start_inspection(&self, id: String) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let inspection = commerce.quality().start_inspection(uuid)
+        let inspection = commerce
+            .quality()
+            .start_inspection(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to start inspection: {}", e)))?;
         Ok(inspection.into())
     }
@@ -7427,7 +7835,9 @@ impl Quality {
     pub async fn complete_inspection(&self, id: String) -> Result<InspectionOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let inspection = commerce.quality().complete_inspection(uuid)
+        let inspection = commerce
+            .quality()
+            .complete_inspection(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to complete inspection: {}", e)))?;
         Ok(inspection.into())
     }
@@ -7436,17 +7846,21 @@ impl Quality {
     #[napi]
     pub async fn create_ncr(&self, input: CreateNcrInput) -> Result<NcrOutput> {
         let commerce = self.commerce.lock().await;
-        let ncr = commerce.quality().create_ncr(stateset_core::CreateNonConformance {
-            inspection_id: None,
-            source: parse_ncr_source(&input.source),
-            severity: parse_severity(&input.severity),
-            sku: input.sku,
-            lot_number: input.lot_number,
-            serial_number: None,
-            quantity_affected: Decimal::from_f64_retain(input.quantity_affected).unwrap_or_default(),
-            description: input.description,
-            assigned_to: None,
-        }).map_err(|e| Error::from_reason(format!("Failed to create NCR: {}", e)))?;
+        let ncr = commerce
+            .quality()
+            .create_ncr(stateset_core::CreateNonConformance {
+                inspection_id: None,
+                source: parse_ncr_source(&input.source),
+                severity: parse_severity(&input.severity),
+                sku: input.sku,
+                lot_number: input.lot_number,
+                serial_number: None,
+                quantity_affected: Decimal::from_f64_retain(input.quantity_affected)
+                    .unwrap_or_default(),
+                description: input.description,
+                assigned_to: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create NCR: {}", e)))?;
         Ok(ncr.into())
     }
 
@@ -7455,7 +7869,9 @@ impl Quality {
     pub async fn get_ncr(&self, id: String) -> Result<Option<NcrOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let ncr = commerce.quality().get_ncr(uuid)
+        let ncr = commerce
+            .quality()
+            .get_ncr(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get NCR: {}", e)))?;
         Ok(ncr.map(|n| n.into()))
     }
@@ -7464,7 +7880,9 @@ impl Quality {
     #[napi]
     pub async fn list_ncrs(&self) -> Result<Vec<NcrOutput>> {
         let commerce = self.commerce.lock().await;
-        let ncrs = commerce.quality().list_ncrs(Default::default())
+        let ncrs = commerce
+            .quality()
+            .list_ncrs(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list NCRs: {}", e)))?;
         Ok(ncrs.into_iter().map(|n| n.into()).collect())
     }
@@ -7474,7 +7892,9 @@ impl Quality {
     pub async fn close_ncr(&self, id: String) -> Result<NcrOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let ncr = commerce.quality().close_ncr(uuid)
+        let ncr = commerce
+            .quality()
+            .close_ncr(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to close NCR: {}", e)))?;
         Ok(ncr.into())
     }
@@ -7483,19 +7903,22 @@ impl Quality {
     #[napi]
     pub async fn create_hold(&self, input: CreateQualityHoldInput) -> Result<QualityHoldOutput> {
         let commerce = self.commerce.lock().await;
-        let hold = commerce.quality().create_hold(stateset_core::CreateQualityHold {
-            sku: input.sku,
-            lot_number: input.lot_number,
-            serial_number: None,
-            location_id: input.location_id,
-            quantity: Decimal::from_f64_retain(input.quantity_held).unwrap_or_default(),
-            reason: input.reason,
-            hold_type: parse_hold_type(&input.hold_type),
-            ncr_id: None,
-            inspection_id: None,
-            placed_by: input.placed_by.unwrap_or_default(),
-            expires_at: None,
-        }).map_err(|e| Error::from_reason(format!("Failed to create hold: {}", e)))?;
+        let hold = commerce
+            .quality()
+            .create_hold(stateset_core::CreateQualityHold {
+                sku: input.sku,
+                lot_number: input.lot_number,
+                serial_number: None,
+                location_id: input.location_id,
+                quantity: Decimal::from_f64_retain(input.quantity_held).unwrap_or_default(),
+                reason: input.reason,
+                hold_type: parse_hold_type(&input.hold_type),
+                ncr_id: None,
+                inspection_id: None,
+                placed_by: input.placed_by.unwrap_or_default(),
+                expires_at: None,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create hold: {}", e)))?;
         Ok(hold.into())
     }
 
@@ -7504,7 +7927,9 @@ impl Quality {
     pub async fn get_hold(&self, id: String) -> Result<Option<QualityHoldOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let hold = commerce.quality().get_hold(uuid)
+        let hold = commerce
+            .quality()
+            .get_hold(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get hold: {}", e)))?;
         Ok(hold.map(|h| h.into()))
     }
@@ -7513,20 +7938,33 @@ impl Quality {
     #[napi]
     pub async fn list_holds(&self) -> Result<Vec<QualityHoldOutput>> {
         let commerce = self.commerce.lock().await;
-        let holds = commerce.quality().list_holds(Default::default())
+        let holds = commerce
+            .quality()
+            .list_holds(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list holds: {}", e)))?;
         Ok(holds.into_iter().map(|h| h.into()).collect())
     }
 
     /// Release a quality hold
     #[napi]
-    pub async fn release_hold(&self, id: String, released_by: String, notes: Option<String>) -> Result<QualityHoldOutput> {
+    pub async fn release_hold(
+        &self,
+        id: String,
+        released_by: String,
+        notes: Option<String>,
+    ) -> Result<QualityHoldOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let hold = commerce.quality().release_hold(uuid, stateset_core::ReleaseQualityHold {
-            released_by,
-            release_notes: notes,
-        }).map_err(|e| Error::from_reason(format!("Failed to release hold: {}", e)))?;
+        let hold = commerce
+            .quality()
+            .release_hold(
+                uuid,
+                stateset_core::ReleaseQualityHold {
+                    released_by,
+                    release_notes: notes,
+                },
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to release hold: {}", e)))?;
         Ok(hold.into())
     }
 
@@ -7534,7 +7972,9 @@ impl Quality {
     #[napi]
     pub async fn get_active_holds(&self) -> Result<Vec<QualityHoldOutput>> {
         let commerce = self.commerce.lock().await;
-        let holds = commerce.quality().get_active_holds()
+        let holds = commerce
+            .quality()
+            .get_active_holds()
             .map_err(|e| Error::from_reason(format!("Failed to get active holds: {}", e)))?;
         Ok(holds.into_iter().map(|h| h.into()).collect())
     }
@@ -7543,7 +7983,9 @@ impl Quality {
     #[napi]
     pub async fn count_active_holds(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.quality().count_active_holds()
+        let count = commerce
+            .quality()
+            .count_active_holds()
             .map_err(|e| Error::from_reason(format!("Failed to count holds: {}", e)))?;
         Ok(count as u32)
     }
@@ -7608,15 +8050,26 @@ impl Lots {
     #[napi]
     pub async fn create(&self, input: CreateLotInput) -> Result<LotOutput> {
         let commerce = self.commerce.lock().await;
-        let lot = commerce.lots().create(stateset_core::CreateLot {
-            lot_number: input.lot_number,
-            sku: input.sku,
-            quantity: Decimal::from_f64_retain(input.quantity_produced).unwrap_or_default(),
-            production_date: input.production_date.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            expiration_date: input.expiration_date.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            supplier_lot: input.supplier_lot_number,
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create lot: {}", e)))?;
+        let lot = commerce
+            .lots()
+            .create(stateset_core::CreateLot {
+                lot_number: input.lot_number,
+                sku: input.sku,
+                quantity: Decimal::from_f64_retain(input.quantity_produced).unwrap_or_default(),
+                production_date: input.production_date.and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                }),
+                expiration_date: input.expiration_date.and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                }),
+                supplier_lot: input.supplier_lot_number,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create lot: {}", e)))?;
         Ok(lot.into())
     }
 
@@ -7625,7 +8078,9 @@ impl Lots {
     pub async fn get(&self, id: String) -> Result<Option<LotOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let lot = commerce.lots().get(uuid)
+        let lot = commerce
+            .lots()
+            .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
         Ok(lot.map(|l| l.into()))
     }
@@ -7634,7 +8089,9 @@ impl Lots {
     #[napi]
     pub async fn get_by_number(&self, lot_number: String) -> Result<Option<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lot = commerce.lots().get_by_number(&lot_number)
+        let lot = commerce
+            .lots()
+            .get_by_number(&lot_number)
             .map_err(|e| Error::from_reason(format!("Failed to get lot: {}", e)))?;
         Ok(lot.map(|l| l.into()))
     }
@@ -7643,7 +8100,9 @@ impl Lots {
     #[napi]
     pub async fn list(&self) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().list(Default::default())
+        let lots = commerce
+            .lots()
+            .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7652,7 +8111,9 @@ impl Lots {
     #[napi]
     pub async fn get_active_lots(&self, sku: String) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().get_active_lots(&sku)
+        let lots = commerce
+            .lots()
+            .get_active_lots(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get active lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7661,7 +8122,9 @@ impl Lots {
     #[napi]
     pub async fn get_available_lots_for_sku(&self, sku: String) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().get_available_lots_for_sku(&sku)
+        let lots = commerce
+            .lots()
+            .get_available_lots_for_sku(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get available lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7671,7 +8134,9 @@ impl Lots {
     pub async fn quarantine(&self, id: String, reason: String) -> Result<LotOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let lot = commerce.lots().quarantine(uuid, &reason)
+        let lot = commerce
+            .lots()
+            .quarantine(uuid, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to quarantine lot: {}", e)))?;
         Ok(lot.into())
     }
@@ -7681,7 +8146,9 @@ impl Lots {
     pub async fn release_quarantine(&self, id: String) -> Result<LotOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let lot = commerce.lots().release_quarantine(uuid)
+        let lot = commerce
+            .lots()
+            .release_quarantine(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to release lot: {}", e)))?;
         Ok(lot.into())
     }
@@ -7690,7 +8157,9 @@ impl Lots {
     #[napi]
     pub async fn get_expiring_lots(&self, days: i32) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().get_expiring_lots(days)
+        let lots = commerce
+            .lots()
+            .get_expiring_lots(days)
             .map_err(|e| Error::from_reason(format!("Failed to get expiring lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7699,7 +8168,9 @@ impl Lots {
     #[napi]
     pub async fn get_expired_lots(&self) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().get_expired_lots()
+        let lots = commerce
+            .lots()
+            .get_expired_lots()
             .map_err(|e| Error::from_reason(format!("Failed to get expired lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7708,7 +8179,9 @@ impl Lots {
     #[napi]
     pub async fn get_quarantined(&self) -> Result<Vec<LotOutput>> {
         let commerce = self.commerce.lock().await;
-        let lots = commerce.lots().get_quarantined()
+        let lots = commerce
+            .lots()
+            .get_quarantined()
             .map_err(|e| Error::from_reason(format!("Failed to get quarantined lots: {}", e)))?;
         Ok(lots.into_iter().map(|l| l.into()).collect())
     }
@@ -7717,7 +8190,9 @@ impl Lots {
     #[napi]
     pub async fn count(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.lots().count(Default::default())
+        let count = commerce
+            .lots()
+            .count(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count lots: {}", e)))?;
         Ok(count as u32)
     }
@@ -7775,13 +8250,20 @@ impl Serials {
     #[napi]
     pub async fn create(&self, input: CreateSerialInput) -> Result<SerialOutput> {
         let commerce = self.commerce.lock().await;
-        let serial = commerce.serials().create(stateset_core::CreateSerialNumber {
-            serial: input.serial,
-            sku: input.sku,
-            lot_number: input.lot_number,
-            manufactured_at: input.manufactured_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc))),
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create serial: {}", e)))?;
+        let serial = commerce
+            .serials()
+            .create(stateset_core::CreateSerialNumber {
+                serial: input.serial,
+                sku: input.sku,
+                lot_number: input.lot_number,
+                manufactured_at: input.manufactured_at.and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                }),
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create serial: {}", e)))?;
         Ok(serial.into())
     }
 
@@ -7790,7 +8272,9 @@ impl Serials {
     pub async fn get(&self, id: String) -> Result<Option<SerialOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let serial = commerce.serials().get(uuid)
+        let serial = commerce
+            .serials()
+            .get(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get serial: {}", e)))?;
         Ok(serial.map(|s| s.into()))
     }
@@ -7799,7 +8283,9 @@ impl Serials {
     #[napi]
     pub async fn get_by_serial(&self, serial: String) -> Result<Option<SerialOutput>> {
         let commerce = self.commerce.lock().await;
-        let s = commerce.serials().get_by_serial(&serial)
+        let s = commerce
+            .serials()
+            .get_by_serial(&serial)
             .map_err(|e| Error::from_reason(format!("Failed to get serial: {}", e)))?;
         Ok(s.map(|s| s.into()))
     }
@@ -7808,7 +8294,9 @@ impl Serials {
     #[napi]
     pub async fn list(&self) -> Result<Vec<SerialOutput>> {
         let commerce = self.commerce.lock().await;
-        let serials = commerce.serials().list(Default::default())
+        let serials = commerce
+            .serials()
+            .list(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list serials: {}", e)))?;
         Ok(serials.into_iter().map(|s| s.into()).collect())
     }
@@ -7817,19 +8305,32 @@ impl Serials {
     #[napi]
     pub async fn get_available(&self, sku: String, limit: u32) -> Result<Vec<SerialOutput>> {
         let commerce = self.commerce.lock().await;
-        let serials = commerce.serials().get_available(&sku, limit)
+        let serials = commerce
+            .serials()
+            .get_available(&sku, limit)
             .map_err(|e| Error::from_reason(format!("Failed to get available serials: {}", e)))?;
         Ok(serials.into_iter().map(|s| s.into()).collect())
     }
 
     /// Mark a serial as sold
     #[napi]
-    pub async fn mark_sold(&self, id: String, customer_id: String, order_id: Option<String>) -> Result<SerialOutput> {
+    pub async fn mark_sold(
+        &self,
+        id: String,
+        customer_id: String,
+        order_id: Option<String>,
+    ) -> Result<SerialOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = id.parse().map_err(|_| Error::from_reason("Invalid serial UUID"))?;
-        let cust_uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid customer UUID"))?;
+        let uuid = id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid serial UUID"))?;
+        let cust_uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
         let order_uuid = order_id.and_then(|s| s.parse().ok());
-        let serial = commerce.serials().mark_sold(uuid, cust_uuid, order_uuid)
+        let serial = commerce
+            .serials()
+            .mark_sold(uuid, cust_uuid, order_uuid)
             .map_err(|e| Error::from_reason(format!("Failed to mark sold: {}", e)))?;
         Ok(serial.into())
     }
@@ -7839,7 +8340,9 @@ impl Serials {
     pub async fn quarantine(&self, id: String, reason: String) -> Result<SerialOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let serial = commerce.serials().quarantine(uuid, &reason)
+        let serial = commerce
+            .serials()
+            .quarantine(uuid, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to quarantine serial: {}", e)))?;
         Ok(serial.into())
     }
@@ -7848,7 +8351,9 @@ impl Serials {
     #[napi]
     pub async fn is_available(&self, serial: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let available = commerce.serials().is_available(&serial)
+        let available = commerce
+            .serials()
+            .is_available(&serial)
             .map_err(|e| Error::from_reason(format!("Failed to check availability: {}", e)))?;
         Ok(available)
     }
@@ -7857,7 +8362,9 @@ impl Serials {
     #[napi]
     pub async fn count(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.serials().count(Default::default())
+        let count = commerce
+            .serials()
+            .count(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count serials: {}", e)))?;
         Ok(count as u32)
     }
@@ -7983,13 +8490,19 @@ impl Warehouse {
     #[napi]
     pub async fn create_warehouse(&self, input: CreateWarehouseInput) -> Result<WarehouseOutput> {
         let commerce = self.commerce.lock().await;
-        let warehouse = commerce.warehouse().create_warehouse(stateset_core::CreateWarehouse {
-            code: input.code,
-            name: input.name,
-            warehouse_type: input.warehouse_type.map(|s| parse_warehouse_type(&s)).unwrap_or(stateset_core::WarehouseType::Distribution),
-            timezone: input.timezone,
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create warehouse: {}", e)))?;
+        let warehouse = commerce
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: input.code,
+                name: input.name,
+                warehouse_type: input
+                    .warehouse_type
+                    .map(|s| parse_warehouse_type(&s))
+                    .unwrap_or(stateset_core::WarehouseType::Distribution),
+                timezone: input.timezone,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create warehouse: {}", e)))?;
         Ok(warehouse.into())
     }
 
@@ -7997,7 +8510,9 @@ impl Warehouse {
     #[napi]
     pub async fn get_warehouse(&self, id: i32) -> Result<Option<WarehouseOutput>> {
         let commerce = self.commerce.lock().await;
-        let warehouse = commerce.warehouse().get_warehouse(id)
+        let warehouse = commerce
+            .warehouse()
+            .get_warehouse(id)
             .map_err(|e| Error::from_reason(format!("Failed to get warehouse: {}", e)))?;
         Ok(warehouse.map(|w| w.into()))
     }
@@ -8006,7 +8521,9 @@ impl Warehouse {
     #[napi]
     pub async fn get_warehouse_by_code(&self, code: String) -> Result<Option<WarehouseOutput>> {
         let commerce = self.commerce.lock().await;
-        let warehouse = commerce.warehouse().get_warehouse_by_code(&code)
+        let warehouse = commerce
+            .warehouse()
+            .get_warehouse_by_code(&code)
             .map_err(|e| Error::from_reason(format!("Failed to get warehouse: {}", e)))?;
         Ok(warehouse.map(|w| w.into()))
     }
@@ -8015,7 +8532,9 @@ impl Warehouse {
     #[napi]
     pub async fn list_warehouses(&self) -> Result<Vec<WarehouseOutput>> {
         let commerce = self.commerce.lock().await;
-        let warehouses = commerce.warehouse().list_warehouses(Default::default())
+        let warehouses = commerce
+            .warehouse()
+            .list_warehouses(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list warehouses: {}", e)))?;
         Ok(warehouses.into_iter().map(|w| w.into()).collect())
     }
@@ -8024,17 +8543,20 @@ impl Warehouse {
     #[napi]
     pub async fn create_location(&self, input: CreateLocationInput) -> Result<LocationOutput> {
         let commerce = self.commerce.lock().await;
-        let location = commerce.warehouse().create_location(stateset_core::CreateLocation {
-            warehouse_id: input.warehouse_id,
-            location_type: parse_location_type(&input.location_type),
-            zone: input.zone,
-            aisle: input.aisle,
-            rack: input.rack,
-            bin: input.bin,
-            is_pickable: input.is_pickable,
-            is_receivable: input.is_receivable,
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create location: {}", e)))?;
+        let location = commerce
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: input.warehouse_id,
+                location_type: parse_location_type(&input.location_type),
+                zone: input.zone,
+                aisle: input.aisle,
+                rack: input.rack,
+                bin: input.bin,
+                is_pickable: input.is_pickable,
+                is_receivable: input.is_receivable,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create location: {}", e)))?;
         Ok(location.into())
     }
 
@@ -8042,7 +8564,9 @@ impl Warehouse {
     #[napi]
     pub async fn get_location(&self, id: i32) -> Result<Option<LocationOutput>> {
         let commerce = self.commerce.lock().await;
-        let location = commerce.warehouse().get_location(id)
+        let location = commerce
+            .warehouse()
+            .get_location(id)
             .map_err(|e| Error::from_reason(format!("Failed to get location: {}", e)))?;
         Ok(location.map(|l| l.into()))
     }
@@ -8055,16 +8579,24 @@ impl Warehouse {
             warehouse_id,
             ..Default::default()
         };
-        let locations = commerce.warehouse().list_locations(filter)
+        let locations = commerce
+            .warehouse()
+            .list_locations(filter)
             .map_err(|e| Error::from_reason(format!("Failed to list locations: {}", e)))?;
         Ok(locations.into_iter().map(|l| l.into()).collect())
     }
 
     /// Get pickable locations for a SKU
     #[napi]
-    pub async fn get_pickable_locations(&self, warehouse_id: i32, sku: String) -> Result<Vec<LocationOutput>> {
+    pub async fn get_pickable_locations(
+        &self,
+        warehouse_id: i32,
+        sku: String,
+    ) -> Result<Vec<LocationOutput>> {
         let commerce = self.commerce.lock().await;
-        let locations = commerce.warehouse().get_pickable_locations(warehouse_id, &sku)
+        let locations = commerce
+            .warehouse()
+            .get_pickable_locations(warehouse_id, &sku)
             .map_err(|e| Error::from_reason(format!("Failed to get pickable locations: {}", e)))?;
         Ok(locations.into_iter().map(|l| l.into()).collect())
     }
@@ -8073,7 +8605,9 @@ impl Warehouse {
     #[napi]
     pub async fn get_total_available(&self, warehouse_id: i32, sku: String) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let total = commerce.warehouse().get_total_available(warehouse_id, &sku)
+        let total = commerce
+            .warehouse()
+            .get_total_available(warehouse_id, &sku)
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
         Ok(to_f64_or_nan(total))
     }
@@ -8082,7 +8616,9 @@ impl Warehouse {
     #[napi]
     pub async fn count_warehouses(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.warehouse().count_warehouses(Default::default())
+        let count = commerce
+            .warehouse()
+            .count_warehouses(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count warehouses: {}", e)))?;
         Ok(count as u32)
     }
@@ -8151,20 +8687,26 @@ impl Receiving {
     #[napi]
     pub async fn create_receipt(&self, input: CreateReceiptInput) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let receipt = commerce.receiving().create_receipt(stateset_core::CreateReceipt {
-            receipt_number: None,
-            receipt_type: parse_receipt_type(&input.receipt_type),
-            reference_type: input.purchase_order_id.as_ref().map(|_| "purchase_order".to_string()),
-            reference_id: input.purchase_order_id.and_then(|s| s.parse().ok()),
-            supplier_id: None,
-            warehouse_id: input.warehouse_id,
-            carrier: input.carrier,
-            tracking_number: input.tracking_number,
-            expected_date: None,
-            notes: None,
-            created_by: None,
-            items: vec![],
-        }).map_err(|e| Error::from_reason(format!("Failed to create receipt: {}", e)))?;
+        let receipt = commerce
+            .receiving()
+            .create_receipt(stateset_core::CreateReceipt {
+                receipt_number: None,
+                receipt_type: parse_receipt_type(&input.receipt_type),
+                reference_type: input
+                    .purchase_order_id
+                    .as_ref()
+                    .map(|_| "purchase_order".to_string()),
+                reference_id: input.purchase_order_id.and_then(|s| s.parse().ok()),
+                supplier_id: None,
+                warehouse_id: input.warehouse_id,
+                carrier: input.carrier,
+                tracking_number: input.tracking_number,
+                expected_date: None,
+                notes: None,
+                created_by: None,
+                items: vec![],
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create receipt: {}", e)))?;
         Ok(receipt.into())
     }
 
@@ -8173,7 +8715,9 @@ impl Receiving {
     pub async fn get_receipt(&self, id: String) -> Result<Option<ReceiptOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let receipt = commerce.receiving().get_receipt(uuid)
+        let receipt = commerce
+            .receiving()
+            .get_receipt(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get receipt: {}", e)))?;
         Ok(receipt.map(|r| r.into()))
     }
@@ -8182,7 +8726,9 @@ impl Receiving {
     #[napi]
     pub async fn get_receipt_by_number(&self, number: String) -> Result<Option<ReceiptOutput>> {
         let commerce = self.commerce.lock().await;
-        let receipt = commerce.receiving().get_receipt_by_number(&number)
+        let receipt = commerce
+            .receiving()
+            .get_receipt_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get receipt: {}", e)))?;
         Ok(receipt.map(|r| r.into()))
     }
@@ -8191,7 +8737,9 @@ impl Receiving {
     #[napi]
     pub async fn list_receipts(&self) -> Result<Vec<ReceiptOutput>> {
         let commerce = self.commerce.lock().await;
-        let receipts = commerce.receiving().list_receipts(Default::default())
+        let receipts = commerce
+            .receiving()
+            .list_receipts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list receipts: {}", e)))?;
         Ok(receipts.into_iter().map(|r| r.into()).collect())
     }
@@ -8201,7 +8749,9 @@ impl Receiving {
     pub async fn start_receiving(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let receipt = commerce.receiving().start_receiving(uuid)
+        let receipt = commerce
+            .receiving()
+            .start_receiving(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to start receiving: {}", e)))?;
         Ok(receipt.into())
     }
@@ -8211,7 +8761,9 @@ impl Receiving {
     pub async fn complete_receiving(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let receipt = commerce.receiving().complete_receiving(uuid)
+        let receipt = commerce
+            .receiving()
+            .complete_receiving(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to complete receiving: {}", e)))?;
         Ok(receipt.into())
     }
@@ -8221,17 +8773,27 @@ impl Receiving {
     pub async fn cancel_receipt(&self, id: String) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let receipt = commerce.receiving().cancel_receipt(uuid)
+        let receipt = commerce
+            .receiving()
+            .cancel_receipt(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel receipt: {}", e)))?;
         Ok(receipt.into())
     }
 
     /// Create a receipt from a purchase order
     #[napi]
-    pub async fn create_receipt_from_po(&self, po_id: String, warehouse_id: i32) -> Result<ReceiptOutput> {
+    pub async fn create_receipt_from_po(
+        &self,
+        po_id: String,
+        warehouse_id: i32,
+    ) -> Result<ReceiptOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = po_id.parse().map_err(|_| Error::from_reason("Invalid PO UUID"))?;
-        let receipt = commerce.receiving().create_receipt_from_po(uuid, warehouse_id)
+        let uuid = po_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid PO UUID"))?;
+        let receipt = commerce
+            .receiving()
+            .create_receipt_from_po(uuid, warehouse_id)
             .map_err(|e| Error::from_reason(format!("Failed to create receipt from PO: {}", e)))?;
         Ok(receipt.into())
     }
@@ -8240,7 +8802,9 @@ impl Receiving {
     #[napi]
     pub async fn count_receipts(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.receiving().count_receipts(Default::default())
+        let count = commerce
+            .receiving()
+            .count_receipts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count receipts: {}", e)))?;
         Ok(count as u32)
     }
@@ -8322,16 +8886,21 @@ impl Fulfillment {
     #[napi]
     pub async fn create_wave(&self, input: CreateWaveInput) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
-        let order_ids: Vec<uuid::Uuid> = input.order_ids.iter()
+        let order_ids: Vec<uuid::Uuid> = input
+            .order_ids
+            .iter()
             .filter_map(|s| s.parse().ok())
             .collect();
-        let wave = commerce.fulfillment().create_wave(stateset_core::CreateWave {
-            warehouse_id: input.warehouse_id,
-            order_ids,
-            priority: input.priority,
-            notes: input.notes,
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create wave: {}", e)))?;
+        let wave = commerce
+            .fulfillment()
+            .create_wave(stateset_core::CreateWave {
+                warehouse_id: input.warehouse_id,
+                order_ids,
+                priority: input.priority,
+                notes: input.notes,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create wave: {}", e)))?;
         Ok(wave.into())
     }
 
@@ -8340,7 +8909,9 @@ impl Fulfillment {
     pub async fn get_wave(&self, id: String) -> Result<Option<WaveOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let wave = commerce.fulfillment().get_wave(uuid)
+        let wave = commerce
+            .fulfillment()
+            .get_wave(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get wave: {}", e)))?;
         Ok(wave.map(|w| w.into()))
     }
@@ -8349,7 +8920,9 @@ impl Fulfillment {
     #[napi]
     pub async fn list_waves(&self) -> Result<Vec<WaveOutput>> {
         let commerce = self.commerce.lock().await;
-        let waves = commerce.fulfillment().list_waves(Default::default())
+        let waves = commerce
+            .fulfillment()
+            .list_waves(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list waves: {}", e)))?;
         Ok(waves.into_iter().map(|w| w.into()).collect())
     }
@@ -8359,7 +8932,9 @@ impl Fulfillment {
     pub async fn release_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let wave = commerce.fulfillment().release_wave(uuid)
+        let wave = commerce
+            .fulfillment()
+            .release_wave(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to release wave: {}", e)))?;
         Ok(wave.into())
     }
@@ -8369,7 +8944,9 @@ impl Fulfillment {
     pub async fn complete_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let wave = commerce.fulfillment().complete_wave(uuid)
+        let wave = commerce
+            .fulfillment()
+            .complete_wave(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to complete wave: {}", e)))?;
         Ok(wave.into())
     }
@@ -8379,7 +8956,9 @@ impl Fulfillment {
     pub async fn cancel_wave(&self, id: String) -> Result<WaveOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let wave = commerce.fulfillment().cancel_wave(uuid)
+        let wave = commerce
+            .fulfillment()
+            .cancel_wave(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel wave: {}", e)))?;
         Ok(wave.into())
     }
@@ -8389,7 +8968,9 @@ impl Fulfillment {
     pub async fn get_pick(&self, id: String) -> Result<Option<PickTaskOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let pick = commerce.fulfillment().get_pick(uuid)
+        let pick = commerce
+            .fulfillment()
+            .get_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get pick: {}", e)))?;
         Ok(pick.map(|p| p.into()))
     }
@@ -8398,7 +8979,9 @@ impl Fulfillment {
     #[napi]
     pub async fn list_picks(&self) -> Result<Vec<PickTaskOutput>> {
         let commerce = self.commerce.lock().await;
-        let picks = commerce.fulfillment().list_picks(Default::default())
+        let picks = commerce
+            .fulfillment()
+            .list_picks(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list picks: {}", e)))?;
         Ok(picks.into_iter().map(|p| p.into()).collect())
     }
@@ -8408,7 +8991,9 @@ impl Fulfillment {
     pub async fn assign_pick(&self, id: String, assigned_to: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let pick = commerce.fulfillment().assign_pick(uuid, &assigned_to)
+        let pick = commerce
+            .fulfillment()
+            .assign_pick(uuid, &assigned_to)
             .map_err(|e| Error::from_reason(format!("Failed to assign pick: {}", e)))?;
         Ok(pick.into())
     }
@@ -8418,7 +9003,9 @@ impl Fulfillment {
     pub async fn start_pick(&self, id: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let pick = commerce.fulfillment().start_pick(uuid)
+        let pick = commerce
+            .fulfillment()
+            .start_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to start pick: {}", e)))?;
         Ok(pick.into())
     }
@@ -8428,7 +9015,9 @@ impl Fulfillment {
     pub async fn cancel_pick(&self, id: String) -> Result<PickTaskOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let pick = commerce.fulfillment().cancel_pick(uuid)
+        let pick = commerce
+            .fulfillment()
+            .cancel_pick(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel pick: {}", e)))?;
         Ok(pick.into())
     }
@@ -8437,8 +9026,12 @@ impl Fulfillment {
     #[napi]
     pub async fn is_order_ready_to_pack(&self, order_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let ready = commerce.fulfillment().is_order_ready_to_pack(uuid)
+        let uuid = order_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ready = commerce
+            .fulfillment()
+            .is_order_ready_to_pack(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to check: {}", e)))?;
         Ok(ready)
     }
@@ -8447,8 +9040,12 @@ impl Fulfillment {
     #[napi]
     pub async fn is_order_ready_to_ship(&self, order_id: String) -> Result<bool> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let ready = commerce.fulfillment().is_order_ready_to_ship(uuid)
+        let uuid = order_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let ready = commerce
+            .fulfillment()
+            .is_order_ready_to_ship(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to check: {}", e)))?;
         Ok(ready)
     }
@@ -8457,7 +9054,9 @@ impl Fulfillment {
     #[napi]
     pub async fn count_waves(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.fulfillment().count_waves(Default::default())
+        let count = commerce
+            .fulfillment()
+            .count_waves(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count waves: {}", e)))?;
         Ok(count as u32)
     }
@@ -8542,23 +9141,28 @@ impl AccountsPayable {
     #[napi]
     pub async fn create_bill(&self, input: CreateBillInput) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
-        let supplier_id = input.supplier_id.parse()
+        let supplier_id = input
+            .supplier_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid supplier UUID"))?;
         let due_date = chrono::DateTime::parse_from_rfc3339(&input.due_date)
             .map_err(|_| Error::from_reason("Invalid due date format"))?
             .with_timezone(&chrono::Utc);
-        let bill = commerce.accounts_payable().create_bill(stateset_core::CreateBill {
-            bill_number: None,
-            supplier_id,
-            purchase_order_id: None,
-            bill_date: None,
-            due_date,
-            payment_terms: input.payment_terms,
-            currency: None,
-            reference_number: input.reference_number,
-            memo: input.notes,
-            items: vec![],
-        }).map_err(|e| Error::from_reason(format!("Failed to create bill: {}", e)))?;
+        let bill = commerce
+            .accounts_payable()
+            .create_bill(stateset_core::CreateBill {
+                bill_number: None,
+                supplier_id,
+                purchase_order_id: None,
+                bill_date: None,
+                due_date,
+                payment_terms: input.payment_terms,
+                currency: None,
+                reference_number: input.reference_number,
+                memo: input.notes,
+                items: vec![],
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create bill: {}", e)))?;
         Ok(bill.into())
     }
 
@@ -8567,7 +9171,9 @@ impl AccountsPayable {
     pub async fn get_bill(&self, id: String) -> Result<Option<BillOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let bill = commerce.accounts_payable().get_bill(uuid)
+        let bill = commerce
+            .accounts_payable()
+            .get_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
         Ok(bill.map(|b| b.into()))
     }
@@ -8576,7 +9182,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_bill_by_number(&self, number: String) -> Result<Option<BillOutput>> {
         let commerce = self.commerce.lock().await;
-        let bill = commerce.accounts_payable().get_bill_by_number(&number)
+        let bill = commerce
+            .accounts_payable()
+            .get_bill_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get bill: {}", e)))?;
         Ok(bill.map(|b| b.into()))
     }
@@ -8585,7 +9193,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn list_bills(&self) -> Result<Vec<BillOutput>> {
         let commerce = self.commerce.lock().await;
-        let bills = commerce.accounts_payable().list_bills(Default::default())
+        let bills = commerce
+            .accounts_payable()
+            .list_bills(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list bills: {}", e)))?;
         Ok(bills.into_iter().map(|b| b.into()).collect())
     }
@@ -8595,7 +9205,9 @@ impl AccountsPayable {
     pub async fn approve_bill(&self, id: String) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let bill = commerce.accounts_payable().approve_bill(uuid)
+        let bill = commerce
+            .accounts_payable()
+            .approve_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to approve bill: {}", e)))?;
         Ok(bill.into())
     }
@@ -8605,7 +9217,9 @@ impl AccountsPayable {
     pub async fn cancel_bill(&self, id: String) -> Result<BillOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let bill = commerce.accounts_payable().cancel_bill(uuid)
+        let bill = commerce
+            .accounts_payable()
+            .cancel_bill(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel bill: {}", e)))?;
         Ok(bill.into())
     }
@@ -8614,7 +9228,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_overdue_bills(&self) -> Result<Vec<BillOutput>> {
         let commerce = self.commerce.lock().await;
-        let bills = commerce.accounts_payable().get_overdue_bills()
+        let bills = commerce
+            .accounts_payable()
+            .get_overdue_bills()
             .map_err(|e| Error::from_reason(format!("Failed to get overdue bills: {}", e)))?;
         Ok(bills.into_iter().map(|b| b.into()).collect())
     }
@@ -8623,7 +9239,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_bills_due_soon(&self, days: i32) -> Result<Vec<BillOutput>> {
         let commerce = self.commerce.lock().await;
-        let bills = commerce.accounts_payable().get_bills_due_soon(days)
+        let bills = commerce
+            .accounts_payable()
+            .get_bills_due_soon(days)
             .map_err(|e| Error::from_reason(format!("Failed to get bills: {}", e)))?;
         Ok(bills.into_iter().map(|b| b.into()).collect())
     }
@@ -8632,7 +9250,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_aging_summary(&self) -> Result<ApAgingSummaryOutput> {
         let commerce = self.commerce.lock().await;
-        let aging = commerce.accounts_payable().get_aging_summary()
+        let aging = commerce
+            .accounts_payable()
+            .get_aging_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
         Ok(aging.into())
     }
@@ -8641,7 +9261,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn get_total_outstanding(&self) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let total = commerce.accounts_payable().get_total_outstanding()
+        let total = commerce
+            .accounts_payable()
+            .get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
         Ok(to_f64_or_nan(total))
     }
@@ -8650,7 +9272,9 @@ impl AccountsPayable {
     #[napi]
     pub async fn count_bills(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.accounts_payable().count_bills(Default::default())
+        let count = commerce
+            .accounts_payable()
+            .count_bills(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to count bills: {}", e)))?;
         Ok(count as u32)
     }
@@ -8722,8 +9346,12 @@ impl From<stateset_core::CreditMemo> for CreditMemoOutput {
 
 fn parse_credit_memo_reason(s: &str) -> stateset_core::CreditMemoReason {
     match s.to_lowercase().as_str() {
-        "returned_goods" | "returnedgoods" | "return" => stateset_core::CreditMemoReason::ReturnedGoods,
-        "pricing_error" | "pricingerror" | "billing_error" => stateset_core::CreditMemoReason::PricingError,
+        "returned_goods" | "returnedgoods" | "return" => {
+            stateset_core::CreditMemoReason::ReturnedGoods
+        }
+        "pricing_error" | "pricingerror" | "billing_error" => {
+            stateset_core::CreditMemoReason::PricingError
+        }
         "overpayment" => stateset_core::CreditMemoReason::Overpayment,
         "damaged" => stateset_core::CreditMemoReason::Damaged,
         "service_credit" | "servicecredit" => stateset_core::CreditMemoReason::ServiceCredit,
@@ -8743,7 +9371,9 @@ impl AccountsReceivable {
     #[napi]
     pub async fn get_aging_summary(&self) -> Result<ArAgingSummaryOutput> {
         let commerce = self.commerce.lock().await;
-        let aging = commerce.accounts_receivable().get_aging_summary()
+        let aging = commerce
+            .accounts_receivable()
+            .get_aging_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get aging: {}", e)))?;
         Ok(aging.into())
     }
@@ -8752,7 +9382,9 @@ impl AccountsReceivable {
     #[napi]
     pub async fn get_total_outstanding(&self) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let total = commerce.accounts_receivable().get_total_outstanding()
+        let total = commerce
+            .accounts_receivable()
+            .get_total_outstanding()
             .map_err(|e| Error::from_reason(format!("Failed to get total: {}", e)))?;
         Ok(to_f64_or_nan(total))
     }
@@ -8761,24 +9393,34 @@ impl AccountsReceivable {
     #[napi]
     pub async fn get_dso(&self, days: i32) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let dso = commerce.accounts_receivable().get_dso(days)
+        let dso = commerce
+            .accounts_receivable()
+            .get_dso(days)
             .map_err(|e| Error::from_reason(format!("Failed to get DSO: {}", e)))?;
         Ok(to_f64_or_nan(dso))
     }
 
     /// Create a credit memo
     #[napi]
-    pub async fn create_credit_memo(&self, input: CreateCreditMemoInput) -> Result<CreditMemoOutput> {
+    pub async fn create_credit_memo(
+        &self,
+        input: CreateCreditMemoInput,
+    ) -> Result<CreditMemoOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id = input.customer_id.parse()
+        let customer_id = input
+            .customer_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
-        let memo = commerce.accounts_receivable().create_credit_memo(stateset_core::CreateCreditMemo {
-            customer_id,
-            original_invoice_id: input.original_invoice_id.and_then(|s| s.parse().ok()),
-            reason: parse_credit_memo_reason(&input.reason),
-            amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
-            notes: input.notes,
-        }).map_err(|e| Error::from_reason(format!("Failed to create credit memo: {}", e)))?;
+        let memo = commerce
+            .accounts_receivable()
+            .create_credit_memo(stateset_core::CreateCreditMemo {
+                customer_id,
+                original_invoice_id: input.original_invoice_id.and_then(|s| s.parse().ok()),
+                reason: parse_credit_memo_reason(&input.reason),
+                amount: Decimal::from_f64_retain(input.amount).unwrap_or_default(),
+                notes: input.notes,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create credit memo: {}", e)))?;
         Ok(memo.into())
     }
 
@@ -8787,7 +9429,9 @@ impl AccountsReceivable {
     pub async fn get_credit_memo(&self, id: String) -> Result<Option<CreditMemoOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let memo = commerce.accounts_receivable().get_credit_memo(uuid)
+        let memo = commerce
+            .accounts_receivable()
+            .get_credit_memo(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get credit memo: {}", e)))?;
         Ok(memo.map(|m| m.into()))
     }
@@ -8796,7 +9440,9 @@ impl AccountsReceivable {
     #[napi]
     pub async fn list_credit_memos(&self) -> Result<Vec<CreditMemoOutput>> {
         let commerce = self.commerce.lock().await;
-        let memos = commerce.accounts_receivable().list_credit_memos(Default::default())
+        let memos = commerce
+            .accounts_receivable()
+            .list_credit_memos(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list credit memos: {}", e)))?;
         Ok(memos.into_iter().map(|m| m.into()).collect())
     }
@@ -8806,17 +9452,26 @@ impl AccountsReceivable {
     pub async fn void_credit_memo(&self, id: String) -> Result<CreditMemoOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let memo = commerce.accounts_receivable().void_credit_memo(uuid)
+        let memo = commerce
+            .accounts_receivable()
+            .void_credit_memo(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to void credit memo: {}", e)))?;
         Ok(memo.into())
     }
 
     /// Get unapplied credits for a customer
     #[napi]
-    pub async fn get_unapplied_credits(&self, customer_id: String) -> Result<Vec<CreditMemoOutput>> {
+    pub async fn get_unapplied_credits(
+        &self,
+        customer_id: String,
+    ) -> Result<Vec<CreditMemoOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let memos = commerce.accounts_receivable().get_unapplied_credits(uuid)
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let memos = commerce
+            .accounts_receivable()
+            .get_unapplied_credits(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get credits: {}", e)))?;
         Ok(memos.into_iter().map(|m| m.into()).collect())
     }
@@ -8888,7 +9543,9 @@ impl CostAccounting {
     #[napi]
     pub async fn get_item_cost(&self, sku: String) -> Result<Option<ItemCostOutput>> {
         let commerce = self.commerce.lock().await;
-        let cost = commerce.cost_accounting().get_item_cost(&sku)
+        let cost = commerce
+            .cost_accounting()
+            .get_item_cost(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get cost: {}", e)))?;
         Ok(cost.map(|c| c.into()))
     }
@@ -8897,15 +9554,26 @@ impl CostAccounting {
     #[napi]
     pub async fn set_item_cost(&self, input: SetItemCostInput) -> Result<ItemCostOutput> {
         let commerce = self.commerce.lock().await;
-        let cost = commerce.cost_accounting().set_item_cost(stateset_core::SetItemCost {
-            sku: input.sku,
-            cost_method: input.cost_method.map(|s| parse_cost_method(&s)),
-            standard_cost: input.standard_cost.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            material_cost: input.material_cost.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            labor_cost: input.labor_cost.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            overhead_cost: input.overhead_cost.map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to set cost: {}", e)))?;
+        let cost = commerce
+            .cost_accounting()
+            .set_item_cost(stateset_core::SetItemCost {
+                sku: input.sku,
+                cost_method: input.cost_method.map(|s| parse_cost_method(&s)),
+                standard_cost: input
+                    .standard_cost
+                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+                material_cost: input
+                    .material_cost
+                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+                labor_cost: input
+                    .labor_cost
+                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+                overhead_cost: input
+                    .overhead_cost
+                    .map(|v| Decimal::from_f64_retain(v).unwrap_or_default()),
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to set cost: {}", e)))?;
         Ok(cost.into())
     }
 
@@ -8913,20 +9581,30 @@ impl CostAccounting {
     #[napi]
     pub async fn list_item_costs(&self) -> Result<Vec<ItemCostOutput>> {
         let commerce = self.commerce.lock().await;
-        let costs = commerce.cost_accounting().list_item_costs(Default::default())
+        let costs = commerce
+            .cost_accounting()
+            .list_item_costs(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list costs: {}", e)))?;
         Ok(costs.into_iter().map(|c| c.into()).collect())
     }
 
     /// Update average cost
     #[napi]
-    pub async fn update_average_cost(&self, sku: String, quantity: f64, unit_cost: f64) -> Result<ItemCostOutput> {
+    pub async fn update_average_cost(
+        &self,
+        sku: String,
+        quantity: f64,
+        unit_cost: f64,
+    ) -> Result<ItemCostOutput> {
         let commerce = self.commerce.lock().await;
-        let cost = commerce.cost_accounting().update_average_cost(
-            &sku,
-            Decimal::from_f64_retain(quantity).unwrap_or_default(),
-            Decimal::from_f64_retain(unit_cost).unwrap_or_default(),
-        ).map_err(|e| Error::from_reason(format!("Failed to update cost: {}", e)))?;
+        let cost = commerce
+            .cost_accounting()
+            .update_average_cost(
+                &sku,
+                Decimal::from_f64_retain(quantity).unwrap_or_default(),
+                Decimal::from_f64_retain(unit_cost).unwrap_or_default(),
+            )
+            .map_err(|e| Error::from_reason(format!("Failed to update cost: {}", e)))?;
         Ok(cost.into())
     }
 
@@ -8934,7 +9612,9 @@ impl CostAccounting {
     #[napi]
     pub async fn get_total_inventory_value(&self) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let total = commerce.cost_accounting().get_total_inventory_value()
+        let total = commerce
+            .cost_accounting()
+            .get_total_inventory_value()
             .map_err(|e| Error::from_reason(format!("Failed to get value: {}", e)))?;
         Ok(to_f64_or_nan(total))
     }
@@ -9008,17 +9688,25 @@ pub struct Credit {
 impl Credit {
     /// Create a credit account
     #[napi]
-    pub async fn create_credit_account(&self, input: CreateCreditAccountInput) -> Result<CreditAccountOutput> {
+    pub async fn create_credit_account(
+        &self,
+        input: CreateCreditAccountInput,
+    ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let customer_id = input.customer_id.parse()
+        let customer_id = input
+            .customer_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
-        let account = commerce.credit().create_credit_account(stateset_core::CreateCreditAccount {
-            customer_id,
-            credit_limit: Decimal::from_f64_retain(input.credit_limit).unwrap_or_default(),
-            payment_terms: input.payment_terms,
-            notes: input.notes,
-            ..Default::default()
-        }).map_err(|e| Error::from_reason(format!("Failed to create credit account: {}", e)))?;
+        let account = commerce
+            .credit()
+            .create_credit_account(stateset_core::CreateCreditAccount {
+                customer_id,
+                credit_limit: Decimal::from_f64_retain(input.credit_limit).unwrap_or_default(),
+                payment_terms: input.payment_terms,
+                notes: input.notes,
+                ..Default::default()
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create credit account: {}", e)))?;
         Ok(account.into())
     }
 
@@ -9027,17 +9715,26 @@ impl Credit {
     pub async fn get_credit_account(&self, id: String) -> Result<Option<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.credit().get_credit_account(uuid)
+        let account = commerce
+            .credit()
+            .get_credit_account(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
         Ok(account.map(|a| a.into()))
     }
 
     /// Get credit account by customer
     #[napi]
-    pub async fn get_credit_account_by_customer(&self, customer_id: String) -> Result<Option<CreditAccountOutput>> {
+    pub async fn get_credit_account_by_customer(
+        &self,
+        customer_id: String,
+    ) -> Result<Option<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.credit().get_credit_account_by_customer(uuid)
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let account = commerce
+            .credit()
+            .get_credit_account_by_customer(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
         Ok(account.map(|a| a.into()))
     }
@@ -9046,47 +9743,88 @@ impl Credit {
     #[napi]
     pub async fn list_credit_accounts(&self) -> Result<Vec<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let accounts = commerce.credit().list_credit_accounts(Default::default())
+        let accounts = commerce
+            .credit()
+            .list_credit_accounts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
         Ok(accounts.into_iter().map(|a| a.into()).collect())
     }
 
     /// Check credit
     #[napi]
-    pub async fn check_credit(&self, customer_id: String, order_amount: f64) -> Result<CreditCheckOutput> {
+    pub async fn check_credit(
+        &self,
+        customer_id: String,
+        order_amount: f64,
+    ) -> Result<CreditCheckOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let result = commerce.credit().check_credit(uuid, Decimal::from_f64_retain(order_amount).unwrap_or_default())
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let result = commerce
+            .credit()
+            .check_credit(
+                uuid,
+                Decimal::from_f64_retain(order_amount).unwrap_or_default(),
+            )
             .map_err(|e| Error::from_reason(format!("Failed to check credit: {}", e)))?;
         Ok(result.into())
     }
 
     /// Adjust credit limit
     #[napi]
-    pub async fn adjust_credit_limit(&self, customer_id: String, new_limit: f64, reason: String) -> Result<CreditAccountOutput> {
+    pub async fn adjust_credit_limit(
+        &self,
+        customer_id: String,
+        new_limit: f64,
+        reason: String,
+    ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.credit().adjust_credit_limit(uuid, Decimal::from_f64_retain(new_limit).unwrap_or_default(), &reason)
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let account = commerce
+            .credit()
+            .adjust_credit_limit(
+                uuid,
+                Decimal::from_f64_retain(new_limit).unwrap_or_default(),
+                &reason,
+            )
             .map_err(|e| Error::from_reason(format!("Failed to adjust limit: {}", e)))?;
         Ok(account.into())
     }
 
     /// Suspend credit account
     #[napi]
-    pub async fn suspend_credit_account(&self, customer_id: String, reason: String) -> Result<CreditAccountOutput> {
+    pub async fn suspend_credit_account(
+        &self,
+        customer_id: String,
+        reason: String,
+    ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.credit().suspend_credit_account(uuid, &reason)
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let account = commerce
+            .credit()
+            .suspend_credit_account(uuid, &reason)
             .map_err(|e| Error::from_reason(format!("Failed to suspend account: {}", e)))?;
         Ok(account.into())
     }
 
     /// Reactivate credit account
     #[napi]
-    pub async fn reactivate_credit_account(&self, customer_id: String) -> Result<CreditAccountOutput> {
+    pub async fn reactivate_credit_account(
+        &self,
+        customer_id: String,
+    ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = customer_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.credit().reactivate_credit_account(uuid)
+        let uuid = customer_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let account = commerce
+            .credit()
+            .reactivate_credit_account(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to reactivate account: {}", e)))?;
         Ok(account.into())
     }
@@ -9095,7 +9833,9 @@ impl Credit {
     #[napi]
     pub async fn get_over_limit_customers(&self) -> Result<Vec<CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let accounts = commerce.credit().get_over_limit_customers()
+        let accounts = commerce
+            .credit()
+            .get_over_limit_customers()
             .map_err(|e| Error::from_reason(format!("Failed to get accounts: {}", e)))?;
         Ok(accounts.into_iter().map(|a| a.into()).collect())
     }
@@ -9191,22 +9931,29 @@ impl Backorders {
     #[napi]
     pub async fn create_backorder(&self, input: CreateBackorderInput) -> Result<BackorderOutput> {
         let commerce = self.commerce.lock().await;
-        let order_id = input.order_id.parse()
+        let order_id = input
+            .order_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid order UUID"))?;
-        let customer_id = input.customer_id.parse()
+        let customer_id = input
+            .customer_id
+            .parse()
             .map_err(|_| Error::from_reason("Invalid customer UUID"))?;
-        let backorder = commerce.backorder().create_backorder(stateset_core::CreateBackorder {
-            order_id,
-            order_line_id: None,
-            customer_id,
-            sku: input.sku,
-            quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
-            priority: input.priority.map(|s| parse_backorder_priority(&s)),
-            expected_date: None,
-            promised_date: None,
-            source_location_id: None,
-            notes: input.notes,
-        }).map_err(|e| Error::from_reason(format!("Failed to create backorder: {}", e)))?;
+        let backorder = commerce
+            .backorder()
+            .create_backorder(stateset_core::CreateBackorder {
+                order_id,
+                order_line_id: None,
+                customer_id,
+                sku: input.sku,
+                quantity: Decimal::from_f64_retain(input.quantity).unwrap_or_default(),
+                priority: input.priority.map(|s| parse_backorder_priority(&s)),
+                expected_date: None,
+                promised_date: None,
+                source_location_id: None,
+                notes: input.notes,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create backorder: {}", e)))?;
         Ok(backorder.into())
     }
 
@@ -9215,7 +9962,9 @@ impl Backorders {
     pub async fn get_backorder(&self, id: String) -> Result<Option<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let backorder = commerce.backorder().get_backorder(uuid)
+        let backorder = commerce
+            .backorder()
+            .get_backorder(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
         Ok(backorder.map(|b| b.into()))
     }
@@ -9224,7 +9973,9 @@ impl Backorders {
     #[napi]
     pub async fn get_backorder_by_number(&self, number: String) -> Result<Option<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let backorder = commerce.backorder().get_backorder_by_number(&number)
+        let backorder = commerce
+            .backorder()
+            .get_backorder_by_number(&number)
             .map_err(|e| Error::from_reason(format!("Failed to get backorder: {}", e)))?;
         Ok(backorder.map(|b| b.into()))
     }
@@ -9233,7 +9984,9 @@ impl Backorders {
     #[napi]
     pub async fn list_backorders(&self) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let backorders = commerce.backorder().list_backorders(Default::default())
+        let backorders = commerce
+            .backorder()
+            .list_backorders(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list backorders: {}", e)))?;
         Ok(backorders.into_iter().map(|b| b.into()).collect())
     }
@@ -9243,7 +9996,9 @@ impl Backorders {
     pub async fn cancel_backorder(&self, id: String) -> Result<BackorderOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let backorder = commerce.backorder().cancel_backorder(uuid)
+        let backorder = commerce
+            .backorder()
+            .cancel_backorder(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to cancel backorder: {}", e)))?;
         Ok(backorder.into())
     }
@@ -9252,8 +10007,12 @@ impl Backorders {
     #[napi]
     pub async fn get_backorders_for_order(&self, order_id: String) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let uuid = order_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let backorders = commerce.backorder().get_backorders_for_order(uuid)
+        let uuid = order_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let backorders = commerce
+            .backorder()
+            .get_backorders_for_order(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
         Ok(backorders.into_iter().map(|b| b.into()).collect())
     }
@@ -9262,7 +10021,9 @@ impl Backorders {
     #[napi]
     pub async fn get_backorders_for_sku(&self, sku: String) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let backorders = commerce.backorder().get_backorders_for_sku(&sku)
+        let backorders = commerce
+            .backorder()
+            .get_backorders_for_sku(&sku)
             .map_err(|e| Error::from_reason(format!("Failed to get backorders: {}", e)))?;
         Ok(backorders.into_iter().map(|b| b.into()).collect())
     }
@@ -9271,7 +10032,9 @@ impl Backorders {
     #[napi]
     pub async fn get_overdue_backorders(&self) -> Result<Vec<BackorderOutput>> {
         let commerce = self.commerce.lock().await;
-        let backorders = commerce.backorder().get_overdue_backorders()
+        let backorders = commerce
+            .backorder()
+            .get_overdue_backorders()
             .map_err(|e| Error::from_reason(format!("Failed to get overdue backorders: {}", e)))?;
         Ok(backorders.into_iter().map(|b| b.into()).collect())
     }
@@ -9280,7 +10043,9 @@ impl Backorders {
     #[napi]
     pub async fn get_summary(&self) -> Result<BackorderSummaryOutput> {
         let commerce = self.commerce.lock().await;
-        let summary = commerce.backorder().get_summary()
+        let summary = commerce
+            .backorder()
+            .get_summary()
             .map_err(|e| Error::from_reason(format!("Failed to get summary: {}", e)))?;
         Ok(summary.into())
     }
@@ -9289,7 +10054,9 @@ impl Backorders {
     #[napi]
     pub async fn count_pending(&self) -> Result<u32> {
         let commerce = self.commerce.lock().await;
-        let count = commerce.backorder().count_pending()
+        let count = commerce
+            .backorder()
+            .count_pending()
             .map_err(|e| Error::from_reason(format!("Failed to count backorders: {}", e)))?;
         Ok(count as u32)
     }
@@ -9443,17 +10210,20 @@ impl GeneralLedger {
     #[napi]
     pub async fn create_account(&self, input: CreateGlAccountInput) -> Result<GlAccountOutput> {
         let commerce = self.commerce.lock().await;
-        let account = commerce.general_ledger().create_account(stateset_core::CreateGlAccount {
-            account_number: input.account_number,
-            name: input.name,
-            description: input.description,
-            account_type: parse_account_type(&input.account_type),
-            account_sub_type: None,
-            parent_account_id: None,
-            is_header: None,
-            is_posting: Some(true),
-            currency: input.currency,
-        }).map_err(|e| Error::from_reason(format!("Failed to create account: {}", e)))?;
+        let account = commerce
+            .general_ledger()
+            .create_account(stateset_core::CreateGlAccount {
+                account_number: input.account_number,
+                name: input.name,
+                description: input.description,
+                account_type: parse_account_type(&input.account_type),
+                account_sub_type: None,
+                parent_account_id: None,
+                is_header: None,
+                is_posting: Some(true),
+                currency: input.currency,
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to create account: {}", e)))?;
         Ok(account.into())
     }
 
@@ -9462,16 +10232,23 @@ impl GeneralLedger {
     pub async fn get_account(&self, id: String) -> Result<Option<GlAccountOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let account = commerce.general_ledger().get_account(uuid)
+        let account = commerce
+            .general_ledger()
+            .get_account(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
         Ok(account.map(|a| a.into()))
     }
 
     /// Get a GL account by account number
     #[napi]
-    pub async fn get_account_by_number(&self, account_number: String) -> Result<Option<GlAccountOutput>> {
+    pub async fn get_account_by_number(
+        &self,
+        account_number: String,
+    ) -> Result<Option<GlAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let account = commerce.general_ledger().get_account_by_number(&account_number)
+        let account = commerce
+            .general_ledger()
+            .get_account_by_number(&account_number)
             .map_err(|e| Error::from_reason(format!("Failed to get account: {}", e)))?;
         Ok(account.map(|a| a.into()))
     }
@@ -9480,7 +10257,9 @@ impl GeneralLedger {
     #[napi]
     pub async fn list_accounts(&self) -> Result<Vec<GlAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let accounts = commerce.general_ledger().list_accounts(Default::default())
+        let accounts = commerce
+            .general_ledger()
+            .list_accounts(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list accounts: {}", e)))?;
         Ok(accounts.into_iter().map(|a| a.into()).collect())
     }
@@ -9489,7 +10268,9 @@ impl GeneralLedger {
     #[napi]
     pub async fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccountOutput>> {
         let commerce = self.commerce.lock().await;
-        let accounts = commerce.general_ledger().initialize_chart_of_accounts()
+        let accounts = commerce
+            .general_ledger()
+            .initialize_chart_of_accounts()
             .map_err(|e| Error::from_reason(format!("Failed to initialize chart: {}", e)))?;
         Ok(accounts.into_iter().map(|a| a.into()).collect())
     }
@@ -9499,7 +10280,9 @@ impl GeneralLedger {
     pub async fn get_journal_entry(&self, id: String) -> Result<Option<JournalEntryOutput>> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let entry = commerce.general_ledger().get_journal_entry(uuid)
+        let entry = commerce
+            .general_ledger()
+            .get_journal_entry(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to get entry: {}", e)))?;
         Ok(entry.map(|e| e.into()))
     }
@@ -9508,17 +10291,25 @@ impl GeneralLedger {
     #[napi]
     pub async fn list_journal_entries(&self) -> Result<Vec<JournalEntryOutput>> {
         let commerce = self.commerce.lock().await;
-        let entries = commerce.general_ledger().list_journal_entries(Default::default())
+        let entries = commerce
+            .general_ledger()
+            .list_journal_entries(Default::default())
             .map_err(|e| Error::from_reason(format!("Failed to list entries: {}", e)))?;
         Ok(entries.into_iter().map(|e| e.into()).collect())
     }
 
     /// Post a journal entry
     #[napi]
-    pub async fn post_journal_entry(&self, id: String, posted_by: String) -> Result<JournalEntryOutput> {
+    pub async fn post_journal_entry(
+        &self,
+        id: String,
+        posted_by: String,
+    ) -> Result<JournalEntryOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let entry = commerce.general_ledger().post_journal_entry(uuid, &posted_by)
+        let entry = commerce
+            .general_ledger()
+            .post_journal_entry(uuid, &posted_by)
             .map_err(|e| Error::from_reason(format!("Failed to post entry: {}", e)))?;
         Ok(entry.into())
     }
@@ -9528,7 +10319,9 @@ impl GeneralLedger {
     pub async fn void_journal_entry(&self, id: String) -> Result<JournalEntryOutput> {
         let commerce = self.commerce.lock().await;
         let uuid = id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
-        let entry = commerce.general_ledger().void_journal_entry(uuid)
+        let entry = commerce
+            .general_ledger()
+            .void_journal_entry(uuid)
             .map_err(|e| Error::from_reason(format!("Failed to void entry: {}", e)))?;
         Ok(entry.into())
     }
@@ -9539,7 +10332,9 @@ impl GeneralLedger {
         let commerce = self.commerce.lock().await;
         let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
             .map_err(|_| Error::from_reason("Invalid date format"))?;
-        let balance = commerce.general_ledger().get_trial_balance(date)
+        let balance = commerce
+            .general_ledger()
+            .get_trial_balance(date)
             .map_err(|e| Error::from_reason(format!("Failed to get trial balance: {}", e)))?;
         Ok(balance.into())
     }
@@ -9550,31 +10345,47 @@ impl GeneralLedger {
         let commerce = self.commerce.lock().await;
         let date = chrono::NaiveDate::parse_from_str(&as_of_date, "%Y-%m-%d")
             .map_err(|_| Error::from_reason("Invalid date format"))?;
-        let sheet = commerce.general_ledger().get_balance_sheet(date)
+        let sheet = commerce
+            .general_ledger()
+            .get_balance_sheet(date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance sheet: {}", e)))?;
         Ok(sheet.into())
     }
 
     /// Get income statement
     #[napi]
-    pub async fn get_income_statement(&self, start_date: String, end_date: String) -> Result<IncomeStatementOutput> {
+    pub async fn get_income_statement(
+        &self,
+        start_date: String,
+        end_date: String,
+    ) -> Result<IncomeStatementOutput> {
         let commerce = self.commerce.lock().await;
         let start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
             .map_err(|_| Error::from_reason("Invalid start date format"))?;
         let end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
             .map_err(|_| Error::from_reason("Invalid end date format"))?;
-        let statement = commerce.general_ledger().get_income_statement(start, end)
+        let statement = commerce
+            .general_ledger()
+            .get_income_statement(start, end)
             .map_err(|e| Error::from_reason(format!("Failed to get income statement: {}", e)))?;
         Ok(statement.into())
     }
 
     /// Get account balance
     #[napi]
-    pub async fn get_account_balance(&self, account_id: String, as_of_date: Option<String>) -> Result<f64> {
+    pub async fn get_account_balance(
+        &self,
+        account_id: String,
+        as_of_date: Option<String>,
+    ) -> Result<f64> {
         let commerce = self.commerce.lock().await;
-        let uuid = account_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = account_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
         let date = as_of_date.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
-        let balance = commerce.general_ledger().get_account_balance(uuid, date)
+        let balance = commerce
+            .general_ledger()
+            .get_account_balance(uuid, date)
             .map_err(|e| Error::from_reason(format!("Failed to get balance: {}", e)))?;
         Ok(balance.map(to_f64_or_nan).unwrap_or(f64::NAN))
     }
@@ -9943,7 +10754,9 @@ fn parse_credit_direction(s: &str) -> Result<stateset_core::X402CreditDirection>
 
 fn parse_uuid_opt(value: Option<String>) -> Result<Option<uuid::Uuid>> {
     match value {
-        Some(id) => Ok(Some(id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?)),
+        Some(id) => Ok(Some(
+            id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?,
+        )),
         None => Ok(None),
     }
 }
@@ -10021,7 +10834,9 @@ impl X402 {
         input: X402SignIntentInput,
     ) -> Result<X402IntentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = intent_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
         let signed = commerce
             .x402()
             .sign_intent(
@@ -10049,7 +10864,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn list_intents(&self, filter: X402IntentFilterInput) -> Result<Vec<X402IntentOutput>> {
+    pub async fn list_intents(
+        &self,
+        filter: X402IntentFilterInput,
+    ) -> Result<Vec<X402IntentOutput>> {
         let commerce = self.commerce.lock().await;
         let intents = commerce
             .x402()
@@ -10087,7 +10905,9 @@ impl X402 {
         block_number: i64,
     ) -> Result<X402IntentOutput> {
         let commerce = self.commerce.lock().await;
-        let uuid = intent_id.parse().map_err(|_| Error::from_reason("Invalid UUID"))?;
+        let uuid = intent_id
+            .parse()
+            .map_err(|_| Error::from_reason("Invalid UUID"))?;
         let block_number = parse_u64_field("block_number", block_number)?;
         let intent = commerce
             .x402()
@@ -10103,8 +10923,7 @@ impl X402 {
             .x402()
             .get_next_nonce(&payer_address)
             .map_err(|e| Error::from_reason(format!("Failed to get nonce: {}", e)))?;
-        i64::try_from(nonce)
-            .map_err(|_| Error::from_reason("Nonce too large to fit in i64"))
+        i64::try_from(nonce).map_err(|_| Error::from_reason("Nonce too large to fit in i64"))
     }
 
     #[napi]
@@ -10225,7 +11044,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn get_agent_by_wallet(&self, wallet_address: String) -> Result<Option<X402AgentCardOutput>> {
+    pub async fn get_agent_by_wallet(
+        &self,
+        wallet_address: String,
+    ) -> Result<Option<X402AgentCardOutput>> {
         let commerce = self.commerce.lock().await;
         let agent = commerce
             .x402()
@@ -10246,7 +11068,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn list_agents(&self, filter: X402AgentCardFilterInput) -> Result<Vec<X402AgentCardOutput>> {
+    pub async fn list_agents(
+        &self,
+        filter: X402AgentCardFilterInput,
+    ) -> Result<Vec<X402AgentCardOutput>> {
         let commerce = self.commerce.lock().await;
         let agents = commerce
             .x402()
@@ -10301,7 +11126,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn get_credit_account(&self, input: X402CreditBalanceInput) -> Result<Option<X402CreditAccountOutput>> {
+    pub async fn get_credit_account(
+        &self,
+        input: X402CreditBalanceInput,
+    ) -> Result<Option<X402CreditAccountOutput>> {
         let commerce = self.commerce.lock().await;
         let asset = match input.asset {
             Some(val) => parse_x402_asset(&val)?,
@@ -10319,7 +11147,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn credit_account(&self, input: X402CreditAdjustmentInput) -> Result<X402CreditTransactionOutput> {
+    pub async fn credit_account(
+        &self,
+        input: X402CreditAdjustmentInput,
+    ) -> Result<X402CreditTransactionOutput> {
         let commerce = self.commerce.lock().await;
         let asset = match input.asset {
             Some(val) => parse_x402_asset(&val)?,
@@ -10346,7 +11177,10 @@ impl X402 {
     }
 
     #[napi]
-    pub async fn debit_account(&self, input: X402CreditAdjustmentInput) -> Result<X402CreditTransactionOutput> {
+    pub async fn debit_account(
+        &self,
+        input: X402CreditAdjustmentInput,
+    ) -> Result<X402CreditTransactionOutput> {
         let commerce = self.commerce.lock().await;
         let asset = match input.asset {
             Some(val) => parse_x402_asset(&val)?,
@@ -10397,7 +11231,9 @@ impl X402 {
                 limit: filter.limit,
                 offset: filter.offset,
             })
-            .map_err(|e| Error::from_reason(format!("Failed to list credit transactions: {}", e)))?;
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to list credit transactions: {}", e))
+            })?;
 
         Ok(transactions.into_iter().map(|t| t.into()).collect())
     }
@@ -10470,12 +11306,16 @@ pub struct VectorSearch {
 impl VectorSearch {
     /// Search products using natural language query
     #[napi]
-    pub async fn search_products(&self, query: String, limit: Option<u32>) -> Result<Vec<ProductSearchResultOutput>> {
+    pub async fn search_products(
+        &self,
+        query: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<ProductSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let results = vector
@@ -10494,12 +11334,16 @@ impl VectorSearch {
 
     /// Search customers using natural language query
     #[napi]
-    pub async fn search_customers(&self, query: String, limit: Option<u32>) -> Result<Vec<CustomerSearchResultOutput>> {
+    pub async fn search_customers(
+        &self,
+        query: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<CustomerSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let results = vector
@@ -10518,12 +11362,16 @@ impl VectorSearch {
 
     /// Search orders using natural language query
     #[napi]
-    pub async fn search_orders(&self, query: String, limit: Option<u32>) -> Result<Vec<OrderSearchResultOutput>> {
+    pub async fn search_orders(
+        &self,
+        query: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<OrderSearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let results = vector
@@ -10542,12 +11390,16 @@ impl VectorSearch {
 
     /// Search inventory items using natural language query
     #[napi]
-    pub async fn search_inventory(&self, query: String, limit: Option<u32>) -> Result<Vec<InventorySearchResultOutput>> {
+    pub async fn search_inventory(
+        &self,
+        query: String,
+        limit: Option<u32>,
+    ) -> Result<Vec<InventorySearchResultOutput>> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let results = vector
@@ -10579,9 +11431,9 @@ impl VectorSearch {
                 .map_err(|e| Error::from_reason(format!("Failed to get product: {}", e)))?
                 .ok_or_else(|| Error::from_reason("Product not found"))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (product, vector)
         };
@@ -10608,9 +11460,9 @@ impl VectorSearch {
                 .map_err(|e| Error::from_reason(format!("Failed to get customer: {}", e)))?
                 .ok_or_else(|| Error::from_reason("Customer not found"))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (customer, vector)
         };
@@ -10637,9 +11489,9 @@ impl VectorSearch {
                 .map_err(|e| Error::from_reason(format!("Failed to get order: {}", e)))?
                 .ok_or_else(|| Error::from_reason("Order not found"))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (order, vector)
         };
@@ -10666,9 +11518,9 @@ impl VectorSearch {
                 .map_err(|e| Error::from_reason(format!("Failed to get inventory item: {}", e)))?
                 .ok_or_else(|| Error::from_reason("Inventory item not found"))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (item, vector)
         };
@@ -10690,9 +11542,9 @@ impl VectorSearch {
                 .list(Default::default())
                 .map_err(|e| Error::from_reason(format!("Failed to list products: {}", e)))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (products, vector)
         };
@@ -10714,9 +11566,9 @@ impl VectorSearch {
                 .list(Default::default())
                 .map_err(|e| Error::from_reason(format!("Failed to list customers: {}", e)))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (customers, vector)
         };
@@ -10738,9 +11590,9 @@ impl VectorSearch {
                 .list(Default::default())
                 .map_err(|e| Error::from_reason(format!("Failed to list orders: {}", e)))?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (orders, vector)
         };
@@ -10757,14 +11609,13 @@ impl VectorSearch {
     pub async fn index_all_inventory(&self) -> Result<u32> {
         let (items, vector) = {
             let commerce = self.commerce.lock().await;
-            let items = commerce
-                .inventory()
-                .list(Default::default())
-                .map_err(|e| Error::from_reason(format!("Failed to list inventory items: {}", e)))?;
+            let items = commerce.inventory().list(Default::default()).map_err(|e| {
+                Error::from_reason(format!("Failed to list inventory items: {}", e))
+            })?;
 
-            let vector = commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?;
+            let vector = commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?;
 
             (items, vector)
         };
@@ -10781,9 +11632,9 @@ impl VectorSearch {
     pub async fn stats(&self) -> Result<EmbeddingStatsOutput> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let stats = vector
@@ -10791,10 +11642,22 @@ impl VectorSearch {
             .map_err(|e| Error::from_reason(format!("Failed to get stats: {}", e)))?;
 
         Ok(EmbeddingStatsOutput {
-            product_count: *stats.counts.get(&stateset_core::EntityType::Product).unwrap_or(&0) as u32,
-            customer_count: *stats.counts.get(&stateset_core::EntityType::Customer).unwrap_or(&0) as u32,
-            order_count: *stats.counts.get(&stateset_core::EntityType::Order).unwrap_or(&0) as u32,
-            inventory_count: *stats.counts.get(&stateset_core::EntityType::InventoryItem).unwrap_or(&0) as u32,
+            product_count: *stats
+                .counts
+                .get(&stateset_core::EntityType::Product)
+                .unwrap_or(&0) as u32,
+            customer_count: *stats
+                .counts
+                .get(&stateset_core::EntityType::Customer)
+                .unwrap_or(&0) as u32,
+            order_count: *stats
+                .counts
+                .get(&stateset_core::EntityType::Order)
+                .unwrap_or(&0) as u32,
+            inventory_count: *stats
+                .counts
+                .get(&stateset_core::EntityType::InventoryItem)
+                .unwrap_or(&0) as u32,
             model: stats.model,
             dimensions: stats.dimensions as u32,
         })
@@ -10805,9 +11668,9 @@ impl VectorSearch {
     pub async fn clear(&self, entity_type: String) -> Result<u32> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let et: stateset_core::EntityType = entity_type
@@ -10826,9 +11689,9 @@ impl VectorSearch {
     pub async fn clear_all(&self) -> Result<u32> {
         let vector = {
             let commerce = self.commerce.lock().await;
-            commerce
-                .vector(self.api_key.clone())
-                .map_err(|e| Error::from_reason(format!("Failed to initialize vector search: {}", e)))?
+            commerce.vector(self.api_key.clone()).map_err(|e| {
+                Error::from_reason(format!("Failed to initialize vector search: {}", e))
+            })?
         };
 
         let count = vector

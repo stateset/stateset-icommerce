@@ -5,9 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    CommerceError, Result, X402Asset, X402CreditAccount, X402CreditAdjustment,
-    X402CreditDirection, X402CreditRepository, X402CreditTransaction,
-    X402CreditTransactionFilter, X402Network,
+    CommerceError, Result, X402Asset, X402CreditAccount, X402CreditAdjustment, X402CreditDirection,
+    X402CreditRepository, X402CreditTransaction, X402CreditTransactionFilter, X402Network,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -249,10 +248,11 @@ impl PgX402CreditRepository {
         }
 
         let new_balance = match input.direction {
-            X402CreditDirection::Credit => account
-                .balance
-                .checked_add(amount_i64)
-                .ok_or_else(|| CommerceError::ValidationError("x402 balance overflow".to_string()))?,
+            X402CreditDirection::Credit => {
+                account.balance.checked_add(amount_i64).ok_or_else(|| {
+                    CommerceError::ValidationError("x402 balance overflow".to_string())
+                })?
+            }
             X402CreditDirection::Debit => {
                 if account.balance < amount_i64 {
                     return Err(CommerceError::NotPermitted(
@@ -265,15 +265,13 @@ impl PgX402CreditRepository {
 
         let now = Utc::now();
 
-        sqlx::query(
-            "UPDATE x402_credit_accounts SET balance = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(new_balance)
-        .bind(now)
-        .bind(account.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_db_error)?;
+        sqlx::query("UPDATE x402_credit_accounts SET balance = $1, updated_at = $2 WHERE id = $3")
+            .bind(new_balance)
+            .bind(now)
+            .bind(account.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
 
         let tx_id = Uuid::new_v4();
         let direction_str = input.direction.to_string();
@@ -324,16 +322,24 @@ impl PgX402CreditRepository {
         );
 
         if let Some(payer_address) = filter.payer_address {
-            builder.push(" AND payer_address = ").push_bind(payer_address);
+            builder
+                .push(" AND payer_address = ")
+                .push_bind(payer_address);
         }
         if let Some(asset) = filter.asset {
-            builder.push(" AND asset = ").push_bind(asset.to_string().to_lowercase());
+            builder
+                .push(" AND asset = ")
+                .push_bind(asset.to_string().to_lowercase());
         }
         if let Some(network) = filter.network {
-            builder.push(" AND network = ").push_bind(network.to_string());
+            builder
+                .push(" AND network = ")
+                .push_bind(network.to_string());
         }
         if let Some(direction) = filter.direction {
-            builder.push(" AND direction = ").push_bind(direction.to_string());
+            builder
+                .push(" AND direction = ")
+                .push_bind(direction.to_string());
         }
 
         builder.push(" ORDER BY created_at DESC");
@@ -374,7 +380,12 @@ impl X402CreditRepository for PgX402CreditRepository {
         block_on(self.get_or_create_account_async(payer_address, asset, network))
     }
 
-    fn get_balance(&self, payer_address: &str, asset: X402Asset, network: X402Network) -> Result<u64> {
+    fn get_balance(
+        &self,
+        payer_address: &str,
+        asset: X402Asset,
+        network: X402Network,
+    ) -> Result<u64> {
         block_on(self.get_balance_async(payer_address, asset, network))
     }
 

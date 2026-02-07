@@ -316,13 +316,21 @@ impl Order {
 
     /// Check if order can be refunded
     pub fn can_refund(&self) -> bool {
-        matches!(self.payment_status, PaymentStatus::Paid | PaymentStatus::PartiallyPaid)
+        matches!(
+            self.payment_status,
+            PaymentStatus::Paid | PaymentStatus::PartiallyPaid
+        )
     }
 }
 
 impl OrderItem {
     /// Calculate item total
-    pub fn calculate_total(quantity: i32, unit_price: Decimal, discount: Decimal, tax: Decimal) -> Decimal {
+    pub fn calculate_total(
+        quantity: i32,
+        unit_price: Decimal,
+        discount: Decimal,
+        tax: Decimal,
+    ) -> Decimal {
         let subtotal = unit_price * Decimal::from(quantity);
         subtotal - discount + tax
     }
@@ -599,9 +607,15 @@ mod tests {
         assert_eq!(format!("{}", PaymentStatus::Pending), "pending");
         assert_eq!(format!("{}", PaymentStatus::Authorized), "authorized");
         assert_eq!(format!("{}", PaymentStatus::Paid), "paid");
-        assert_eq!(format!("{}", PaymentStatus::PartiallyPaid), "partially_paid");
+        assert_eq!(
+            format!("{}", PaymentStatus::PartiallyPaid),
+            "partially_paid"
+        );
         assert_eq!(format!("{}", PaymentStatus::Refunded), "refunded");
-        assert_eq!(format!("{}", PaymentStatus::PartiallyRefunded), "partially_refunded");
+        assert_eq!(
+            format!("{}", PaymentStatus::PartiallyRefunded),
+            "partially_refunded"
+        );
         assert_eq!(format!("{}", PaymentStatus::Failed), "failed");
     }
 
@@ -627,7 +641,10 @@ mod tests {
     #[test]
     fn test_fulfillment_status_display() {
         assert_eq!(format!("{}", FulfillmentStatus::Unfulfilled), "unfulfilled");
-        assert_eq!(format!("{}", FulfillmentStatus::PartiallyFulfilled), "partially_fulfilled");
+        assert_eq!(
+            format!("{}", FulfillmentStatus::PartiallyFulfilled),
+            "partially_fulfilled"
+        );
         assert_eq!(format!("{}", FulfillmentStatus::Fulfilled), "fulfilled");
         assert_eq!(format!("{}", FulfillmentStatus::Shipped), "shipped");
         assert_eq!(format!("{}", FulfillmentStatus::Delivered), "delivered");

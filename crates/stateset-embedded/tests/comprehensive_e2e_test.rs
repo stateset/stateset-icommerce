@@ -115,7 +115,7 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
 
     let order = commerce
         .orders()
-        .ship(order.id, Some("FEDEX123456".into()))
+        .ship(order.id, Some("FEDEX123456"))
         .expect("Failed to ship order");
 
     assert_eq!(order.status, OrderStatus::Shipped);

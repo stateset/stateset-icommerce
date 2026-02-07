@@ -30,9 +30,9 @@
 
 use rust_decimal::Decimal;
 use stateset_core::{
-    AddLotCertificate, AdjustLot, ConsumeLot, CreateLot, Lot, LotCertificate,
-    LotFilter, LotLocation, LotRepository, LotStatus, LotTransaction,
-    MergeLots, ReserveLot, Result, SplitLot, TraceabilityResult, TransferLot, UpdateLot,
+    AddLotCertificate, AdjustLot, ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter,
+    LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result, SplitLot,
+    TraceabilityResult, TransferLot, UpdateLot,
 };
 use stateset_db::Database;
 use std::sync::Arc;
@@ -296,7 +296,11 @@ impl Lots {
     }
 
     /// Get quantity at a specific location.
-    pub fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
+    pub fn get_quantity_at_location(
+        &self,
+        lot_id: Uuid,
+        location_id: i32,
+    ) -> Result<Option<Decimal>> {
         self.db.lots().get_quantity_at_location(lot_id, location_id)
     }
 

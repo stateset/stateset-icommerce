@@ -46,18 +46,23 @@ impl PgCurrencyRepository {
 
     fn parse_currency(s: &str, entity: &str, field: &str) -> Result<Currency> {
         Currency::from_str(s).map_err(|e| {
-            CommerceError::DatabaseError(format!(
-                "Invalid {}.{} '{}': {}",
-                entity, field, s, e
-            ))
+            CommerceError::DatabaseError(format!("Invalid {}.{} '{}': {}", entity, field, s, e))
         })
     }
 
     fn row_to_exchange_rate(row: ExchangeRateRow) -> Result<ExchangeRate> {
         Ok(ExchangeRate {
             id: row.id,
-            base_currency: Self::parse_currency(&row.base_currency, "exchange_rate", "base_currency")?,
-            quote_currency: Self::parse_currency(&row.quote_currency, "exchange_rate", "quote_currency")?,
+            base_currency: Self::parse_currency(
+                &row.base_currency,
+                "exchange_rate",
+                "base_currency",
+            )?,
+            quote_currency: Self::parse_currency(
+                &row.quote_currency,
+                "exchange_rate",
+                "quote_currency",
+            )?,
             rate: row.rate,
             source: row.source,
             rate_at: row.rate_at,
@@ -67,7 +72,11 @@ impl PgCurrencyRepository {
     }
 
     /// Get rate (async)
-    pub async fn get_rate_async(&self, from: Currency, to: Currency) -> Result<Option<ExchangeRate>> {
+    pub async fn get_rate_async(
+        &self,
+        from: Currency,
+        to: Currency,
+    ) -> Result<Option<ExchangeRate>> {
         // Same currency = rate of 1
         if from == to {
             return Ok(Some(ExchangeRate {
@@ -298,8 +307,11 @@ impl PgCurrencyRepository {
 
         match row {
             Some(row) => {
-                let base_currency =
-                    Self::parse_currency(&row.base_currency, "store_currency_settings", "base_currency")?;
+                let base_currency = Self::parse_currency(
+                    &row.base_currency,
+                    "store_currency_settings",
+                    "base_currency",
+                )?;
                 let enabled_currencies: Vec<Currency> =
                     serde_json::from_value(row.enabled_currencies).map_err(|e| {
                         CommerceError::DatabaseError(format!(

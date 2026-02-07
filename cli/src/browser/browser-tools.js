@@ -217,7 +217,7 @@ export class BrowserTools {
 
     // Attach persistent message handler.
     const onMessage = (rawOrEvent) => {
-      const raw = typeof rawOrEvent === 'string' ? rawOrEvent : rawOrEvent.data ?? rawOrEvent;
+      const raw = typeof rawOrEvent === 'string' ? rawOrEvent : (rawOrEvent.data ?? rawOrEvent);
       let msg;
       try {
         msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString());
@@ -384,9 +384,7 @@ export class BrowserTools {
       });
 
       this._process.on('exit', (code, signal) => {
-        console.log(
-          `[browser-tools] Chrome exited (code=${code}, signal=${signal}).`,
-        );
+        console.log(`[browser-tools] Chrome exited (code=${code}, signal=${signal}).`);
         this._process = null;
       });
     }
@@ -599,16 +597,12 @@ export class BrowserTools {
     const escapedSelector = JSON.stringify(selector);
 
     while (Date.now() < deadline) {
-      const found = await this.evaluate(
-        `!!document.querySelector(${escapedSelector})`,
-      );
+      const found = await this.evaluate(`!!document.querySelector(${escapedSelector})`);
       if (found) return;
       await sleep(100);
     }
 
-    throw new Error(
-      `waitForSelector("${selector}") timed out after ${timeout ?? this.timeout}ms`,
-    );
+    throw new Error(`waitForSelector("${selector}") timed out after ${timeout ?? this.timeout}ms`);
   }
 
   /**
@@ -670,7 +664,7 @@ export class BrowserTools {
     // Get the full accessibility tree
     const { nodes } = await this.send('Accessibility.getFullAXTree', {
       depth,
-      max_depth: depth
+      max_depth: depth,
     });
 
     if (!nodes || nodes.length === 0) {
@@ -695,12 +689,41 @@ export class BrowserTools {
       // Filter out uninteresting nodes if requested
       if (interestingOnly) {
         const interestingRoles = new Set([
-          'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
-          'listbox', 'option', 'menuitem', 'tab', 'tabpanel', 'dialog',
-          'alert', 'alertdialog', 'heading', 'img', 'list', 'listitem',
-          'table', 'row', 'cell', 'form', 'search', 'navigation', 'main',
-          'article', 'banner', 'contentinfo', 'complementary', 'region',
-          'slider', 'spinbutton', 'switch', 'textfield', 'searchbox'
+          'button',
+          'link',
+          'textbox',
+          'checkbox',
+          'radio',
+          'combobox',
+          'listbox',
+          'option',
+          'menuitem',
+          'tab',
+          'tabpanel',
+          'dialog',
+          'alert',
+          'alertdialog',
+          'heading',
+          'img',
+          'list',
+          'listitem',
+          'table',
+          'row',
+          'cell',
+          'form',
+          'search',
+          'navigation',
+          'main',
+          'article',
+          'banner',
+          'contentinfo',
+          'complementary',
+          'region',
+          'slider',
+          'spinbutton',
+          'switch',
+          'textfield',
+          'searchbox',
         ]);
 
         // Skip generic/container nodes without meaningful content
@@ -730,7 +753,7 @@ export class BrowserTools {
         role: role.toLowerCase(),
         ...(name && { name }),
         ...(value && { value }),
-        ...(description && { description })
+        ...(description && { description }),
       };
 
       // Add properties that indicate state
@@ -741,7 +764,17 @@ export class BrowserTools {
           const propValue = prop.value?.value;
           if (propValue !== undefined && propValue !== false) {
             // Include boolean states and values
-            if (['disabled', 'checked', 'selected', 'expanded', 'pressed', 'required', 'readonly'].includes(propName)) {
+            if (
+              [
+                'disabled',
+                'checked',
+                'selected',
+                'expanded',
+                'pressed',
+                'required',
+                'readonly',
+              ].includes(propName)
+            ) {
               props[propName] = propValue;
             }
           }
@@ -776,7 +809,7 @@ export class BrowserTools {
     };
 
     // Find the root node (usually the first one with role RootWebArea)
-    const rootNode = nodes.find(n => n.role?.value === 'RootWebArea') || nodes[0];
+    const rootNode = nodes.find((n) => n.role?.value === 'RootWebArea') || nodes[0];
     return convertNode(rootNode) || { role: 'RootWebArea', name: '', children: [] };
   }
 
@@ -833,9 +866,21 @@ export class BrowserTools {
       // Add reference ID for interactive elements
       if (includeRefs) {
         const interactiveRoles = new Set([
-          'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
-          'listbox', 'option', 'menuitem', 'tab', 'slider', 'switch',
-          'spinbutton', 'searchbox', 'textfield'
+          'button',
+          'link',
+          'textbox',
+          'checkbox',
+          'radio',
+          'combobox',
+          'listbox',
+          'option',
+          'menuitem',
+          'tab',
+          'slider',
+          'switch',
+          'spinbutton',
+          'searchbox',
+          'textfield',
         ]);
 
         if (interactiveRoles.has(node.role)) {
@@ -843,7 +888,7 @@ export class BrowserTools {
           refs.set(refCounter, {
             role: node.role,
             name: node.name || node.value || '',
-            nodeInfo: node
+            nodeInfo: node,
           });
           line += ` [ref=${refCounter}]`;
         }
@@ -879,7 +924,7 @@ export class BrowserTools {
       snapshot: lines.join('\n'),
       refs,
       nodeCount: lines.length,
-      refCount: refCounter
+      refCount: refCounter,
     };
   }
 

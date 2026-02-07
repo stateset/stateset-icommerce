@@ -36,7 +36,7 @@ export const DEFAULT_FALLBACK_CHAIN = [
     model: 'claude-sonnet-4-5-20250929',
     envKey: 'ANTHROPIC_API_KEY',
     priority: 1,
-    capabilities: ['tools', 'thinking', 'streaming']
+    capabilities: ['tools', 'thinking', 'streaming'],
   },
   {
     id: 'claude-haiku',
@@ -44,7 +44,7 @@ export const DEFAULT_FALLBACK_CHAIN = [
     model: 'claude-haiku-3-5-20241022',
     envKey: 'ANTHROPIC_API_KEY',
     priority: 2,
-    capabilities: ['tools', 'streaming']
+    capabilities: ['tools', 'streaming'],
   },
   {
     id: 'openai-gpt4o-mini',
@@ -52,7 +52,7 @@ export const DEFAULT_FALLBACK_CHAIN = [
     model: 'gpt-4o-mini',
     envKey: 'OPENAI_API_KEY',
     priority: 3,
-    capabilities: ['streaming']
+    capabilities: ['streaming'],
   },
   {
     id: 'gemini-flash',
@@ -60,8 +60,8 @@ export const DEFAULT_FALLBACK_CHAIN = [
     model: 'gemini-2.0-flash-exp',
     envKey: 'GOOGLE_API_KEY',
     priority: 4,
-    capabilities: ['streaming']
-  }
+    capabilities: ['streaming'],
+  },
 ];
 
 /**
@@ -77,7 +77,7 @@ const RATE_LIMIT_PATTERNS = [
   /temporarily.?unavailable/i,
   /503/,
   /504/,
-  /timeout/i
+  /timeout/i,
 ];
 
 /**
@@ -91,7 +91,7 @@ const PERMANENT_FAILURE_PATTERNS = [
   /403/,
   /invalid.?model/i,
   /not.?found/i,
-  /404/
+  /404/,
 ];
 
 // ============================================================================
@@ -151,7 +151,7 @@ class CooldownTracker {
     this.cooldowns.set(id, {
       until: Date.now() + adjustedDuration,
       reason,
-      attempts
+      attempts,
     });
   }
 
@@ -177,7 +177,7 @@ class CooldownTracker {
           id,
           remainingMs: entry.until - now,
           reason: entry.reason,
-          attempts: entry.attempts
+          attempts: entry.attempts,
         });
       }
     }
@@ -217,10 +217,8 @@ export class ModelFallback {
 
     // Filter chain based on required capabilities
     if (this.requiredCapabilities.length > 0) {
-      this.chain = this.chain.filter(model =>
-        this.requiredCapabilities.every(cap =>
-          model.capabilities?.includes(cap)
-        )
+      this.chain = this.chain.filter((model) =>
+        this.requiredCapabilities.every((cap) => model.capabilities?.includes(cap)),
       );
     }
   }
@@ -230,7 +228,7 @@ export class ModelFallback {
    * @returns {object[]}
    */
   getAvailableModels() {
-    return this.chain.filter(model => {
+    return this.chain.filter((model) => {
       // Check cooldown
       if (this.cooldownTracker.isInCooldown(model.id)) {
         return false;
@@ -258,12 +256,12 @@ export class ModelFallback {
     const attempts = [];
 
     // Build ordered list of models to try
-    let modelsToTry = this.getAvailableModels();
+    const modelsToTry = this.getAvailableModels();
 
     if (modelsToTry.length === 0) {
       // Provide helpful error message based on why no models are available
-      const missingKeys = this.chain.filter(m => m.envKey && !process.env[m.envKey]);
-      const inCooldown = this.chain.filter(m => this.cooldownTracker.isInCooldown(m.id));
+      const missingKeys = this.chain.filter((m) => m.envKey && !process.env[m.envKey]);
+      const inCooldown = this.chain.filter((m) => this.cooldownTracker.isInCooldown(m.id));
 
       let errorMsg = 'No models available.';
       let hint = '';
@@ -271,11 +269,12 @@ export class ModelFallback {
       if (missingKeys.length > 0 && inCooldown.length === 0) {
         // All models missing API keys
         errorMsg = 'No API keys configured.';
-        hint = `\n\nTo fix this, set up your API key:\n` +
-               `  1. Run: stateset-config set-key anthropic\n` +
-               `  2. Or set: export ANTHROPIC_API_KEY="sk-ant-..."\n` +
-               `  3. Get key from: https://console.anthropic.com/\n\n` +
-               `Run 'stateset-config show-keys' to check your configuration.`;
+        hint =
+          `\n\nTo fix this, set up your API key:\n` +
+          `  1. Run: stateset-config set-key anthropic\n` +
+          `  2. Or set: export ANTHROPIC_API_KEY="sk-ant-..."\n` +
+          `  3. Get key from: https://console.anthropic.com/\n\n` +
+          `Run 'stateset-config show-keys' to check your configuration.`;
       } else if (inCooldown.length > 0) {
         errorMsg = 'All models are in cooldown due to rate limiting.';
         hint = '\n\nTry again in a few minutes, or use a different provider with --provider.';
@@ -288,7 +287,9 @@ export class ModelFallback {
 
     // If preferred model specified, move it to front
     if (preferredModel) {
-      const preferredIndex = modelsToTry.findIndex(m => m.id === preferredModel || m.model === preferredModel);
+      const preferredIndex = modelsToTry.findIndex(
+        (m) => m.id === preferredModel || m.model === preferredModel,
+      );
       if (preferredIndex > 0) {
         const [preferred] = modelsToTry.splice(preferredIndex, 1);
         modelsToTry.unshift(preferred);
@@ -314,14 +315,14 @@ export class ModelFallback {
           modelAttempts.push({
             retry,
             success: true,
-            duration
+            duration,
           });
 
           attempts.push({
             model: model.id,
             provider: model.provider,
             attempts: modelAttempts,
-            success: true
+            success: true,
           });
 
           return { result, model, attempts };
@@ -332,7 +333,7 @@ export class ModelFallback {
           modelAttempts.push({
             retry,
             success: false,
-            error: errorMsg
+            error: errorMsg,
           });
 
           // Check if this is a permanent failure
@@ -369,7 +370,7 @@ export class ModelFallback {
         provider: model.provider,
         attempts: modelAttempts,
         success: false,
-        error: lastError?.message
+        error: lastError?.message,
       });
 
       // Notify fallback
@@ -378,7 +379,7 @@ export class ModelFallback {
         this.onFallback({
           from: model,
           to: nextModel,
-          reason: lastError?.message
+          reason: lastError?.message,
         });
       }
     }
@@ -387,7 +388,7 @@ export class ModelFallback {
     const lastAttempt = attempts[attempts.length - 1];
     throw new Error(
       `All models failed. Last error: ${lastAttempt?.error || 'Unknown error'}. ` +
-      `Tried ${attempts.length} model(s): ${attempts.map(a => a.model).join(', ')}`
+        `Tried ${attempts.length} model(s): ${attempts.map((a) => a.model).join(', ')}`,
     );
   }
 
@@ -399,7 +400,7 @@ export class ModelFallback {
    * @returns {Promise<any>}
    */
   async executeWithModel(modelId, operation) {
-    const model = this.chain.find(m => m.id === modelId || m.model === modelId);
+    const model = this.chain.find((m) => m.id === modelId || m.model === modelId);
     if (!model) {
       throw new Error(`Unknown model: ${modelId}`);
     }
@@ -417,7 +418,7 @@ export class ModelFallback {
    * @private
    */
   _isRateLimitError(errorMsg) {
-    return RATE_LIMIT_PATTERNS.some(pattern => pattern.test(errorMsg));
+    return RATE_LIMIT_PATTERNS.some((pattern) => pattern.test(errorMsg));
   }
 
   /**
@@ -425,7 +426,7 @@ export class ModelFallback {
    * @private
    */
   _isPermanentFailure(errorMsg) {
-    return PERMANENT_FAILURE_PATTERNS.some(pattern => pattern.test(errorMsg));
+    return PERMANENT_FAILURE_PATTERNS.some((pattern) => pattern.test(errorMsg));
   }
 
   /**
@@ -433,7 +434,7 @@ export class ModelFallback {
    * @private
    */
   _sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -441,7 +442,7 @@ export class ModelFallback {
    * @returns {object[]}
    */
   getStatus() {
-    return this.chain.map(model => {
+    return this.chain.map((model) => {
       const inCooldown = this.cooldownTracker.isInCooldown(model.id);
       const cooldownRemaining = this.cooldownTracker.getCooldownRemaining(model.id);
       const hasApiKey = !model.envKey || !!process.env[model.envKey];
@@ -454,7 +455,7 @@ export class ModelFallback {
         inCooldown,
         cooldownRemainingMs: cooldownRemaining,
         hasApiKey,
-        capabilities: model.capabilities
+        capabilities: model.capabilities,
       };
     });
   }
@@ -498,11 +499,11 @@ export function createFallbackCaller({
   openaiCall,
   geminiCall,
   requiredCapabilities = [],
-  onFallback
+  onFallback,
 }) {
   const fallback = new ModelFallback({
     requiredCapabilities,
-    onFallback
+    onFallback,
   });
 
   /**
@@ -512,30 +513,33 @@ export function createFallbackCaller({
    * @returns {Promise<{ result: any, model: object }>}
    */
   async function call(prompt, options = {}) {
-    return fallback.execute(async (model) => {
-      switch (model.provider) {
-        case 'claude':
-          if (!claudeCall) throw new Error('Claude provider not configured');
-          return claudeCall(model.model, prompt, options);
+    return fallback.execute(
+      async (model) => {
+        switch (model.provider) {
+          case 'claude':
+            if (!claudeCall) throw new Error('Claude provider not configured');
+            return claudeCall(model.model, prompt, options);
 
-        case 'openai':
-          if (!openaiCall) throw new Error('OpenAI provider not configured');
-          return openaiCall(model.model, prompt, options);
+          case 'openai':
+            if (!openaiCall) throw new Error('OpenAI provider not configured');
+            return openaiCall(model.model, prompt, options);
 
-        case 'gemini':
-          if (!geminiCall) throw new Error('Gemini provider not configured');
-          return geminiCall(model.model, prompt, options);
+          case 'gemini':
+            if (!geminiCall) throw new Error('Gemini provider not configured');
+            return geminiCall(model.model, prompt, options);
 
-        default:
-          throw new Error(`Unknown provider: ${model.provider}`);
-      }
-    }, { preferredModel: options.preferredModel });
+          default:
+            throw new Error(`Unknown provider: ${model.provider}`);
+        }
+      },
+      { preferredModel: options.preferredModel },
+    );
   }
 
   return {
     call,
     fallback,
-    getStatus: () => fallback.getStatus()
+    getStatus: () => fallback.getStatus(),
   };
 }
 
@@ -547,5 +551,5 @@ export default {
   ModelFallback,
   CooldownTracker,
   DEFAULT_FALLBACK_CHAIN,
-  createFallbackCaller
+  createFallbackCaller,
 };

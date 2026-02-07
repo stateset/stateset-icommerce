@@ -10,9 +10,15 @@ use std::collections::HashMap;
 
 /// Helper macro for decimal literals
 macro_rules! dec {
-    (0) => { Decimal::ZERO };
-    (1) => { Decimal::ONE };
-    ($val:expr) => { Decimal::from($val as i64) };
+    (0) => {
+        Decimal::ZERO
+    };
+    (1) => {
+        Decimal::ONE
+    };
+    ($val:expr) => {
+        Decimal::from($val as i64)
+    };
 }
 
 // ============================================================================
@@ -426,7 +432,15 @@ impl ForecastingEngine {
         }
 
         // Calculate seasonal indices
-        let day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        let day_names = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ];
         let mut indices = Vec::new();
         let mut variance_sum = dec!(0);
 
@@ -458,15 +472,16 @@ impl ForecastingEngine {
             seasonality_type: SeasonalityType::Weekly,
             indices,
             strength: strength.min(dec!(1)),
-            significance: if strength > dec!(0.1) { dec!(0.05) } else { dec!(0.5) },
+            significance: if strength > dec!(0.1) {
+                dec!(0.05)
+            } else {
+                dec!(0.5)
+            },
         })
     }
 
     /// Detect anomalies using z-score method
-    pub fn detect_anomalies_zscore(
-        data: &[TimeSeriesPoint],
-        threshold: Decimal,
-    ) -> Vec<Anomaly> {
+    pub fn detect_anomalies_zscore(data: &[TimeSeriesPoint], threshold: Decimal) -> Vec<Anomaly> {
         if data.len() < 3 {
             return vec![];
         }
@@ -485,8 +500,7 @@ impl ForecastingEngine {
             let abs_z = if z_score < dec!(0) { -z_score } else { z_score };
 
             if abs_z > threshold {
-                let deviation_percent = ((point.value - mean) / mean * dec!(100))
-                    .round_dp(2);
+                let deviation_percent = ((point.value - mean) / mean * dec!(100)).round_dp(2);
 
                 let anomaly_type = if z_score > dec!(0) {
                     AnomalyType::Spike
@@ -584,10 +598,12 @@ impl ForecastingEngine {
             .enumerate()
             .map(|(i, v)| Decimal::from(i as u32) * *v)
             .sum();
-        let sum_xx: Decimal = (0..n).map(|i| {
-            let x = Decimal::from(i as u32);
-            x * x
-        }).sum();
+        let sum_xx: Decimal = (0..n)
+            .map(|i| {
+                let x = Decimal::from(i as u32);
+                x * x
+            })
+            .sum();
 
         let denominator = n_dec * sum_xx - sum_x * sum_x;
         if denominator == dec!(0) {
@@ -671,16 +687,34 @@ mod tests {
         use chrono::TimeZone;
 
         let data: Vec<TimeSeriesPoint> = vec![
-            TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(), value: d(100) },
-            TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(), value: d(102) },
-            TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(), value: d(98) },
-            TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(), value: d(500) }, // Anomaly!
-            TimeSeriesPoint { timestamp: Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(), value: d(101) },
+            TimeSeriesPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                value: d(100),
+            },
+            TimeSeriesPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+                value: d(102),
+            },
+            TimeSeriesPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
+                value: d(98),
+            },
+            TimeSeriesPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 4, 0, 0, 0).unwrap(),
+                value: d(500),
+            }, // Anomaly!
+            TimeSeriesPoint {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 5, 0, 0, 0).unwrap(),
+                value: d(101),
+            },
         ];
 
         // z-score for 500 is about 1.79 given the data spread, so use threshold 1.5
         let anomalies = ForecastingEngine::detect_anomalies_zscore(&data, dec!(1.5));
-        assert!(!anomalies.is_empty(), "Expected to detect 500 as an anomaly");
+        assert!(
+            !anomalies.is_empty(),
+            "Expected to detect 500 as an anomaly"
+        );
         assert_eq!(anomalies[0].anomaly_type, AnomalyType::Spike);
     }
 }

@@ -1,38 +1,10 @@
 use super::Commerce;
 
 use crate::{
-    AccountsPayable,
-    AccountsReceivable,
-    Analytics,
-    Backorders,
-    Bom,
-    Carts,
-    CostAccounting,
-    Credit,
-    CurrencyOps,
-    Customers,
-    Fulfillment,
-    GeneralLedger,
-    Inventory,
-    Invoices,
-    Lots,
-    Orders,
-    Payments,
-    Products,
-    Promotions,
-    PurchaseOrders,
-    Quality,
-    Receiving,
-    Returns,
-    Serials,
-    Shipments,
-    Subscriptions,
-    Tax,
-    WarehouseOps,
-    Warranties,
-    WorkOrders,
-    X402,
-    Erc8004,
+    AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit,
+    CurrencyOps, Customers, Erc8004, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders,
+    Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials,
+    Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402,
 };
 
 impl Commerce {
@@ -64,11 +36,11 @@ impl Commerce {
     pub fn orders(&self) -> Orders {
         #[cfg(feature = "events")]
         {
-            return Orders::new(self.db.clone(), self.event_system.clone());
+            Orders::new(self.db.clone(), self.event_system.clone())
         }
         #[cfg(not(feature = "events"))]
         {
-            return Orders::new(self.db.clone());
+            Orders::new(self.db.clone())
         }
     }
 
@@ -100,11 +72,11 @@ impl Commerce {
     pub fn inventory(&self) -> Inventory {
         #[cfg(feature = "events")]
         {
-            return Inventory::new(self.db.clone(), self.event_system.clone());
+            Inventory::new(self.db.clone(), self.event_system.clone())
         }
         #[cfg(not(feature = "events"))]
         {
-            return Inventory::new(self.db.clone());
+            Inventory::new(self.db.clone())
         }
     }
 
@@ -128,11 +100,11 @@ impl Commerce {
     pub fn customers(&self) -> Customers {
         #[cfg(feature = "events")]
         {
-            return Customers::new(self.db.clone(), self.event_system.clone());
+            Customers::new(self.db.clone(), self.event_system.clone())
         }
         #[cfg(not(feature = "events"))]
         {
-            return Customers::new(self.db.clone());
+            Customers::new(self.db.clone())
         }
     }
 
@@ -161,11 +133,11 @@ impl Commerce {
     pub fn products(&self) -> Products {
         #[cfg(feature = "events")]
         {
-            return Products::new(self.db.clone(), self.event_system.clone());
+            Products::new(self.db.clone(), self.event_system.clone())
         }
         #[cfg(not(feature = "events"))]
         {
-            return Products::new(self.db.clone());
+            Products::new(self.db.clone())
         }
     }
 
@@ -194,11 +166,11 @@ impl Commerce {
     pub fn returns(&self) -> Returns {
         #[cfg(feature = "events")]
         {
-            return Returns::new(self.db.clone(), self.event_system.clone());
+            Returns::new(self.db.clone(), self.event_system.clone())
         }
         #[cfg(not(feature = "events"))]
         {
-            return Returns::new(self.db.clone());
+            Returns::new(self.db.clone())
         }
     }
 
@@ -1141,17 +1113,25 @@ impl Commerce {
     /// println!("Updated cart total: ${}", commerce.carts().get(cart.id)?.unwrap().grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn calculate_cart_tax(&self, cart_id: uuid::Uuid) -> stateset_core::Result<stateset_core::TaxCalculationResult> {
-        use stateset_core::{TaxAddress, TaxCalculationRequest, TaxLineItem, ProductTaxCategory};
+    pub fn calculate_cart_tax(
+        &self,
+        cart_id: uuid::Uuid,
+    ) -> stateset_core::Result<stateset_core::TaxCalculationResult> {
         use rust_decimal::Decimal;
+        use stateset_core::{ProductTaxCategory, TaxAddress, TaxCalculationRequest, TaxLineItem};
 
         // Get the cart
-        let cart = self.carts().get(cart_id)?
+        let cart = self
+            .carts()
+            .get(cart_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Need a shipping address to calculate tax
-        let shipping_address = cart.shipping_address
-            .ok_or_else(|| stateset_core::CommerceError::ValidationError("Shipping address required to calculate tax".into()))?;
+        let shipping_address = cart.shipping_address.ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError(
+                "Shipping address required to calculate tax".into(),
+            )
+        })?;
 
         // Convert CartAddress to TaxAddress
         let tax_address = TaxAddress {
@@ -1164,19 +1144,23 @@ impl Commerce {
         };
 
         // Convert cart items to TaxLineItems
-        let line_items: Vec<TaxLineItem> = cart.items.iter().map(|item| {
-            TaxLineItem {
-                id: item.id.to_string(),
-                sku: Some(item.sku.clone()),
-                product_id: item.product_id,
-                quantity: Decimal::from(item.quantity),
-                unit_price: item.unit_price,
-                discount_amount: item.discount_amount,
-                tax_category: ProductTaxCategory::Standard, // Default to standard, can be enhanced
-                tax_code: None,
-                description: Some(item.name.clone()),
-            }
-        }).collect();
+        let line_items: Vec<TaxLineItem> = cart
+            .items
+            .iter()
+            .map(|item| {
+                TaxLineItem {
+                    id: item.id.to_string(),
+                    sku: Some(item.sku.clone()),
+                    product_id: item.product_id,
+                    quantity: Decimal::from(item.quantity),
+                    unit_price: item.unit_price,
+                    discount_amount: item.discount_amount,
+                    tax_category: ProductTaxCategory::Standard, // Default to standard, can be enhanced
+                    tax_code: None,
+                    description: Some(item.name.clone()),
+                }
+            })
+            .collect();
 
         // Build tax calculation request
         let request = TaxCalculationRequest {
@@ -1241,31 +1225,40 @@ impl Commerce {
     /// println!("New total: ${}", updated_cart.grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn apply_cart_promotions(&self, cart_id: uuid::Uuid) -> stateset_core::Result<stateset_core::ApplyPromotionsResult> {
-        use stateset_core::{ApplyPromotionsRequest, PromotionLineItem, UpdateCart, UpdateCartItem};
+    pub fn apply_cart_promotions(
+        &self,
+        cart_id: uuid::Uuid,
+    ) -> stateset_core::Result<stateset_core::ApplyPromotionsResult> {
+        use stateset_core::{
+            ApplyPromotionsRequest, PromotionLineItem, UpdateCart, UpdateCartItem,
+        };
 
         // Get the cart
-        let cart = self.carts().get(cart_id)?
+        let cart = self
+            .carts()
+            .get(cart_id)?
             .ok_or(stateset_core::CommerceError::NotFound)?;
 
         // Convert cart items to PromotionLineItems
-        let line_items: Vec<PromotionLineItem> = cart.items.iter().map(|item| {
-            PromotionLineItem {
-                id: item.id.to_string(),
-                product_id: item.product_id,
-                variant_id: item.variant_id,
-                sku: Some(item.sku.clone()),
-                category_ids: vec![], // Could be enhanced to load from product
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                line_total: item.total,
-            }
-        }).collect();
+        let line_items: Vec<PromotionLineItem> = cart
+            .items
+            .iter()
+            .map(|item| {
+                PromotionLineItem {
+                    id: item.id.to_string(),
+                    product_id: item.product_id,
+                    variant_id: item.variant_id,
+                    sku: Some(item.sku.clone()),
+                    category_ids: vec![], // Could be enhanced to load from product
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                    line_total: item.total,
+                }
+            })
+            .collect();
 
         // Build promotion request
-        let coupon_codes = cart.coupon_code
-            .map(|c| vec![c])
-            .unwrap_or_default();
+        let coupon_codes = cart.coupon_code.map(|c| vec![c]).unwrap_or_default();
 
         let request = ApplyPromotionsRequest {
             cart_id: Some(cart_id),
@@ -1283,7 +1276,9 @@ impl Commerce {
         // Apply promotions
         let result = self.promotions().apply(request)?;
 
-        let discount_description = result.applied_promotions.iter()
+        let discount_description = result
+            .applied_promotions
+            .iter()
             .map(|p| p.promotion_name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
@@ -1323,8 +1318,7 @@ impl Commerce {
         for applied in &result.applied_promotions {
             // Look up coupon_id if a coupon code was used
             let coupon_id = if let Some(ref code) = applied.coupon_code {
-                self.promotions().get_coupon_by_code(code)?
-                    .map(|c| c.id)
+                self.promotions().get_coupon_by_code(code)?.map(|c| c.id)
             } else {
                 None
             };
@@ -1342,5 +1336,4 @@ impl Commerce {
 
         Ok(result)
     }
-
 }
