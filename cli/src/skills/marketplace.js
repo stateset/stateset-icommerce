@@ -84,8 +84,8 @@ export class MarketplaceClient {
           this._catalog = await res.json();
           return this._catalog;
         }
-      } catch {
-        // Fall through to local
+      } catch (err) {
+        console.warn(`[Marketplace] Failed to fetch remote catalog: ${err.message}`);
       }
     }
 
@@ -339,15 +339,32 @@ export class MarketplaceClient {
       fs.writeFileSync(tmpFile, Buffer.from(arrayBuf));
 
       try {
-        // Try to extract as tar.gz first, then zip
+        // Extract archive — use execFileSync (no shell) for safety
         const { execFileSync } = await import('child_process');
         if (url.endsWith('.tar.gz') || url.endsWith('.tgz')) {
+          // --strip-components=1 prevents directory traversal at top level
           execFileSync('tar', ['-xzf', tmpFile, '-C', destDir, '--strip-components=1'], {
             stdio: 'pipe',
+            timeout: 30000,
           });
         } else {
-          // Assume zip — use unzip command
-          execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], { stdio: 'pipe' });
+          execFileSync('unzip', ['-o', '-q', tmpFile, '-d', destDir], {
+            stdio: 'pipe',
+            timeout: 30000,
+          });
+        }
+        // Verify no files escaped destDir (defence against zip path traversal)
+        const resolvedDest = path.resolve(destDir);
+        const { execFileSync: efs2 } = await import('child_process');
+        const listing = efs2('find', [resolvedDest, '-type', 'f'], {
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        for (const line of listing.split('\n').filter(Boolean)) {
+          if (!path.resolve(line).startsWith(resolvedDest)) {
+            fs.rmSync(resolvedDest, { recursive: true, force: true });
+            throw new Error('Extracted archive contains path traversal — installation aborted');
+          }
         }
       } finally {
         fs.unlinkSync(tmpFile);

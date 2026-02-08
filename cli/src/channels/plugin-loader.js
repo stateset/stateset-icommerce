@@ -200,7 +200,8 @@ function scanDirectory(dirPath, origin) {
   let entries;
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn(`[PluginLoader] Failed to read directory ${dirPath}: ${err.message}`);
     return plugins;
   }
 

@@ -9,7 +9,27 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+
+// ============================================================================
+// Security Helpers
+// ============================================================================
+
+/**
+ * Resolve a user-supplied sub-path within a base directory, preventing
+ * path traversal attacks. Throws if the resolved path escapes baseDir.
+ * @param {string} baseDir - Trusted base directory
+ * @param {string} subPath - User-supplied relative path
+ * @returns {string} Resolved absolute path
+ */
+function safePath(baseDir, subPath) {
+  const resolved = path.resolve(baseDir, subPath);
+  const base = path.resolve(baseDir);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw new Error('Path traversal detected: path escapes the working directory');
+  }
+  return resolved;
+}
 
 // ============================================================================
 // Project Templates
@@ -338,7 +358,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          const fullPath = path.join(workDir, pagePath);
+          const fullPath = safePath(workDir, pagePath);
           const content = generatePageContent(pageType, customName);
 
           writeFileSync(fullPath, content);
@@ -393,7 +413,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          const fullPath = path.join(workDir, componentPath);
+          const fullPath = safePath(workDir, componentPath);
           const content = generateComponentContent(componentType, customName);
 
           writeFileSync(fullPath, content);
@@ -431,7 +451,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          const fullPath = path.join(workDir, hookPath);
+          const fullPath = safePath(workDir, hookPath);
           const content = generateHookContent(hookName, customName);
 
           writeFileSync(fullPath, content);
@@ -465,7 +485,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          const fullPath = path.join(workDir, apiPath);
+          const fullPath = safePath(workDir, apiPath);
           const content = generateApiRouteContent(routePath, methods);
 
           writeFileSync(fullPath, content);
@@ -488,7 +508,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           overwrite: z.boolean().optional().describe('Whether to overwrite existing file'),
         },
         async ({ filePath, content, overwrite }) => {
-          const fullPath = path.join(workDir, filePath);
+          const fullPath = safePath(workDir, filePath);
 
           if (!allowWrite) {
             return result({
@@ -519,7 +539,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           filePath: z.string().describe('Path to the file relative to project root'),
         },
         async ({ filePath }) => {
-          const fullPath = path.join(workDir, filePath);
+          const fullPath = safePath(workDir, filePath);
 
           if (!fileExists(fullPath)) {
             return errorResult(`File ${filePath} does not exist`);
@@ -544,7 +564,7 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
           recursive: z.boolean().optional().describe('Whether to list files recursively'),
         },
         async ({ directory = '.', recursive = false }) => {
-          const fullPath = path.join(workDir, directory);
+          const fullPath = safePath(workDir, directory);
 
           if (!fs.existsSync(fullPath)) {
             return errorResult(`Directory ${directory} does not exist`);
@@ -577,34 +597,29 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
             });
           }
 
-          // Allowlist: only permit safe scaffold commands
-          const ALLOWED_PREFIXES = [
-            'npm install',
-            'npm ci',
-            'npm run',
-            'npm test',
-            'npm start',
-            'npx ',
-            'node ',
-            'git init',
-            'git add',
-            'git commit',
-            'ls',
-            'cat ',
-            'mkdir ',
-          ];
+          // Allowlist: only permit safe scaffold commands.
+          // We match the executable exactly and reject shell metacharacters
+          // to prevent command chaining (e.g. "npm install && rm -rf /").
+          const ALLOWED_EXECUTABLES = new Set(['npm', 'npx', 'node', 'git', 'ls', 'cat', 'mkdir']);
+          const SHELL_METACHAR_RE = /[;&|`$(){}!<>]/;
           const trimmed = command.trim();
-          const isAllowed = ALLOWED_PREFIXES.some((p) => trimmed.startsWith(p));
-          if (!isAllowed) {
+          const executable = trimmed.split(/\s+/)[0];
+          if (!ALLOWED_EXECUTABLES.has(executable)) {
             return errorResult(
-              `Command not allowed. Permitted prefixes: ${ALLOWED_PREFIXES.join(', ')}`,
+              `Command not allowed. Permitted executables: ${[...ALLOWED_EXECUTABLES].join(', ')}`,
+            );
+          }
+          if (SHELL_METACHAR_RE.test(trimmed)) {
+            return errorResult(
+              'Command contains disallowed shell metacharacters. Remove ;, &, |, `, $, etc.',
             );
           }
 
           try {
+            // Use execFile (no shell) to prevent injection via metacharacters.
+            const args = trimmed.split(/\s+/).slice(1);
             if (background) {
-              const child = spawn(command, {
-                shell: true,
+              const child = spawn(executable, args, {
                 cwd: workDir,
                 detached: true,
                 stdio: 'ignore',
@@ -617,7 +632,12 @@ export function createScaffoldMcpServer({ workDir = process.cwd(), allowWrite = 
               });
             }
 
-            const output = execSync(command, { cwd: workDir, encoding: 'utf8', timeout: 120000 });
+            const { execFileSync } = await import('child_process');
+            const output = execFileSync(executable, args, {
+              cwd: workDir,
+              encoding: 'utf8',
+              timeout: 120000,
+            });
             return result({
               success: true,
               command,
