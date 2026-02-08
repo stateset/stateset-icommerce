@@ -107,7 +107,7 @@ export const orderTools = [
       notes: z.string().optional().describe('Order notes'),
     },
     permission: 'write',
-    handler: async ({ commerce, params, allowApply }) => {
+    handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
       if (!allowApply) {
         return {
           error: 'Create operation not allowed. The --apply flag must be set to create orders.',
@@ -121,6 +121,7 @@ export const orderTools = [
       }
 
       const order = await commerce.orders.create(params);
+      if (autoIndexEntity) autoIndexEntity('order', order);
 
       return {
         success: true,

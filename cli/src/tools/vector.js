@@ -5,6 +5,8 @@
  * Uses OpenAI text-embedding-3-small model for generating embeddings.
  */
 
+import { z } from 'zod';
+
 /**
  * Vector search tool definitions
  */
@@ -14,20 +16,8 @@ export const vectorTools = [
     description:
       'Search products using natural language query with hybrid semantic + BM25 ranking. Returns products sorted by relevance score.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description:
-            'Natural language search query (e.g., "wireless bluetooth headphones", "eco-friendly water bottle")',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
-          default: 10,
-        },
-      },
-      required: ['query'],
+      query: z.string().describe('Natural language search query'),
+      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
@@ -35,38 +25,16 @@ export const vectorTools = [
     description:
       'Search customers using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Natural language search query (e.g., "enterprise customers in tech")',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
-          default: 10,
-        },
-      },
-      required: ['query'],
+      query: z.string().describe('Natural language search query'),
+      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
     name: 'vector_search_orders',
     description: 'Search orders using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Natural language search query (e.g., "late shipments", "refund requested")',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
-          default: 10,
-        },
-      },
-      required: ['query'],
+      query: z.string().describe('Natural language search query'),
+      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
@@ -74,156 +42,83 @@ export const vectorTools = [
     description:
       'Search inventory items using natural language query with hybrid semantic + BM25 ranking.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Natural language search query (e.g., "blue widgets", "outdoor gear")',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
-          default: 10,
-        },
-      },
-      required: ['query'],
+      query: z.string().describe('Natural language search query'),
+      limit: z.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
   },
   {
     name: 'vector_index_product',
     description: 'Index a single product for vector search by its ID.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        product_id: {
-          type: 'string',
-          description: 'Product ID (UUID) to index',
-        },
-      },
-      required: ['product_id'],
+      product_id: z.string().describe('Product ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_customer',
     description: 'Index a single customer for vector search by their ID.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        customer_id: {
-          type: 'string',
-          description: 'Customer ID (UUID) to index',
-        },
-      },
-      required: ['customer_id'],
+      customer_id: z.string().describe('Customer ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_order',
     description: 'Index a single order for vector search by its ID.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        order_id: {
-          type: 'string',
-          description: 'Order ID (UUID) to index',
-        },
-      },
-      required: ['order_id'],
+      order_id: z.string().describe('Order ID (UUID) to index'),
     },
   },
   {
     name: 'vector_index_inventory',
     description: 'Index a single inventory item for vector search by its ID.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        item_id: {
-          type: 'string',
-          description: 'Inventory item ID to index',
-        },
-      },
-      required: ['item_id'],
+      item_id: z.string().describe('Inventory item ID to index'),
     },
   },
   {
     name: 'vector_index_all_products',
     description:
       'Index all products in the database for vector search. This may take a while for large catalogs.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_index_all_customers',
     description: 'Index all customers in the database for vector search.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_index_all_orders',
     description: 'Index all orders in the database for vector search.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_index_all_inventory',
     description: 'Index all inventory items in the database for vector search.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_stats',
     description: 'Get statistics about vector embeddings including counts by entity type.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_clear',
     description: 'Clear all vector embeddings for a specific entity type.',
     inputSchema: {
-      type: 'object',
-      properties: {
-        entity_type: {
-          type: 'string',
-          enum: ['products', 'customers', 'orders', 'inventory'],
-          description: 'Entity type to clear embeddings for',
-        },
-      },
-      required: ['entity_type'],
+      entity_type: z
+        .enum(['products', 'customers', 'orders', 'inventory'])
+        .describe('Entity type to clear embeddings for'),
     },
   },
   {
     name: 'vector_clear_all',
     description: 'Clear all vector embeddings across all entity types.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
   {
     name: 'vector_reindex_all',
     description:
       'Rebuild all vector embeddings from scratch. Clears existing embeddings then re-indexes all products, customers, orders, and inventory items. Use this after bulk data imports or to fix stale embeddings.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: {},
   },
 ];
 

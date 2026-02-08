@@ -89,7 +89,7 @@ export const customerTools = [
         .describe('Whether customer accepts marketing'),
     },
     permission: 'write',
-    handler: async ({ commerce, params, allowApply }) => {
+    handler: async ({ commerce, params, allowApply, autoIndexEntity }) => {
       if (!allowApply) {
         return {
           error: 'Create operation not allowed. The --apply flag must be set to create customers.',
@@ -99,6 +99,7 @@ export const customerTools = [
       }
 
       const customer = await commerce.customers.create(params);
+      if (autoIndexEntity) autoIndexEntity('customer', customer);
 
       return {
         success: true,
