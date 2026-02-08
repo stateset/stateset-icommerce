@@ -11,6 +11,7 @@ jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -23,6 +24,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -38,6 +40,7 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install cargo-audit
@@ -51,6 +54,7 @@ jobs:
   deny:
     name: Dependency Policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install cargo-deny
@@ -62,6 +66,7 @@ jobs:
     name: Dependency Review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
@@ -71,6 +76,7 @@ jobs:
   docs:
     name: Docs
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Install mdBook
@@ -83,6 +89,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [fmt, clippy]
 
     steps:
@@ -107,6 +114,7 @@ jobs:
   node-bindings:
     name: Node Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -138,6 +146,7 @@ jobs:
   python-bindings:
     name: Python Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -170,6 +179,7 @@ jobs:
   postgres:
     name: Postgres Migrations
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -202,6 +212,7 @@ jobs:
   cli:
     name: CLI Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -239,6 +250,7 @@ jobs:
   ruby-bindings:
     name: Ruby Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +272,7 @@ jobs:
   admin:
     name: Admin UI
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ hashFiles('admin/package.json') != '' }}
 
     steps:
@@ -291,6 +304,7 @@ jobs:
   go-bindings:
     name: Go Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -316,6 +330,7 @@ jobs:
   dotnet-bindings:
     name: .NET Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -340,6 +355,7 @@ jobs:
   jvm-bindings:
     name: JVM Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -378,6 +394,7 @@ jobs:
   swift-bindings:
     name: Swift Bindings
     runs-on: macos-latest
+    timeout-minutes: 30
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-swift')
 
     steps:
@@ -399,6 +416,7 @@ jobs:
   wasm-bindings:
     name: WASM Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -417,6 +435,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [fmt, clippy]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
@@ -453,6 +472,7 @@ jobs:
   php-bindings:
     name: PHP Bindings
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -481,6 +501,7 @@ jobs:
   benchmarks:
     name: Benchmark Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [rust]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 

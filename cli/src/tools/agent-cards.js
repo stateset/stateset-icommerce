@@ -1,0 +1,219 @@
+/**
+ * Agent Card Tools Module
+ *
+ * MCP tool definitions for A2A (Agent-to-Agent) commerce agent card operations.
+ * Modularized from mcp-server.js for better maintainability.
+ */
+
+import { z } from 'zod';
+
+/**
+ * Agent card tool definitions
+ */
+export const agentCardTools = [
+  {
+    name: 'register_agent_card',
+    description:
+      'Register an AI agent card for A2A commerce. Advertises capabilities, supported networks, and payment assets.',
+    inputSchema: {
+      name: z.string().describe('Agent name'),
+      walletAddress: z.string().describe('Agent wallet address for receiving payments'),
+      publicKey: z.string().describe('Ed25519 public key for verifying signatures'),
+      supportedNetworks: z
+        .array(z.string())
+        .optional()
+        .describe('Networks: set_chain, base, ethereum, arbitrum'),
+      supportedAssets: z.array(z.string()).optional().describe('Assets: usdc, ssusd, usdt'),
+      skills: z
+        .array(z.string())
+        .optional()
+        .describe('A2A skills: sell, buy, quote, fulfill, deliver'),
+      endpointUrl: z.string().optional().describe('A2A endpoint URL'),
+      description: z.string().optional().describe('Agent description'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return {
+          error: 'Registering agent card requires --apply flag.',
+          wouldRegister: { name: params.name, walletAddress: params.walletAddress },
+        };
+      }
+
+      const card = await commerce.x402().registerAgent({
+        name: params.name,
+        wallet_address: params.walletAddress,
+        public_key: params.publicKey,
+        supported_networks: params.supportedNetworks,
+        supported_assets: params.supportedAssets,
+        a2a_skills: params.skills,
+        endpoint_url: params.endpointUrl,
+        description: params.description,
+      });
+      return {
+        success: true,
+        message: 'Agent card registered.',
+        agent: {
+          id: card.id,
+          name: card.name,
+          walletAddress: card.wallet_address,
+          trustLevel: card.trust_level,
+          active: card.active,
+          supportedNetworks: card.supported_networks,
+          supportedAssets: card.supported_assets,
+          skills: card.a2a_skills,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'discover_agents',
+    description:
+      'Discover AI agents with specific commerce capabilities. Find sellers, buyers, or agents supporting specific networks/assets.',
+    inputSchema: {
+      network: z.string().optional().describe('Filter by network: set_chain, base, ethereum'),
+      asset: z.string().optional().describe('Filter by asset: usdc, ssusd, usdt'),
+      skill: z.string().optional().describe('Filter by skill: sell, buy, quote, fulfill'),
+      trustLevel: z
+        .string()
+        .optional()
+        .describe('Minimum trust level: sandbox, standard, verified, enterprise'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const agents = await commerce
+        .x402()
+        .discoverAgents(params.network, params.asset, params.skill, params.trustLevel);
+      return {
+        success: true,
+        count: agents.length,
+        agents: agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          walletAddress: a.wallet_address,
+          trustLevel: a.trust_level,
+          supportedNetworks: a.supported_networks,
+          supportedAssets: a.supported_assets,
+          skills: a.a2a_skills,
+          endpointUrl: a.endpoint_url,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'get_agent_card',
+    description: 'Get details of a registered AI agent card.',
+    inputSchema: {
+      agentId: z.string().optional().describe('Agent ID (UUID)'),
+      walletAddress: z.string().optional().describe('Agent wallet address'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const { agentId, walletAddress } = params;
+      let agent;
+      if (agentId) {
+        agent = await commerce.x402().getAgent(agentId);
+      } else if (walletAddress) {
+        agent = await commerce.x402().getAgentByWallet(walletAddress);
+      } else {
+        return { error: 'Must provide agentId or walletAddress' };
+      }
+      if (!agent) {
+        return { error: 'Agent not found' };
+      }
+      return {
+        success: true,
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          description: agent.description,
+          walletAddress: agent.wallet_address,
+          publicKey: agent.public_key,
+          trustLevel: agent.trust_level,
+          active: agent.active,
+          supportedNetworks: agent.supported_networks,
+          supportedAssets: agent.supported_assets,
+          skills: agent.a2a_skills,
+          endpointUrl: agent.endpoint_url,
+          createdAt: agent.created_at,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'verify_agent',
+    description: 'Verify an AI agent card (admin operation). Upgrades trust level to Verified.',
+    inputSchema: {
+      agentId: z.string().describe('Agent ID to verify'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      const { agentId } = params;
+      if (!allowApply) {
+        return {
+          error: 'Verifying agent requires --apply flag.',
+          wouldVerify: { agentId },
+        };
+      }
+
+      const verified = await commerce.x402().verifyAgent(agentId);
+      return {
+        success: true,
+        message: 'Agent verified.',
+        agent: {
+          id: verified.id,
+          name: verified.name,
+          trustLevel: verified.trust_level,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'list_agent_cards',
+    description: 'List all registered AI agent cards.',
+    inputSchema: {
+      active: z.boolean().optional().describe('Filter by active status'),
+      trustLevel: z.string().optional().describe('Filter by trust level'),
+      limit: z.number().optional().describe('Maximum results (default: 50)'),
+    },
+    permission: 'read',
+    handler: async ({ commerce, params }) => {
+      const agents = await commerce.x402().listAgents({
+        active: params.active,
+        trust_level: params.trustLevel,
+        limit: params.limit || 50,
+      });
+      return {
+        success: true,
+        count: agents.length,
+        agents: agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          walletAddress: a.wallet_address,
+          trustLevel: a.trust_level,
+          active: a.active,
+        })),
+      };
+    },
+  },
+];
+
+/**
+ * Get all agent card tools
+ */
+export function getAgentCardTools() {
+  return agentCardTools;
+}
+
+/**
+ * Get agent card tool by name
+ */
+export function getAgentCardTool(name) {
+  return agentCardTools.find((t) => t.name === name);
+}
+
+export default agentCardTools;

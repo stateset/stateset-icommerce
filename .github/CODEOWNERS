@@ -1,0 +1,27 @@
+# StateSet iCommerce — Code Owners
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default
+* @stateset/core
+
+# Rust core crates
+/crates/ @stateset/core
+
+# CLI
+/cli/ @stateset/cli
+
+# Admin UI
+/admin/ @stateset/admin
+
+# Language bindings
+/bindings/ @stateset/core
+
+# CI/CD and security-sensitive
+/.github/ @stateset/devops
+/SECURITY.md @stateset/core @stateset/devops
+/deny.toml @stateset/core @stateset/devops
+
+# Deployment
+/deploy/ @stateset/devops
+/docker-compose.yml @stateset/devops
+/Dockerfile @stateset/devops

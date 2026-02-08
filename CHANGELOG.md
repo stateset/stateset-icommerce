@@ -6,9 +6,47 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-07
+
 ### Added
+- **1,842 automated tests** (1,581 CLI + 261 admin) with 0 failures — up from ~76 in v0.6.0.
+- 40+ new CLI unit test files covering permissions, telemetry, errors, HTTP gateway/auth, channels subsystem (middleware, rich-messages, templates, event-bridge, gateway-methods, notifier, handoff, metrics, adapter-types), context, credentials, session persistence, MCP schema validator, command queue, and more.
+- ESLint flat config for CLI with `eslint-config-prettier` integration.
+- Prettier config with `format:check` in CI and pre-commit hook.
+- Commitlint + Husky hooks enforcing conventional commits (`commit-msg`, `pre-commit`).
+- `jsconfig.json` with `checkJs` for CLI type checking via JSDoc.
+- Persistent SQLite audit log (`audit-store.js`) for permission gate decisions.
+- In-memory sliding-window rate limiter (per-API-key 60/min, per-IP 30/min) on HTTP gateway.
+- Graceful shutdown handlers for all 47 `bin/` entry points (`runMain()` / `installShutdownHandlers()`).
+- Security headers on HTTP gateway (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy).
+- Body size limits on HTTP gateway and admin API routes.
+- `safeIdSchema` path traversal prevention on admin API routes.
+- `secrets.yaml.template` pattern (actual secrets gitignored).
 - Harness lifecycle events (`onEvent`) across loop/stream sessions plus context transforms and hook points (`before_compaction`, `tool_result_persist`, `before_send`).
 - Provider overrides for non-Claude calls (`apiKey`, `getApiKey`, `signal`) and stream session event emission.
+
+### Changed
+- 168+ MCP tools mapped to permission gates (was 64).
+- `@modelcontextprotocol/sdk` upgraded ^1.25.4 to ^1.26.0 (fixes GHSA-345p-7cg4-v4c7).
+- `Math.random()` replaced with `crypto.randomUUID()` in mcp-conversation-context, mcp-tool-composer, and error boundary.
+- ~15 empty `catch {}` blocks replaced with `console.warn()` across orchestrator, HTTP gateway, credentials, agent-session-store, permissions, claude-harness, and messaging gateways.
+- Command injection prevention: `scaffold-server` allowlist, `marketplace` and `gateway` use `execFileSync`.
+- SQL injection prevention: `treasury/store.js` hardcoded column whitelist.
+- Error detection in `errors.js` uses property-based + case-insensitive fallback (replaced fragile string matching).
+- `load-env.js` warns on missing `.env` instead of silently failing.
+- `capture.js` warns on unmapped event types.
+- Admin test coverage thresholds raised to 80/70/70/80.
+- Rust core models, DB layer, and embedded API updated with new methods and improved error handling.
+- Language bindings updated across Node, Python, WASM, Ruby, PHP, Java, Kotlin, Swift, .NET, and Go.
+
+### Fixed
+- `mcp-schema-validator.js`: `.optional().regex()` reordered to `.regex().optional()` (Zod API).
+- `x402/budget.js`: `DEFAULT_STATE` shared mutable references replaced with deep copy.
+- `credentials.js`: silent `.catch(() => {})` replaced with `console.warn`.
+- `session-persistence.test.js`: TTL race condition (sessionTtl 1ms to 5000ms).
+- `runMain()`: `Promise.resolve()` fix for sync main functions.
+- Streaming error handling in `gemini.js`, `ollama.js`, `openai.js` (debug logging on catch).
+- Admin sessions route: silent `.catch(() => ({}))` replaced with proper error handling.
 
 ## [0.6.0] - 2026-02-04
 
