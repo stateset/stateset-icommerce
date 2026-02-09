@@ -5,6 +5,8 @@
  * encountered during agent loop execution.
  */
 
+import crypto from 'crypto';
+
 // ============================================================================
 // Retry Helpers
 // ============================================================================
@@ -48,7 +50,7 @@ export function computeRetryDelay(attempt, retrySettings) {
   let delay = base * 2 ** Math.max(0, attempt - 1);
   delay = Math.min(delay, max);
   if (jitter > 0) {
-    const rand = (Math.random() * 2 - 1) * jitter;
+    const rand = ((crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff) * 2 - 1) * jitter;
     delay = Math.max(0, Math.floor(delay * (1 + rand)));
   }
   return delay;

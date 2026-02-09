@@ -20,6 +20,7 @@ module.exports = {
         'revert',   // Revert a commit
       ],
     ],
+    'scope-enum': [1, 'always', ['cli', 'admin', 'core', 'ci', 'docs', 'deps']],
     'subject-case': [2, 'never', ['upper-case']],
     'subject-empty': [2, 'never'],
     'type-empty': [2, 'never'],

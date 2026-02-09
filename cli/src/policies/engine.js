@@ -30,7 +30,15 @@ export const Operators = {
   contains: (a, b) => String(a).includes(String(b)),
   startsWith: (a, b) => String(a).startsWith(String(b)),
   endsWith: (a, b) => String(a).endsWith(String(b)),
-  matches: (a, b) => new RegExp(b).test(String(a)),
+  matches: (a, b) => {
+    const pattern = String(b);
+    if (pattern.length > 200) return false;
+    try {
+      return new RegExp(pattern).test(String(a));
+    } catch {
+      return false;
+    }
+  },
 
   // Collection
   in: (a, b) => (Array.isArray(b) ? b.includes(a) : false),

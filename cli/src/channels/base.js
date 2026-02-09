@@ -7,6 +7,7 @@
  * Inspired by moltbot's ChannelPlugin pattern.
  */
 
+import crypto from 'crypto';
 import { runAgentLoop } from '../claude-harness.js';
 import { runMiddleware } from './middleware.js';
 import { getMetrics } from './metrics.js';
@@ -709,7 +710,8 @@ export const RECONNECT_POLICY = {
 export function computeBackoff(policy, attempt) {
   const base = policy.initialMs * Math.pow(policy.factor, attempt - 1);
   const clamped = Math.min(base, policy.maxMs);
-  const jitter = 1 + (Math.random() * 2 - 1) * policy.jitter;
+  const jitter =
+    1 + ((crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff) * 2 - 1) * policy.jitter;
   return Math.round(clamped * jitter);
 }
 

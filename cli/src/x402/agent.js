@@ -3,6 +3,7 @@
  */
 
 import crypto from 'crypto';
+import { validateFetchUrl } from '../utils/url-validator.js';
 import { createBudgetState, getDefaultBudgetStateFile } from './budget.js';
 import {
   computeX402SigningHash,
@@ -151,6 +152,8 @@ export async function x402Fetch(url, options, config) {
   if (!payerAddress) throw new Error('payerAddress is required');
   if (!signingKey?.privateKey || !signingKey?.publicKey)
     throw new Error('signingKey with privateKey/publicKey is required');
+
+  validateFetchUrl(url);
 
   const baseHeaders = options?.headers ? { ...options.headers } : {};
 

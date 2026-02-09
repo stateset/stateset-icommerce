@@ -3821,7 +3821,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3845,7 +3845,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3867,7 +3867,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-dotnet"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "libc",
@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3919,7 +3919,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-node"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "napi",
@@ -3937,7 +3937,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-php"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "ext-php-rs",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-python"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "pyo3",
@@ -3961,7 +3961,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-ruby"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "magnus",
@@ -3972,7 +3972,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -3990,7 +3990,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-go"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "libc",
@@ -4005,7 +4005,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-java"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "jni",
@@ -4020,7 +4020,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-kotlin"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "jni",
@@ -4035,14 +4035,14 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "stateset-swift"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cbindgen",
  "chrono",

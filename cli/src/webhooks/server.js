@@ -63,7 +63,8 @@ export class WebhookSource {
 
     try {
       return timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
-    } catch {
+    } catch (err) {
+      console.warn('[webhook] signature verification error:', err.message);
       return false;
     }
   }

@@ -88,8 +88,8 @@ export class X402SequencerClient {
       try {
         const response = await this.getPaymentReceipt(intentId);
         if (response?.receipt) return response.receipt;
-      } catch {
-        // ignore until timeout
+      } catch (err) {
+        console.warn('[x402] waitForReceipt poll error:', err.message);
       }
       if (Date.now() - start > timeoutMs) {
         throw new Error(`Timed out waiting for receipt for intent ${intentId}`);
