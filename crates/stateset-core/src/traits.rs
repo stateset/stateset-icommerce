@@ -3244,3 +3244,50 @@ pub trait A2ACommerceRepository {
     /// Count purchases matching filter
     fn count_purchases(&self, filter: A2APurchaseFilter) -> Result<u64>;
 }
+
+// ============================================================================
+// Custom Objects Repository
+// ============================================================================
+
+/// Custom Objects repository trait (custom states / metaobjects).
+///
+/// Provides a schema-driven custom data system:
+/// - Define types (schemas) with typed fields
+/// - Create records (instances) that validate against the schema
+pub trait CustomObjectRepository {
+    // ------------------------------------------------------------------------
+    // Type (schema) operations
+    // ------------------------------------------------------------------------
+
+    fn create_type(&self, input: CreateCustomObjectType) -> Result<CustomObjectType>;
+
+    fn get_type(&self, id: Uuid) -> Result<Option<CustomObjectType>>;
+
+    fn get_type_by_handle(&self, handle: &str) -> Result<Option<CustomObjectType>>;
+
+    fn update_type(&self, id: Uuid, input: UpdateCustomObjectType) -> Result<CustomObjectType>;
+
+    fn list_types(&self, filter: CustomObjectTypeFilter) -> Result<Vec<CustomObjectType>>;
+
+    fn delete_type(&self, id: Uuid) -> Result<()>;
+
+    // ------------------------------------------------------------------------
+    // Record operations
+    // ------------------------------------------------------------------------
+
+    fn create_object(&self, input: CreateCustomObject) -> Result<CustomObject>;
+
+    fn get_object(&self, id: Uuid) -> Result<Option<CustomObject>>;
+
+    fn get_object_by_handle(
+        &self,
+        type_handle: &str,
+        object_handle: &str,
+    ) -> Result<Option<CustomObject>>;
+
+    fn update_object(&self, id: Uuid, input: UpdateCustomObject) -> Result<CustomObject>;
+
+    fn list_objects(&self, filter: CustomObjectFilter) -> Result<Vec<CustomObject>>;
+
+    fn delete_object(&self, id: Uuid) -> Result<()>;
+}

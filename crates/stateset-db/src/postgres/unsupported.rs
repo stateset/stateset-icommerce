@@ -563,6 +563,12 @@ impl CartRepository for UnsupportedPostgresRepository {
     fn set_payment(&self, _id: Uuid, _payment: SetCartPayment) -> Result<Cart> {
         self.not_supported()
     }
+    fn set_x402_payment(&self, _id: Uuid, _payment: SetCartX402Payment) -> Result<Cart> {
+        self.not_supported()
+    }
+    fn complete_with_x402(&self, _id: Uuid, _payee_address: &str) -> Result<X402CheckoutResult> {
+        self.not_supported()
+    }
     fn apply_discount(&self, _id: Uuid, _coupon_code: &str) -> Result<Cart> {
         self.not_supported()
     }

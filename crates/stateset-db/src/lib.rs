@@ -53,11 +53,11 @@ use stateset_core::{
     AccountsPayableRepository, AccountsReceivableRepository, AgentCardRepository,
     AgentIdentityRepository, AgentReputationRepository, AgentValidationRepository,
     AnalyticsRepository, BackorderRepository, BomRepository, CartRepository,
-    CostAccountingRepository, CreditRepository, CurrencyRepository, CustomerRepository,
-    FulfillmentRepository, GeneralLedgerRepository, InventoryRepository, InvoiceRepository,
-    LotRepository, OrderRepository, PaymentRepository, ProductRepository, PromotionRepository,
-    PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result, ReturnRepository,
-    SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
+    CostAccountingRepository, CreditRepository, CurrencyRepository, CustomObjectRepository,
+    CustomerRepository, FulfillmentRepository, GeneralLedgerRepository, InventoryRepository,
+    InvoiceRepository, LotRepository, OrderRepository, PaymentRepository, ProductRepository,
+    PromotionRepository, PurchaseOrderRepository, QualityRepository, ReceivingRepository, Result,
+    ReturnRepository, SerialRepository, ShipmentRepository, SubscriptionRepository, TaxRepository,
     WarehouseRepository, WarrantyRepository, WorkOrderRepository, X402CreditRepository,
     X402PaymentIntentRepository,
 };
@@ -149,6 +149,8 @@ pub trait Database: Send + Sync {
     fn customers(&self) -> Box<dyn CustomerRepository + '_>;
     /// Get the product repository
     fn products(&self) -> Box<dyn ProductRepository + '_>;
+    /// Get the custom objects repository (custom states / metaobjects)
+    fn custom_objects(&self) -> Box<dyn CustomObjectRepository + '_>;
     /// Get the return repository
     fn returns(&self) -> Box<dyn ReturnRepository + '_>;
     /// Get the BOM (Bill of Materials) repository
@@ -325,6 +327,10 @@ macro_rules! impl_database_accessors {
 
             fn products(&self) -> Box<dyn ProductRepository + '_> {
                 Box::new(self.products())
+            }
+
+            fn custom_objects(&self) -> Box<dyn CustomObjectRepository + '_> {
+                Box::new(self.custom_objects())
             }
 
             fn returns(&self) -> Box<dyn ReturnRepository + '_> {

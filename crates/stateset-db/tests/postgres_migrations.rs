@@ -37,7 +37,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    assert_eq!(applied, 33, "expected all embedded migrations to apply");
+    assert_eq!(applied, 34, "expected all embedded migrations to apply");
 
     for table in [
         "exchange_rates",
@@ -55,6 +55,8 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         "agent_feedback_responses",
         "agent_validation_requests",
         "agent_validation_responses",
+        "custom_object_types",
+        "custom_object_records",
     ] {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",

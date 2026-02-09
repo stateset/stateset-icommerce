@@ -16,6 +16,8 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(commerce.customers, 'customers API should exist');
     assert.ok(commerce.orders, 'orders API should exist');
     assert.ok(commerce.products, 'products API should exist');
+    assert.ok(commerce.customObjects, 'customObjects API should exist');
+    assert.ok(commerce.customStates, 'customStates API should exist');
     assert.ok(commerce.inventory, 'inventory API should exist');
     assert.ok(commerce.returns, 'returns API should exist');
     assert.ok(commerce.carts, 'carts API should exist');
@@ -28,6 +30,75 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(commerce.workOrders, 'workOrders API should exist');
     assert.ok(commerce.analytics, 'analytics API should exist');
     assert.ok(commerce.currency, 'currency API should exist');
+  });
+
+  await t.test('should create and manage custom objects', async () => {
+    const type = await commerce.customObjects.createType({
+      handle: 'warranty_registration',
+      displayName: 'Warranty Registration',
+      description: 'Extra data attached to warranties',
+      fields: [
+        { key: 'serial_number', fieldType: 'string', required: true },
+        { key: 'registered_at', fieldType: 'date_time', required: false },
+        { key: 'tags', fieldType: 'string', list: true, required: false },
+        { key: 'metadata', fieldType: 'json', required: false },
+      ],
+    });
+
+    assert.ok(type.id, 'custom object type should have an ID');
+    assert.strictEqual(type.handle, 'warranty_registration');
+    assert.strictEqual(type.displayName, 'Warranty Registration');
+    assert.ok(Array.isArray(type.fields) && type.fields.length === 4);
+
+    const gotType = await commerce.customStates.getTypeByHandle('warranty_registration');
+    assert.ok(gotType, 'should fetch type by handle');
+    assert.strictEqual(gotType.id, type.id);
+
+    const obj = await commerce.customObjects.createObject({
+      typeHandle: 'warranty_registration',
+      handle: 'wr_001',
+      ownerType: 'customer',
+      ownerId: 'cust_123',
+      valuesJson: JSON.stringify({
+        serial_number: 'SN123',
+        tags: ['alpha', 'beta'],
+        metadata: { source: 'test' },
+      }),
+    });
+
+    assert.ok(obj.id, 'custom object record should have an ID');
+    assert.strictEqual(obj.typeHandle, 'warranty_registration');
+    assert.strictEqual(obj.handle, 'wr_001');
+    assert.strictEqual(obj.ownerType, 'customer');
+    assert.strictEqual(obj.ownerId, 'cust_123');
+
+    const fetched = await commerce.customObjects.getObjectByHandle(
+      'warranty_registration',
+      'wr_001'
+    );
+    assert.ok(fetched, 'should fetch record by handle');
+    assert.strictEqual(fetched.id, obj.id);
+
+    const updated = await commerce.customObjects.updateObject(obj.id, {
+      valuesJson: JSON.stringify({
+        serial_number: 'SN124',
+        tags: ['alpha'],
+        metadata: { source: 'test', v: 2 },
+      }),
+    });
+    assert.ok(updated, 'should update record');
+    assert.strictEqual(updated.id, obj.id);
+
+    const listed = await commerce.customObjects.listObjects({ typeHandle: 'warranty_registration' });
+    assert.ok(listed.length >= 1);
+
+    await commerce.customObjects.deleteObject(obj.id);
+    const afterDelete = await commerce.customObjects.getObject(obj.id);
+    assert.strictEqual(afterDelete, null);
+
+    await commerce.customObjects.deleteType(type.id);
+    const afterTypeDelete = await commerce.customObjects.getType(type.id);
+    assert.strictEqual(afterTypeDelete, null);
   });
 
   await t.test('should create and retrieve a customer', async () => {

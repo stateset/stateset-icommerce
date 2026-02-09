@@ -15,6 +15,7 @@ mod carts;
 mod cost_accounting;
 mod credit;
 mod currency;
+mod custom_objects;
 mod customers;
 mod fulfillment;
 mod general_ledger;
@@ -53,6 +54,7 @@ pub use carts::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use currency::*;
+pub use custom_objects::*;
 pub use customers::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
@@ -228,6 +230,10 @@ impl PostgresDatabase {
             ),
             ("032_erc8004", include_str!("migrations/032_erc8004.sql")),
             ("033_x402_a2a", include_str!("migrations/033_x402_a2a.sql")),
+            (
+                "034_custom_objects",
+                include_str!("migrations/034_custom_objects.sql"),
+            ),
         ];
 
         for (name, sql) in migrations {
@@ -274,6 +280,11 @@ impl PostgresDatabase {
     /// Get product repository
     pub fn products(&self) -> PgProductRepository {
         PgProductRepository::new(self.pool.clone())
+    }
+
+    /// Get custom objects repository (custom states / metaobjects)
+    pub fn custom_objects(&self) -> PgCustomObjectRepository {
+        PgCustomObjectRepository::new(self.pool.clone())
     }
 
     /// Get return repository

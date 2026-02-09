@@ -161,6 +161,42 @@ pub enum CommerceEvent {
         timestamp: DateTime<Utc>,
     },
 
+    // Custom Objects (custom states / metaobjects)
+    CustomObjectTypeCreated {
+        type_id: Uuid,
+        handle: String,
+        timestamp: DateTime<Utc>,
+    },
+    CustomObjectTypeUpdated {
+        type_id: Uuid,
+        handle: String,
+        fields_changed: Vec<String>,
+        timestamp: DateTime<Utc>,
+    },
+    CustomObjectTypeDeleted {
+        type_id: Uuid,
+        handle: String,
+        timestamp: DateTime<Utc>,
+    },
+    CustomObjectCreated {
+        object_id: Uuid,
+        type_handle: String,
+        owner_type: Option<String>,
+        owner_id: Option<String>,
+        timestamp: DateTime<Utc>,
+    },
+    CustomObjectUpdated {
+        object_id: Uuid,
+        type_handle: String,
+        fields_changed: Vec<String>,
+        timestamp: DateTime<Utc>,
+    },
+    CustomObjectDeleted {
+        object_id: Uuid,
+        type_handle: String,
+        timestamp: DateTime<Utc>,
+    },
+
     // Return events
     ReturnRequested {
         return_id: Uuid,
@@ -336,6 +372,12 @@ impl CommerceEvent {
             Self::ProductStatusChanged { .. } => "product_status_changed",
             Self::ProductVariantAdded { .. } => "product_variant_added",
             Self::ProductVariantUpdated { .. } => "product_variant_updated",
+            Self::CustomObjectTypeCreated { .. } => "custom_object_type_created",
+            Self::CustomObjectTypeUpdated { .. } => "custom_object_type_updated",
+            Self::CustomObjectTypeDeleted { .. } => "custom_object_type_deleted",
+            Self::CustomObjectCreated { .. } => "custom_object_created",
+            Self::CustomObjectUpdated { .. } => "custom_object_updated",
+            Self::CustomObjectDeleted { .. } => "custom_object_deleted",
             Self::ReturnRequested { .. } => "return_requested",
             Self::ReturnStatusChanged { .. } => "return_status_changed",
             Self::ReturnApproved { .. } => "return_approved",
@@ -389,6 +431,12 @@ impl CommerceEvent {
             | Self::ProductStatusChanged { timestamp, .. }
             | Self::ProductVariantAdded { timestamp, .. }
             | Self::ProductVariantUpdated { timestamp, .. }
+            | Self::CustomObjectTypeCreated { timestamp, .. }
+            | Self::CustomObjectTypeUpdated { timestamp, .. }
+            | Self::CustomObjectTypeDeleted { timestamp, .. }
+            | Self::CustomObjectCreated { timestamp, .. }
+            | Self::CustomObjectUpdated { timestamp, .. }
+            | Self::CustomObjectDeleted { timestamp, .. }
             | Self::ReturnRequested { timestamp, .. }
             | Self::ReturnStatusChanged { timestamp, .. }
             | Self::ReturnApproved { timestamp, .. }

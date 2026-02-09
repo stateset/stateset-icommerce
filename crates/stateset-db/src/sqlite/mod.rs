@@ -13,6 +13,7 @@ mod carts;
 mod cost_accounting;
 mod credit;
 mod currency;
+mod custom_objects;
 mod customers;
 mod fulfillment;
 mod general_ledger;
@@ -54,6 +55,7 @@ pub use carts::*;
 pub use cost_accounting::*;
 pub use credit::*;
 pub use currency::*;
+pub use custom_objects::*;
 pub use customers::*;
 pub use fulfillment::*;
 pub use general_ledger::*;
@@ -185,6 +187,11 @@ impl SqliteDatabase {
     /// Get product repository
     pub fn products(&self) -> SqliteProductRepository {
         SqliteProductRepository::new(self.pool.clone())
+    }
+
+    /// Get custom objects repository (custom states / metaobjects)
+    pub fn custom_objects(&self) -> SqliteCustomObjectRepository {
+        SqliteCustomObjectRepository::new(self.pool.clone())
     }
 
     /// Get return repository

@@ -131,6 +131,7 @@ mod commerce;
 mod cost_accounting;
 mod credit;
 mod currency;
+mod custom_objects;
 mod customers;
 mod erc8004;
 mod fulfillment;
@@ -185,6 +186,7 @@ pub use commerce::{Commerce, CommerceBuilder};
 pub use cost_accounting::CostAccounting;
 pub use credit::Credit;
 pub use currency::CurrencyOps;
+pub use custom_objects::CustomObjects;
 pub use customers::Customers;
 pub use erc8004::Erc8004;
 pub use fulfillment::Fulfillment;
@@ -252,6 +254,7 @@ pub use stateset_core::{
     is_eu_member,
     to_smallest_unit,
     validate_currency_code,
+    validate_custom_object_type_input,
     // Validation utilities
     validate_email,
     validate_phone,
@@ -438,6 +441,8 @@ pub use stateset_core::{
     // Credit types
     CreateCreditAccount,
     CreateCreditMemo,
+    CreateCustomObject,
+    CreateCustomObjectType,
     CreateCustomer,
     CreateCustomerAddress,
     CreateDefectCode,
@@ -526,6 +531,13 @@ pub use stateset_core::{
     CreditTransactionFilter,
     CreditTransactionType,
     Currency,
+    // Custom Objects (custom states / metaobjects)
+    CustomFieldDefinition,
+    CustomFieldType,
+    CustomObject,
+    CustomObjectFilter,
+    CustomObjectType,
+    CustomObjectTypeFilter,
     Customer,
     CustomerAddress,
     CustomerArAging,
@@ -812,6 +824,8 @@ pub use stateset_core::{
     UpdateCart,
     UpdateCartItem,
     UpdateCreditAccount,
+    UpdateCustomObject,
+    UpdateCustomObjectType,
     UpdateCustomer,
     UpdateGlAccount,
     UpdateInspection,

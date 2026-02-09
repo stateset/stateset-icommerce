@@ -131,7 +131,7 @@ pub mod postgres {
             PgError::Database(db_err) => {
                 // Check for specific PostgreSQL error codes
                 if let Some(code) = db_err.code() {
-                    let code_str = code.code();
+                    let code_str = code.as_ref();
 
                     // Class 23 - Integrity Constraint Violation
                     if code_str.starts_with("23") {

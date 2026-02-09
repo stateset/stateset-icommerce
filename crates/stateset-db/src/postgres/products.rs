@@ -313,9 +313,9 @@ impl PgProductRepository {
             let pattern = format!("%{}%", search);
             builder
                 .push(" AND (name ILIKE ")
-                .push_bind(&pattern)
+                .push_bind(pattern.clone())
                 .push(" OR description ILIKE ")
-                .push_bind(&pattern)
+                .push_bind(pattern)
                 .push(')');
         }
         if let Some(category) = category {
@@ -596,9 +596,9 @@ impl PgProductRepository {
             let pattern = format!("%{}%", search);
             builder
                 .push(" AND (name ILIKE ")
-                .push_bind(&pattern)
+                .push_bind(pattern.clone())
                 .push(" OR description ILIKE ")
-                .push_bind(&pattern)
+                .push_bind(pattern)
                 .push(')');
         }
         if let Some(category) = category {

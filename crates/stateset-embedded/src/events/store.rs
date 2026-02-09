@@ -70,6 +70,18 @@ impl InMemoryEventStore {
             | CommerceEvent::ProductVariantUpdated { variant_id, .. } => {
                 (Some("variant".to_string()), Some(variant_id.to_string()))
             }
+            CommerceEvent::CustomObjectTypeCreated { type_id, .. }
+            | CommerceEvent::CustomObjectTypeUpdated { type_id, .. }
+            | CommerceEvent::CustomObjectTypeDeleted { type_id, .. } => (
+                Some("custom_object_type".to_string()),
+                Some(type_id.to_string()),
+            ),
+            CommerceEvent::CustomObjectCreated { object_id, .. }
+            | CommerceEvent::CustomObjectUpdated { object_id, .. }
+            | CommerceEvent::CustomObjectDeleted { object_id, .. } => (
+                Some("custom_object".to_string()),
+                Some(object_id.to_string()),
+            ),
             CommerceEvent::InventoryItemCreated { item_id, .. }
             | CommerceEvent::InventoryAdjusted { item_id, .. } => {
                 (Some("inventory".to_string()), Some(item_id.to_string()))

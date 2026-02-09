@@ -2,9 +2,9 @@ use super::Commerce;
 
 use crate::{
     AccountsPayable, AccountsReceivable, Analytics, Backorders, Bom, Carts, CostAccounting, Credit,
-    CurrencyOps, Customers, Erc8004, Fulfillment, GeneralLedger, Inventory, Invoices, Lots, Orders,
-    Payments, Products, Promotions, PurchaseOrders, Quality, Receiving, Returns, Serials,
-    Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402,
+    CurrencyOps, CustomObjects, Customers, Erc8004, Fulfillment, GeneralLedger, Inventory,
+    Invoices, Lots, Orders, Payments, Products, Promotions, PurchaseOrders, Quality, Receiving,
+    Returns, Serials, Shipments, Subscriptions, Tax, WarehouseOps, Warranties, WorkOrders, X402,
 };
 
 impl Commerce {
@@ -139,6 +139,23 @@ impl Commerce {
         {
             Products::new(self.db.clone())
         }
+    }
+
+    /// Access custom objects (custom states / metaobjects) operations.
+    pub fn custom_objects(&self) -> CustomObjects {
+        #[cfg(feature = "events")]
+        {
+            CustomObjects::new(self.db.clone(), self.event_system.clone())
+        }
+        #[cfg(not(feature = "events"))]
+        {
+            CustomObjects::new(self.db.clone())
+        }
+    }
+
+    /// Alias for `custom_objects()` (for users who prefer the "custom states" name).
+    pub fn custom_states(&self) -> CustomObjects {
+        self.custom_objects()
     }
 
     /// Access return operations.

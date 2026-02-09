@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
-assertion_line: 209
 expression: "migrations.collect::<Result<Vec<_>, _>>()"
 ---
 Ok(
@@ -35,5 +34,6 @@ Ok(
         "029_x402_a2a",
         "030_x402_credits",
         "031_erc8004",
+        "032_custom_objects",
     ],
 )

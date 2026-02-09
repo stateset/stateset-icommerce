@@ -87,6 +87,81 @@ export interface ProductVariantOutput {
   compareAtPrice?: number
   isDefault: boolean
 }
+export interface CustomFieldDefinitionInput {
+  key: string
+  fieldType: string
+  required?: boolean
+  list?: boolean
+  description?: string
+}
+export interface CustomFieldDefinitionOutput {
+  key: string
+  fieldType: string
+  required: boolean
+  list: boolean
+  description?: string
+}
+export interface CreateCustomObjectTypeInput {
+  handle: string
+  displayName: string
+  description?: string
+  fields: Array<CustomFieldDefinitionInput>
+}
+export interface UpdateCustomObjectTypeInput {
+  displayName?: string
+  description?: string
+  fields?: Array<CustomFieldDefinitionInput>
+}
+export interface CustomObjectTypeFilterInput {
+  search?: string
+  limit?: number
+  offset?: number
+}
+export interface CustomObjectTypeOutput {
+  id: string
+  handle: string
+  displayName: string
+  description: string
+  fields: Array<CustomFieldDefinitionOutput>
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+export interface CreateCustomObjectInput {
+  typeHandle: string
+  handle?: string
+  ownerType?: string
+  ownerId?: string
+  /** JSON string representing record values (must be an object). */
+  valuesJson: string
+}
+export interface UpdateCustomObjectInput {
+  handle?: string
+  ownerType?: string
+  ownerId?: string
+  /** JSON string representing record values (must be an object). */
+  valuesJson?: string
+}
+export interface CustomObjectFilterInput {
+  typeHandle?: string
+  ownerType?: string
+  ownerId?: string
+  handle?: string
+  limit?: number
+  offset?: number
+}
+export interface CustomObjectOutput {
+  id: string
+  typeId: string
+  typeHandle: string
+  handle?: string
+  ownerType?: string
+  ownerId?: string
+  valuesJson: string
+  createdAt: string
+  updatedAt: string
+  version: number
+}
 export interface CreateInventoryItemInput {
   sku: string
   name: string
@@ -1848,6 +1923,10 @@ export declare class Commerce {
   get orders(): Orders
   /** Get the products API */
   get products(): Products
+  /** Get the custom objects API (custom states / metaobjects) */
+  get customObjects(): CustomObjects
+  /** Alias for `customObjects` (for users who prefer the "custom states" name) */
+  get customStates(): CustomObjects
   /** Get the inventory API */
   get inventory(): Inventory
   /** Get the returns API */
@@ -1934,6 +2013,20 @@ export declare class Products {
   getVariantBySku(sku: string): Promise<ProductVariantOutput | null>
   list(): Promise<Array<ProductOutput>>
   count(): Promise<number>
+}
+export declare class CustomObjects {
+  createType(input: CreateCustomObjectTypeInput): Promise<CustomObjectTypeOutput>
+  getType(id: string): Promise<CustomObjectTypeOutput | null>
+  getTypeByHandle(handle: string): Promise<CustomObjectTypeOutput | null>
+  updateType(id: string, input: UpdateCustomObjectTypeInput): Promise<CustomObjectTypeOutput>
+  listTypes(filter?: CustomObjectTypeFilterInput | undefined | null): Promise<Array<CustomObjectTypeOutput>>
+  deleteType(id: string): Promise<void>
+  createObject(input: CreateCustomObjectInput): Promise<CustomObjectOutput>
+  getObject(id: string): Promise<CustomObjectOutput | null>
+  getObjectByHandle(typeHandle: string, objectHandle: string): Promise<CustomObjectOutput | null>
+  updateObject(id: string, input: UpdateCustomObjectInput): Promise<CustomObjectOutput>
+  listObjects(filter?: CustomObjectFilterInput | undefined | null): Promise<Array<CustomObjectOutput>>
+  deleteObject(id: string): Promise<void>
 }
 export declare class Inventory {
   createItem(input: CreateInventoryItemInput): Promise<InventoryItemOutput>

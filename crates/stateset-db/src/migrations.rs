@@ -174,5 +174,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ),
         // ERC-8004 Trustless Agents registries
         ("031_erc8004", include_str!("../migrations/031_erc8004.sql")),
+        // Custom objects (custom states / metaobjects)
+        (
+            "032_custom_objects",
+            include_str!("../migrations/032_custom_objects.sql"),
+        ),
     ]
 }
