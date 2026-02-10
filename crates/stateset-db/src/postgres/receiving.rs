@@ -329,7 +329,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_receipt).transpose()?)
+        row.map(Self::row_to_receipt).transpose()
     }
 
     pub async fn get_receipt_by_number_async(&self, number: &str) -> Result<Option<Receipt>> {
@@ -340,7 +340,7 @@ impl PgReceivingRepository {
                 .await
                 .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_receipt).transpose()?)
+        row.map(Self::row_to_receipt).transpose()
     }
 
     pub async fn update_receipt_async(&self, id: Uuid, input: UpdateReceipt) -> Result<Receipt> {
@@ -410,10 +410,9 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_receipt)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_receipt_async(&self, id: Uuid) -> Result<()> {
@@ -588,10 +587,9 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_receipt_item)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_receipts_async(&self, filter: ReceiptFilter) -> Result<u64> {
@@ -669,7 +667,7 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_put_away).transpose()?)
+        row.map(Self::row_to_put_away).transpose()
     }
 
     pub async fn list_put_aways_async(&self, filter: PutAwayFilter) -> Result<Vec<PutAway>> {
@@ -700,10 +698,9 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_put_away)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_put_away_async(&self, id: Uuid, assigned_to: &str) -> Result<PutAway> {
@@ -907,10 +904,9 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_receipt)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 }
 

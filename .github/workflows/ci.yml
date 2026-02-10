@@ -37,6 +37,24 @@ jobs:
         # compiled/tested in their dedicated jobs with the required toolchains.
         run: cargo clippy --all-targets -- -D warnings
 
+  clippy-features:
+    name: Clippy (Features)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy optional feature sets
+        run: |
+          cargo clippy -p stateset-core --features metrics --all-targets -- -D warnings
+          cargo clippy -p stateset-db --no-default-features --features postgres --lib -- -D warnings
+          cargo clippy -p stateset-db --no-default-features --features "postgres,saga" --lib -- -D warnings
+          cargo clippy -p stateset-embedded --features postgres --all-targets -- -D warnings
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -99,6 +117,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Compile optional feature sets
+        run: |
+          cargo check -p stateset-core --features metrics
+          cargo check -p stateset-db --no-default-features --features postgres
+          cargo check -p stateset-db --no-default-features --features "postgres,saga"
+          cargo check -p stateset-embedded --features postgres
 
       - name: Test
         run: cargo test -p stateset-core -p stateset-db -p stateset-embedded
@@ -208,6 +233,54 @@ jobs:
           POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
         run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_migrations
+
+      - name: Postgres CRUD smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_crud
+
+      - name: Postgres Agent Cards smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_agent_cards
+
+      - name: Postgres x402 Credits smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_x402_credits
+
+      - name: Postgres x402 Payment Intents smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features postgres --test postgres_x402_payment_intents
+
+      - name: Postgres AsyncCommerce smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-embedded --features postgres --test postgres_async_smoke
+
+      - name: Postgres Cart Checkout smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-embedded --features postgres --test postgres_cart_checkout_smoke
+
+      - name: Test postgres migrations (saga feature)
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features "postgres,saga" --test postgres_migrations
+
+      - name: Postgres Saga smoke
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/stateset_test
+        run: cargo test -p stateset-db --no-default-features --features "postgres,saga" --test postgres_saga
 
   cli:
     name: CLI Tests

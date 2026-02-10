@@ -8,10 +8,10 @@ use sqlx::FromRow;
 use stateset_core::{
     generate_promotion_code, AppliedPromotion, ApplyPromotionsRequest, ApplyPromotionsResult,
     CommerceError, ConditionOperator, ConditionType, CouponCode, CouponFilter, CouponStatus,
-    CreateCouponCode, CreatePromotion, CreatePromotionCondition, DiscountTier, Promotion,
-    PromotionCondition, PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget,
-    PromotionTrigger, PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result,
-    StackingBehavior, UpdatePromotion,
+    CreateCouponCode, CreatePromotion, DiscountTier, Promotion, PromotionCondition,
+    PromotionFilter, PromotionRepository, PromotionStatus, PromotionTarget, PromotionTrigger,
+    PromotionType, PromotionUsage, RejectedPromotion, RejectionReason, Result, StackingBehavior,
+    UpdatePromotion,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -435,28 +435,28 @@ impl PgPromotionRepository {
         .bind(input.total_usage_limit)
         .bind(input.per_customer_limit)
         .bind(
-            serde_json::to_value(&input.applicable_product_ids.unwrap_or_default())
+            serde_json::to_value(input.applicable_product_ids.unwrap_or_default())
                 .unwrap_or_default(),
         )
         .bind(
-            serde_json::to_value(&input.applicable_category_ids.unwrap_or_default())
+            serde_json::to_value(input.applicable_category_ids.unwrap_or_default())
                 .unwrap_or_default(),
         )
-        .bind(serde_json::to_value(&input.applicable_skus.unwrap_or_default()).unwrap_or_default())
+        .bind(serde_json::to_value(input.applicable_skus.unwrap_or_default()).unwrap_or_default())
         .bind(
-            serde_json::to_value(&input.excluded_product_ids.unwrap_or_default())
-                .unwrap_or_default(),
-        )
-        .bind(
-            serde_json::to_value(&input.excluded_category_ids.unwrap_or_default())
+            serde_json::to_value(input.excluded_product_ids.unwrap_or_default())
                 .unwrap_or_default(),
         )
         .bind(
-            serde_json::to_value(&input.eligible_customer_ids.unwrap_or_default())
+            serde_json::to_value(input.excluded_category_ids.unwrap_or_default())
                 .unwrap_or_default(),
         )
         .bind(
-            serde_json::to_value(&input.eligible_customer_groups.unwrap_or_default())
+            serde_json::to_value(input.eligible_customer_ids.unwrap_or_default())
+                .unwrap_or_default(),
+        )
+        .bind(
+            serde_json::to_value(input.eligible_customer_groups.unwrap_or_default())
                 .unwrap_or_default(),
         )
         .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
@@ -584,7 +584,6 @@ impl PgPromotionRepository {
                 " AND (name ILIKE ${0} OR code ILIKE ${0} OR description ILIKE ${0})",
                 param_idx
             ));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY priority ASC, created_at DESC");
@@ -782,7 +781,6 @@ impl PgPromotionRepository {
         }
         if filter.search.is_some() {
             sql.push_str(&format!(" AND code ILIKE ${}", param_idx));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY created_at DESC");
@@ -953,6 +951,7 @@ impl PgPromotionRepository {
         Ok(result)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_usage_async(
         &self,
         promotion_id: Uuid,

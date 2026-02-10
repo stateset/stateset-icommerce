@@ -7,11 +7,10 @@ use chrono::{DateTime, Datelike, Duration, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use stateset_core::{
-    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CommerceError, CustomerMetrics,
-    DemandForecast, FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem,
-    OrderStatusBreakdown, ProductPerformance, Result, ReturnMetrics, ReturnReasonCount,
-    RevenueByPeriod, RevenueForecast, SalesSummary, TimeGranularity, TimePeriod, TopCustomer,
-    TopProduct, TopReturnedProduct, Trend,
+    validate_batch_size, AnalyticsQuery, AnalyticsRepository, CustomerMetrics, DemandForecast,
+    FulfillmentMetrics, InventoryHealth, InventoryMovement, LowStockItem, OrderStatusBreakdown,
+    ProductPerformance, Result, ReturnMetrics, ReturnReasonCount, RevenueByPeriod, RevenueForecast,
+    SalesSummary, TimeGranularity, TimePeriod, TopCustomer, TopProduct, TopReturnedProduct, Trend,
 };
 use uuid::Uuid;
 
@@ -255,7 +254,8 @@ impl PgAnalyticsRepository {
         let (start, end) = self.get_date_range(&query);
         let limit = query.limit.unwrap_or(10) as i64;
 
-        let rows: Vec<(Option<Uuid>, String, String, i64, Decimal, i64, Decimal)> = sqlx::query_as(
+        type TopProductRow = (Option<Uuid>, String, String, i64, Decimal, i64, Decimal);
+        let rows: Vec<TopProductRow> = sqlx::query_as(
             r#"
             SELECT
                 oi.product_id,
@@ -392,7 +392,7 @@ impl PgAnalyticsRepository {
         let (start, end) = self.get_date_range(&query);
         let limit = query.limit.unwrap_or(10) as i64;
 
-        let rows: Vec<(
+        type TopCustomerRow = (
             Uuid,
             String,
             String,
@@ -401,7 +401,8 @@ impl PgAnalyticsRepository {
             Decimal,
             Option<DateTime<Utc>>,
             Option<DateTime<Utc>>,
-        )> = sqlx::query_as(
+        );
+        let rows: Vec<TopCustomerRow> = sqlx::query_as(
             r#"
             SELECT
                 c.id,

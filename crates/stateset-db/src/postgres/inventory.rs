@@ -430,15 +430,6 @@ impl PgInventoryRepository {
         Ok(())
     }
 
-    pub(crate) async fn confirm_reservation_in_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        reservation_id: Uuid,
-    ) -> Result<ReservationConfirmOutcome> {
-        self.confirm_reservation_in_tx_with_now(tx, reservation_id, Utc::now())
-            .await
-    }
-
     pub(crate) async fn confirm_reservation_in_tx_with_now(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -789,11 +780,7 @@ impl PgInventoryRepository {
         }
 
         // Record transaction
-        let tx_type = if input.quantity >= Decimal::ZERO {
-            "adjustment"
-        } else {
-            "adjustment"
-        };
+        let tx_type = "adjustment";
 
         let tx_row: (i64,) = sqlx::query_as(
             r#"

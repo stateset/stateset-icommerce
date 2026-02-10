@@ -1039,6 +1039,67 @@ fn test_cart_checkout_creates_order() {
     assert_eq!(order.customer_id, customer_id);
 }
 
+#[test]
+fn test_cart_checkout_is_idempotent() {
+    let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
+    let customer_id = create_test_customer(&commerce);
+    let product_id = Uuid::new_v4();
+
+    let cart = commerce
+        .carts()
+        .create(CreateCart {
+            customer_id: Some(customer_id),
+            customer_email: Some("checkout-idem@example.com".into()),
+            customer_name: Some("Checkout Idempotent".into()),
+            ..Default::default()
+        })
+        .expect("Failed to create cart");
+
+    commerce
+        .carts()
+        .add_item(
+            cart.id,
+            AddCartItem {
+                product_id: Some(product_id),
+                sku: "SKU-IDEM-001".into(),
+                name: "Checkout Widget".into(),
+                quantity: 2,
+                unit_price: dec!(29.99),
+                ..Default::default()
+            },
+        )
+        .expect("Failed to add item");
+
+    commerce
+        .carts()
+        .set_shipping_address(cart.id, create_test_address())
+        .expect("Failed to set shipping address");
+
+    commerce
+        .carts()
+        .set_payment(
+            cart.id,
+            SetCartPayment {
+                payment_method: "credit_card".into(),
+                payment_token: Some("tok_test".into()),
+                ..Default::default()
+            },
+        )
+        .expect("Failed to set payment");
+
+    let first = commerce
+        .carts()
+        .complete(cart.id)
+        .expect("Failed to complete checkout (first)");
+    let second = commerce
+        .carts()
+        .complete(cart.id)
+        .expect("Failed to complete checkout (second)");
+
+    assert_eq!(second.order_id, first.order_id);
+    assert_eq!(second.order_number, first.order_number);
+}
+
 // ============================================================================
 // Cart Status Tests
 // ============================================================================

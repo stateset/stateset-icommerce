@@ -307,7 +307,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_backorder).transpose()?)
+        row.map(Self::row_to_backorder).transpose()
     }
 
     pub async fn get_backorder_by_number_async(&self, number: &str) -> Result<Option<Backorder>> {
@@ -322,7 +322,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_backorder).transpose()?)
+        row.map(Self::row_to_backorder).transpose()
     }
 
     pub async fn update_backorder_async(
@@ -379,7 +379,6 @@ impl PgBackorderRepository {
         }
         if filter.priority.is_some() {
             sql.push_str(&format!(" AND priority = ${}", param_idx));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC");
@@ -407,10 +406,9 @@ impl PgBackorderRepository {
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_backorder)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn cancel_backorder_async(&self, id: Uuid) -> Result<Backorder> {
@@ -523,10 +521,9 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_fulfillment)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn allocate_backorder_async(
@@ -567,7 +564,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row)?)
+        Self::row_to_allocation(row)
     }
 
     pub async fn get_allocations_async(
@@ -583,10 +580,9 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_allocation)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn release_allocation_async(
@@ -608,7 +604,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row)?)
+        Self::row_to_allocation(row)
     }
 
     pub async fn confirm_allocation_async(
@@ -630,7 +626,7 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(Self::row_to_allocation(row)?)
+        Self::row_to_allocation(row)
     }
 
     pub async fn expire_allocations_async(&self) -> Result<u32> {
@@ -735,10 +731,9 @@ impl PgBackorderRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_backorder)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_pending_async(&self) -> Result<u64> {

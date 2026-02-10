@@ -1,11 +1,13 @@
-//! Metrics and observability for StateSet iCommerce
+//! Prometheus metrics helpers for StateSet iCommerce.
 //!
-//! Provides comprehensive metrics collection using OpenTelemetry
-//! with histograms for request latency and counters for operation tracking.
+//! This module provides a small set of Prometheus metrics primitives:
+//! - Histograms for operation latency
+//! - Counters for success/failure totals
+//! - Gauges for active counts (e.g., reservations)
 
 use once_cell::sync::Lazy;
 use prometheus::{
-    register_histogram_vec, register_int_counter_vec, register_int_gauge, HistogramVec,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge, Encoder, HistogramVec,
     IntCounterVec, IntGauge, TextEncoder,
 };
 use std::time::Instant;
@@ -79,7 +81,8 @@ impl OperationTimer {
 
 impl Drop for OperationTimer {
     fn drop(&mut self) {
-        let duration = self.start.elapsed().as_millis() as f64;
+        // Millisecond precision as a float (supports sub-ms durations).
+        let duration = self.start.elapsed().as_secs_f64() * 1000.0;
         let domain = domain_from_labels(&self.labels);
         OPERATION_LATENCY
             .with_label_values(&[self.operation, domain])
@@ -151,20 +154,16 @@ pub mod orders {
 
     /// Track an order creation event
     pub fn track_order_creation(_customer_id: &str) {
-        track_operation!(
-            operation = "orders.create",
-            labels = vec!["domain:orders".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["orders.create", "orders"])
+            .inc();
     }
 
     /// Track an order status transition
     pub fn track_order_status_transition(_order_id: &str, _from: &str, _to: &str) {
-        track_operation!(
-            operation = "orders.status_transition",
-            labels = vec!["domain:orders".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["orders.status_transition", "orders"])
+            .inc();
     }
 }
 
@@ -175,20 +174,16 @@ pub mod inventory {
     /// Track an inventory reservation
     pub fn track_reservation(_sku: &str, _quantity: f64) {
         ACTIVE_RESERVATIONS.inc();
-        track_operation!(
-            operation = "inventory.reserve",
-            labels = vec!["domain:inventory".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["inventory.reserve", "inventory"])
+            .inc();
     }
 
     /// Track an inventory stock adjustment
     pub fn track_stock_adjustment(_sku: &str, _delta: f64) {
-        track_operation!(
-            operation = "inventory.adjust",
-            labels = vec!["domain:inventory".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["inventory.adjust", "inventory"])
+            .inc();
     }
 }
 
@@ -198,20 +193,16 @@ pub mod payments {
 
     /// Track a payment processing operation
     pub fn track_payment_processing(_order_id: &str, _amount: f64) {
-        track_operation!(
-            operation = "payments.process",
-            labels = vec!["domain:payments".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["payments.process", "payments"])
+            .inc();
     }
 
     /// Track a payment refund operation
     pub fn track_refund(_payment_id: &str, _amount: f64) {
-        track_operation!(
-            operation = "payments.refund",
-            labels = vec!["domain:payments".to_string()],
-            OPERATIONS_TOTAL.inc()
-        );
+        OPERATIONS_TOTAL
+            .with_label_values(&["payments.refund", "payments"])
+            .inc();
     }
 }
 
@@ -258,7 +249,7 @@ pub fn export_metrics() -> Result<String, prometheus::Error> {
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
     encoder.encode(&metric_families, &mut buffer)?;
-    Ok(String::from_utf8(buffer).unwrap())
+    String::from_utf8(buffer).map_err(|e| prometheus::Error::Msg(e.to_string()))
 }
 
 #[cfg(test)]

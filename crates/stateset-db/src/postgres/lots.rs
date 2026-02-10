@@ -183,6 +183,7 @@ impl PgLotRepository {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_transaction_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, Postgres>,

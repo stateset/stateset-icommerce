@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use stateset_core::{CommerceError, CreateProduct, ProductRepository, UpdateProduct};
 use stateset_db::SqliteDatabase;
 

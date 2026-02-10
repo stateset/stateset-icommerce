@@ -6,13 +6,13 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
 use stateset_core::{
-    generate_plan_code, generate_subscription_number, Address, BillingCycle, BillingCycleFilter,
+    generate_plan_code, generate_subscription_number, BillingCycle, BillingCycleFilter,
     BillingCycleStatus, BillingInterval, CancelSubscription, CommerceError, CreateBillingCycle,
-    CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan, CreateSubscriptionPlanItem,
-    PauseSubscription, PlanStatus, Result, SkipBillingCycle, Subscription, SubscriptionEvent,
-    SubscriptionEventType, SubscriptionFilter, SubscriptionItem, SubscriptionPlan,
-    SubscriptionPlanFilter, SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus,
-    UpdateSubscription, UpdateSubscriptionPlan,
+    CreateSubscription, CreateSubscriptionItem, CreateSubscriptionPlan, PauseSubscription,
+    PlanStatus, Result, SkipBillingCycle, Subscription, SubscriptionEvent, SubscriptionEventType,
+    SubscriptionFilter, SubscriptionItem, SubscriptionPlan, SubscriptionPlanFilter,
+    SubscriptionPlanItem, SubscriptionRepository, SubscriptionStatus, UpdateSubscription,
+    UpdateSubscriptionPlan,
 };
 use uuid::Uuid;
 
@@ -627,7 +627,7 @@ impl PgSubscriptionRepository {
         .bind(input.price)
         .bind(input.setup_fee)
         .bind(input.currency.unwrap_or_else(|| "USD".to_string()))
-        .bind(input.trial_days.unwrap_or(0) as i32)
+        .bind(input.trial_days.unwrap_or(0))
         .bind(input.trial_requires_payment_method.unwrap_or(true))
         .bind(input.min_cycles)
         .bind(input.max_cycles)
@@ -746,7 +746,6 @@ impl PgSubscriptionRepository {
                 " AND (name ILIKE ${0} OR code ILIKE ${0} OR description ILIKE ${0})",
                 param_idx
             ));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY created_at DESC");
@@ -812,7 +811,7 @@ impl PgSubscriptionRepository {
         .bind(input.status.map(plan_status_str))
         .bind(input.price)
         .bind(input.setup_fee)
-        .bind(input.trial_days.map(|d| d as i32))
+        .bind(input.trial_days)
         .bind(input.trial_requires_payment_method)
         .bind(input.min_cycles)
         .bind(input.max_cycles)
@@ -1126,7 +1125,6 @@ impl PgSubscriptionRepository {
                 " AND (subscription_number ILIKE ${0} OR plan_name ILIKE ${0})",
                 param_idx
             ));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY created_at DESC");
@@ -1516,7 +1514,6 @@ impl PgSubscriptionRepository {
         }
         if filter.to_date.is_some() {
             sql.push_str(&format!(" AND period_end <= ${}", param_idx));
-            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY period_start DESC");

@@ -491,7 +491,7 @@ impl PgX402PaymentIntentRepository {
         let mut qb = QueryBuilder::<Postgres>::new("SELECT * FROM x402_payment_intents");
         let mut has_where = false;
 
-        let mut push_cond = |qb: &mut QueryBuilder<Postgres>, cond: &str, has_where: &mut bool| {
+        let push_cond = |qb: &mut QueryBuilder<Postgres>, cond: &str, has_where: &mut bool| {
             if !*has_where {
                 qb.push(" WHERE ");
                 *has_where = true;
@@ -559,7 +559,7 @@ impl PgX402PaymentIntentRepository {
         let mut qb = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM x402_payment_intents");
         let mut has_where = false;
 
-        let mut push_cond = |qb: &mut QueryBuilder<Postgres>, cond: &str, has_where: &mut bool| {
+        let push_cond = |qb: &mut QueryBuilder<Postgres>, cond: &str, has_where: &mut bool| {
             if !*has_where {
                 qb.push(" WHERE ");
                 *has_where = true;

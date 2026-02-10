@@ -35,5 +35,6 @@ Ok(
         "030_x402_credits",
         "031_erc8004",
         "032_custom_objects",
+        "033_orders_cart_id",
     ],
 )

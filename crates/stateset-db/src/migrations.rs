@@ -179,5 +179,10 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "032_custom_objects",
             include_str!("../migrations/032_custom_objects.sql"),
         ),
+        // Orders <-> carts linkage for checkout idempotency (retry safety)
+        (
+            "033_orders_cart_id",
+            include_str!("../migrations/033_orders_cart_id.sql"),
+        ),
     ]
 }

@@ -380,7 +380,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_bill).transpose()?)
+        row.map(Self::row_to_bill).transpose()
     }
 
     pub async fn get_bill_by_number_async(&self, number: &str) -> Result<Option<Bill>> {
@@ -390,7 +390,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_bill).transpose()?)
+        row.map(Self::row_to_bill).transpose()
     }
 
     pub async fn update_bill_async(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
@@ -469,10 +469,9 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_bill_async(&self, id: Uuid) -> Result<()> {
@@ -668,10 +667,9 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn create_payment_async(&self, input: CreateBillPayment) -> Result<BillPayment> {
@@ -771,7 +769,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment).transpose()?)
+        row.map(Self::row_to_payment).transpose()
     }
 
     pub async fn get_payment_by_number_async(&self, number: &str) -> Result<Option<BillPayment>> {
@@ -782,7 +780,7 @@ impl PgAccountsPayableRepository {
                 .await
                 .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment).transpose()?)
+        row.map(Self::row_to_payment).transpose()
     }
 
     pub async fn list_payments_async(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>> {
@@ -825,10 +823,9 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_payment)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn void_payment_async(&self, id: Uuid) -> Result<BillPayment> {
@@ -884,10 +881,9 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_payment)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_payments_async(&self, filter: BillPaymentFilter) -> Result<u64> {
@@ -969,7 +965,7 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_payment_run).transpose()?)
+        row.map(Self::row_to_payment_run).transpose()
     }
 
     pub async fn list_payment_runs_async(
@@ -1007,10 +1003,9 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_payment_run)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn approve_payment_run_async(
@@ -1074,10 +1069,9 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_aging_summary_async(&self) -> Result<ApAgingSummary> {
@@ -1207,10 +1201,9 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_bill)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 }
 
@@ -1365,5 +1358,5 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
 }
 
 fn from_date(date: NaiveDate) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc)
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }

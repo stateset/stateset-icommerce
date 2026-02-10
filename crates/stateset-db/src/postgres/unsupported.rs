@@ -3,6 +3,10 @@
 //! The PostgreSQL backend is still under development. These implementations prevent runtime panics
 //! by returning a structured `CommerceError` when a domain repository is not yet supported.
 
+// This module intentionally implements a large number of repository traits as stubs.
+// Keep builds warning-free until the PostgreSQL backend is fully implemented.
+#![allow(unused_variables)]
+
 use chrono::{DateTime, NaiveDate, Utc};
 use stateset_core::*;
 use uuid::Uuid;

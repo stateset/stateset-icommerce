@@ -758,14 +758,14 @@ impl PgWarrantyRepository {
         }
 
         let mut resolution = input.resolution.unwrap_or(claim.resolution);
-        let mut denial_reason = input.denial_reason.or(claim.denial_reason);
+        let denial_reason = input.denial_reason.or(claim.denial_reason);
         let mut approved_at = claim.approved_at;
         let mut resolved_at = claim.resolved_at;
 
         match status {
             ClaimStatus::Approved => {
                 if claim.status != ClaimStatus::Approved {
-                    approved_at = Some(now.clone());
+                    approved_at = Some(now);
                 }
             }
             ClaimStatus::Denied => {
@@ -787,7 +787,7 @@ impl PgWarrantyRepository {
                     ));
                 }
                 if claim.status != ClaimStatus::Denied {
-                    resolved_at = Some(now.clone());
+                    resolved_at = Some(now);
                 }
             }
             ClaimStatus::Completed => {
@@ -797,12 +797,12 @@ impl PgWarrantyRepository {
                     ));
                 }
                 if claim.status != ClaimStatus::Completed {
-                    resolved_at = Some(now.clone());
+                    resolved_at = Some(now);
                 }
             }
             ClaimStatus::Cancelled => {
                 if claim.status != ClaimStatus::Cancelled {
-                    resolved_at = Some(now.clone());
+                    resolved_at = Some(now);
                 }
             }
             _ => {}

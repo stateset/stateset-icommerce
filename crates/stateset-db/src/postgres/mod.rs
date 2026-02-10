@@ -133,10 +133,14 @@ impl PostgresDatabase {
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Get list of migrations
-        let migrations = vec![
+        let mut migrations = vec![
             (
                 "001_initial_schema",
                 include_str!("migrations/001_initial_schema.sql"),
+            ),
+            (
+                "001a_pgcrypto",
+                include_str!("migrations/001a_pgcrypto.sql"),
             ),
             (
                 "002_inventory",
@@ -235,6 +239,17 @@ impl PostgresDatabase {
                 include_str!("migrations/034_custom_objects.sql"),
             ),
         ];
+
+        // Optional, experimental migrations.
+        #[cfg(feature = "saga")]
+        {
+            migrations.push(("035_sagas", include_str!("migrations/035_sagas.sql")));
+        }
+
+        migrations.push((
+            "036_orders_cart_id",
+            include_str!("migrations/036_orders_cart_id.sql"),
+        ));
 
         for (name, sql) in migrations {
             // Check if migration already applied

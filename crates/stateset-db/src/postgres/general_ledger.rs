@@ -406,7 +406,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_account).transpose()?)
+        row.map(Self::row_to_account).transpose()
     }
 
     pub async fn get_account_by_number_async(
@@ -424,7 +424,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_account).transpose()?)
+        row.map(Self::row_to_account).transpose()
     }
 
     pub async fn update_account_async(
@@ -513,10 +513,9 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_account)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_account_hierarchy_async(&self) -> Result<Vec<GlAccount>> {
@@ -601,7 +600,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period).transpose()?)
+        row.map(Self::row_to_period).transpose()
     }
 
     pub async fn get_current_period_async(&self) -> Result<Option<GlPeriod>> {
@@ -614,7 +613,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period).transpose()?)
+        row.map(Self::row_to_period).transpose()
     }
 
     pub async fn get_period_for_date_async(&self, date: NaiveDate) -> Result<Option<GlPeriod>> {
@@ -628,7 +627,7 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_period).transpose()?)
+        row.map(Self::row_to_period).transpose()
     }
 
     pub async fn list_periods_async(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
@@ -660,10 +659,9 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_period)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn open_period_async(&self, id: Uuid) -> Result<GlPeriod> {

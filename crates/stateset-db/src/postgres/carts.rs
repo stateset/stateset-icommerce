@@ -7,10 +7,11 @@ use sqlx::{postgres::PgPool, FromRow};
 use stateset_core::{
     validate_batch_size, AddCartItem, BatchResult, Cart, CartAddress, CartFilter, CartItem,
     CartPaymentStatus, CartRepository, CartStatus, CartX402Payment, CheckoutResult, CommerceError,
-    CreateCart, CreateCustomer, CreateOrder, CreateOrderItem, FulfillmentType, Result,
-    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
-    X402Asset, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
-    X402IntentStatus, X402Network, X402PaymentRequiredData,
+    CreateCart, CreateCustomer, CreateOrder, CreateOrderItem, FulfillmentType, OrderStatus,
+    PaymentStatus, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, UpdateOrder, X402Asset, X402AwaitingSettlementData,
+    X402CheckoutResult, X402IntentCreatedData, X402IntentStatus, X402Network,
+    X402PaymentRequiredData,
 };
 use uuid::Uuid;
 
@@ -280,6 +281,78 @@ impl PgCartRepository {
         Self { pool }
     }
 
+    async fn resolve_customer_id_async(&self, cart: &Cart) -> Result<Uuid> {
+        let customer_repo = PgCustomerRepository::new(self.pool.clone());
+
+        if let Some(id) = cart.customer_id {
+            return Ok(id);
+        }
+
+        let email = cart.customer_email.as_ref().ok_or_else(|| {
+            CommerceError::ValidationError("Customer ID or email required".to_string())
+        })?;
+
+        if let Some(customer) = customer_repo.get_by_email_async(email).await? {
+            return Ok(customer.id);
+        }
+
+        let (first_name, last_name) = cart
+            .customer_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|name| {
+                let mut parts = name.split_whitespace();
+                let first = parts.next().unwrap_or("Guest").to_string();
+                let rest = parts.collect::<Vec<_>>().join(" ");
+                let last = if rest.is_empty() {
+                    "Customer".to_string()
+                } else {
+                    rest
+                };
+                (first, last)
+            })
+            .unwrap_or_else(|| ("Guest".to_string(), "Customer".to_string()));
+
+        let customer = customer_repo
+            .get_or_create_by_email_async(CreateCustomer {
+                email: email.clone(),
+                first_name,
+                last_name,
+                ..Default::default()
+            })
+            .await?;
+
+        Ok(customer.id)
+    }
+
+    fn order_items_from_cart(cart: &Cart) -> Vec<CreateOrderItem> {
+        cart.items
+            .iter()
+            .map(|item| CreateOrderItem {
+                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
+                variant_id: item.variant_id,
+                sku: item.sku.clone(),
+                name: item.name.clone(),
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                discount: Some(item.discount_amount),
+                tax_amount: Some(item.tax_amount),
+            })
+            .collect()
+    }
+
+    fn billing_address_for_cart(cart: &Cart) -> Option<stateset_core::Address> {
+        if cart.billing_same_as_shipping {
+            cart.billing_address
+                .clone()
+                .or_else(|| cart.shipping_address.clone())
+                .map(Into::into)
+        } else {
+            cart.billing_address.clone().map(Into::into)
+        }
+    }
+
     fn generate_cart_number() -> String {
         let timestamp = Utc::now().timestamp();
         let random: u32 = (Uuid::new_v4().as_u128() % 10000) as u32;
@@ -354,54 +427,52 @@ impl PgCartRepository {
             .await?
             .ok_or(CommerceError::NotFound)?;
 
-        let order_repo = PgOrderRepository::new(self.pool.clone());
-        let customer_repo = PgCustomerRepository::new(self.pool.clone());
-
-        let customer_id = if let Some(id) = cart.customer_id {
-            id
-        } else if let Some(email) = &cart.customer_email {
-            if let Some(customer) = customer_repo.get_by_email_async(email).await? {
-                customer.id
-            } else {
-                let new_customer = customer_repo
-                    .create_async(CreateCustomer {
-                        email: email.clone(),
-                        first_name: cart.customer_name.clone().unwrap_or_default(),
-                        ..Default::default()
-                    })
-                    .await?;
-                new_customer.id
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(X402CheckoutResult::Completed(CheckoutResult {
+                    cart_id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                }));
             }
-        } else {
-            return Err(CommerceError::ValidationError(
-                "Customer ID or email required".to_string(),
-            ));
-        };
+        }
 
-        let order_items: Vec<CreateOrderItem> = cart
-            .items
-            .iter()
-            .map(|item| CreateOrderItem {
-                product_id: item.product_id.unwrap_or_else(Uuid::new_v4),
-                variant_id: item.variant_id,
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                quantity: item.quantity,
-                unit_price: item.unit_price,
-                ..Default::default()
-            })
-            .collect();
+        let order_repo = PgOrderRepository::new(self.pool.clone());
+        let customer_id = self.resolve_customer_id_async(&cart).await?;
+        let order_items = Self::order_items_from_cart(&cart);
+
+        let shipping_address = cart.shipping_address.clone().map(Into::into);
+        let billing_address = Self::billing_address_for_cart(&cart);
+        let order = order_repo
+            .create_from_cart_async(
+                cart_id,
+                CreateOrder {
+                    customer_id,
+                    items: order_items,
+                    currency: Some(cart.currency.clone()),
+                    shipping_address,
+                    billing_address,
+                    notes: cart.notes.clone(),
+                    payment_method: cart.payment_method.clone(),
+                    shipping_method: cart.shipping_method.clone(),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
         let order = order_repo
-            .create_async(CreateOrder {
-                customer_id,
-                items: order_items,
-                currency: Some(cart.currency.clone()),
-                shipping_address: cart.shipping_address.clone().map(Into::into),
-                billing_address: cart.billing_address.clone().map(Into::into),
-                notes: cart.notes.clone(),
-                ..Default::default()
-            })
+            .update_async(
+                order.id,
+                UpdateOrder {
+                    status: Some(OrderStatus::Confirmed),
+                    payment_status: Some(PaymentStatus::Paid),
+                    ..Default::default()
+                },
+            )
             .await?;
 
         let now = Utc::now();
@@ -409,14 +480,15 @@ impl PgCartRepository {
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
                 payment_status = 'captured', x402_status = $3,
-                completed_at = $4, updated_at = $5
-             WHERE id = $6"#,
+                completed_at = $4, updated_at = $5, customer_id = $6
+             WHERE id = $7"#,
         )
         .bind(order.id)
         .bind(&order.order_number)
         .bind(X402IntentStatus::Settled.to_string())
         .bind(now)
         .bind(now)
+        .bind(customer_id)
         .bind(cart_id)
         .execute(&self.pool)
         .await
@@ -702,11 +774,11 @@ impl PgCartRepository {
 
         sql.push_str(" ORDER BY created_at DESC");
 
-        if let Some(limit) = filter.limit {
+        if filter.limit.is_some() {
             param_count += 1;
             sql.push_str(&format!(" LIMIT ${}", param_count));
         }
-        if let Some(offset) = filter.offset {
+        if filter.offset.is_some() {
             param_count += 1;
             sql.push_str(&format!(" OFFSET ${}", param_count));
         }
@@ -1176,6 +1248,20 @@ impl PgCartRepository {
             .await?
             .ok_or(CommerceError::NotFound)?;
 
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(X402CheckoutResult::Completed(CheckoutResult {
+                    cart_id: id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                }));
+            }
+        }
+
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
                 "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
@@ -1195,7 +1281,8 @@ impl PgCartRepository {
         let amount_display = format!("{:.6} {}", cart.grand_total, x402_payment.asset);
 
         if let Some(intent_id) = x402_payment.intent_id {
-            let row: Option<(String, Option<String>, Option<i64>, Option<Uuid>)> = sqlx::query_as(
+            type IntentStatusRow = (String, Option<String>, Option<i64>, Option<Uuid>);
+            let row: Option<IntentStatusRow> = sqlx::query_as(
                 "SELECT status, signing_hash, sequence_number, batch_id FROM x402_payment_intents WHERE id = $1",
             )
             .bind(intent_id)
@@ -1326,38 +1413,116 @@ impl PgCartRepository {
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<CheckoutResult> {
-        let cart = self
-            .get_cart_with_items(id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
+        // Lock the cart row so only one checkout can run at a time.
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Use NO KEY UPDATE so a checkout can insert an order referencing `carts(id)` via a
+        // foreign key (`orders.cart_id`) without deadlocking.
+        let row: Option<CartRow> =
+            sqlx::query_as("SELECT * FROM carts WHERE id = $1 FOR NO KEY UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+
+        let row = match row {
+            Some(row) => row,
+            None => {
+                tx.commit().await.map_err(map_db_error)?;
+                return Err(CommerceError::NotFound);
+            }
+        };
+
+        let item_rows: Vec<CartItemRow> =
+            sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
+                .bind(id)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+
+        let items: Vec<CartItem> = item_rows.into_iter().map(Into::into).collect();
+        let cart = row.into_cart(items)?;
+
+        // Idempotent checkout: if already completed, return the existing order reference.
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                tx.commit().await.map_err(map_db_error)?;
+                return Ok(CheckoutResult {
+                    cart_id: id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                });
+            }
+        }
+
+        if !cart.is_ready_for_checkout() {
+            tx.commit().await.map_err(map_db_error)?;
+            return Err(CommerceError::ValidationError(
+                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
+            ));
+        }
+
+        let customer_id = self.resolve_customer_id_async(&cart).await?;
+        let order_items = Self::order_items_from_cart(&cart);
+
+        let shipping_address = cart.shipping_address.clone().map(Into::into);
+        let billing_address = Self::billing_address_for_cart(&cart);
+
+        let order_repo = PgOrderRepository::new(self.pool.clone());
+        let order = order_repo
+            .create_from_cart_async(
+                id,
+                CreateOrder {
+                    customer_id,
+                    items: order_items,
+                    currency: Some(cart.currency.clone()),
+                    shipping_address,
+                    billing_address,
+                    notes: cart.notes.clone(),
+                    payment_method: cart.payment_method.clone(),
+                    shipping_method: cart.shipping_method.clone(),
+                },
+            )
+            .await?;
+
+        let order = order_repo
+            .update_async(
+                order.id,
+                UpdateOrder {
+                    status: Some(OrderStatus::Confirmed),
+                    payment_status: Some(PaymentStatus::Paid),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
         let now = Utc::now();
-        let order_id = Uuid::new_v4();
-        let order_number = format!(
-            "ORD-{}-{:04}",
-            now.timestamp(),
-            (Uuid::new_v4().as_u128() % 10000) as u32
-        );
-
         sqlx::query(
             r#"UPDATE carts SET
                 status = 'completed', order_id = $1, order_number = $2,
-                payment_status = 'captured', completed_at = $3, updated_at = $4
-            WHERE id = $5"#,
+                payment_status = 'captured', completed_at = $3, updated_at = $4, customer_id = $5
+            WHERE id = $6"#,
         )
-        .bind(order_id)
-        .bind(&order_number)
+        .bind(order.id)
+        .bind(&order.order_number)
         .bind(now)
         .bind(now)
+        .bind(customer_id)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
+
         Ok(CheckoutResult {
             cart_id: id,
-            order_id,
-            order_number,
+            order_id: order.id,
+            order_number: order.order_number,
             payment_id: None,
             total_charged: cart.grand_total,
             currency: cart.currency,

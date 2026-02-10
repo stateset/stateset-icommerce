@@ -3,7 +3,7 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{postgres::PgPool, FromRow, Row};
+use sqlx::{postgres::PgPool, FromRow};
 use stateset_core::{
     generate_invoice_number, validate_batch_size, BatchResult, CommerceError, CreateInvoice,
     CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, InvoiceRepository, InvoiceStatus,
@@ -476,11 +476,11 @@ impl PgInvoiceRepository {
 
         sql.push_str(" ORDER BY invoice_date DESC");
 
-        if let Some(limit) = filter.limit {
+        if filter.limit.is_some() {
             param_count += 1;
             sql.push_str(&format!(" LIMIT ${}", param_count));
         }
-        if let Some(offset) = filter.offset {
+        if filter.offset.is_some() {
             param_count += 1;
             sql.push_str(&format!(" OFFSET ${}", param_count));
         }

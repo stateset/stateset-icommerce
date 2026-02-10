@@ -37,9 +37,13 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    assert_eq!(applied, 34, "expected all embedded migrations to apply");
+    let expected = if cfg!(feature = "saga") { 37 } else { 36 };
+    assert_eq!(
+        applied, expected,
+        "expected all embedded migrations to apply"
+    );
 
-    for table in [
+    let mut tables = vec![
         "exchange_rates",
         "store_currency_settings",
         "exchange_rate_history",
@@ -57,7 +61,12 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         "agent_validation_responses",
         "custom_object_types",
         "custom_object_records",
-    ] {
+    ];
+    if cfg!(feature = "saga") {
+        tables.extend(["sagas", "saga_steps"]);
+    }
+
+    for table in tables {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
         )
@@ -78,6 +87,14 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         currency_cols, 1,
         "`orders.currency` should exist exactly once"
     );
+
+    let cart_cols: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'cart_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query orders.cart_id");
+    assert_eq!(cart_cols, 1, "`orders.cart_id` should exist exactly once");
 
     let defaults: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM store_currency_settings WHERE id = 'default'")

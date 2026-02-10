@@ -717,10 +717,9 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_collection_activity)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn update_collection_status_async(
@@ -757,10 +756,9 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_invoice)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn send_dunning_letter_async(
@@ -865,7 +863,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_write_off).transpose()?)
+        row.map(Self::row_to_write_off).transpose()
     }
 
     pub async fn list_write_offs_async(&self, filter: WriteOffFilter) -> Result<Vec<WriteOff>> {
@@ -913,10 +911,9 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_write_off)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn reverse_write_off_async(&self, id: Uuid) -> Result<WriteOff> {
@@ -1009,7 +1006,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_memo).transpose()?)
+        row.map(Self::row_to_credit_memo).transpose()
     }
 
     pub async fn get_credit_memo_by_number_async(
@@ -1027,7 +1024,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_memo).transpose()?)
+        row.map(Self::row_to_credit_memo).transpose()
     }
 
     pub async fn list_credit_memos_async(
@@ -1083,10 +1080,9 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_credit_memo)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn apply_credit_memo_async(&self, input: ApplyCreditMemo) -> Result<CreditMemo> {
@@ -1603,5 +1599,5 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
 }
 
 fn from_date(date: NaiveDate) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc)
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }

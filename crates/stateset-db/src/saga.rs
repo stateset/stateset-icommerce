@@ -1,3 +1,9 @@
+//! Persisted saga coordinator (PostgreSQL).
+//!
+//! This module is behind the `stateset-db/saga` feature. It is intended for
+//! long-lived, multi-step orchestrations where each step can be compensated
+//! (rolled back) if a later step fails.
+
 use crate::PostgresDatabase;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,6 +30,31 @@ pub enum SagaStatus {
     Failed,
     Completed,
     RolledBack,
+}
+
+impl SagaStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            SagaStatus::Pending => "pending",
+            SagaStatus::Running => "running",
+            SagaStatus::Failed => "failed",
+            SagaStatus::Completed => "completed",
+            SagaStatus::RolledBack => "rolled_back",
+        }
+    }
+
+    fn from_str(raw: &str) -> Result<Self, SagaError> {
+        match raw {
+            "pending" => Ok(SagaStatus::Pending),
+            "running" => Ok(SagaStatus::Running),
+            "failed" => Ok(SagaStatus::Failed),
+            "completed" => Ok(SagaStatus::Completed),
+            "rolled_back" => Ok(SagaStatus::RolledBack),
+            other => Err(SagaError::StepExecutionFailed(format!(
+                "Unknown saga status: {other}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,16 +112,68 @@ impl Saga {
     }
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SagaDbRow {
+    id: Uuid,
+    name: String,
+    idempotency_key: String,
+    status: String,
+    current_step: i32,
+    total_steps: i32,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+    business_key: Option<String>,
+}
+
+impl SagaDbRow {
+    fn into_saga(self) -> Result<Saga, SagaError> {
+        Ok(Saga {
+            id: self.id,
+            name: self.name,
+            idempotency_key: self.idempotency_key,
+            status: SagaStatus::from_str(&self.status)?,
+            current_step: self.current_step,
+            total_steps: self.total_steps,
+            created_at: self.created_at,
+            started_at: self.started_at,
+            completed_at: self.completed_at,
+            business_key: self.business_key,
+        })
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SagaStepDbRow {
+    id: Uuid,
+    name: String,
+    step_order: i32,
+    payload: serde_json::Value,
+    status: String,
+    executed_at: Option<DateTime<Utc>>,
+    result: Option<serde_json::Value>,
+    compensation_step_id: Option<Uuid>,
+    rollback_at: Option<DateTime<Utc>>,
+}
+
+impl SagaStepDbRow {
+    fn into_step(self) -> Result<SagaStep, SagaError> {
+        Ok(SagaStep {
+            id: self.id,
+            name: self.name,
+            step_order: self.step_order,
+            payload: self.payload,
+            status: SagaStatus::from_str(&self.status)?,
+            executed_at: self.executed_at,
+            result: self.result,
+            compensation_step_id: self.compensation_step_id,
+            rollback_at: self.rollback_at,
+        })
+    }
+}
+
 pub struct SagaCoordinator {
     db: std::sync::Arc<PostgresDatabase>,
-}
-
-fn serialize_status(status: &SagaStatus) -> Result<String, SagaError> {
-    serde_json::to_string(status).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))
-}
-
-fn deserialize_status(raw: &str) -> Result<SagaStatus, SagaError> {
-    serde_json::from_str(raw).map_err(|e| SagaError::StepExecutionFailed(e.to_string()))
 }
 
 impl SagaCoordinator {
@@ -107,8 +190,7 @@ impl SagaCoordinator {
         let saga = Saga::new(name, idempotency_key.clone(), total_steps);
 
         let pool = self.db.pool();
-        let status = serialize_status(&saga.status)?;
-        sqlx::query!(
+        let inserted: Option<Uuid> = sqlx::query_scalar(
             r#"
             INSERT INTO sagas (id, name, idempotency_key, status, current_step, total_steps,
                             created_at, started_at, completed_at, business_key)
@@ -116,22 +198,33 @@ impl SagaCoordinator {
             ON CONFLICT (idempotency_key) DO NOTHING
             RETURNING id
             "#,
-            saga.id,
-            saga.name,
-            saga.idempotency_key,
-            status,
-            saga.current_step,
-            saga.total_steps,
-            saga.created_at,
-            saga.started_at,
-            saga.completed_at,
-            saga.business_key
         )
-        .fetch_one(pool)
+        .bind(saga.id)
+        .bind(&saga.name)
+        .bind(&saga.idempotency_key)
+        .bind(saga.status.as_str())
+        .bind(saga.current_step)
+        .bind(saga.total_steps)
+        .bind(saga.created_at)
+        .bind(saga.started_at)
+        .bind(saga.completed_at)
+        .bind(&saga.business_key)
+        .fetch_optional(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        Ok(saga)
+        if inserted.is_some() {
+            return Ok(saga);
+        }
+
+        // Idempotency conflict: return the existing saga.
+        self.get_saga_by_idempotency_key(&idempotency_key)
+            .await?
+            .ok_or_else(|| {
+                SagaError::StepExecutionFailed(format!(
+                    "Saga idempotency_key conflict but saga not found: {idempotency_key}"
+                ))
+            })
     }
 
     pub async fn add_step(
@@ -154,24 +247,23 @@ impl SagaCoordinator {
         };
 
         let pool = self.db.pool();
-        let status = serialize_status(&step.status)?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO saga_steps (id, saga_id, name, step_order, payload, status,
                                  executed_at, result, compensation_step_id, rollback_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
-            step.id,
-            saga_id,
-            step.name,
-            step.step_order,
-            step.payload,
-            status,
-            step.executed_at,
-            step.result,
-            step.compensation_step_id,
-            step.rollback_at
         )
+        .bind(step.id)
+        .bind(saga_id)
+        .bind(&step.name)
+        .bind(step.step_order)
+        .bind(&step.payload)
+        .bind(step.status.as_str())
+        .bind(step.executed_at)
+        .bind(&step.result)
+        .bind(step.compensation_step_id)
+        .bind(step.rollback_at)
         .execute(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
@@ -195,16 +287,17 @@ impl SagaCoordinator {
             .await
             .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        let step = sqlx::query!(
+        let step: SagaStepDbRow = sqlx::query_as(
             r#"
-            SELECT id, name, step_order, payload, status, executed_at, result
+            SELECT id, name, step_order, payload, status, executed_at, result,
+                   compensation_step_id, rollback_at
             FROM saga_steps
             WHERE id = $1 AND saga_id = $2
             FOR UPDATE
             "#,
-            step_id,
-            saga_id
         )
+        .bind(step_id)
+        .bind(saga_id)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| match e {
@@ -212,39 +305,30 @@ impl SagaCoordinator {
             _ => SagaError::StepExecutionFailed(e.to_string()),
         })?;
 
-        let completed_status = serialize_status(&SagaStatus::Completed)?;
-        if step.status == completed_status {
-            let result = match step.result.as_ref() {
-                Some(result_str) => serde_json::from_str(result_str)
-                    .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?,
-                None => serde_json::Value::Null,
-            };
+        let status = SagaStatus::from_str(&step.status)?;
+        if status == SagaStatus::Completed {
             tx.commit()
                 .await
                 .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
-            return Ok(result);
+            return Ok(step.result.unwrap_or(serde_json::Value::Null));
         }
 
-        let payload: serde_json::Value = serde_json::from_str(&step.payload)
-            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
-        let result = handler(payload)
+        let result = handler(step.payload)
             .await
             .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        let result_json = serde_json::to_string(&result)
-            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE saga_steps
             SET status = $1, executed_at = $2, result = $3
             WHERE id = $4 AND saga_id = $5
             "#,
-            completed_status,
-            Utc::now(),
-            result_json,
-            step_id,
-            saga_id
         )
+        .bind(SagaStatus::Completed.as_str())
+        .bind(Utc::now())
+        .bind(&result)
+        .bind(step_id)
+        .bind(saga_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
@@ -264,16 +348,16 @@ impl SagaCoordinator {
     ) -> Result<(), SagaError> {
         let pool = self.db.pool();
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE saga_steps
             SET compensation_step_id = $1
             WHERE id = $2 AND saga_id = $3
             "#,
-            compensation_step_id,
-            step_id,
-            saga_id
         )
+        .bind(compensation_step_id)
+        .bind(step_id)
+        .bind(saga_id)
         .execute(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
@@ -284,17 +368,16 @@ impl SagaCoordinator {
     pub async fn start_saga(&self, saga_id: Uuid) -> Result<(), SagaError> {
         let pool = self.db.pool();
 
-        let status = serialize_status(&SagaStatus::Running)?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE sagas
             SET status = $1, started_at = $2
             WHERE id = $3
             "#,
-            status,
-            Utc::now(),
-            saga_id
         )
+        .bind(SagaStatus::Running.as_str())
+        .bind(Utc::now())
+        .bind(saga_id)
         .execute(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
@@ -305,17 +388,16 @@ impl SagaCoordinator {
     pub async fn mark_saga_completed(&self, saga_id: Uuid) -> Result<(), SagaError> {
         let pool = self.db.pool();
 
-        let status = serialize_status(&SagaStatus::Completed)?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE sagas
             SET status = $1, completed_at = $2, current_step = total_steps
             WHERE id = $3
             "#,
-            status,
-            Utc::now(),
-            saga_id
         )
+        .bind(SagaStatus::Completed.as_str())
+        .bind(Utc::now())
+        .bind(saga_id)
         .execute(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
@@ -323,63 +405,68 @@ impl SagaCoordinator {
         Ok(())
     }
 
-    pub async fn rollback_saga<F, Fut>(&self, saga_id: Uuid, handler: F) -> Result<(), SagaError>
+    pub async fn rollback_saga<F, Fut>(
+        &self,
+        saga_id: Uuid,
+        mut handler: F,
+    ) -> Result<(), SagaError>
     where
-        F: FnOnce(Uuid, serde_json::Value) -> Fut,
+        F: FnMut(Uuid, serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
     {
+        #[derive(sqlx::FromRow)]
+        struct RollbackRow {
+            id: Uuid,
+            payload: serde_json::Value,
+            compensation_step_id: Option<Uuid>,
+        }
+
         let pool = self.db.pool();
 
-        let completed_status = serde_json::to_string(&SagaStatus::Completed)
-            .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
-        let steps = sqlx::query!(
+        let steps: Vec<RollbackRow> = sqlx::query_as(
             r#"
-            SELECT id, name, step_order, payload, compensation_step_id, result
+            SELECT id, payload, compensation_step_id
             FROM saga_steps
             WHERE saga_id = $1 AND status = $2
             ORDER BY step_order DESC
             "#,
-            saga_id,
-            completed_status
         )
+        .bind(saga_id)
+        .bind(SagaStatus::Completed.as_str())
         .fetch_all(pool)
         .await
         .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
 
         for step in steps {
             if let Some(comp_step_id) = step.compensation_step_id {
-                let payload: serde_json::Value = serde_json::from_str(&step.payload)
-                    .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
-                (handler)(comp_step_id, payload)
+                handler(comp_step_id, step.payload)
                     .await
                     .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
 
-                sqlx::query!(
+                sqlx::query(
                     r#"
                     UPDATE saga_steps
                     SET rollback_at = $1
                     WHERE id = $2
                     "#,
-                    Utc::now(),
-                    comp_step_id
                 )
+                .bind(Utc::now())
+                .bind(step.id)
                 .execute(pool)
                 .await
                 .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
             }
         }
 
-        let rolled_back_status = serde_json::to_string(&SagaStatus::RolledBack)
-            .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE sagas
             SET status = $1
             WHERE id = $2
             "#,
-            rolled_back_status,
-            saga_id
         )
+        .bind(SagaStatus::RolledBack.as_str())
+        .bind(saga_id)
         .execute(pool)
         .await
         .map_err(|e| SagaError::RollbackFailed(e.to_string()))?;
@@ -390,75 +477,46 @@ impl SagaCoordinator {
     pub async fn get_saga(&self, saga_id: Uuid) -> Result<Saga, SagaError> {
         let pool = self.db.pool();
 
-        let row = sqlx::query!(
+        let row: SagaDbRow = sqlx::query_as(
             r#"
             SELECT id, name, idempotency_key, status, current_step, total_steps,
                    created_at, started_at, completed_at, business_key
             FROM sagas
             WHERE id = $1
             "#,
-            saga_id
         )
+        .bind(saga_id)
         .fetch_optional(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?
         .ok_or(SagaError::SagaNotFound(saga_id))?;
 
-        let status = deserialize_status(&row.status)?;
-
-        Ok(Saga {
-            id: row.id,
-            name: row.name,
-            idempotency_key: row.idempotency_key,
-            status,
-            current_step: row.current_step,
-            total_steps: row.total_steps,
-            created_at: row.created_at,
-            started_at: row.started_at,
-            completed_at: row.completed_at,
-            business_key: row.business_key,
-        })
+        row.into_saga()
     }
 
     pub async fn get_saga_by_idempotency_key(&self, key: &str) -> Result<Option<Saga>, SagaError> {
         let pool = self.db.pool();
 
-        let row = sqlx::query!(
+        let row: Option<SagaDbRow> = sqlx::query_as(
             r#"
             SELECT id, name, idempotency_key, status, current_step, total_steps,
                    created_at, started_at, completed_at, business_key
             FROM sagas
             WHERE idempotency_key = $1
             "#,
-            key
         )
+        .bind(key)
         .fetch_optional(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        if let Some(row) = row {
-            let status = deserialize_status(&row.status)?;
-            Ok(Some(Saga {
-                id: row.id,
-                name: row.name,
-                idempotency_key: row.idempotency_key,
-                status,
-                current_step: row.current_step,
-                total_steps: row.total_steps,
-                created_at: row.created_at,
-                started_at: row.started_at,
-                completed_at: row.completed_at,
-                business_key: row.business_key,
-            }))
-        } else {
-            Ok(None)
-        }
+        row.map(SagaDbRow::into_saga).transpose()
     }
 
     pub async fn get_saga_steps(&self, saga_id: Uuid) -> Result<Vec<SagaStep>, SagaError> {
         let pool = self.db.pool();
 
-        let rows = sqlx::query!(
+        let rows: Vec<SagaStepDbRow> = sqlx::query_as(
             r#"
             SELECT id, name, step_order, payload, status, executed_at, result,
                    compensation_step_id, rollback_at
@@ -466,38 +524,13 @@ impl SagaCoordinator {
             WHERE saga_id = $1
             ORDER BY step_order
             "#,
-            saga_id
         )
+        .bind(saga_id)
         .fetch_all(pool)
         .await
         .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
 
-        rows.iter()
-            .map(|row| {
-                let status = deserialize_status(&row.status)?;
-                let result = match row.result.as_ref() {
-                    Some(r) => Some(
-                        serde_json::from_str(r)
-                            .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?,
-                    ),
-                    None => None,
-                };
-                let payload = serde_json::from_str(&row.payload)
-                    .map_err(|e| SagaError::StepExecutionFailed(e.to_string()))?;
-
-                Ok(SagaStep {
-                    id: row.id,
-                    name: row.name.clone(),
-                    step_order: row.step_order,
-                    payload,
-                    status,
-                    executed_at: row.executed_at,
-                    result,
-                    compensation_step_id: row.compensation_step_id,
-                    rollback_at: row.rollback_at,
-                })
-            })
-            .collect()
+        rows.into_iter().map(SagaStepDbRow::into_step).collect()
     }
 }
 

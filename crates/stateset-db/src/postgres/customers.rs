@@ -146,6 +146,60 @@ impl PgCustomerRepository {
         })
     }
 
+    /// Get a customer by email, creating one if it doesn't exist.
+    ///
+    /// This is safe under concurrency and avoids surfacing unique-constraint races to callers.
+    pub async fn get_or_create_by_email_async(&self, input: CreateCustomer) -> Result<Customer> {
+        Self::validate_customer_input(&input)?;
+
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let tags = input.tags.clone().unwrap_or_default();
+        let accepts_marketing = input.accepts_marketing.unwrap_or(false);
+
+        let tags_json = serde_json::to_value(&tags).unwrap_or_default();
+        let metadata_json = input.metadata.clone();
+
+        let inserted: Option<CustomerRow> = sqlx::query_as(
+            r#"
+            INSERT INTO customers (id, email, first_name, last_name, phone, status,
+                                   accepts_marketing, email_verified, tags, metadata,
+                                   created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (email) DO NOTHING
+            RETURNING *
+            "#,
+        )
+        .bind(id)
+        .bind(&input.email)
+        .bind(&input.first_name)
+        .bind(&input.last_name)
+        .bind(&input.phone)
+        .bind("active")
+        .bind(accepts_marketing)
+        .bind(false)
+        .bind(&tags_json)
+        .bind(&metadata_json)
+        .bind(now)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+
+        if let Some(row) = inserted {
+            return Ok(Self::row_to_customer(row)?);
+        }
+
+        // Conflict: return the existing customer row.
+        let row = sqlx::query_as::<_, CustomerRow>("SELECT * FROM customers WHERE email = $1")
+            .bind(&input.email)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        Ok(Self::row_to_customer(row)?)
+    }
+
     /// Create a new customer (async)
     pub async fn create_async(&self, input: CreateCustomer) -> Result<Customer> {
         Self::validate_customer_input(&input)?;
@@ -371,10 +425,9 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_customer)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     /// Delete a customer (soft delete, async)
@@ -520,10 +573,9 @@ impl PgCustomerRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_address)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     /// Update a customer address (async)
@@ -586,7 +638,7 @@ impl PgCustomerRepository {
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
 
-        Ok(Self::row_to_address(row)?)
+        Self::row_to_address(row)
     }
 
     /// Delete a customer address (async)
@@ -1065,10 +1117,9 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_customer)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 }
 

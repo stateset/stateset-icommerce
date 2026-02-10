@@ -226,30 +226,34 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let end_str = end.to_rfc3339();
 
         let granularity = query.granularity.unwrap_or(TimeGranularity::Day);
-        let date_format = match granularity {
-            TimeGranularity::Hour => "%Y-%m-%d %H:00",
-            TimeGranularity::Day => "%Y-%m-%d",
-            TimeGranularity::Week => "%Y-W%W",
-            TimeGranularity::Month => "%Y-%m",
-            TimeGranularity::Quarter => "%Y-Q",
-            TimeGranularity::Year => "%Y",
+        let period_expr = match granularity {
+            TimeGranularity::Hour => "strftime('%Y-%m-%d %H:00', created_at)".to_string(),
+            TimeGranularity::Day => "strftime('%Y-%m-%d', created_at)".to_string(),
+            TimeGranularity::Week => "strftime('%Y-W%W', created_at)".to_string(),
+            TimeGranularity::Month => "strftime('%Y-%m', created_at)".to_string(),
+            TimeGranularity::Quarter => {
+                // SQLite doesn't have a built-in quarter function. Derive it from the month:
+                // Q = ((month - 1) / 3) + 1, resulting in 1..=4.
+                "strftime('%Y', created_at) || '-Q' || ((CAST(strftime('%m', created_at) AS INTEGER) - 1) / 3 + 1)".to_string()
+            }
+            TimeGranularity::Year => "strftime('%Y', created_at)".to_string(),
         };
 
         let mut stmt = conn
             .prepare(&format!(
                 r#"
                 SELECT
-                    strftime('{}', created_at) as period,
-                    COALESCE(SUM(total_amount), 0) as revenue,
+                    {} as period,
+                    CAST(COALESCE(SUM(total_amount), 0) AS TEXT) as revenue,
                     COUNT(*) as order_count,
                     MIN(created_at) as period_start
                 FROM orders
                 WHERE created_at >= ?1 AND created_at <= ?2
                   AND status NOT IN ('cancelled', 'refunded')
-                GROUP BY strftime('{}', created_at)
+                GROUP BY {}
                 ORDER BY period
                 "#,
-                date_format, date_format
+                period_expr, period_expr
             ))
             .map_err(map_db_error)?;
 
@@ -295,9 +299,9 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     oi.sku,
                     oi.name,
                     SUM(oi.quantity) as units_sold,
-                    SUM(oi.total) as revenue,
+                    CAST(COALESCE(SUM(oi.total), 0) AS TEXT) as revenue,
                     COUNT(DISTINCT oi.order_id) as order_count,
-                    AVG(oi.unit_price) as avg_price
+                    CAST(COALESCE(AVG(oi.unit_price), 0) AS TEXT) as avg_price
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
                 WHERE o.created_at >= ?1 AND o.created_at <= ?2
@@ -411,7 +415,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let avg_ltv: String = conn
             .query_row(
                 r#"
-                SELECT COALESCE(AVG(total), 0) FROM (
+                SELECT CAST(COALESCE(AVG(total), 0) AS TEXT) FROM (
                     SELECT customer_id, SUM(total_amount) as total
                     FROM orders
                     WHERE status NOT IN ('cancelled', 'refunded')
@@ -427,7 +431,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let avg_orders: String = conn
             .query_row(
                 r#"
-                SELECT COALESCE(AVG(cnt), 0) FROM (
+                SELECT CAST(COALESCE(AVG(cnt), 0) AS TEXT) FROM (
                     SELECT customer_id, COUNT(*) as cnt
                     FROM orders
                     GROUP BY customer_id
@@ -466,9 +470,9 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     c.id,
                     c.email,
                     COALESCE(c.first_name || ' ' || c.last_name, c.email) as name,
-                    COALESCE(SUM(o.total_amount), 0) as total_spent,
+                    CAST(COALESCE(SUM(o.total_amount), 0) AS TEXT) as total_spent,
                     COUNT(o.id) as order_count,
-                    COALESCE(AVG(o.total_amount), 0) as avg_order,
+                    CAST(COALESCE(AVG(o.total_amount), 0) AS TEXT) as avg_order,
                     MIN(o.created_at) as first_order,
                     MAX(o.created_at) as last_order
                 FROM customers c
@@ -560,7 +564,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         let total_value: String = conn
             .query_row(
                 r#"
-                SELECT COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0)
+                SELECT CAST(COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0) AS TEXT)
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 LEFT JOIN product_variants pv ON ii.sku = pv.sku
@@ -592,9 +596,9 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 SELECT
                     ii.sku,
                     ii.name,
-                    COALESCE(ib.on_hand, 0) as on_hand,
-                    COALESCE(ib.allocated, 0) as allocated,
-                    COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) as available,
+                    CAST(COALESCE(ib.on_hand, 0) AS TEXT) as on_hand,
+                    CAST(COALESCE(ib.allocated, 0) AS TEXT) as allocated,
+                    CAST(COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) AS TEXT) as available,
                     ii.reorder_point
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
@@ -818,7 +822,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
         // Total refunded
         let total_refunded: String = conn
             .query_row(
-                "SELECT COALESCE(SUM(refund_amount), 0) FROM returns WHERE created_at >= ?1 AND created_at <= ?2",
+                "SELECT CAST(COALESCE(SUM(refund_amount), 0) AS TEXT) FROM returns WHERE created_at >= ?1 AND created_at <= ?2",
                 [&start_str, &end_str],
                 |row| row.get(0),
             )

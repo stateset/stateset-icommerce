@@ -73,7 +73,9 @@ export const customObjectTools = [
     description:
       'Create a custom object type (schema). Fields define allowed keys and types; record values are validated deterministically.',
     inputSchema: {
-      handle: z.string().describe('Stable handle for the type (safe ASCII, e.g., warranty_registration)'),
+      handle: z
+        .string()
+        .describe('Stable handle for the type (safe ASCII, e.g., warranty_registration)'),
       displayName: z.string().describe('Human display name'),
       description: z.string().optional().describe('Optional description'),
       fields: z
@@ -158,7 +160,8 @@ export const customObjectTools = [
 
   {
     name: 'delete_custom_object_type',
-    description: 'Delete a custom object type (schema). Records of this type must be deleted first.',
+    description:
+      'Delete a custom object type (schema). Records of this type must be deleted first.',
     inputSchema: {
       id: z.string().describe('Custom object type ID (UUID)'),
     },
@@ -244,7 +247,10 @@ export const customObjectTools = [
     inputSchema: {
       typeHandle: z.string().describe('Custom object type handle'),
       handle: z.string().optional().describe('Optional record handle (unique within type)'),
-      ownerType: z.string().optional().describe('Optional owner type (must be paired with ownerId)'),
+      ownerType: z
+        .string()
+        .optional()
+        .describe('Optional owner type (must be paired with ownerId)'),
       ownerId: z.string().optional().describe('Optional owner id (must be paired with ownerType)'),
       values: z.record(z.any()).optional().describe('Record values as an object'),
       valuesJson: z.string().optional().describe('Record values as a JSON string'),
@@ -296,7 +302,8 @@ export const customObjectTools = [
           hint: 'Run with --apply to enable write operations.',
           wouldUpdate: {
             ...params,
-            valuesJson: params.valuesJson ?? (params.values ? JSON.stringify(params.values) : undefined),
+            valuesJson:
+              params.valuesJson ?? (params.values ? JSON.stringify(params.values) : undefined),
           },
         };
       }
@@ -354,4 +361,3 @@ export function getCustomObjectTool(name) {
 }
 
 export default customObjectTools;
-

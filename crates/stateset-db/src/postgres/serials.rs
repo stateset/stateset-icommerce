@@ -166,6 +166,7 @@ impl PgSerialRepository {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_history_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, Postgres>,

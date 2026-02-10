@@ -12,11 +12,11 @@
 
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    AddCartItem, BillingCycleFilter, BillingInterval, Commerce, CreateBackorder, CreateBom,
-    CreateBomComponent, CreateCart, CreateCouponCode, CreateCustomer, CreateInventoryItem,
-    CreateOrder, CreateOrderItem, CreatePromotion, CreatePurchaseOrder, CreatePurchaseOrderItem,
-    CreateReturn, CreateReturnItem, CreateSerialNumbersBulk, CreateSubscription,
-    CreateSubscriptionPlan, CreateSupplier, CreateWorkOrder, FulfillBackorder,
+    AddCartItem, BillingCycleFilter, BillingInterval, CartAddress, Commerce, CreateBackorder,
+    CreateBom, CreateBomComponent, CreateCart, CreateCouponCode, CreateCustomer,
+    CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePromotion, CreatePurchaseOrder,
+    CreatePurchaseOrderItem, CreateReturn, CreateReturnItem, CreateSerialNumbersBulk,
+    CreateSubscription, CreateSubscriptionPlan, CreateSupplier, CreateWorkOrder, FulfillBackorder,
     FulfillmentSourceType, InventoryItem, ItemCondition, OrderStatus, PromotionType,
     PurchaseOrderStatus, ReserveSerialNumber, ReturnReason, ReturnStatus, SerialStatus,
     SubscriptionStatus, WorkOrderStatus,
@@ -51,6 +51,22 @@ fn setup_test_inventory(
             ..Default::default()
         })
         .expect("Failed to create inventory item")
+}
+
+fn test_address() -> CartAddress {
+    CartAddress {
+        first_name: "Test".into(),
+        last_name: "Customer".into(),
+        company: None,
+        line1: "123 Main St".into(),
+        line2: None,
+        city: "San Francisco".into(),
+        state: Some("CA".into()),
+        postal_code: "94102".into(),
+        country: "US".into(),
+        phone: Some("555-1234".into()),
+        email: Some("customer@example.com".into()),
+    }
 }
 
 #[test]
@@ -98,6 +114,11 @@ fn test_complete_order_lifecycle_from_cart_to_return() {
             },
         )
         .expect("Failed to add second item to cart");
+
+    commerce
+        .carts()
+        .set_shipping_address(cart.id, test_address())
+        .expect("Failed to set shipping address");
 
     let checkout = commerce
         .carts()

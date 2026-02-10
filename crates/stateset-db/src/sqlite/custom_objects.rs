@@ -483,7 +483,7 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let mut conn = self.conn()?;
         let tx = conn.transaction().map_err(map_db_error)?;
 
-        let existing: Option<(
+        type ExistingObjectRow = (
             String,
             String,
             Option<String>,
@@ -491,7 +491,8 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             Option<String>,
             String,
             i32,
-        )> = tx
+        );
+        let existing: Option<ExistingObjectRow> = tx
             .query_row(
                 "SELECT r.type_id, t.handle AS type_handle, r.handle, r.owner_type, r.owner_id, r.values_json, r.version
                  FROM custom_object_records r

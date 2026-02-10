@@ -49,10 +49,10 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     let applied: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |row| row.get(0))
         .expect("count _migrations");
-    // Base: 32 migrations (001-032)
+    // Base: 33 migrations (001-033)
     // 027_vector_search is skipped without vector feature
     // 028_bm25_search is skipped without FTS5
-    let expected = 32
+    let expected = 33
         - if cfg!(feature = "vector") { 0 } else { 1 }
         - if fts5_available(&conn) { 0 } else { 1 };
     assert_eq!(
@@ -93,6 +93,7 @@ fn sqlite_migrations_apply_and_multi_currency_schema_is_present() {
     );
     assert!(orders.contains(&"exchange_rate".to_string()));
     assert!(orders.contains(&"base_currency_total".to_string()));
+    assert!(orders.contains(&"cart_id".to_string()));
 
     let order_items = column_names(&conn, "order_items");
     assert!(order_items.contains(&"currency".to_string()));

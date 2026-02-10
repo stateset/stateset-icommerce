@@ -3,6 +3,7 @@ source: crates/stateset-db/tests/snapshot_migrations.rs
 expression: order_indexes
 ---
 [
+    "CREATE UNIQUE INDEX idx_orders_cart_id_unique ON orders(cart_id) WHERE cart_id IS NOT NULL",
     "CREATE INDEX idx_orders_customer ON orders(customer_id)",
     "CREATE INDEX idx_orders_list_cover\n    ON orders(status, order_date, customer_id)",
     "CREATE INDEX idx_orders_order_date ON orders(order_date)",

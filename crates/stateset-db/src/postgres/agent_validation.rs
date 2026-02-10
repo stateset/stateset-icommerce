@@ -187,7 +187,8 @@ impl AgentValidationRepository for PgAgentValidationRepository {
                 None => return Ok(None),
             };
 
-            let row: Option<(i16, Option<String>, Option<String>, DateTime<Utc>)> = sqlx::query_as(
+            type LatestResponseRow = (i16, Option<String>, Option<String>, DateTime<Utc>);
+            let row: Option<LatestResponseRow> = sqlx::query_as(
                 "SELECT response, response_hash, tag, created_at\
                  FROM agent_validation_responses WHERE request_hash = $1\
                  ORDER BY created_at DESC LIMIT 1",

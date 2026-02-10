@@ -11,7 +11,7 @@ use stateset_core::{
     CreditApplicationFilter, CreditApplicationStatus, CreditCheckResult, CreditHold,
     CreditHoldFilter, CreditHoldStatus, CreditHoldType, CreditRepository, CreditTransaction,
     CreditTransactionFilter, CreditTransactionType, CustomerCreditSummary, PlaceCreditHold,
-    RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication, RiskRating,
+    RecordCreditTransaction, ReleaseCreditHold, Result, ReviewCreditApplication,
     SubmitCreditApplication, UpdateCreditAccount,
 };
 use uuid::Uuid;
@@ -339,7 +339,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_account).transpose()?)
+        row.map(Self::row_to_credit_account).transpose()
     }
 
     pub async fn get_credit_account_by_customer_async(
@@ -357,7 +357,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_account).transpose()?)
+        row.map(Self::row_to_credit_account).transpose()
     }
 
     pub async fn update_credit_account_async(
@@ -440,10 +440,9 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_credit_account)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn adjust_credit_limit_async(
@@ -750,7 +749,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_hold).transpose()?)
+        row.map(Self::row_to_credit_hold).transpose()
     }
 
     pub async fn list_holds_async(&self, filter: CreditHoldFilter) -> Result<Vec<CreditHold>> {
@@ -790,10 +789,9 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_credit_hold)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn release_hold_async(&self, input: ReleaseCreditHold) -> Result<CreditHold> {
@@ -885,7 +883,7 @@ impl PgCreditRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_credit_application).transpose()?)
+        row.map(Self::row_to_credit_application).transpose()
     }
 
     pub async fn list_applications_async(
@@ -928,10 +926,9 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_credit_application)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn review_application_async(
@@ -1099,10 +1096,9 @@ impl PgCreditRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_credit_transaction)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn apply_payment_async(
@@ -1338,5 +1334,5 @@ impl CreditRepository for PgCreditRepository {
 }
 
 fn from_date(date: NaiveDate) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc)
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }

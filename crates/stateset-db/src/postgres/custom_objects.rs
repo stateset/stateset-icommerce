@@ -617,7 +617,6 @@ impl PgCustomObjectRepository {
 
         if let (Some(owner_type), Some(owner_id)) = (&filter.owner_type, &filter.owner_id) {
             qb.push(if first { " WHERE " } else { " AND " });
-            first = false;
             qb.push("r.owner_type = ");
             qb.push_bind(owner_type.clone());
             qb.push(" AND r.owner_id = ");

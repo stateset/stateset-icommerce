@@ -59,7 +59,6 @@ struct OrderItemRow {
     discount: Decimal,
     tax_amount: Decimal,
     total: Decimal,
-    created_at: DateTime<Utc>,
 }
 
 impl PgOrderRepository {
@@ -275,6 +274,26 @@ impl PgOrderRepository {
 
     /// Create an order (async)
     pub async fn create_async(&self, input: CreateOrder) -> Result<Order> {
+        self.create_async_internal(None, false, input).await
+    }
+
+    /// Create an order for a cart, using `orders.cart_id` for checkout idempotency.
+    pub async fn create_from_cart_async(&self, cart_id: Uuid, input: CreateOrder) -> Result<Order> {
+        if let Some(existing) = self.get_by_cart_id_async(cart_id).await? {
+            return Ok(existing);
+        }
+
+        // If another checkout is racing us, this will return the existing order instead of
+        // creating a duplicate.
+        self.create_async_internal(Some(cart_id), true, input).await
+    }
+
+    async fn create_async_internal(
+        &self,
+        cart_id: Option<Uuid>,
+        idempotent_by_cart_id: bool,
+        input: CreateOrder,
+    ) -> Result<Order> {
         Self::validate_order_input(&input)?;
 
         let id = Uuid::new_v4();
@@ -329,34 +348,85 @@ impl PgOrderRepository {
             })
             .transpose()?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
-                               currency, payment_status, fulfillment_status, payment_method,
-                               shipping_method, notes, shipping_address, billing_address,
-                               created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-            "#,
-        )
-        .bind(id)
-        .bind(&order_number)
-        .bind(input.customer_id)
-        .bind("pending")
-        .bind(now)
-        .bind(total)
-        .bind(input.currency.as_deref().unwrap_or("USD"))
-        .bind("pending")
-        .bind("unfulfilled")
-        .bind(&input.payment_method)
-        .bind(&input.shipping_method)
-        .bind(&input.notes)
-        .bind(&shipping_address_json)
-        .bind(&billing_address_json)
-        .bind(now)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        // Insert the order row first. When creating from a cart, we ensure at most one order per
+        // cart by using `orders.cart_id` and a unique index.
+        let (order_id, order_number, inserted) = if idempotent_by_cart_id {
+            let cart_id = cart_id.ok_or_else(|| {
+                CommerceError::ValidationError("cart_id is required for cart checkout".into())
+            })?;
+
+            sqlx::query_as(
+                r#"
+                INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                   currency, payment_status, fulfillment_status, payment_method,
+                                   shipping_method, notes, shipping_address, billing_address,
+                                   cart_id, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ON CONFLICT (cart_id) WHERE cart_id IS NOT NULL
+                DO UPDATE SET cart_id = EXCLUDED.cart_id
+                RETURNING id, order_number, (xmax = 0) AS inserted
+                "#,
+            )
+            .bind(id)
+            .bind(&order_number)
+            .bind(input.customer_id)
+            .bind("pending")
+            .bind(now)
+            .bind(total)
+            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind("pending")
+            .bind("unfulfilled")
+            .bind(&input.payment_method)
+            .bind(&input.shipping_method)
+            .bind(&input.notes)
+            .bind(&shipping_address_json)
+            .bind(&billing_address_json)
+            .bind(cart_id)
+            .bind(now)
+            .bind(now)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO orders (id, order_number, customer_id, status, order_date, total_amount,
+                                   currency, payment_status, fulfillment_status, payment_method,
+                                   shipping_method, notes, shipping_address, billing_address,
+                                   created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                "#,
+            )
+            .bind(id)
+            .bind(&order_number)
+            .bind(input.customer_id)
+            .bind("pending")
+            .bind(now)
+            .bind(total)
+            .bind(input.currency.as_deref().unwrap_or("USD"))
+            .bind("pending")
+            .bind("unfulfilled")
+            .bind(&input.payment_method)
+            .bind(&input.shipping_method)
+            .bind(&input.notes)
+            .bind(&shipping_address_json)
+            .bind(&billing_address_json)
+            .bind(now)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            (id, order_number, true)
+        };
+
+        if !inserted {
+            tx.rollback().await.map_err(map_db_error)?;
+            return self
+                .get_async(order_id)
+                .await?
+                .ok_or(CommerceError::OrderNotFound(order_id));
+        }
 
         // Insert order items
         let mut items = Vec::new();
@@ -379,7 +449,7 @@ impl PgOrderRepository {
                 "#,
             )
             .bind(item_id)
-            .bind(id)
+            .bind(order_id)
             .bind(item_input.product_id)
             .bind(item_input.variant_id)
             .bind(&item_input.sku)
@@ -396,7 +466,7 @@ impl PgOrderRepository {
 
             items.push(OrderItem {
                 id: item_id,
-                order_id: id,
+                order_id,
                 product_id: item_input.product_id,
                 variant_id: item_input.variant_id,
                 sku: item_input.sku.clone(),
@@ -409,7 +479,7 @@ impl PgOrderRepository {
             });
         }
 
-        let reference_id = id.to_string();
+        let reference_id = order_id.to_string();
         for item in &items {
             if item.quantity <= 0 {
                 continue;
@@ -473,7 +543,7 @@ impl PgOrderRepository {
             let remaining = requested - reserved;
             if remaining > Decimal::ZERO {
                 let backorder_input = CreateBackorder {
-                    order_id: id,
+                    order_id,
                     order_line_id: Some(item.id),
                     customer_id: input.customer_id,
                     sku: item.sku.clone(),
@@ -493,8 +563,8 @@ impl PgOrderRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(Order {
-            id,
-            order_number,
+            id: order_id,
+            order_number: order_number.clone(),
             customer_id: input.customer_id,
             status: OrderStatus::Pending,
             order_date: now,
@@ -536,6 +606,23 @@ impl PgOrderRepository {
     pub async fn get_by_number_async(&self, order_number: &str) -> Result<Option<Order>> {
         let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE order_number = $1")
             .bind(order_number)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+
+        match row {
+            Some(order_row) => {
+                let items = self.get_items_async(order_row.id).await?;
+                Ok(Some(Self::row_to_order(order_row, items)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get an order by `orders.cart_id` (async)
+    pub async fn get_by_cart_id_async(&self, cart_id: Uuid) -> Result<Option<Order>> {
+        let row = sqlx::query_as::<_, OrderRow>("SELECT * FROM orders WHERE cart_id = $1")
+            .bind(cart_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(map_db_error)?;
@@ -685,10 +772,9 @@ impl PgOrderRepository {
                 if inventory_repo
                     .expire_reservation_if_needed_in_tx(&mut tx, *reservation_id, now)
                     .await?
+                    && expired_reservation.is_none()
                 {
-                    if expired_reservation.is_none() {
-                        expired_reservation = Some(*reservation_id);
-                    }
+                    expired_reservation = Some(*reservation_id);
                 }
             }
 

@@ -316,7 +316,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warehouse).transpose()?)
+        row.map(Self::row_to_warehouse).transpose()
     }
 
     pub async fn get_warehouse_by_code_async(&self, code: &str) -> Result<Option<Warehouse>> {
@@ -326,7 +326,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_warehouse).transpose()?)
+        row.map(Self::row_to_warehouse).transpose()
     }
 
     pub async fn update_warehouse_async(
@@ -395,10 +395,9 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_warehouse)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_warehouse_async(&self, id: i32) -> Result<()> {
@@ -595,7 +594,7 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_location).transpose()?)
+        row.map(Self::row_to_location).transpose()
     }
 
     pub async fn get_location_by_code_async(
@@ -612,7 +611,7 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_location).transpose()?)
+        row.map(Self::row_to_location).transpose()
     }
 
     pub async fn update_location_async(&self, id: i32, input: UpdateLocation) -> Result<Location> {
@@ -700,10 +699,9 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_location)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn delete_location_async(&self, id: i32) -> Result<()> {
@@ -797,10 +795,9 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_location)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_receivable_locations_async(&self, warehouse_id: i32) -> Result<Vec<Location>> {
@@ -1164,10 +1161,9 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_movement)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn count_movements_async(&self, filter: MovementFilter) -> Result<u64> {
@@ -1246,10 +1242,9 @@ impl PgWarehouseRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_location)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 }
 

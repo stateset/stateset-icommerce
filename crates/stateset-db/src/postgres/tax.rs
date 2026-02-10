@@ -445,7 +445,6 @@ impl PgTaxRepository {
         }
         if filter.level.is_some() {
             query.push_str(&format!(" AND level = ${}", param_idx));
-            param_idx += 1;
         }
         if filter.active_only {
             query.push_str(" AND active = true");
@@ -556,7 +555,6 @@ impl PgTaxRepository {
                 param_idx,
                 param_idx + 1
             ));
-            param_idx += 2;
         }
 
         query.push_str(" ORDER BY priority, name");

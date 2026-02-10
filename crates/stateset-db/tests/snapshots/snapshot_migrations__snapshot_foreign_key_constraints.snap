@@ -30,6 +30,14 @@ Ok(
         ),
         (
             "orders",
+            "carts",
+            "cart_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+        ),
+        (
+            "orders",
             "customers",
             "customer_id",
             "id",

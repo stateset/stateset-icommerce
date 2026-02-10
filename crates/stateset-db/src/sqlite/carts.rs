@@ -16,10 +16,10 @@ use stateset_core::{
     validate_batch_size, validate_currency_code, validate_price, AddCartItem, BatchResult, Cart,
     CartAddress, CartFilter, CartItem, CartPaymentStatus, CartRepository, CartStatus,
     CartX402Payment, CheckoutResult, CommerceError, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PromotionType, Result,
-    SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate, UpdateCart, UpdateCartItem,
-    UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult, X402IntentCreatedData,
-    X402IntentStatus, X402PaymentRequiredData,
+    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
+    PromotionType, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
+    UpdateCart, UpdateCartItem, UpdateOrder, X402AwaitingSettlementData, X402CheckoutResult,
+    X402IntentCreatedData, X402IntentStatus, X402PaymentRequiredData,
 };
 use uuid::Uuid;
 
@@ -276,31 +276,29 @@ impl SqliteCartRepository {
         // This is similar to complete() but assumes x402 payment is settled
         let cart = self.get(cart_id)?.ok_or(CommerceError::NotFound)?;
 
-        // Create the order
-        let order_repo = SqliteOrderRepository::new(self.pool.clone());
-        let customer_repo = SqliteCustomerRepository::new(self.pool.clone());
-
-        // Get or create customer
-        let customer_id = if let Some(cid) = cart.customer_id {
-            cid
-        } else if let Some(email) = &cart.customer_email {
-            if let Some(customer) = customer_repo.get_by_email(email)? {
-                customer.id
-            } else {
-                let new_customer = customer_repo.create(CreateCustomer {
-                    email: email.clone(),
-                    first_name: cart.customer_name.clone().unwrap_or_default(),
-                    ..Default::default()
-                })?;
-                new_customer.id
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(X402CheckoutResult::Completed(CheckoutResult {
+                    cart_id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                }));
             }
-        } else {
-            return Err(CommerceError::ValidationError(
-                "Customer ID or email required".into(),
-            ));
-        };
+        }
 
-        // Build order items
+        if !cart.is_ready_for_checkout() {
+            return Err(CommerceError::ValidationError(
+                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
+            ));
+        }
+
+        let order_repo = SqliteOrderRepository::new(self.pool.clone());
+        let customer_id = self.resolve_customer_id(&cart)?;
+
         let order_items: Vec<CreateOrderItem> = cart
             .items
             .iter()
@@ -311,20 +309,43 @@ impl SqliteCartRepository {
                 name: item.name.clone(),
                 quantity: item.quantity,
                 unit_price: item.unit_price,
-                ..Default::default()
+                discount: Some(item.discount_amount),
+                tax_amount: Some(item.tax_amount),
             })
             .collect();
 
-        // Create the order
-        let order = order_repo.create(CreateOrder {
-            customer_id,
-            items: order_items,
-            currency: Some(cart.currency.clone()),
-            shipping_address: cart.shipping_address.clone().map(Into::into),
-            billing_address: cart.billing_address.clone().map(Into::into),
-            notes: cart.notes.clone(),
-            ..Default::default()
-        })?;
+        let shipping_address = cart.shipping_address.clone().map(Into::into);
+        let billing_address = if cart.billing_same_as_shipping {
+            cart.billing_address
+                .clone()
+                .or_else(|| cart.shipping_address.clone())
+                .map(Into::into)
+        } else {
+            cart.billing_address.clone().map(Into::into)
+        };
+
+        let order = order_repo.create_from_cart(
+            cart_id,
+            CreateOrder {
+                customer_id,
+                items: order_items,
+                currency: Some(cart.currency.clone()),
+                shipping_address,
+                billing_address,
+                notes: cart.notes.clone(),
+                payment_method: cart.payment_method.clone(),
+                shipping_method: cart.shipping_method.clone(),
+            },
+        )?;
+
+        let order = order_repo.update(
+            order.id,
+            UpdateOrder {
+                status: Some(OrderStatus::Confirmed),
+                payment_status: Some(PaymentStatus::Paid),
+                ..Default::default()
+            },
+        )?;
 
         // Update cart to completed status
         let conn = self.conn()?;
@@ -332,13 +353,14 @@ impl SqliteCartRepository {
             "UPDATE carts SET
                 status = 'completed', order_id = ?, order_number = ?,
                 payment_status = 'captured', x402_status = 'settled',
-                completed_at = ?, updated_at = ?
+                completed_at = ?, updated_at = ?, customer_id = ?
              WHERE id = ?",
             rusqlite::params![
                 order.id.to_string(),
                 order.order_number,
                 Utc::now().to_rfc3339(),
                 Utc::now().to_rfc3339(),
+                customer_id.to_string(),
                 cart_id.to_string()
             ],
         )
@@ -1068,6 +1090,20 @@ impl CartRepository for SqliteCartRepository {
 
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(X402CheckoutResult::Completed(CheckoutResult {
+                    cart_id: id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                }));
+            }
+        }
+
         // Validate cart is ready for checkout
         if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
@@ -1273,9 +1309,24 @@ impl CartRepository for SqliteCartRepository {
     fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
-        if cart.items.is_empty() {
+        // Idempotent checkout: if already completed, return the existing order reference.
+        if cart.status == CartStatus::Completed {
+            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+            {
+                return Ok(CheckoutResult {
+                    cart_id: id,
+                    order_id,
+                    order_number,
+                    payment_id: None,
+                    total_charged: cart.grand_total,
+                    currency: cart.currency,
+                });
+            }
+        }
+
+        if !cart.is_ready_for_checkout() {
             return Err(CommerceError::ValidationError(
-                "Cart must have at least one item".to_string(),
+                "Cart is not ready for checkout - ensure items, customer info, and shipping address are set".to_string(),
             ));
         }
 
@@ -1306,22 +1357,26 @@ impl CartRepository for SqliteCartRepository {
         };
 
         let order_repo = SqliteOrderRepository::new(self.pool.clone());
-        let order = order_repo.create(CreateOrder {
-            customer_id,
-            items: order_items,
-            currency: Some(cart.currency.clone()),
-            shipping_address,
-            billing_address,
-            notes: cart.notes.clone(),
-            payment_method: cart.payment_method.clone(),
-            shipping_method: cart.shipping_method.clone(),
-        })?;
+        let order = order_repo.create_from_cart(
+            id,
+            CreateOrder {
+                customer_id,
+                items: order_items,
+                currency: Some(cart.currency.clone()),
+                shipping_address,
+                billing_address,
+                notes: cart.notes.clone(),
+                payment_method: cart.payment_method.clone(),
+                shipping_method: cart.shipping_method.clone(),
+            },
+        )?;
 
         // Confirm the order after checkout
         let order = order_repo.update(
             order.id,
             UpdateOrder {
                 status: Some(OrderStatus::Confirmed),
+                payment_status: Some(PaymentStatus::Paid),
                 ..Default::default()
             },
         )?;

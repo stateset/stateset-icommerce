@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+//!
 //!
 //! Snapshot tests for database migrations
 //!

@@ -323,7 +323,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_wave).transpose()?)
+        row.map(Self::row_to_wave).transpose()
     }
 
     pub async fn get_wave_by_number_async(&self, number: &str) -> Result<Option<Wave>> {
@@ -333,7 +333,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_wave).transpose()?)
+        row.map(Self::row_to_wave).transpose()
     }
 
     pub async fn list_waves_async(&self, filter: WaveFilter) -> Result<Vec<Wave>> {
@@ -367,10 +367,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_wave)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn release_wave_async(&self, id: Uuid) -> Result<Wave> {
@@ -493,7 +492,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_pick).transpose()?)
+        row.map(Self::row_to_pick).transpose()
     }
 
     pub async fn list_picks_async(&self, filter: PickTaskFilter) -> Result<Vec<PickTask>> {
@@ -530,10 +529,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_pick)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_pick_async(&self, id: Uuid, assigned_to: &str) -> Result<PickTask> {
@@ -719,7 +717,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_pack).transpose()?)
+        row.map(Self::row_to_pack).transpose()
     }
 
     pub async fn list_packs_async(&self, filter: PackTaskFilter) -> Result<Vec<PackTask>> {
@@ -750,10 +748,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_pack)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_pack_async(&self, id: Uuid, assigned_to: &str) -> Result<PackTask> {
@@ -844,7 +841,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_carton).transpose()?)
+        row.map(Self::row_to_carton).transpose()
     }
 
     pub async fn add_carton_item_async(&self, input: AddCartonItem) -> Result<CartonItem> {
@@ -885,10 +882,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_carton)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_carton_items_async(&self, carton_id: Uuid) -> Result<Vec<CartonItem>> {
@@ -983,7 +979,7 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_ship).transpose()?)
+        row.map(Self::row_to_ship).transpose()
     }
 
     pub async fn list_ships_async(&self, filter: ShipTaskFilter) -> Result<Vec<ShipTask>> {
@@ -1014,10 +1010,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_ship)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn assign_ship_async(&self, id: Uuid, assigned_to: &str) -> Result<ShipTask> {
@@ -1219,10 +1214,9 @@ impl PgFulfillmentRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_pick)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 }
 

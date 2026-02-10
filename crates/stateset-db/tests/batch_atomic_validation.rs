@@ -1,3 +1,5 @@
+#![cfg(feature = "sqlite")]
+
 use rust_decimal_macros::dec;
 use stateset_core::{
     AdjustInventory, CommerceError, CreateCustomer, CreateInventoryItem, CreateOrder,

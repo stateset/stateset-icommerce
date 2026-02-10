@@ -346,6 +346,7 @@ impl PgCostAccountingRepository {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_cost_transaction_tx(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         sku: &str,
@@ -408,7 +409,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_item_cost).transpose()?)
+        row.map(Self::row_to_item_cost).transpose()
     }
 
     pub async fn set_item_cost_async(&self, input: SetItemCost) -> Result<ItemCost> {
@@ -511,10 +512,9 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_item_cost)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn update_average_cost_async(
@@ -626,7 +626,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_cost_layer).transpose()?)
+        row.map(Self::row_to_cost_layer).transpose()
     }
 
     pub async fn list_cost_layers_async(&self, filter: CostLayerFilter) -> Result<Vec<CostLayer>> {
@@ -677,10 +677,9 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_cost_layer)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn issue_fifo_async(&self, input: IssueCostLayers) -> Result<Vec<CostTransaction>> {
@@ -799,6 +798,7 @@ impl PgCostAccountingRepository {
         Ok(total)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_cost_transaction_async(
         &self,
         sku: &str,
@@ -889,10 +889,9 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_cost_transaction)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn record_variance_async(&self, input: RecordCostVariance) -> Result<CostVariance> {
@@ -994,10 +993,9 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_cost_variance)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn get_variance_summary_async(
@@ -1072,7 +1070,7 @@ impl PgCostAccountingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Ok(row.map(Self::row_to_cost_adjustment).transpose()?)
+        row.map(Self::row_to_cost_adjustment).transpose()
     }
 
     pub async fn list_adjustments_async(
@@ -1118,10 +1116,9 @@ impl PgCostAccountingRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(Self::row_to_cost_adjustment)
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     pub async fn approve_adjustment_async(
@@ -1498,5 +1495,5 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
 }
 
 fn from_date(date: NaiveDate) -> DateTime<Utc> {
-    DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc)
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }

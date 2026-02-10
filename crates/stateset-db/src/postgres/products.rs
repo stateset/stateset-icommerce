@@ -7,8 +7,8 @@ use sqlx::postgres::PgPool;
 use sqlx::{FromRow, QueryBuilder};
 use stateset_core::{
     validate_batch_size, BatchResult, CommerceError, CreateProduct, CreateProductVariant, Product,
-    ProductAttribute, ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant,
-    Result, SeoMetadata, UpdateProduct, VariantOption,
+    ProductFilter, ProductRepository, ProductStatus, ProductType, ProductVariant, Result,
+    UpdateProduct,
 };
 use uuid::Uuid;
 
@@ -501,7 +501,7 @@ impl PgProductRepository {
                     e => map_db_error(e),
                 })?;
         let options_json =
-            serde_json::to_value(&input.options.clone().unwrap_or_default()).unwrap_or_default();
+            serde_json::to_value(input.options.clone().unwrap_or_default()).unwrap_or_default();
 
         let result = sqlx::query(
             r#"
