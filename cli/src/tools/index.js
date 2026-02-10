@@ -7,6 +7,7 @@
 
 import { customerTools } from './customers.js';
 import { orderTools } from './orders.js';
+import { customObjectTools } from './custom-objects.js';
 import { vectorTools } from './vector.js';
 
 /**
@@ -15,6 +16,7 @@ import { vectorTools } from './vector.js';
 const TOOL_MODULES = {
   customers: () => customerTools,
   orders: () => orderTools,
+  'custom-objects': () => customObjectTools,
   vector: () => vectorTools,
   // Additional categories loaded on demand
   products: () => import('./products.js').then((m) => m.default),
@@ -187,6 +189,7 @@ export const AGENT_TOOL_CATEGORIES = {
   'customer-service': [
     'customers',
     'orders',
+    'custom-objects',
     'products',
     'inventory',
     'returns',
@@ -258,6 +261,7 @@ export async function getToolsForAgent(agentName) {
 export const immediateTools = {
   customers: customerTools,
   orders: orderTools,
+  'custom-objects': customObjectTools,
   vector: vectorTools,
 };
 

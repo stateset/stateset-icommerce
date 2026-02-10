@@ -14,6 +14,7 @@ import { orderTools } from './tools/orders.js';
 import { vectorTools } from './tools/vector.js';
 import { productTools } from './tools/products.js';
 import { inventoryTools } from './tools/inventory.js';
+import { customObjectTools } from './tools/custom-objects.js';
 import { returnTools } from './tools/returns.js';
 import { cartTools } from './tools/carts.js';
 import { analyticsTools } from './tools/analytics.js';
@@ -42,6 +43,7 @@ const ALL_TOOL_DEFS = [
   ...orderTools,
   ...productTools,
   ...inventoryTools,
+  ...customObjectTools,
   ...returnTools,
   ...cartTools,
   ...analyticsTools,
