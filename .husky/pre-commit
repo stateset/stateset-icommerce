@@ -1,2 +1,4 @@
+. "$(dirname "$0")/node-env.sh"
+
 npm run format:check
 cd cli && npm run lint
