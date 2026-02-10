@@ -428,6 +428,11 @@ use stateset_db::PostgresDatabase;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use stateset_core::{
+    CreateCustomObject, CreateCustomObjectType, CustomObject, CustomObjectFilter, CustomObjectType,
+    CustomObjectTypeFilter, UpdateCustomObject, UpdateCustomObjectType,
+};
+
 /// Async commerce interface for PostgreSQL.
 ///
 /// This provides a fully async API for PostgreSQL users who want to avoid
@@ -503,6 +508,16 @@ impl AsyncCommerce {
     /// Access async product operations.
     pub fn products(&self) -> AsyncProducts {
         AsyncProducts::new(self.db.clone())
+    }
+
+    /// Access async custom objects operations (custom states / metaobjects).
+    pub fn custom_objects(&self) -> AsyncCustomObjects {
+        AsyncCustomObjects::new(self.db.clone())
+    }
+
+    /// Alias for `custom_objects` (for users who prefer the "custom states" name).
+    pub fn custom_states(&self) -> AsyncCustomObjects {
+        self.custom_objects()
     }
 
     /// Access async return operations.
@@ -1286,6 +1301,109 @@ impl AsyncProducts {
     /// Count products.
     pub async fn count(&self, filter: ProductFilter) -> Result<u64> {
         self.db.products().count_async(filter).await
+    }
+}
+
+// ============================================================================
+// Async Custom Objects (Custom States / Metaobjects)
+// ============================================================================
+
+/// Async custom object operations.
+pub struct AsyncCustomObjects {
+    db: Arc<PostgresDatabase>,
+}
+
+impl AsyncCustomObjects {
+    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
+        Self { db }
+    }
+
+    // ------------------------------------------------------------------------
+    // Types (schemas)
+    // ------------------------------------------------------------------------
+
+    /// Create a new custom object type (schema).
+    pub async fn create_type(&self, input: CreateCustomObjectType) -> Result<CustomObjectType> {
+        self.db.custom_objects().create_type_async(input).await
+    }
+
+    /// Get a custom object type by ID.
+    pub async fn get_type(&self, id: Uuid) -> Result<Option<CustomObjectType>> {
+        self.db.custom_objects().get_type_async(id).await
+    }
+
+    /// Get a custom object type by handle.
+    pub async fn get_type_by_handle(&self, handle: &str) -> Result<Option<CustomObjectType>> {
+        self.db
+            .custom_objects()
+            .get_type_by_handle_async(handle)
+            .await
+    }
+
+    /// Update a custom object type.
+    pub async fn update_type(
+        &self,
+        id: Uuid,
+        input: UpdateCustomObjectType,
+    ) -> Result<CustomObjectType> {
+        self.db.custom_objects().update_type_async(id, input).await
+    }
+
+    /// List custom object types.
+    pub async fn list_types(
+        &self,
+        filter: CustomObjectTypeFilter,
+    ) -> Result<Vec<CustomObjectType>> {
+        self.db.custom_objects().list_types_async(filter).await
+    }
+
+    /// Delete a custom object type.
+    pub async fn delete_type(&self, id: Uuid) -> Result<()> {
+        self.db.custom_objects().delete_type_async(id).await
+    }
+
+    // ------------------------------------------------------------------------
+    // Records
+    // ------------------------------------------------------------------------
+
+    /// Create a new custom object record.
+    pub async fn create_object(&self, input: CreateCustomObject) -> Result<CustomObject> {
+        self.db.custom_objects().create_object_async(input).await
+    }
+
+    /// Get a custom object record by ID.
+    pub async fn get_object(&self, id: Uuid) -> Result<Option<CustomObject>> {
+        self.db.custom_objects().get_object_async(id).await
+    }
+
+    /// Get a custom object record by type handle and object handle.
+    pub async fn get_object_by_handle(
+        &self,
+        type_handle: &str,
+        object_handle: &str,
+    ) -> Result<Option<CustomObject>> {
+        self.db
+            .custom_objects()
+            .get_object_by_handle_async(type_handle, object_handle)
+            .await
+    }
+
+    /// Update a custom object record.
+    pub async fn update_object(&self, id: Uuid, input: UpdateCustomObject) -> Result<CustomObject> {
+        self.db
+            .custom_objects()
+            .update_object_async(id, input)
+            .await
+    }
+
+    /// List custom object records.
+    pub async fn list_objects(&self, filter: CustomObjectFilter) -> Result<Vec<CustomObject>> {
+        self.db.custom_objects().list_objects_async(filter).await
+    }
+
+    /// Delete a custom object record.
+    pub async fn delete_object(&self, id: Uuid) -> Result<()> {
+        self.db.custom_objects().delete_object_async(id).await
     }
 }
 

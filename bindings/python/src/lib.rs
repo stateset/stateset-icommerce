@@ -16,6 +16,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
+use serde_json;
 // Use :: prefix to refer to the external crate, not the pymodule
 use ::stateset_embedded::Commerce as RustCommerce;
 use std::sync::{Arc, Mutex};
@@ -87,6 +88,20 @@ impl Commerce {
         Products {
             commerce: self.inner.clone(),
         }
+    }
+
+    /// Get the custom objects API (custom states / metaobjects).
+    #[getter]
+    fn custom_objects(&self) -> CustomObjectsApi {
+        CustomObjectsApi {
+            commerce: self.inner.clone(),
+        }
+    }
+
+    /// Alias for `custom_objects` (for users who prefer the "custom states" name).
+    #[getter]
+    fn custom_states(&self) -> CustomObjectsApi {
+        self.custom_objects()
     }
 
     /// Get the inventory API.
@@ -1147,6 +1162,522 @@ impl Products {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to count products: {}", e)))?;
 
         Ok(count as u32)
+    }
+}
+
+// ============================================================================
+// Custom Objects (Custom States / Metaobjects)
+// ============================================================================
+
+/// Custom field definition (output).
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomFieldDefinition {
+    #[pyo3(get)]
+    key: String,
+    #[pyo3(get)]
+    field_type: String,
+    #[pyo3(get)]
+    required: bool,
+    #[pyo3(get)]
+    list: bool,
+    #[pyo3(get)]
+    description: Option<String>,
+}
+
+impl From<stateset_core::CustomFieldDefinition> for CustomFieldDefinition {
+    fn from(f: stateset_core::CustomFieldDefinition) -> Self {
+        Self {
+            key: f.key,
+            field_type: f.field_type.to_string(),
+            required: f.required,
+            list: f.list,
+            description: f.description,
+        }
+    }
+}
+
+/// Input for defining a custom field in a type schema.
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomFieldDefinitionInput {
+    #[pyo3(get, set)]
+    key: String,
+    #[pyo3(get, set)]
+    field_type: String,
+    #[pyo3(get, set)]
+    required: bool,
+    #[pyo3(get, set)]
+    list: bool,
+    #[pyo3(get, set)]
+    description: Option<String>,
+}
+
+#[pymethods]
+impl CustomFieldDefinitionInput {
+    #[new]
+    #[pyo3(signature = (key, field_type, required=false, list=false, description=None))]
+    fn new(
+        key: String,
+        field_type: String,
+        required: bool,
+        list: bool,
+        description: Option<String>,
+    ) -> Self {
+        Self {
+            key,
+            field_type,
+            required,
+            list,
+            description,
+        }
+    }
+}
+
+/// Custom object type (schema) output.
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomObjectType {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    handle: String,
+    #[pyo3(get)]
+    display_name: String,
+    #[pyo3(get)]
+    description: String,
+    #[pyo3(get)]
+    fields: Vec<CustomFieldDefinition>,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+    #[pyo3(get)]
+    version: i32,
+}
+
+impl From<stateset_core::CustomObjectType> for CustomObjectType {
+    fn from(t: stateset_core::CustomObjectType) -> Self {
+        Self {
+            id: t.id.to_string(),
+            handle: t.handle,
+            display_name: t.display_name,
+            description: t.description,
+            fields: t.fields.into_iter().map(|f| f.into()).collect(),
+            created_at: t.created_at.to_rfc3339(),
+            updated_at: t.updated_at.to_rfc3339(),
+            version: t.version,
+        }
+    }
+}
+
+/// Custom object record output.
+#[pyclass]
+#[derive(Clone)]
+pub struct CustomObject {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    type_id: String,
+    #[pyo3(get)]
+    type_handle: String,
+    #[pyo3(get)]
+    handle: Option<String>,
+    #[pyo3(get)]
+    owner_type: Option<String>,
+    #[pyo3(get)]
+    owner_id: Option<String>,
+    /// Values JSON string (always an object).
+    #[pyo3(get)]
+    values_json: String,
+    #[pyo3(get)]
+    created_at: String,
+    #[pyo3(get)]
+    updated_at: String,
+    #[pyo3(get)]
+    version: i32,
+}
+
+impl From<stateset_core::CustomObject> for CustomObject {
+    fn from(o: stateset_core::CustomObject) -> Self {
+        let values_json = serde_json::to_string(&o.values).unwrap_or_else(|_| "{}".to_string());
+        Self {
+            id: o.id.to_string(),
+            type_id: o.type_id.to_string(),
+            type_handle: o.type_handle,
+            handle: o.handle,
+            owner_type: o.owner_type,
+            owner_id: o.owner_id,
+            values_json,
+            created_at: o.created_at.to_rfc3339(),
+            updated_at: o.updated_at.to_rfc3339(),
+            version: o.version,
+        }
+    }
+}
+
+fn parse_custom_field_type(s: &str) -> PyResult<stateset_core::CustomFieldType> {
+    s.parse::<stateset_core::CustomFieldType>()
+        .map_err(|e| PyValueError::new_err(format!("Invalid custom field type '{}': {}", s, e)))
+}
+
+/// Custom objects API for defining schemas and storing typed records.
+#[pyclass]
+pub struct CustomObjectsApi {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[pymethods]
+impl CustomObjectsApi {
+    // ------------------------------------------------------------------------
+    // Types
+    // ------------------------------------------------------------------------
+
+    /// Create a new custom object type (schema).
+    #[pyo3(signature = (handle, display_name, description=None, fields=None))]
+    fn create_type(
+        &self,
+        handle: String,
+        display_name: String,
+        description: Option<String>,
+        fields: Option<Vec<CustomFieldDefinitionInput>>,
+    ) -> PyResult<CustomObjectType> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let mut out_fields = Vec::new();
+        if let Some(fields) = fields {
+            out_fields.reserve(fields.len());
+            for f in fields {
+                out_fields.push(stateset_core::CustomFieldDefinition {
+                    key: f.key,
+                    field_type: parse_custom_field_type(&f.field_type)?,
+                    required: f.required,
+                    list: f.list,
+                    description: f.description,
+                });
+            }
+        }
+
+        let ty = commerce
+            .custom_objects()
+            .create_type(stateset_core::CreateCustomObjectType {
+                handle,
+                display_name,
+                description,
+                fields: out_fields,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create custom object type: {}", e))
+            })?;
+
+        Ok(ty.into())
+    }
+
+    /// Get a custom object type by ID.
+    fn get_type(&self, id: String) -> PyResult<Option<CustomObjectType>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let ty = commerce.custom_objects().get_type(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to get custom object type: {}", e))
+        })?;
+
+        Ok(ty.map(|t| t.into()))
+    }
+
+    /// Get a custom object type by handle.
+    fn get_type_by_handle(&self, handle: String) -> PyResult<Option<CustomObjectType>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let ty = commerce
+            .custom_objects()
+            .get_type_by_handle(&handle)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to get custom object type: {}", e))
+            })?;
+
+        Ok(ty.map(|t| t.into()))
+    }
+
+    /// Update a custom object type.
+    #[pyo3(signature = (id, display_name=None, description=None, fields=None))]
+    fn update_type(
+        &self,
+        id: String,
+        display_name: Option<String>,
+        description: Option<String>,
+        fields: Option<Vec<CustomFieldDefinitionInput>>,
+    ) -> PyResult<CustomObjectType> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let fields = if let Some(fields) = fields {
+            let mut out = Vec::with_capacity(fields.len());
+            for f in fields {
+                out.push(stateset_core::CustomFieldDefinition {
+                    key: f.key,
+                    field_type: parse_custom_field_type(&f.field_type)?,
+                    required: f.required,
+                    list: f.list,
+                    description: f.description,
+                });
+            }
+            Some(out)
+        } else {
+            None
+        };
+
+        let updated = commerce
+            .custom_objects()
+            .update_type(
+                uuid,
+                stateset_core::UpdateCustomObjectType {
+                    display_name,
+                    description,
+                    fields,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update custom object type: {}", e))
+            })?;
+
+        Ok(updated.into())
+    }
+
+    /// List custom object types.
+    #[pyo3(signature = (search=None, limit=None, offset=None))]
+    fn list_types(
+        &self,
+        search: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<CustomObjectType>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let list = commerce
+            .custom_objects()
+            .list_types(stateset_core::CustomObjectTypeFilter {
+                search,
+                limit,
+                offset,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list custom object types: {}", e))
+            })?;
+
+        Ok(list.into_iter().map(|t| t.into()).collect())
+    }
+
+    /// Delete a custom object type.
+    fn delete_type(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        commerce.custom_objects().delete_type(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete custom object type: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------------
+    // Records
+    // ------------------------------------------------------------------------
+
+    /// Create a new custom object record.
+    #[pyo3(signature = (type_handle, values_json, handle=None, owner_type=None, owner_id=None))]
+    fn create_object(
+        &self,
+        type_handle: String,
+        values_json: String,
+        handle: Option<String>,
+        owner_type: Option<String>,
+        owner_id: Option<String>,
+    ) -> PyResult<CustomObject> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let values: serde_json::Value = serde_json::from_str(&values_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid values_json: {}", e)))?;
+
+        let obj = commerce
+            .custom_objects()
+            .create_object(stateset_core::CreateCustomObject {
+                type_handle,
+                handle,
+                owner_type,
+                owner_id,
+                values,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create custom object: {}", e))
+            })?;
+
+        Ok(obj.into())
+    }
+
+    /// Get a custom object record by ID.
+    fn get_object(&self, id: String) -> PyResult<Option<CustomObject>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let obj = commerce
+            .custom_objects()
+            .get_object(uuid)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get custom object: {}", e)))?;
+
+        Ok(obj.map(|o| o.into()))
+    }
+
+    /// Get a custom object record by type handle and object handle.
+    fn get_object_by_handle(
+        &self,
+        type_handle: String,
+        object_handle: String,
+    ) -> PyResult<Option<CustomObject>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let obj = commerce
+            .custom_objects()
+            .get_object_by_handle(&type_handle, &object_handle)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get custom object: {}", e)))?;
+
+        Ok(obj.map(|o| o.into()))
+    }
+
+    /// Update a custom object record.
+    #[pyo3(signature = (id, handle=None, owner_type=None, owner_id=None, values_json=None))]
+    fn update_object(
+        &self,
+        id: String,
+        handle: Option<String>,
+        owner_type: Option<String>,
+        owner_id: Option<String>,
+        values_json: Option<String>,
+    ) -> PyResult<CustomObject> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        let values = if let Some(values_json) = values_json {
+            Some(
+                serde_json::from_str(&values_json)
+                    .map_err(|e| PyValueError::new_err(format!("Invalid values_json: {}", e)))?,
+            )
+        } else {
+            None
+        };
+
+        let updated = commerce
+            .custom_objects()
+            .update_object(
+                uuid,
+                stateset_core::UpdateCustomObject {
+                    handle,
+                    owner_type,
+                    owner_id,
+                    values,
+                },
+            )
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to update custom object: {}", e))
+            })?;
+
+        Ok(updated.into())
+    }
+
+    /// List custom object records.
+    #[pyo3(signature = (type_handle=None, owner_type=None, owner_id=None, handle=None, limit=None, offset=None))]
+    fn list_objects(
+        &self,
+        type_handle: Option<String>,
+        owner_type: Option<String>,
+        owner_id: Option<String>,
+        handle: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<CustomObject>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let list = commerce
+            .custom_objects()
+            .list_objects(stateset_core::CustomObjectFilter {
+                type_handle,
+                owner_type,
+                owner_id,
+                handle,
+                limit,
+                offset,
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to list custom objects: {}", e))
+            })?;
+
+        Ok(list.into_iter().map(|o| o.into()).collect())
+    }
+
+    /// Delete a custom object record.
+    fn delete_object(&self, id: String) -> PyResult<()> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let uuid = id
+            .parse()
+            .map_err(|_| PyValueError::new_err("Invalid UUID"))?;
+
+        commerce.custom_objects().delete_object(uuid).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete custom object: {}", e))
+        })?;
+
+        Ok(())
     }
 }
 
@@ -11117,6 +11648,13 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Product>()?;
     m.add_class::<ProductVariant>()?;
     m.add_class::<CreateProductVariantInput>()?;
+
+    // Custom Objects (custom states / metaobjects)
+    m.add_class::<CustomObjectsApi>()?;
+    m.add_class::<CustomObjectType>()?;
+    m.add_class::<CustomFieldDefinition>()?;
+    m.add_class::<CustomFieldDefinitionInput>()?;
+    m.add_class::<CustomObject>()?;
 
     // Inventory
     m.add_class::<Inventory>()?;

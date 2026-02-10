@@ -217,9 +217,9 @@ pub use vector::Vector;
 // Async API for PostgreSQL (feature-gated)
 #[cfg(feature = "postgres")]
 pub use async_commerce::{
-    AsyncAnalytics, AsyncBom, AsyncCarts, AsyncCommerce, AsyncCurrency, AsyncCustomers,
-    AsyncInventory, AsyncInvoices, AsyncOrders, AsyncPayments, AsyncProducts, AsyncPurchaseOrders,
-    AsyncReturns, AsyncShipments, AsyncWarranties, AsyncWorkOrders,
+    AsyncAnalytics, AsyncBom, AsyncCarts, AsyncCommerce, AsyncCurrency, AsyncCustomObjects,
+    AsyncCustomers, AsyncInventory, AsyncInvoices, AsyncOrders, AsyncPayments, AsyncProducts,
+    AsyncPurchaseOrders, AsyncReturns, AsyncShipments, AsyncWarranties, AsyncWorkOrders,
 };
 
 // Re-export Database trait for advanced users who want to bring their own database

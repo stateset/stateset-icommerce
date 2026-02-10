@@ -35,6 +35,16 @@ class Commerce:
         ...
 
     @property
+    def custom_objects(self) -> CustomObjectsApi:
+        """Get the custom objects API (custom states / metaobjects)."""
+        ...
+
+    @property
+    def custom_states(self) -> CustomObjectsApi:
+        """Alias for `custom_objects`."""
+        ...
+
+    @property
     def inventory(self) -> Inventory:
         """Get the inventory API."""
         ...
@@ -322,6 +332,132 @@ class Products:
     def count(self) -> int:
         """Count products."""
         ...
+
+# ============================================================================
+# Custom Objects
+# ============================================================================
+
+class CustomFieldDefinition:
+    """Custom field definition in a custom object type schema."""
+
+    key: str
+    field_type: str
+    required: bool
+    list: bool
+    description: Optional[str]
+
+class CustomFieldDefinitionInput:
+    """Input for defining a custom field in a schema."""
+
+    key: str
+    field_type: str
+    required: bool
+    list: bool
+    description: Optional[str]
+
+    def __init__(
+        self,
+        key: str,
+        field_type: str,
+        required: bool = False,
+        list: bool = False,
+        description: Optional[str] = None,
+    ) -> None: ...
+
+class CustomObjectType:
+    """Custom object type (schema) definition."""
+
+    id: str
+    handle: str
+    display_name: str
+    description: str
+    fields: List[CustomFieldDefinition]
+    created_at: str
+    updated_at: str
+    version: int
+
+class CustomObject:
+    """Custom object record (validated instance of a type)."""
+
+    id: str
+    type_id: str
+    type_handle: str
+    handle: Optional[str]
+    owner_type: Optional[str]
+    owner_id: Optional[str]
+    values_json: str
+    created_at: str
+    updated_at: str
+    version: int
+
+class CustomObjectsApi:
+    """Custom objects API for schemas and records."""
+
+    def create_type(
+        self,
+        handle: str,
+        display_name: str,
+        description: Optional[str] = None,
+        fields: Optional[List[CustomFieldDefinitionInput]] = None,
+    ) -> CustomObjectType: ...
+
+    def get_type(self, id: str) -> Optional[CustomObjectType]: ...
+    def get_type_by_handle(self, handle: str) -> Optional[CustomObjectType]: ...
+
+    def update_type(
+        self,
+        id: str,
+        display_name: Optional[str] = None,
+        description: Optional[str] = None,
+        fields: Optional[List[CustomFieldDefinitionInput]] = None,
+    ) -> CustomObjectType: ...
+
+    def list_types(
+        self,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[CustomObjectType]: ...
+
+    def delete_type(self, id: str) -> None: ...
+
+    def create_object(
+        self,
+        type_handle: str,
+        values_json: str,
+        handle: Optional[str] = None,
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None,
+    ) -> CustomObject: ...
+
+    def get_object(self, id: str) -> Optional[CustomObject]: ...
+
+    def get_object_by_handle(
+        self,
+        type_handle: str,
+        object_handle: str,
+    ) -> Optional[CustomObject]: ...
+
+    def update_object(
+        self,
+        id: str,
+        handle: Optional[str] = None,
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        values_json: Optional[str] = None,
+    ) -> CustomObject: ...
+
+    def list_objects(
+        self,
+        type_handle: Optional[str] = None,
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        handle: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[CustomObject]: ...
+
+    def delete_object(self, id: str) -> None: ...
 
 # ============================================================================
 # Inventory

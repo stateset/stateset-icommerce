@@ -3953,6 +3953,7 @@ dependencies = [
  "chrono",
  "pyo3",
  "rust_decimal",
+ "serde_json",
  "stateset-core",
  "stateset-db",
  "stateset-embedded",

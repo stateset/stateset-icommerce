@@ -1,8 +1,10 @@
 """Tests for stateset_embedded Python bindings."""
 
+import json
 import pytest
 from stateset_embedded import (
     Commerce,
+    CustomFieldDefinitionInput,
     CreateOrderItemInput,
     CreateProductVariantInput,
     CreateReturnItemInput,
@@ -25,6 +27,85 @@ def create_product(commerce, sku: str, price: float, name: str):
             )
         ],
     )
+
+class TestCustomObjects:
+    """Custom Objects API tests."""
+
+    def test_custom_objects_type_and_record_crud(self, commerce):
+        ty = commerce.custom_objects.create_type(
+            handle="warranty_registration",
+            display_name="Warranty Registration",
+            description="Extra data attached to warranties",
+            fields=[
+                CustomFieldDefinitionInput("serial_number", "string", required=True),
+                CustomFieldDefinitionInput("registered_at", "date_time"),
+                CustomFieldDefinitionInput("tags", "string", list=True),
+                CustomFieldDefinitionInput("metadata", "json"),
+            ],
+        )
+
+        assert ty.id is not None
+        assert ty.handle == "warranty_registration"
+        assert ty.display_name == "Warranty Registration"
+        assert len(ty.fields) == 4
+
+        got = commerce.custom_states.get_type_by_handle("warranty_registration")
+        assert got is not None
+        assert got.id == ty.id
+
+        obj = commerce.custom_objects.create_object(
+            type_handle="warranty_registration",
+            handle="wr_001",
+            owner_type="customer",
+            owner_id="cust_123",
+            values_json=json.dumps(
+                {
+                    "serial_number": "SN123",
+                    "tags": ["alpha", "beta"],
+                    "metadata": {"source": "test"},
+                }
+            ),
+        )
+
+        assert obj.id is not None
+        assert obj.type_handle == "warranty_registration"
+        assert obj.handle == "wr_001"
+        assert obj.owner_type == "customer"
+        assert obj.owner_id == "cust_123"
+
+        fetched = commerce.custom_objects.get_object_by_handle(
+            "warranty_registration",
+            "wr_001",
+        )
+        assert fetched is not None
+        assert fetched.id == obj.id
+
+        updated = commerce.custom_objects.update_object(
+            obj.id,
+            values_json=json.dumps(
+                {
+                    "serial_number": "SN124",
+                    "tags": ["alpha"],
+                    "metadata": {"source": "test", "v": 2},
+                }
+            ),
+        )
+        assert updated.id == obj.id
+
+        listed = commerce.custom_objects.list_objects(type_handle="warranty_registration")
+        assert len(listed) >= 1
+
+        with pytest.raises(RuntimeError):
+            commerce.custom_objects.create_object(
+                type_handle="warranty_registration",
+                values_json=json.dumps({"serial_number": "SN999", "unknown": "x"}),
+            )
+
+        commerce.custom_objects.delete_object(obj.id)
+        assert commerce.custom_objects.get_object(obj.id) is None
+
+        commerce.custom_objects.delete_type(ty.id)
+        assert commerce.custom_objects.get_type(ty.id) is None
 
 
 class TestCustomers:
