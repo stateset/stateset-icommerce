@@ -248,6 +248,7 @@ export class Scheduler extends EventEmitter {
     this.jobs = new Map();
     this.runningJobs = new Map();
     this.jobHistory = [];
+    this.retryTimers = new Set();
     this.tickTimer = null;
     this.isRunning = false;
   }
@@ -380,11 +381,11 @@ export class Scheduler extends EventEmitter {
     const running = this.runningJobs.get(jobId);
     if (!running) return false;
 
-    if (running.abortController) {
-      running.abortController.abort();
-    }
+    running.cancelled = true;
 
-    this.runningJobs.delete(jobId);
+    if (running.abortController) {
+      running.abortController.abort('cancelled');
+    }
 
     const job = this.jobs.get(jobId);
     if (job) {
@@ -420,7 +421,7 @@ export class Scheduler extends EventEmitter {
     return jobs.sort((a, b) => {
       if (!a.nextRunAt) return 1;
       if (!b.nextRunAt) return -1;
-      return new Date(a.nextRunAt) - new Date(b.nextRunAt);
+      return new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime();
     });
   }
 
@@ -452,12 +453,19 @@ export class Scheduler extends EventEmitter {
     this.emit('job:started', { job, runId });
 
     let result;
+    let timeoutId = null;
+    let timedOut = false;
 
     try {
       // Set up timeout
-      const timeoutId = setTimeout(() => {
-        abortController.abort();
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        abortController.abort('timeout');
       }, job.timeout);
+
+      if (typeof timeoutId.unref === 'function') {
+        timeoutId.unref();
+      }
 
       // Execute the action
       let output;
@@ -472,7 +480,13 @@ export class Scheduler extends EventEmitter {
         throw new Error('No executor configured');
       }
 
-      clearTimeout(timeoutId);
+      // If the run was cancelled/timed out while the executor ignored the signal,
+      // treat it as an abort rather than a successful completion.
+      if (abortController.signal.aborted) {
+        const abortError = new Error('Job aborted');
+        abortError.name = 'AbortError';
+        throw abortError;
+      }
 
       // Success
       const completedAt = new Date();
@@ -482,7 +496,7 @@ export class Scheduler extends EventEmitter {
         status: JobStatus.COMPLETED,
         startedAt: startedAt.toISOString(),
         completedAt: completedAt.toISOString(),
-        duration: completedAt - startedAt,
+        duration: completedAt.getTime() - startedAt.getTime(),
         output,
         retryCount,
       });
@@ -503,48 +517,79 @@ export class Scheduler extends EventEmitter {
       this.emit('job:completed', { job, result });
     } catch (error) {
       const completedAt = new Date();
-      const errorMessage = error.name === 'AbortError' ? 'Job timed out' : error.message;
+      const running = this.runningJobs.get(job.id);
+      const cancelReason = abortController.signal.reason;
+      const wasCancelled = running?.cancelled === true || cancelReason === 'cancelled';
+      const wasTimeout =
+        timedOut || cancelReason === 'timeout' || (error.name === 'AbortError' && !wasCancelled);
 
-      result = new JobResult({
-        jobId: job.id,
-        runId,
-        status: JobStatus.FAILED,
-        startedAt: startedAt.toISOString(),
-        completedAt: completedAt.toISOString(),
-        duration: completedAt - startedAt,
-        error: errorMessage,
-        retryCount,
-      });
+      if (wasCancelled) {
+        result = new JobResult({
+          jobId: job.id,
+          runId,
+          status: JobStatus.CANCELLED,
+          startedAt: startedAt.toISOString(),
+          completedAt: completedAt.toISOString(),
+          duration: completedAt.getTime() - startedAt.getTime(),
+          error: 'Job cancelled',
+          retryCount,
+        });
 
-      job.lastError = errorMessage;
-      job.failCount++;
-
-      // Retry logic
-      if (retryCount < job.maxRetries) {
-        this.emit('job:retry', { job, result, nextRetry: retryCount + 1 });
-
-        // Schedule retry
-        setTimeout(
-          () => {
-            this.executeJob(job, retryCount + 1);
-          },
-          job.retryDelay * Math.pow(2, retryCount),
-        ); // Exponential backoff
-      } else {
-        job.status = JobStatus.FAILED;
+        job.status = JobStatus.CANCELLED;
         job.lastRunAt = completedAt.toISOString();
+        job.lastError = null;
+      } else {
+        const errorMessage = wasTimeout ? 'Job timed out' : error.message;
 
-        // Still calculate next run for recurring jobs
-        if (job.type !== 'once') {
-          job.nextRunAt = job.calculateNextRun(completedAt)?.toISOString() || null;
-          job.status = JobStatus.PENDING; // Reset for next scheduled run
+        result = new JobResult({
+          jobId: job.id,
+          runId,
+          status: JobStatus.FAILED,
+          startedAt: startedAt.toISOString(),
+          completedAt: completedAt.toISOString(),
+          duration: completedAt.getTime() - startedAt.getTime(),
+          error: errorMessage,
+          retryCount,
+        });
+
+        job.lastError = errorMessage;
+        job.failCount++;
+
+        // Retry logic
+        if (retryCount < job.maxRetries) {
+          this.emit('job:retry', { job, result, nextRetry: retryCount + 1 });
+
+          // Schedule retry
+          const retryTimer = setTimeout(
+            () => {
+              this.retryTimers.delete(retryTimer);
+              this.executeJob(job, retryCount + 1);
+            },
+            job.retryDelay * Math.pow(2, retryCount),
+          ); // Exponential backoff
+          this.retryTimers.add(retryTimer);
+          if (typeof retryTimer.unref === 'function') {
+            retryTimer.unref();
+          }
         } else {
-          job.enabled = false;
-        }
+          job.status = JobStatus.FAILED;
+          job.lastRunAt = completedAt.toISOString();
 
-        this.emit('job:failed', { job, result });
+          // Still calculate next run for recurring jobs
+          if (job.type !== 'once') {
+            job.nextRunAt = job.calculateNextRun(completedAt)?.toISOString() || null;
+            job.status = JobStatus.PENDING; // Reset for next scheduled run
+          } else {
+            job.enabled = false;
+          }
+
+          this.emit('job:failed', { job, result });
+        }
       }
     } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       this.runningJobs.delete(job.id);
       this.jobHistory.push(result);
       this.save();
@@ -626,6 +671,11 @@ export class Scheduler extends EventEmitter {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+
+    for (const retryTimer of this.retryTimers) {
+      clearTimeout(retryTimer);
+    }
+    this.retryTimers.clear();
 
     this.emit('stopped');
   }

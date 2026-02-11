@@ -712,7 +712,7 @@ export class WorkflowEngine extends EventEmitter {
     }
 
     return instances
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .slice(0, limit)
       .map((i) => i.toJSON());
   }
@@ -733,7 +733,7 @@ export class WorkflowEngine extends EventEmitter {
       totalInstances: instances.length,
       byStatus,
       recentInstances: instances
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .slice(0, 5)
         .map((i) => ({
           id: i.id,

@@ -1,0 +1,10 @@
+{
+  "extends": "./jsconfig.json",
+  "include": ["src/workflows/**/*.js"],
+  "exclude": [
+    "node_modules",
+    "node_modules_root_owned_*",
+    "test",
+    "tests"
+  ]
+}

@@ -390,9 +390,17 @@ describe('Scheduler', () => {
   it('cancelJob cancels running job', async () => {
     const slowScheduler = new Scheduler({
       storePath: null,
-      executor: async (action, { signal }) => {
-        await new Promise((r) => setTimeout(r, 60000));
-      },
+      executor: async (action, { signal }) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve({ ok: true }), 60000);
+          const onAbort = () => {
+            clearTimeout(timer);
+            const abortError = new Error('aborted');
+            abortError.name = 'AbortError';
+            reject(abortError);
+          };
+          signal?.addEventListener('abort', onAbort, { once: true });
+        }),
     });
 
     const job = slowScheduler.addJob({

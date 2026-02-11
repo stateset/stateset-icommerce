@@ -69,7 +69,8 @@
     "test:coverage": "node --test --experimental-test-coverage test/**/*.test.js",
     "lint": "npx eslint src/ bin/",
     "lint:fix": "npx eslint --fix src/ bin/",
-    "typecheck": "npx tsc --noEmit -p jsconfig.json",
+    "typecheck": "npx tsc --noEmit -p jsconfig.typecheck.json",
+    "typecheck:full": "npx tsc --noEmit -p jsconfig.json",
     "test:watch": "node --test --watch test/unit/*.test.js",
     "prepublishOnly": "npm test && echo 'Ready to publish @stateset/cli'"
   },

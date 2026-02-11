@@ -74,6 +74,7 @@ bindings/php/modules/
 # CLI local state
 cli/.stateset/
 .stateset/
+cli/node_modules_root_owned_*/
 
 # Secrets (keep .template files, ignore filled-in secrets)
 **/secrets.yaml
