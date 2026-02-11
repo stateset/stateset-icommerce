@@ -204,10 +204,7 @@ impl Histogram {
     /// Record an observation value for the histogram
     pub fn observe(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut observations = self
-            .observations
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut observations = self.observations.write().unwrap_or_else(|e| e.into_inner());
 
         let data = observations.entry(key).or_insert_with(|| {
             let mut bucket_counts = Vec::with_capacity(self.buckets.len());

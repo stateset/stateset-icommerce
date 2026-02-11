@@ -2,10 +2,17 @@
   "private": true,
   "name": "stateset-icommerce",
   "description": "Workspace root for development tooling",
+  "engines": {
+    "node": ">=20.20.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "prepare": "husky",
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
-    "format:check": "prettier --check 'cli/{src,bin}/**/*.js'"
+    "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
+    "check:rust": "cargo fmt --all -- --check && cargo test -p stateset-core -p stateset-db -p stateset-embedded --quiet",
+    "check:cli": "npm --prefix cli run lint && npm --prefix cli run typecheck",
+    "check": "npm run check:rust && npm run check:cli"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",

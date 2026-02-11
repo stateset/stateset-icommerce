@@ -20,6 +20,13 @@ npm install -g @stateset/cli@0.7.0      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
+**Development toolchain (repo root):**
+```bash
+nvm use                      # uses .nvmrc / .node-version (20.20.0)
+rustup show active-toolchain # uses rust-toolchain.toml (1.90.0)
+npm run check                # root quality checks
+```
+
 ---
 
 ## Documentation

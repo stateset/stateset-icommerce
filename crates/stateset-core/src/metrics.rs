@@ -256,14 +256,18 @@ pub mod inventory {
             metric.inc();
         }
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric.with_label_values(&["inventory.reserve", "inventory"]).inc();
+            metric
+                .with_label_values(&["inventory.reserve", "inventory"])
+                .inc();
         }
     }
 
     /// Track an inventory stock adjustment
     pub fn track_stock_adjustment(_sku: &str, _delta: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric.with_label_values(&["inventory.adjust", "inventory"]).inc();
+            metric
+                .with_label_values(&["inventory.adjust", "inventory"])
+                .inc();
         }
     }
 }
@@ -275,14 +279,18 @@ pub mod payments {
     /// Track a payment processing operation
     pub fn track_payment_processing(_order_id: &str, _amount: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric.with_label_values(&["payments.process", "payments"]).inc();
+            metric
+                .with_label_values(&["payments.process", "payments"])
+                .inc();
         }
     }
 
     /// Track a payment refund operation
     pub fn track_refund(_payment_id: &str, _amount: f64) {
         if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
-            metric.with_label_values(&["payments.refund", "payments"]).inc();
+            metric
+                .with_label_values(&["payments.refund", "payments"])
+                .inc();
         }
     }
 }

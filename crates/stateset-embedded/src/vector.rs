@@ -107,10 +107,7 @@ impl Vector {
 
         // Process in batches of 100 for API efficiency
         for chunk in products.chunks(100) {
-            let texts: Vec<String> = chunk
-                .iter()
-                .map(EmbeddingService::product_text)
-                .collect();
+            let texts: Vec<String> = chunk.iter().map(EmbeddingService::product_text).collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
 
@@ -168,10 +165,7 @@ impl Vector {
         let mut indexed = 0;
 
         for chunk in customers.chunks(100) {
-            let texts: Vec<String> = chunk
-                .iter()
-                .map(EmbeddingService::customer_text)
-                .collect();
+            let texts: Vec<String> = chunk.iter().map(EmbeddingService::customer_text).collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
 
@@ -228,10 +222,7 @@ impl Vector {
         let mut indexed = 0;
 
         for chunk in orders.chunks(100) {
-            let texts: Vec<String> = chunk
-                .iter()
-                .map(EmbeddingService::order_text)
-                .collect();
+            let texts: Vec<String> = chunk.iter().map(EmbeddingService::order_text).collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
 

@@ -669,16 +669,14 @@ mod tests {
             })
             .unwrap();
 
-        let result = commerce
-            .x402()
-            .sign_intent(
-                intent.id,
-                SignX402PaymentIntent {
-                    intent_id: intent.id,
-                    signature: "not-hex-signature".into(),
-                    public_key: "not-hex-public-key".into(),
-                },
-            );
+        let result = commerce.x402().sign_intent(
+            intent.id,
+            SignX402PaymentIntent {
+                intent_id: intent.id,
+                signature: "not-hex-signature".into(),
+                public_key: "not-hex-public-key".into(),
+            },
+        );
 
         assert!(result.is_err());
     }

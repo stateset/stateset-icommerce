@@ -101,7 +101,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
           cache: "npm"
           cache-dependency-path: cli/package-lock.json
 
@@ -124,11 +124,11 @@ jobs:
             echo "Could not determine line coverage — skipping threshold check"
             exit 0
           fi
-          if (( $(echo "$LINE_COV < 60" | bc -l) )); then
-            echo "::error::CLI line coverage ${LINE_COV}% is below 60% threshold"
+          if (( $(echo "$LINE_COV < 75" | bc -l) )); then
+            echo "::error::CLI line coverage ${LINE_COV}% is below 75% threshold"
             exit 1
           fi
-          echo "CLI line coverage ${LINE_COV}% meets 60% threshold"
+          echo "CLI line coverage ${LINE_COV}% meets 75% threshold"
 
       - name: Upload coverage artifact
         if: always()
