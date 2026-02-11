@@ -30,6 +30,6 @@
   "author": "StateSet <support@stateset.com>",
   "license": "MIT",
   "dependencies": {
-    "@stateset/embedded": "^0.6.0"
+    "@stateset/embedded": "^0.7.0"
   }
 }

@@ -5,6 +5,7 @@ use napi_derive::napi;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_embedded::Commerce as RustCommerce;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -304,6 +305,14 @@ impl Commerce {
         }
     }
 
+    /// Get the events API (pub/sub and webhook management)
+    #[napi(getter)]
+    pub fn events(&self) -> Events {
+        Events {
+            commerce: self.inner.clone(),
+        }
+    }
+
     /// Create a vector search instance with the given OpenAI API key
     ///
     /// Vector search enables semantic similarity search across products,
@@ -313,6 +322,180 @@ impl Commerce {
         VectorSearch {
             commerce: self.inner.clone(),
             api_key,
+        }
+    }
+}
+
+// ============================================================================
+// Events API
+// ============================================================================
+
+#[napi(object)]
+pub struct CreateWebhookInput {
+    /// Display name
+    pub name: Option<String>,
+    /// Target URL for POST requests
+    pub url: String,
+    /// Optional secret for HMAC signature
+    pub secret: Option<String>,
+    /// Event types to receive (empty or omitted = all events)
+    pub event_types: Option<Vec<String>>,
+}
+
+#[napi(object)]
+pub struct WebhookOutput {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub has_secret: bool,
+    pub event_types: Vec<String>,
+    pub active: bool,
+    pub created_at: String,
+}
+
+impl From<stateset_embedded::Webhook> for WebhookOutput {
+    fn from(w: stateset_embedded::Webhook) -> Self {
+        Self {
+            id: w.id.to_string(),
+            name: w.name,
+            url: w.url,
+            has_secret: w.secret.is_some(),
+            event_types: w.event_types,
+            active: w.active,
+            created_at: w.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi]
+pub struct Events {
+    commerce: Arc<Mutex<RustCommerce>>,
+}
+
+#[napi]
+impl Events {
+    /// Subscribe to all commerce events.
+    #[napi]
+    pub async fn subscribe(&self) -> Result<CommerceEventSubscription> {
+        let commerce = self.commerce.lock().await;
+        let subscription = commerce.subscribe_events();
+        Ok(CommerceEventSubscription::new(subscription, None))
+    }
+
+    /// Subscribe to a subset of commerce events by event type.
+    ///
+    /// Event types must match `CommerceEvent::event_type()` values (snake_case),
+    /// e.g. "order_created", "inventory_adjusted".
+    #[napi]
+    pub async fn subscribe_filtered(
+        &self,
+        event_types: Vec<String>,
+    ) -> Result<CommerceEventSubscription> {
+        let commerce = self.commerce.lock().await;
+        let subscription = commerce.subscribe_events();
+
+        let allowed_event_types: HashSet<String> = event_types.into_iter().collect();
+        let allowed_event_types = if allowed_event_types.is_empty() {
+            None
+        } else {
+            Some(allowed_event_types)
+        };
+
+        Ok(CommerceEventSubscription::new(
+            subscription,
+            allowed_event_types,
+        ))
+    }
+
+    /// List registered webhooks.
+    #[napi]
+    pub async fn list_webhooks(&self) -> Result<Vec<WebhookOutput>> {
+        let commerce = self.commerce.lock().await;
+        let webhooks = commerce.list_webhooks();
+        Ok(webhooks.into_iter().map(|w| w.into()).collect())
+    }
+
+    /// Register a webhook endpoint for event delivery.
+    #[napi]
+    pub async fn register_webhook(&self, input: CreateWebhookInput) -> Result<Option<String>> {
+        let commerce = self.commerce.lock().await;
+
+        let name = input.name.unwrap_or_else(|| "Webhook".to_string());
+        let mut webhook = stateset_embedded::Webhook::new(name, input.url);
+        if let Some(secret) = input.secret {
+            webhook = webhook.with_secret(secret);
+        }
+        if let Some(events) = input.event_types {
+            if !events.is_empty() {
+                webhook = webhook.with_events(events);
+            }
+        }
+
+        Ok(commerce.register_webhook(webhook).map(|id| id.to_string()))
+    }
+
+    /// Unregister a webhook endpoint.
+    #[napi]
+    pub async fn unregister_webhook(&self, id: String) -> Result<bool> {
+        let commerce = self.commerce.lock().await;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| Error::from_reason(format!("Invalid UUID: {}", e)))?;
+        Ok(commerce.unregister_webhook(uuid))
+    }
+}
+
+#[napi]
+pub struct CommerceEventSubscription {
+    inner: Mutex<stateset_embedded::EventSubscription>,
+    allowed_event_types: Option<HashSet<String>>,
+}
+
+impl CommerceEventSubscription {
+    fn new(
+        inner: stateset_embedded::EventSubscription,
+        allowed_event_types: Option<HashSet<String>>,
+    ) -> Self {
+        Self {
+            inner: Mutex::new(inner),
+            allowed_event_types,
+        }
+    }
+}
+
+#[napi]
+impl CommerceEventSubscription {
+    /// Receive the next event (or `null` if the stream is closed).
+    ///
+    /// Returned events are JSON objects and include an `event_type` field (snake_case).
+    #[napi]
+    pub async fn recv(&self) -> Result<Option<serde_json::Value>> {
+        let mut subscription = self.inner.lock().await;
+
+        loop {
+            let Some(event) = subscription.recv().await else {
+                return Ok(None);
+            };
+
+            let event_type = event.event_type().to_string();
+            if let Some(allowed) = &self.allowed_event_types {
+                if !allowed.contains(&event_type) {
+                    continue;
+                }
+            }
+
+            let mut value = serde_json::to_value(&event).map_err(|e| {
+                Error::from_reason(format!("Failed to serialize commerce event: {}", e))
+            })?;
+
+            // Provide a stable `event_type` field for CLI/tools (the serde tag is `type`).
+            if let serde_json::Value::Object(ref mut map) = value {
+                map.insert(
+                    "event_type".to_string(),
+                    serde_json::Value::String(event_type),
+                );
+            }
+
+            return Ok(Some(value));
         }
     }
 }

@@ -87,6 +87,38 @@ function getNestedValue(obj, path) {
 }
 
 /**
+ * Condition operators that ignore the provided comparison value.
+ */
+const UnaryOperators = new Set([
+  'isEmpty',
+  'isNotEmpty',
+  'isNull',
+  'isNotNull',
+  'isTrue',
+  'isFalse',
+]);
+
+/**
+ * Resolve a condition's comparison value when it is a dynamic reference like:
+ *   "${order.billingAddress.country}"
+ *
+ * If the reference path does not exist in context, `resolved` will be undefined.
+ */
+function resolveConditionValue(value, context) {
+  if (typeof value !== 'string') {
+    return { resolved: value, isDynamicRef: false };
+  }
+
+  const match = value.match(/^\$\{([^}]+)\}$/);
+  if (!match) {
+    return { resolved: value, isDynamicRef: false };
+  }
+
+  const refPath = match[1].trim();
+  return { resolved: getNestedValue(context, refPath), isDynamicRef: true };
+}
+
+/**
  * Condition definition
  */
 export class Condition {
@@ -113,7 +145,21 @@ export class Condition {
       throw new Error(`Unknown operator: ${this.operator}`);
     }
 
-    let result = operatorFn(fieldValue, this.value);
+    const isUnary = UnaryOperators.has(this.operator);
+    let compareValue = this.value;
+
+    if (!isUnary) {
+      const { resolved, isDynamicRef } = resolveConditionValue(this.value, context);
+      compareValue = resolved;
+
+      // Missing dynamic references are treated as non-matches (safe default).
+      // This prevents false positives (e.g. neq against an undefined compare value).
+      if (isDynamicRef && compareValue === undefined) {
+        return false;
+      }
+    }
+
+    let result = isUnary ? operatorFn(fieldValue) : operatorFn(fieldValue, compareValue);
 
     if (this.negate) {
       result = !result;

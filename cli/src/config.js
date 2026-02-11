@@ -84,7 +84,7 @@ export const DEFAULT_DB_PATH = './store.db';
 // CLI CONFIGURATION
 // =============================================================================
 
-export const CLI_VERSION = '0.6.0';
+export const CLI_VERSION = '0.7.0';
 
 export const CLI_DEFAULTS = {
   dbPath: DEFAULT_DB_PATH,

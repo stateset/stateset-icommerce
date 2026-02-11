@@ -1983,6 +1983,8 @@ export declare class Commerce {
   get backorder(): Backorders
   /** Get the general ledger API */
   get generalLedger(): GeneralLedger
+  /** Get the events API (pub/sub and webhook management) */
+  get events(): Events
   /**
    * Create a vector search instance with the given OpenAI API key
    *
@@ -1990,6 +1992,50 @@ export declare class Commerce {
    * customers, orders, and inventory items using OpenAI embeddings.
    */
   vector(apiKey: string): VectorSearch
+}
+export interface CreateWebhookInput {
+  /** Display name */
+  name?: string
+  /** Target URL for POST requests */
+  url: string
+  /** Optional secret for HMAC signature */
+  secret?: string
+  /** Event types to receive (empty or omitted = all events) */
+  eventTypes?: Array<string>
+}
+export interface WebhookOutput {
+  id: string
+  name: string
+  url: string
+  hasSecret: boolean
+  eventTypes: Array<string>
+  active: boolean
+  createdAt: string
+}
+export declare class Events {
+  /** Subscribe to all commerce events. */
+  subscribe(): Promise<CommerceEventSubscription>
+  /**
+   * Subscribe to a subset of commerce events by event type.
+   *
+   * Event types must match `CommerceEvent::event_type()` values (snake_case),
+   * e.g. "order_created", "inventory_adjusted".
+   */
+  subscribeFiltered(eventTypes: Array<string>): Promise<CommerceEventSubscription>
+  /** List registered webhooks. */
+  listWebhooks(): Promise<Array<WebhookOutput>>
+  /** Register a webhook endpoint for event delivery. */
+  registerWebhook(input: CreateWebhookInput): Promise<string | null>
+  /** Unregister a webhook endpoint. */
+  unregisterWebhook(id: string): Promise<boolean>
+}
+export declare class CommerceEventSubscription {
+  /**
+   * Receive the next event (or `null` if the stream is closed).
+   *
+   * Returned events are JSON objects and include an `event_type` field (snake_case).
+   */
+  recv(): Promise<any | null>
 }
 export declare class Customers {
   create(input: CreateCustomerInput): Promise<CustomerOutput>

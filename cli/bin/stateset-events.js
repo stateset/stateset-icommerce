@@ -67,66 +67,76 @@ EXAMPLES:
 `;
 
 const EVENT_ICONS = {
-  OrderCreated: '📦',
-  OrderStatusChanged: '🔄',
-  OrderShipped: '🚚',
-  OrderDelivered: '✅',
-  OrderCancelled: '❌',
-  CustomerCreated: '👤',
-  CustomerUpdated: '✏️',
-  InventoryAdjusted: '📊',
-  InventoryReserved: '🔒',
-  InventoryReservationReleased: '🔓',
-  LowStockAlert: '⚠️',
-  ProductCreated: '🏷️',
-  ProductUpdated: '✏️',
-  ReturnRequested: '↩️',
-  ReturnApproved: '✅',
-  ReturnRejected: '❌',
-  ReturnCompleted: '📦',
-  RefundIssued: '💰',
+  order_created: '📦',
+  order_status_changed: '🔄',
+  order_payment_status_changed: '💳',
+  order_fulfillment_status_changed: '🚚',
+  order_cancelled: '❌',
+  order_item_added: '➕',
+  order_item_removed: '➖',
+  customer_created: '👤',
+  customer_updated: '✏️',
+  customer_status_changed: '🔄',
+  customer_address_added: '🏠',
+  inventory_item_created: '📦',
+  inventory_adjusted: '📊',
+  inventory_reserved: '🔒',
+  inventory_reservation_released: '🔓',
+  inventory_reservation_confirmed: '✅',
+  low_stock_alert: '⚠️',
+  product_created: '🏷️',
+  product_updated: '✏️',
+  product_status_changed: '🔄',
+  product_variant_added: '➕',
+  product_variant_updated: '✏️',
+  return_requested: '↩️',
+  return_status_changed: '🔄',
+  return_approved: '✅',
+  return_rejected: '❌',
+  return_completed: '📦',
+  refund_issued: '💰',
   default: '📣',
 };
 
 // Event type to filter category mapping
 const FILTER_MAP = {
   orders: [
-    'OrderCreated',
-    'OrderStatusChanged',
-    'OrderPaymentStatusChanged',
-    'OrderFulfillmentStatusChanged',
-    'OrderCancelled',
-    'OrderItemAdded',
-    'OrderItemRemoved',
+    'order_created',
+    'order_status_changed',
+    'order_payment_status_changed',
+    'order_fulfillment_status_changed',
+    'order_cancelled',
+    'order_item_added',
+    'order_item_removed',
   ],
   inventory: [
-    'InventoryItemCreated',
-    'InventoryAdjusted',
-    'InventoryReserved',
-    'InventoryReservationReleased',
-    'InventoryReservationConfirmed',
-    'LowStockAlert',
+    'inventory_item_created',
+    'inventory_adjusted',
+    'inventory_reserved',
+    'inventory_reservation_released',
+    'inventory_reservation_confirmed',
+    'low_stock_alert',
   ],
   customers: [
-    'CustomerCreated',
-    'CustomerUpdated',
-    'CustomerStatusChanged',
-    'CustomerAddressAdded',
+    'customer_created',
+    'customer_updated',
+    'customer_status_changed',
+    'customer_address_added',
   ],
   products: [
-    'ProductCreated',
-    'ProductUpdated',
-    'ProductStatusChanged',
-    'ProductVariantAdded',
-    'ProductVariantUpdated',
+    'product_created',
+    'product_updated',
+    'product_status_changed',
+    'product_variant_added',
+    'product_variant_updated',
   ],
   returns: [
-    'ReturnRequested',
-    'ReturnStatusChanged',
-    'ReturnApproved',
-    'ReturnRejected',
-    'ReturnCompleted',
-    'RefundIssued',
+    'return_requested',
+    'return_status_changed',
+    'return_approved',
+    'return_rejected',
+    'return_completed',
+    'refund_issued',
   ],
 };
 
@@ -139,16 +149,20 @@ function formatEvent(event, output, isJson) {
     return JSON.stringify(event);
   }
 
-  const icon = getEventIcon(event.event_type);
+  const type = event.event_type || event.type || 'unknown';
+  const icon = getEventIcon(type);
   const timestamp = new Date(event.timestamp).toLocaleTimeString();
-  const type = event.event_type;
 
   let details = '';
   if (event.order_id) details += ` order:${event.order_id.slice(0, 8)}`;
   if (event.customer_id) details += ` customer:${event.customer_id.slice(0, 8)}`;
   if (event.sku) details += ` sku:${event.sku}`;
   if (event.quantity !== undefined) details += ` qty:${event.quantity}`;
+  if (event.total_amount !== undefined) details += ` $${event.total_amount}`;
   if (event.amount !== undefined) details += ` $${event.amount}`;
+  if (event.from_status && event.to_status) details += ` ${event.from_status}→${event.to_status}`;
+  if (event.quantity_change !== undefined) details += ` delta:${event.quantity_change}`;
+  if (event.new_quantity !== undefined) details += ` new:${event.new_quantity}`;
 
   return `${output.dim(timestamp)} ${icon} ${output.bold(type)}${output.dim(details)}`;
 }
@@ -164,17 +178,14 @@ async function streamEvents(commerce, filter, output, isJson, isQuiet, emit) {
   }
 
   // Subscribe to events
-  const events = commerce.events();
+  const events = commerce.events;
   let subscription;
 
   if (filter && FILTER_MAP[filter]) {
-    // Use filtered subscription
     const allowedTypes = FILTER_MAP[filter];
-    subscription = events.subscribe_filtered((event) => {
-      return allowedTypes.includes(event.event_type);
-    });
+    subscription = await events.subscribeFiltered(allowedTypes);
   } else {
-    subscription = events.subscribe();
+    subscription = await events.subscribe();
   }
 
   // Handle Ctrl+C gracefully
@@ -200,10 +211,10 @@ async function streamEvents(commerce, filter, output, isJson, isQuiet, emit) {
   }
 }
 
-async function handleWebhooks(command, args, commerce, output, isJson, emit) {
+async function handleWebhooks(command, args, values, commerce, output, isJson, emit) {
   switch (command) {
     case 'list': {
-      const webhooks = commerce.list_webhooks();
+      const webhooks = await commerce.events.listWebhooks();
       if (isJson) {
         await emit(JSON.stringify(webhooks, null, 2));
       } else {
@@ -217,8 +228,11 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
             console.log(`     ${output.dim('ID:')} ${wh.id}`);
             console.log(`     ${output.dim('URL:')} ${wh.url}`);
             console.log(
-              `     ${output.dim('Events:')} ${wh.event_types.length > 0 ? wh.event_types.join(', ') : 'all'}`,
+              `     ${output.dim('Events:')} ${wh.eventTypes.length > 0 ? wh.eventTypes.join(', ') : 'all'}`,
             );
+            if (wh.hasSecret) {
+              console.log(`     ${output.dim('Secret:')} ${output.green('configured')}`);
+            }
           }
         }
         console.log();
@@ -238,28 +252,43 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
         process.exit(1);
       }
 
-      // Parse additional webhook options
-      const secretIndex = args.indexOf('--secret');
-      const secret = secretIndex >= 0 ? args[secretIndex + 1] : null;
+      const secret = values.secret || null;
+      const eventTypes = values.events
+        ? values.events
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
 
-      const eventsIndex = args.indexOf('--events');
-      const eventTypes = eventsIndex >= 0 ? args[eventsIndex + 1].split(',') : [];
+      let name = 'Webhook';
+      try {
+        name = `Webhook (${new URL(url).host})`;
+      } catch {
+        // Ignore invalid URL; keep the default name.
+      }
+
+      const id = await commerce.events.registerWebhook({
+        name,
+        url,
+        secret,
+        eventTypes,
+      });
 
       if (isJson) {
-        await emit(
-          JSON.stringify({
-            warning: 'Webhook management requires the events feature',
-            url,
-            secret: Boolean(secret),
-            events: eventTypes,
-          }),
-        );
+        await emit(JSON.stringify({ id, url, eventTypes, hasSecret: Boolean(secret) }));
         break;
       }
 
-      console.log(output.yellow('⚠️  Webhook management requires the events feature'));
-      console.log(output.dim('   The webhook would be registered at: ' + url));
-      if (secret) console.log(output.dim('   With HMAC secret configured'));
+      if (!id) {
+        console.error(output.red('Failed to register webhook (webhooks may be disabled)'));
+        process.exit(1);
+      }
+
+      console.log(output.green('Webhook registered'));
+      console.log(`  ${output.dim('ID:')} ${id}`);
+      console.log(`  ${output.dim('URL:')} ${url}`);
+      if (eventTypes.length > 0) console.log(`  ${output.dim('Events:')} ${eventTypes.join(', ')}`);
+      if (secret) console.log(`  ${output.dim('Secret:')} ${output.green('configured')}`);
       break;
     }
 
@@ -274,13 +303,18 @@ async function handleWebhooks(command, args, commerce, output, isJson, emit) {
         }
         process.exit(1);
       }
+
+      const removed = await commerce.events.unregisterWebhook(id);
       if (isJson) {
-        await emit(
-          JSON.stringify({ warning: 'Webhook management requires the events feature', id }),
-        );
+        await emit(JSON.stringify({ id, removed }));
         break;
       }
-      console.log(output.yellow('⚠️  Webhook management requires the events feature'));
+
+      if (removed) {
+        console.log(output.green('Webhook removed'));
+      } else {
+        console.log(output.yellow('Webhook not found'));
+      }
       break;
     }
 
@@ -370,7 +404,15 @@ async function main() {
 
   // Check for webhook subcommand
   if (positionals[0] === 'webhooks') {
-    await handleWebhooks(positionals[1], positionals.slice(2), commerce, output, values.json, emit);
+    await handleWebhooks(
+      positionals[1],
+      positionals.slice(2),
+      values,
+      commerce,
+      output,
+      values.json,
+      emit,
+    );
     return;
   }
 
@@ -384,7 +426,7 @@ async function main() {
   }
 
   // Check if events feature is available
-  if (typeof commerce.events !== 'function') {
+  if (!commerce.events || typeof commerce.events.subscribe !== 'function') {
     if (values.json) {
       await emit(JSON.stringify({ error: 'Event streaming requires the "events" feature' }));
     } else {

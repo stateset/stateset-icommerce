@@ -13,10 +13,10 @@ AI agents that reason, decide, and execute—replacing tickets, scripts, and man
 
 **Install:**
 ```bash
-pip install stateset-embedded==0.6.0    # Python
-gem install stateset_embedded -v 0.6.0  # Ruby
-npm install @stateset/embedded@0.6.0    # Node.js
-npm install -g @stateset/cli@0.6.0      # CLI
+pip install stateset-embedded==0.7.0    # Python
+gem install stateset_embedded -v 0.7.0  # Ruby
+npm install @stateset/embedded@0.7.0    # Node.js
+npm install -g @stateset/cli@0.7.0      # CLI
 cargo add stateset-embedded             # Rust
 ```
 
@@ -1065,14 +1065,14 @@ extension=stateset_embedded
 <dependency>
     <groupId>com.stateset</groupId>
     <artifactId>embedded</artifactId>
-    <version>0.6.0</version>
+    <version>0.7.0</version>
 </dependency>
 ```
 
 ### Java (Gradle)
 
 ```groovy
-implementation 'com.stateset:embedded:0.6.0'
+implementation 'com.stateset:embedded:0.7.0'
 ```
 
 ### Kotlin (Gradle)
@@ -1080,7 +1080,7 @@ implementation 'com.stateset:embedded:0.6.0'
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stateset:embedded-kotlin:0.6.0")
+    implementation("com.stateset:embedded-kotlin:0.7.0")
 }
 ```
 
@@ -1089,32 +1089,32 @@ dependencies {
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.6.0")
+    .package(url: "https://github.com/stateset/stateset-swift.git", from: "0.7.0")
 ]
 ```
 
 Or with CocoaPods:
 
 ```ruby
-pod 'StateSet', '~> 0.6.0'
+pod 'StateSet', '~> 0.7.0'
 ```
 
 ### C# / .NET (NuGet)
 
 ```bash
-dotnet add package StateSet.Embedded --version 0.6.0
+dotnet add package StateSet.Embedded --version 0.7.0
 ```
 
 Or in your `.csproj`:
 
 ```xml
-<PackageReference Include="StateSet.Embedded" Version="0.6.0" />
+<PackageReference Include="StateSet.Embedded" Version="0.7.0" />
 ```
 
 ### Go
 
 ```bash
-go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.6.0
+go get github.com/stateset/stateset-icommerce/bindings/go/stateset@v0.7.0
 ```
 
 ### CLI

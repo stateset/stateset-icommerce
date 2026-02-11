@@ -129,6 +129,63 @@ describe('Condition', () => {
     assert.ok(!cond.evaluate({ order: { total: 50 } }));
   });
 
+  it('resolves dynamic reference values (${...})', () => {
+    const cond = new Condition({
+      field: 'inventory.quantity',
+      operator: 'lte',
+      value: '${inventory.reorderPoint}',
+    });
+
+    assert.ok(cond.evaluate({ inventory: { quantity: 3, reorderPoint: 5 } }));
+    assert.ok(!cond.evaluate({ inventory: { quantity: 6, reorderPoint: 5 } }));
+  });
+
+  it('can compare a field against another field via dynamic reference', () => {
+    const cond = new Condition({
+      field: 'order.shippingAddress.country',
+      operator: 'neq',
+      value: '${order.billingAddress.country}',
+    });
+
+    assert.ok(
+      !cond.evaluate({
+        order: {
+          shippingAddress: { country: 'US' },
+          billingAddress: { country: 'US' },
+        },
+      })
+    );
+
+    assert.ok(
+      cond.evaluate({
+        order: {
+          shippingAddress: { country: 'US' },
+          billingAddress: { country: 'CA' },
+        },
+      })
+    );
+  });
+
+  it('returns false when a dynamic reference value is missing (safe default)', () => {
+    const cond = new Condition({
+      field: 'order.shippingAddress.country',
+      operator: 'neq',
+      value: '${order.billingAddress.country}',
+    });
+
+    // Without a billing address, do not treat this as a mismatch.
+    assert.ok(
+      !cond.evaluate({
+        order: { shippingAddress: { country: 'US' } },
+      })
+    );
+  });
+
+  it('does not short-circuit unary operators when value is a dynamic reference', () => {
+    const cond = new Condition({ field: 'missing.path', operator: 'isNull', value: '${x.y.z}' });
+    assert.ok(cond.evaluate({}));
+  });
+
   it('supports dot-notation nested fields', () => {
     const cond = new Condition({ field: 'a.b.c', operator: 'eq', value: 42 });
     assert.ok(cond.evaluate({ a: { b: { c: 42 } } }));

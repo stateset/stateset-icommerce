@@ -6,6 +6,15 @@ const { Commerce } = require('../index.js');
 const assert = require('assert');
 const { test } = require('node:test');
 
+function withTimeout(promise, ms, label = 'operation') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 test('Commerce: basic operations', async (t) => {
   // Create an in-memory commerce instance
   const commerce = new Commerce(':memory:');
@@ -30,6 +39,7 @@ test('Commerce: basic operations', async (t) => {
     assert.ok(commerce.workOrders, 'workOrders API should exist');
     assert.ok(commerce.analytics, 'analytics API should exist');
     assert.ok(commerce.currency, 'currency API should exist');
+    assert.ok(commerce.events, 'events API should exist');
   });
 
   await t.test('should create and manage custom objects', async () => {
@@ -126,6 +136,45 @@ test('Commerce: basic operations', async (t) => {
     // Count
     const count = await commerce.customers.count();
     assert.strictEqual(count, 1);
+  });
+
+  await t.test('should stream commerce events', async () => {
+    const sub = await commerce.events.subscribeFiltered(['customer_created']);
+
+    await commerce.customers.create({
+      email: 'events@example.com',
+      firstName: 'Event',
+      lastName: 'Tester',
+    });
+
+    const evt = await withTimeout(sub.recv(), 2000, 'event recv');
+    assert.ok(evt, 'should receive an event');
+    assert.strictEqual(evt.event_type, 'customer_created');
+    assert.strictEqual(evt.email, 'events@example.com');
+    assert.ok(typeof evt.timestamp === 'string');
+  });
+
+  await t.test('should manage webhooks', async () => {
+    const id = await commerce.events.registerWebhook({
+      name: 'Test Webhook',
+      url: 'https://example.com/webhook',
+      secret: 'test-secret',
+      eventTypes: ['customer_created'],
+    });
+
+    assert.ok(id, 'registerWebhook should return an id');
+
+    const webhooks = await commerce.events.listWebhooks();
+    const found = webhooks.find((w) => w.id === id);
+    assert.ok(found, 'listWebhooks should include registered webhook');
+    assert.strictEqual(found.name, 'Test Webhook');
+    assert.strictEqual(found.url, 'https://example.com/webhook');
+    assert.strictEqual(found.active, true);
+    assert.strictEqual(found.hasSecret, true);
+    assert.deepStrictEqual(found.eventTypes, ['customer_created']);
+
+    const removed = await commerce.events.unregisterWebhook(id);
+    assert.strictEqual(removed, true);
   });
 
   await t.test('should create and manage products', async () => {
