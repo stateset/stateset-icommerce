@@ -153,6 +153,58 @@ describe('TreasuryStore', () => {
     });
   });
 
+  describe('findByTx()', () => {
+    it('finds latest matching transaction by tx/source/direction dimensions', () => {
+      store.record(
+        makeEntry({
+          event_id: 'e1',
+          chain_id: 'set_chain',
+          token_symbol: 'ssUSD',
+          direction: 'deposit',
+          source: 'x402_settlement_incoming',
+          tx_id: '0xtx123',
+        }),
+      );
+      store.record(
+        makeEntry({
+          event_id: 'e2',
+          chain_id: 'set_chain',
+          token_symbol: 'ssUSD',
+          direction: 'deposit',
+          source: 'x402_settlement_incoming',
+          tx_id: '0xtx123',
+          metadata: { second: true },
+        }),
+      );
+
+      const row = store.findByTx({
+        agentId: 'agent-1',
+        chainId: 'set_chain',
+        tokenSymbol: 'ssUSD',
+        direction: 'deposit',
+        source: 'x402_settlement_incoming',
+        txId: '0xtx123',
+      });
+
+      assert.ok(row);
+      assert.equal(row.event_id, 'e2');
+      assert.deepStrictEqual(row.metadata, { second: true });
+    });
+
+    it('returns null when no match exists', () => {
+      const row = store.findByTx({
+        agentId: 'agent-1',
+        chainId: 'set_chain',
+        tokenSymbol: 'ssUSD',
+        direction: 'deposit',
+        source: 'x402_settlement_incoming',
+        txId: '0xmissing',
+      });
+
+      assert.equal(row, null);
+    });
+  });
+
   describe('getBalances()', () => {
     it('computes net balance from deposits', () => {
       store.record(makeEntry({ event_id: 'e1', direction: 'deposit', amount_smallest: '1000000' }));

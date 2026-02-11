@@ -21,12 +21,12 @@ export const stablecoinTools = [
         .string()
         .optional()
         .describe(
-          'Blockchain: solana, solana_devnet, set_chain, base, ethereum, arbitrum (default: solana)',
+          'Blockchain: set_chain, base, ethereum, arbitrum, solana, solana_devnet (default: set_chain)',
         ),
     },
     permission: 'read',
     handler: async ({ params }) => {
-      const chain = params.chain || 'solana';
+      const chain = params.chain || 'set_chain';
       const { getWalletAddress, getChain, getDefaultStablecoin, getExplorerAddressUrl } =
         await import('../chains/index.js');
       const address = await getWalletAddress('default', chain, { configDir: '.stateset' });
@@ -50,7 +50,7 @@ export const stablecoinTools = [
       chain: z
         .string()
         .optional()
-        .describe('Blockchain: solana, set_chain, base (default: solana)'),
+        .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
       token: z
         .string()
         .optional()
@@ -58,7 +58,7 @@ export const stablecoinTools = [
     },
     permission: 'read',
     handler: async ({ params }) => {
-      const chain = params.chain || 'solana';
+      const chain = params.chain || 'set_chain';
       const { getWalletAddress, getBalance } = await import('../chains/index.js');
       const address = await getWalletAddress('default', chain, { configDir: '.stateset' });
       const balance = await getBalance(address, chain, params.token);
@@ -83,7 +83,7 @@ export const stablecoinTools = [
       chain: z
         .string()
         .optional()
-        .describe('Blockchain: solana, set_chain, base (default: solana)'),
+        .describe('Blockchain: set_chain, base, ethereum, arbitrum, solana (default: set_chain)'),
       token: z.string().optional().describe('Token: USDC, ssUSD (default: chain stablecoin)'),
       orderId: z.string().optional().describe('Order ID for audit trail'),
       customerId: z.string().optional().describe('Customer ID for audit trail'),
@@ -106,8 +106,8 @@ export const stablecoinTools = [
           wouldSend: {
             to: params.toAddress,
             amount: params.amount,
-            chain: params.chain || 'solana',
-            token: params.token || 'USDC',
+            chain: params.chain || 'set_chain',
+            token: params.token || 'default_stablecoin_for_chain',
           },
           instruction: 'Run with --apply to execute this payment',
         };
@@ -118,7 +118,7 @@ export const stablecoinTools = [
       const result = await executePayment(
         {
           agentId: effectiveAgentId,
-          chainId: params.chain || 'solana',
+          chainId: params.chain || 'set_chain',
           toAddress: params.toAddress,
           amount: params.amount,
           tokenSymbol: params.token,
@@ -136,7 +136,7 @@ export const stablecoinTools = [
 
       if (result.success) {
         try {
-          const chainId = params.chain || 'solana';
+          const chainId = params.chain || 'set_chain';
           const { loadTreasuryContext, recordWithdrawal } = await import('../treasury/index.js');
           const ctx = await loadTreasuryContext(treasuryContextOptions || {});
           const audit = buildAuditContext
@@ -209,7 +209,7 @@ export const stablecoinTools = [
         success: true,
         count: chains.length,
         chains,
-        recommended: 'solana (USDC) for liquidity, set_chain (ssUSD) for yield',
+        recommended: 'set_chain (ssUSD) for default live settlement, base/ethereum for USDC',
       };
     },
   },

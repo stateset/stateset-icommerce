@@ -4,12 +4,13 @@ use super::{block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::{FromRow, Postgres, QueryBuilder};
+use sqlx::{FromRow, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
     validate_batch_size, BatchResult, CommerceError, CreateX402PaymentIntent, Result,
     SignX402PaymentIntent, X402Asset, X402IntentStatus, X402Network, X402PaymentIntent,
     X402PaymentIntentFilter, X402PaymentIntentRepository, X402_DEFAULT_VALIDITY_SECONDS,
 };
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -61,6 +62,9 @@ struct IntentRow {
 }
 
 impl PgX402PaymentIntentRepository {
+    const NONCE_CONSTRAINT: &'static str = "ux_x402_intents_payer_nonce";
+    const NONCE_RETRY_ATTEMPTS: usize = 3;
+
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -181,73 +185,142 @@ impl PgX402PaymentIntentRepository {
         Some(value.to_string())
     }
 
-    pub async fn create_async(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
-        let now = Utc::now();
-        let now_unix = now.timestamp() as u64;
-        let id = Uuid::new_v4();
-        let nonce = match input.nonce {
-            Some(n) => n,
-            None => self.get_next_nonce_async(&input.payer_address).await?,
-        };
-        let validity_seconds = input
-            .validity_seconds
-            .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
-        let valid_until = now_unix + validity_seconds;
+    fn is_unique_violation_for_constraint(error: &sqlx::Error, constraint: &str) -> bool {
+        match error {
+            sqlx::Error::Database(db_err) => {
+                db_err.code().as_deref() == Some("23505")
+                    && db_err.constraint().as_deref() == Some(constraint)
+            }
+            _ => false,
+        }
+    }
 
-        let asset = input.asset;
-        let network = input.network;
-        let chain_id = network.chain_id();
-        let token_address = asset.contract_address(network).map(String::from);
+    async fn lock_payer_nonce_space_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        payer_address: &str,
+    ) -> Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(payer_address)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Ok(())
+    }
 
-        let decimals = asset.decimals();
-        let divisor = 10u64.pow(decimals as u32);
-        let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
-
-        sqlx::query(
-            r#"
-            INSERT INTO x402_payment_intents (
-                id, version, status, payer_address, payee_address, amount, amount_decimal,
-                asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
-                idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
-                invoice_id, merchant_id, metadata, created_at, updated_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12, $13, $14,
-                $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25
-            )
-            "#,
+    async fn get_next_nonce_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        payer_address: &str,
+    ) -> Result<u64> {
+        let max_nonce: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(nonce) FROM x402_payment_intents WHERE payer_address = $1",
         )
-        .bind(id)
-        .bind("1.0")
-        .bind(X402IntentStatus::Created.to_string())
-        .bind(&input.payer_address)
-        .bind(&input.payee_address)
-        .bind(Self::to_i64(input.amount, "x402 amount")?)
-        .bind(amount_decimal)
-        .bind(asset.to_string().to_lowercase())
-        .bind(network.to_string())
-        .bind(Self::to_i64(chain_id, "x402 chain_id")?)
-        .bind(token_address)
-        .bind(Self::to_i64(now_unix, "x402 created_at_unix")?)
-        .bind(Self::to_i64(valid_until, "x402 valid_until")?)
-        .bind(Self::to_i64(nonce, "x402 nonce")?)
-        .bind(input.idempotency_key)
-        .bind(input.resource_uri)
-        .bind(input.resource_method)
-        .bind(input.description)
-        .bind(input.cart_id)
-        .bind(input.order_id)
-        .bind(input.invoice_id)
-        .bind(input.merchant_id)
-        .bind(input.metadata)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
+        .bind(payer_address)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
+    }
+
+    pub async fn create_async(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
+        let auto_nonce = input.nonce.is_none();
+        let attempts = if auto_nonce {
+            Self::NONCE_RETRY_ATTEMPTS
+        } else {
+            1
+        };
+
+        for attempt in 0..attempts {
+            let now = Utc::now();
+            let now_unix = now.timestamp() as u64;
+            let id = Uuid::new_v4();
+            let validity_seconds = input
+                .validity_seconds
+                .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
+            let valid_until = now_unix + validity_seconds;
+
+            let asset = input.asset;
+            let network = input.network;
+            let chain_id = network.chain_id();
+            let token_address = asset.contract_address(network).map(String::from);
+            let decimals = asset.decimals();
+            let divisor = 10u64.pow(decimals as u32);
+            let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
+
+            let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+            if auto_nonce {
+                Self::lock_payer_nonce_space_tx(&mut tx, &input.payer_address).await?;
+            }
+            let nonce = match input.nonce {
+                Some(n) => n,
+                None => Self::get_next_nonce_in_tx(&mut tx, &input.payer_address).await?,
+            };
+
+            let insert_result = sqlx::query(
+                r#"
+                INSERT INTO x402_payment_intents (
+                    id, version, status, payer_address, payee_address, amount, amount_decimal,
+                    asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
+                    idempotency_key, resource_uri, resource_method, description, cart_id, order_id,
+                    invoice_id, merchant_id, metadata, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7,
+                    $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20,
+                    $21, $22, $23, $24, $25
+                )
+                "#,
+            )
+            .bind(id)
+            .bind("1.0")
+            .bind(X402IntentStatus::Created.to_string())
+            .bind(&input.payer_address)
+            .bind(&input.payee_address)
+            .bind(Self::to_i64(input.amount, "x402 amount")?)
+            .bind(amount_decimal)
+            .bind(asset.to_string().to_lowercase())
+            .bind(network.to_string())
+            .bind(Self::to_i64(chain_id, "x402 chain_id")?)
+            .bind(token_address)
+            .bind(Self::to_i64(now_unix, "x402 created_at_unix")?)
+            .bind(Self::to_i64(valid_until, "x402 valid_until")?)
+            .bind(Self::to_i64(nonce, "x402 nonce")?)
+            .bind(input.idempotency_key.clone())
+            .bind(input.resource_uri.clone())
+            .bind(input.resource_method.clone())
+            .bind(input.description.clone())
+            .bind(input.cart_id.clone())
+            .bind(input.order_id.clone())
+            .bind(input.invoice_id.clone())
+            .bind(input.merchant_id.clone())
+            .bind(input.metadata.clone())
+            .bind(now)
+            .bind(now)
+            .execute(tx.as_mut())
+            .await;
+
+            match insert_result {
+                Ok(_) => {
+                    tx.commit().await.map_err(map_db_error)?;
+                    return self.get_async(id).await?.ok_or(CommerceError::NotFound);
+                }
+                Err(err)
+                    if auto_nonce
+                        && attempt + 1 < attempts
+                        && Self::is_unique_violation_for_constraint(
+                            &err,
+                            Self::NONCE_CONSTRAINT,
+                        ) =>
+                {
+                    continue;
+                }
+                Err(err) => return Err(map_db_error(err)),
+            }
+        }
+
+        Err(CommerceError::DatabaseError(
+            "Unable to allocate unique nonce after retries".to_string(),
+        ))
     }
 
     pub async fn get_async(&self, id: Uuid) -> Result<Option<X402PaymentIntent>> {
@@ -688,19 +761,38 @@ impl PgX402PaymentIntentRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut ids = Vec::with_capacity(inputs.len());
+        let mut next_nonce_by_payer: HashMap<String, u64> = HashMap::new();
+        let mut locked_payers: HashSet<String> = HashSet::new();
 
         for input in inputs {
             let now = Utc::now();
             let now_unix = now.timestamp() as u64;
             let id = Uuid::new_v4();
-            let nonce = match input.nonce {
-                Some(n) => n,
-                None => self.get_next_nonce_async(&input.payer_address).await?,
-            };
             let validity_seconds = input
                 .validity_seconds
                 .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
             let valid_until = now_unix + validity_seconds;
+
+            let payer_address = input.payer_address;
+            let nonce = match input.nonce {
+                Some(n) => n,
+                None => {
+                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&payer_address) {
+                        let allocated = *next_nonce;
+                        *next_nonce += 1;
+                        allocated
+                    } else {
+                        if !locked_payers.contains(&payer_address) {
+                            Self::lock_payer_nonce_space_tx(&mut tx, &payer_address).await?;
+                            locked_payers.insert(payer_address.clone());
+                        }
+                        let next_nonce =
+                            Self::get_next_nonce_in_tx(&mut tx, &payer_address).await?;
+                        next_nonce_by_payer.insert(payer_address.clone(), next_nonce + 1);
+                        next_nonce
+                    }
+                }
+            };
 
             let asset = input.asset;
             let network = input.network;
@@ -729,7 +821,7 @@ impl PgX402PaymentIntentRepository {
             .bind(id)
             .bind("1.0")
             .bind(X402IntentStatus::Created.to_string())
-            .bind(&input.payer_address)
+            .bind(&payer_address)
             .bind(&input.payee_address)
             .bind(Self::to_i64(input.amount, "x402 amount")?)
             .bind(amount_decimal)

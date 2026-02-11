@@ -375,7 +375,7 @@ export class ConversationContext extends EventEmitter {
     if (session.state.pendingOrders.length > 0) {
       suggestions.push({
         priority: 'high',
-        action: 'process_payment',
+        action: 'create_payment',
         reason: `Complete payment for ${session.state.pendingOrders.length} pending order(s)`,
       });
     }
@@ -397,10 +397,10 @@ export class ConversationContext extends EventEmitter {
       });
     }
 
-    if (recentTools.has('create_order') && !recentTools.has('process_payment')) {
+    if (recentTools.has('create_order') && !recentTools.has('create_payment')) {
       suggestions.push({
         priority: 'high',
-        action: 'process_payment',
+        action: 'create_payment',
         reason: 'Process payment for the created order',
       });
     }

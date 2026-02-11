@@ -37,7 +37,7 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         .fetch_one(&pool)
         .await
         .expect("count _migrations");
-    let expected = if cfg!(feature = "saga") { 37 } else { 36 };
+    let expected = if cfg!(feature = "saga") { 38 } else { 37 };
     assert_eq!(
         applied, expected,
         "expected all embedded migrations to apply"

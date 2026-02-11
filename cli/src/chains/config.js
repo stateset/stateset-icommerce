@@ -422,8 +422,24 @@ export function getChain(chainId) {
  */
 export function getToken(chainId, tokenSymbol) {
   const chain = CHAINS[chainId];
-  if (!chain) return null;
-  return chain.tokens[tokenSymbol.toUpperCase()] || null;
+  if (!chain || !tokenSymbol) return null;
+
+  const symbol = tokenSymbol.trim();
+  if (!symbol) return null;
+
+  if (chain.tokens[symbol]) return chain.tokens[symbol];
+
+  const upper = symbol.toUpperCase();
+  if (chain.tokens[upper]) return chain.tokens[upper];
+
+  const lower = symbol.toLowerCase();
+  if (chain.tokens[lower]) return chain.tokens[lower];
+
+  return (
+    Object.values(chain.tokens).find(
+      (token) => typeof token.symbol === 'string' && token.symbol.toLowerCase() === lower,
+    ) || null
+  );
 }
 
 /**
@@ -506,8 +522,30 @@ export function getExplorerAddressUrl(chainId, address) {
  * @returns {bigint}
  */
 export function toSmallestUnit(amount, decimals) {
-  const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return BigInt(Math.floor(amountNum * Math.pow(10, decimals)));
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(`Invalid decimals value: ${decimals}`);
+  }
+
+  const normalized = normalizeDecimalInput(amount);
+  if (normalized.startsWith('-')) {
+    throw new Error('Amount must be non-negative');
+  }
+
+  const unsigned = normalized.startsWith('+') ? normalized.slice(1) : normalized;
+  const parts = unsigned.split('.');
+  const wholePart = parts[0] || '0';
+  const fractionPart = parts[1] || '';
+
+  if (fractionPart.length > decimals) {
+    throw new Error(
+      `Amount ${amount} has too many decimal places for token precision (${decimals})`,
+    );
+  }
+
+  const scaled = `${wholePart}${fractionPart.padEnd(decimals, '0')}`
+    .replace(/^0+(?=\d)/, '')
+    .trim();
+  return BigInt(scaled === '' ? '0' : scaled);
 }
 
 /**
@@ -517,12 +555,76 @@ export function toSmallestUnit(amount, decimals) {
  * @returns {string}
  */
 export function fromSmallestUnit(amount, decimals) {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(`Invalid decimals value: ${decimals}`);
+  }
+
   const amountBigInt = typeof amount === 'bigint' ? amount : BigInt(amount);
-  const divisor = BigInt(Math.pow(10, decimals));
-  const whole = amountBigInt / divisor;
-  const remainder = amountBigInt % divisor;
+  if (decimals === 0) {
+    return amountBigInt.toString();
+  }
+
+  const sign = amountBigInt < 0n ? '-' : '';
+  const absolute = amountBigInt < 0n ? -amountBigInt : amountBigInt;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = absolute / divisor;
+  const remainder = absolute % divisor;
   const remainderStr = remainder.toString().padStart(decimals, '0');
-  return `${whole}.${remainderStr}`;
+  return `${sign}${whole}.${remainderStr}`;
+}
+
+function normalizeDecimalInput(amount) {
+  if (typeof amount !== 'string' && typeof amount !== 'number') {
+    throw new Error(`Invalid amount type: ${typeof amount}`);
+  }
+
+  const raw = typeof amount === 'number' ? amount.toString() : amount.trim();
+  if (!raw) {
+    throw new Error('Amount is required');
+  }
+
+  const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+  if (!decimalPattern.test(raw)) {
+    throw new Error(`Invalid decimal amount: ${amount}`);
+  }
+
+  if (!/[eE]/.test(raw)) {
+    return raw;
+  }
+
+  return expandScientificNotation(raw);
+}
+
+function expandScientificNotation(value) {
+  let sign = '';
+  let rest = value;
+
+  if (rest.startsWith('+') || rest.startsWith('-')) {
+    sign = rest[0];
+    rest = rest.slice(1);
+  }
+
+  const [coefficient, exponentRaw] = rest.toLowerCase().split('e');
+  const exponent = Number.parseInt(exponentRaw, 10);
+  if (!Number.isFinite(exponent)) {
+    throw new Error(`Invalid scientific notation: ${value}`);
+  }
+
+  const [integerPartRaw, fractionalPartRaw = ''] = coefficient.split('.');
+  const integerPart = integerPartRaw || '0';
+  const fractionalPart = fractionalPartRaw;
+  const digits = `${integerPart}${fractionalPart}`.replace(/^0+(?=\d)/, '') || '0';
+  const decimalIndex = integerPart.length + exponent;
+
+  if (decimalIndex <= 0) {
+    return `${sign}0.${'0'.repeat(-decimalIndex)}${digits}`;
+  }
+
+  if (decimalIndex >= digits.length) {
+    return `${sign}${digits}${'0'.repeat(decimalIndex - digits.length)}`;
+  }
+
+  return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
 }
 
 /**
@@ -593,8 +695,8 @@ export function getRecommendedChain(options = {}) {
   if (options.preferNative) {
     return options.testnet ? 'set_chain_testnet' : 'set_chain';
   }
-  // Default to Solana for USDC liquidity
-  return options.testnet ? 'solana_devnet' : 'solana';
+  // Default to an EVM chain so live settlement paths are available by default.
+  return options.testnet ? 'set_chain_testnet' : 'set_chain';
 }
 
 // =============================================================================

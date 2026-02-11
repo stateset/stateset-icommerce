@@ -250,6 +250,10 @@ impl PostgresDatabase {
             "036_orders_cart_id",
             include_str!("migrations/036_orders_cart_id.sql"),
         ));
+        migrations.push((
+            "037_x402_nonce_integrity",
+            include_str!("migrations/037_x402_nonce_integrity.sql"),
+        ));
 
         for (name, sql) in migrations {
             // Check if migration already applied

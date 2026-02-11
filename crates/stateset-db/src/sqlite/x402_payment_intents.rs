@@ -7,13 +7,14 @@ use super::{
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, TransactionBehavior};
 use rust_decimal::Decimal;
 use stateset_core::{
     validate_batch_size, BatchResult, CommerceError, CreateX402PaymentIntent, Result,
     SignX402PaymentIntent, X402IntentStatus, X402PaymentIntent, X402PaymentIntentFilter,
     X402PaymentIntentRepository, X402_DEFAULT_VALIDITY_SECONDS,
 };
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// SQLite implementation of X402PaymentIntentRepository
@@ -138,18 +139,33 @@ impl SqliteX402PaymentIntentRepository {
             )?,
         })
     }
+
+    fn get_next_nonce_in_tx(tx: &rusqlite::Transaction<'_>, payer_address: &str) -> Result<u64> {
+        let max_nonce: Option<i64> = tx
+            .query_row(
+                "SELECT MAX(nonce) FROM x402_payment_intents WHERE payer_address = ?",
+                [payer_address],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+
+        Ok(max_nonce.map(|n| n as u64 + 1).unwrap_or(0))
+    }
 }
 
 impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn create(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_db_error)?;
         let now = Utc::now();
         let now_unix = now.timestamp() as u64;
         let id = Uuid::new_v4();
-        let nonce = input.nonce.unwrap_or_else(|| {
-            // Get next nonce for this payer
-            self.get_next_nonce(&input.payer_address).unwrap_or(0)
-        });
+        let nonce = match input.nonce {
+            Some(n) => n,
+            None => Self::get_next_nonce_in_tx(&tx, &input.payer_address)?,
+        };
         let validity_seconds = input
             .validity_seconds
             .unwrap_or(X402_DEFAULT_VALIDITY_SECONDS);
@@ -165,7 +181,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         let divisor = 10u64.pow(decimals as u32);
         let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO x402_payment_intents (
                 id, version, status, payer_address, payee_address, amount, amount_decimal,
                 asset, network, chain_id, token_address, created_at_unix, valid_until, nonce,
@@ -202,6 +218,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         )
         .map_err(map_db_error)?;
 
+        tx.commit().map_err(map_db_error)?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -619,8 +636,11 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         }
 
         let mut conn = self.conn()?;
-        let tx = conn.transaction().map_err(map_db_error)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_db_error)?;
         let mut ids = Vec::with_capacity(inputs.len());
+        let mut next_nonce_by_payer: HashMap<String, u64> = HashMap::new();
 
         for input in inputs {
             let now = Utc::now();
@@ -638,6 +658,21 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
             let decimals = asset.decimals();
             let divisor = 10u64.pow(decimals as u32);
             let amount_decimal = Decimal::from(input.amount) / Decimal::from(divisor);
+            let payer_address = input.payer_address;
+            let nonce = match input.nonce {
+                Some(n) => n,
+                None => {
+                    if let Some(next_nonce) = next_nonce_by_payer.get_mut(&payer_address) {
+                        let allocated = *next_nonce;
+                        *next_nonce += 1;
+                        allocated
+                    } else {
+                        let next_nonce = Self::get_next_nonce_in_tx(&tx, &payer_address)?;
+                        next_nonce_by_payer.insert(payer_address.clone(), next_nonce + 1);
+                        next_nonce
+                    }
+                }
+            };
 
             tx.execute(
                 "INSERT INTO x402_payment_intents (
@@ -650,7 +685,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                     id.to_string(),
                     "1.0",
                     X402IntentStatus::Created.to_string(),
-                    input.payer_address,
+                    payer_address,
                     input.payee_address,
                     input.amount as i64,
                     amount_decimal.to_string(),
@@ -660,7 +695,7 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                     token_address,
                     now_unix as i64,
                     valid_until as i64,
-                    input.nonce.unwrap_or(0) as i64,
+                    nonce as i64,
                     input.idempotency_key,
                     input.resource_uri,
                     input.resource_method,

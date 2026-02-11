@@ -7,9 +7,18 @@ import { EventEmitter } from 'events';
 import crypto from 'node:crypto';
 
 export class ToolComposer extends EventEmitter {
-  constructor(commerce) {
+  constructor(commerce, options = {}) {
     super();
     this.commerce = commerce;
+    this.allowApply = options.allowApply ?? true;
+    this.dbPath = options.dbPath || './store.db';
+    this.resolveTreasuryAgentId = options.resolveTreasuryAgentId || (async () => 'default');
+    this.treasuryContextOptions = options.treasuryContextOptions || {};
+    this.buildAuditContext = options.buildAuditContext || (() => ({}));
+    this.buildTreasuryIdentityMetadata =
+      options.buildTreasuryIdentityMetadata || (async () => ({}));
+    this.extra = options.extra || {};
+    this._toolRegistryPromise = null;
     this.orchestrations = new Map();
     this.activeTransactions = new Map();
   }
@@ -31,6 +40,8 @@ export class ToolComposer extends EventEmitter {
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         const stepId = `${orchestrationId}-step-${i}`;
+        const resolvedParams =
+          typeof step.params === 'function' ? step.params(results) : (step.params ?? {});
 
         this.emit('step:started', {
           orchestrationId,
@@ -40,7 +51,7 @@ export class ToolComposer extends EventEmitter {
           tool: step.tool,
         });
 
-        const result = await this.executeTool(step.tool, step.params);
+        const result = await this.executeTool(step.tool, resolvedParams);
         results.push({ step: i, tool: step.tool, result });
 
         // Validation step after each execution
@@ -118,13 +129,45 @@ export class ToolComposer extends EventEmitter {
    * Execute a tool with parameters (delegates to MCP tools)
    */
   async executeTool(toolName, params) {
-    // This will be connected to the actual MCP tool execution
-    // For now, simulate execution
-    return {
-      tool: toolName,
+    if (!this.commerce) {
+      // Preserve legacy test behavior when no commerce client is provided.
+      return {
+        tool: toolName,
+        params,
+        executedAt: new Date().toISOString(),
+      };
+    }
+
+    const registry = await this._loadToolRegistry();
+    const tool = registry.get(toolName);
+    if (!tool) {
+      throw new Error(`Unknown tool: ${toolName}`);
+    }
+
+    return tool.handler({
+      commerce: this.commerce,
       params,
-      executedAt: new Date().toISOString(),
-    };
+      allowApply: this.allowApply,
+      dbPath: this.dbPath,
+      resolveTreasuryAgentId: this.resolveTreasuryAgentId,
+      treasuryContextOptions: this.treasuryContextOptions,
+      buildAuditContext: this.buildAuditContext,
+      buildTreasuryIdentityMetadata: this.buildTreasuryIdentityMetadata,
+      extra: this.extra,
+    });
+  }
+
+  async _loadToolRegistry() {
+    if (!this._toolRegistryPromise) {
+      this._toolRegistryPromise = import('./tools/index.js').then(
+        async ({ createToolRegistry }) => {
+          const registry = createToolRegistry();
+          await registry.loadAll();
+          return registry;
+        },
+      );
+    }
+    return this._toolRegistryPromise;
   }
 
   /**
@@ -196,13 +239,13 @@ export class ToolComposer extends EventEmitter {
         validate: (result) => ({ valid: !!result.stock }),
       },
       {
-        tool: 'refund_payment',
+        tool: 'create_refund',
         params: {
-          orderId: params.orderId,
+          paymentId: params.paymentId || params.orderId,
           amount: params.amount,
         },
         rollback: async (result) => ({
-          tool: 'capture_payment', // Capture if refund fails
+          tool: void 0, // No rollback path for refunds in current payment toolset
           params: { paymentId: result.paymentId },
         }),
       },
@@ -256,29 +299,29 @@ export class ToolComposer extends EventEmitter {
         }),
       },
       {
-        tool: 'process_payment',
+        tool: 'create_payment',
         params: (previousResults) => ({
-          orderId: previousResults[4].result.order.id,
-          amount: previousResults[4].result.order.totalAmount,
+          orderId: previousResults[3].result.order.id,
+          amount: previousResults[3].result.order.totalAmount,
           method: params.paymentMethod,
         }),
-        validate: (result) => ({ valid: result.payment?.status === 'paid' }),
+        validate: (result) => ({ valid: !!result.payment?.id }),
         rollback: async (result) => ({
-          tool: 'refund_payment',
+          tool: 'create_refund',
           params: { paymentId: result.payment.id },
         }),
       },
       {
         tool: 'update_order_status',
         params: (previousResults) => ({
-          orderId: previousResults[4].result.order.id,
+          orderId: previousResults[3].result.order.id,
           status: 'confirmed',
         }),
       },
       {
         tool: 'confirm_reservation',
         params: (previousResults) => ({
-          reservationId: previousResults[3].result.reservation.id,
+          reservationId: previousResults[2].result.reservation.id,
         }),
       },
     ]);
@@ -330,7 +373,7 @@ export const ORCHESTRATION_TEMPLATES = {
       { tool: 'calculate_tax' },
       { tool: 'reserve_inventory', rollback: 'release_reservation' },
       { tool: 'create_order', rollback: 'cancel_order' },
-      { tool: 'process_payment', rollback: 'refund_payment' },
+      { tool: 'create_payment', rollback: 'create_refund' },
       { tool: 'update_order_status', params: { status: 'confirmed' } },
       { tool: 'confirm_reservation' },
     ],
@@ -341,8 +384,13 @@ export const ORCHESTRATION_TEMPLATES = {
     steps: [
       { tool: 'approve_return' },
       { tool: 'adjust_inventory', params: { reason: 'Return processed' } },
-      { tool: 'refund_payment', rollback: 'capture_payment' },
+      { tool: 'create_refund' },
     ],
+  },
+
+  agentic_payment: {
+    name: 'Agentic Payment',
+    steps: [{ tool: 'x402_execute_agent_payment' }, { tool: 'x402_get_intent' }],
   },
 
   fulfillment: {

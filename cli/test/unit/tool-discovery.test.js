@@ -85,7 +85,7 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
   it('returns tools for checkout_process intent', () => {
     const tools = engine.discoverToolsByIntent('checkout_process');
     assert.ok(tools.includes('create_cart'));
-    assert.ok(tools.includes('checkout_to_order'));
+    assert.ok(tools.includes('complete_checkout'));
   });
 
   it('returns empty array for unknown intent', () => {
@@ -96,6 +96,26 @@ describe('ToolDiscoveryEngine.discoverToolsByIntent', () => {
   it('returns semantic search tools', () => {
     const tools = engine.discoverToolsByIntent('semantic_search_products');
     assert.ok(tools.includes('vector_search_products'));
+  });
+
+  it('returns updated commerce payment tools for handle_payments intent', () => {
+    const tools = engine.discoverToolsByIntent('handle_payments');
+    assert.ok(tools.includes('create_payment'));
+    assert.ok(tools.includes('create_refund'));
+  });
+
+  it('returns stablecoin toolchain for stablecoin_payments intent', () => {
+    const tools = engine.discoverToolsByIntent('stablecoin_payments');
+    assert.ok(tools.includes('create_stablecoin_payment'));
+    assert.ok(tools.includes('list_supported_chains'));
+  });
+
+  it('returns x402 toolchain for agentic_payments intent', () => {
+    const tools = engine.discoverToolsByIntent('agentic_payments');
+    assert.ok(tools.includes('x402_execute_agent_payment'));
+    assert.ok(tools.includes('x402_create_payment_intent'));
+    assert.ok(tools.includes('x402_settle_intent_onchain'));
+    assert.ok(tools.includes('x402_record_incoming_settlement'));
   });
 });
 
@@ -113,7 +133,7 @@ describe('ToolDiscoveryEngine.getOrchestrationPlan', () => {
     const plan = engine.getOrchestrationPlan('full_checkout');
     assert.ok(plan.length > 0);
     assert.ok(plan.includes('create_cart'));
-    assert.ok(plan.includes('checkout_to_order'));
+    assert.ok(plan.includes('complete_checkout'));
   });
 
   it('returns plan for order_fulfillment', () => {
@@ -135,6 +155,12 @@ describe('ToolDiscoveryEngine.getOrchestrationPlan', () => {
     assert.ok(plan.length > 0);
     assert.ok(plan.includes('get_stock'));
     assert.ok(plan.includes('adjust_inventory'));
+  });
+
+  it('returns plan for agent_to_agent_payment', () => {
+    const plan = engine.getOrchestrationPlan('agent_to_agent_payment');
+    assert.ok(plan.includes('x402_execute_agent_payment'));
+    assert.ok(plan.includes('x402_get_intent'));
   });
 
   it('returns empty array for unknown operation type', () => {
@@ -189,6 +215,20 @@ describe('ToolDiscoveryEngine.getExecutionOrder', () => {
     const order = engine.getExecutionOrder('create_cart');
     assert.ok(Array.isArray(order.mustPrecede));
     assert.ok(order.mustPrecede.includes('add_cart_item'));
+  });
+
+  it('x402_sign_intent has sequencing rules', () => {
+    const order = engine.getExecutionOrder('x402_sign_intent');
+    assert.ok(Array.isArray(order.mustFollow));
+    assert.ok(order.mustFollow.includes('x402_create_payment_intent'));
+    assert.ok(Array.isArray(order.mustPrecede));
+    assert.ok(order.mustPrecede.includes('x402_settle_intent_onchain'));
+  });
+
+  it('x402_execute_agent_payment recommends follow-up intent lookup', () => {
+    const order = engine.getExecutionOrder('x402_execute_agent_payment');
+    assert.ok(Array.isArray(order.mustPrecede));
+    assert.ok(order.mustPrecede.includes('x402_get_intent'));
   });
 
   it('returns empty object for unknown tool', () => {

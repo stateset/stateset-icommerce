@@ -55,6 +55,36 @@ describe('ToolComposer.orchestrate — success', () => {
     assert.equal(result.results[1].step, 1);
     assert.equal(result.results[1].tool, 'beta');
   });
+
+  it('resolves function params using previous step results', async () => {
+    class ParamComposer extends ToolComposer {
+      constructor() {
+        super(null);
+      }
+
+      async executeTool(toolName, params) {
+        if (toolName === 'first_step') {
+          return { generatedId: 'abc-123' };
+        }
+        if (toolName === 'second_step') {
+          return { receivedId: params.sourceId };
+        }
+        return { tool: toolName, params };
+      }
+    }
+
+    const localComposer = new ParamComposer();
+    const result = await localComposer.orchestrate('params-flow', [
+      { tool: 'first_step', params: {} },
+      {
+        tool: 'second_step',
+        params: (previousResults) => ({ sourceId: previousResults[0].result.generatedId }),
+      },
+    ]);
+
+    assert.equal(result.success, true);
+    assert.equal(result.results[1].result.receivedId, 'abc-123');
+  });
 });
 
 // ===========================================================================
@@ -335,7 +365,7 @@ describe('ORCHESTRATION_TEMPLATES', () => {
     const tools = ORCHESTRATION_TEMPLATES.checkout.steps.map((s) => s.tool);
     assert.ok(tools.includes('get_cart'));
     assert.ok(tools.includes('create_order'));
-    assert.ok(tools.includes('process_payment'));
+    assert.ok(tools.includes('create_payment'));
   });
 
   it('has return template', () => {
@@ -344,7 +374,7 @@ describe('ORCHESTRATION_TEMPLATES', () => {
     assert.ok(Array.isArray(ORCHESTRATION_TEMPLATES.return.steps));
     const tools = ORCHESTRATION_TEMPLATES.return.steps.map((s) => s.tool);
     assert.ok(tools.includes('approve_return'));
-    assert.ok(tools.includes('refund_payment'));
+    assert.ok(tools.includes('create_refund'));
   });
 
   it('has fulfillment template', () => {
@@ -354,6 +384,15 @@ describe('ORCHESTRATION_TEMPLATES', () => {
     const tools = ORCHESTRATION_TEMPLATES.fulfillment.steps.map((s) => s.tool);
     assert.ok(tools.includes('get_order'));
     assert.ok(tools.includes('ship_order'));
+  });
+
+  it('has agentic_payment template', () => {
+    assert.ok('agentic_payment' in ORCHESTRATION_TEMPLATES);
+    assert.ok(ORCHESTRATION_TEMPLATES.agentic_payment.name);
+    assert.ok(Array.isArray(ORCHESTRATION_TEMPLATES.agentic_payment.steps));
+    const tools = ORCHESTRATION_TEMPLATES.agentic_payment.steps.map((s) => s.tool);
+    assert.ok(tools.includes('x402_execute_agent_payment'));
+    assert.ok(tools.includes('x402_get_intent'));
   });
 });
 
@@ -411,5 +450,55 @@ describe('ToolComposer.completeCheckout', () => {
     assert.ok(result.orchestrationId);
     assert.equal(result.name, 'complete-checkout');
     assert.ok('success' in result);
+  });
+
+  it('passes reservation id from reserve step into confirm_reservation', async () => {
+    class CheckoutComposer extends ToolComposer {
+      constructor() {
+        super(null);
+        this.calls = [];
+      }
+
+      async executeTool(toolName, params) {
+        this.calls.push({ toolName, params });
+        switch (toolName) {
+          case 'get_cart':
+            return {
+              cart: {
+                itemCount: 1,
+                items: [{ sku: 'SKU-1', quantity: 2 }],
+                shippingAddress: { city: 'Austin' },
+                customerId: 'cust-1',
+                currency: 'USD',
+              },
+            };
+          case 'calculate_tax':
+            return { tax: 1.5 };
+          case 'reserve_inventory':
+            return { reservation: { id: 'res-123' } };
+          case 'create_order':
+            return { order: { id: 'ord-123', totalAmount: 10 } };
+          case 'create_payment':
+            return { payment: { id: 'pay-123' } };
+          case 'update_order_status':
+            return { order: { id: 'ord-123', status: 'confirmed' } };
+          case 'confirm_reservation':
+            return { confirmed: true };
+          default:
+            return { tool: toolName, params };
+        }
+      }
+    }
+
+    const composer = new CheckoutComposer();
+    const result = await composer.completeCheckout({
+      cartId: 'cart-1',
+      paymentMethod: 'credit_card',
+    });
+    const confirmCall = composer.calls.find((call) => call.toolName === 'confirm_reservation');
+
+    assert.equal(result.success, true);
+    assert.ok(confirmCall);
+    assert.equal(confirmCall.params.reservationId, 'res-123');
   });
 });

@@ -35,6 +35,26 @@ import {
 } from './pricing-store.js';
 
 const ERC20_ABI = ['function balanceOf(address owner) view returns (uint256)'];
+const SOLANA_COMMITMENT = 'confirmed';
+let solanaSdkPromise = null;
+
+function isSolanaChain(chainId) {
+  return chainId === 'solana' || chainId === 'solana_devnet';
+}
+
+async function loadSolanaSdk() {
+  if (!solanaSdkPromise) {
+    solanaSdkPromise = Promise.all([import('@solana/web3.js'), import('@solana/spl-token')])
+      .then(([web3, splToken]) => ({ web3, splToken }))
+      .catch((error) => {
+        solanaSdkPromise = null;
+        throw new Error(
+          `Solana sync requires @solana/web3.js and @solana/spl-token. Install them in cli/: ${error.message}`,
+        );
+      });
+  }
+  return solanaSdkPromise;
+}
 
 function trimTrailingZeros(value) {
   if (!value || typeof value !== 'string') return value;
@@ -466,6 +486,38 @@ async function fetchEvmBalance(chainId, token, address) {
   return typeof rawBalance === 'bigint' ? rawBalance : BigInt(rawBalance.toString());
 }
 
+async function fetchSolanaBalance(chainId, token, address) {
+  const chain = getChain(chainId);
+  if (!chain?.rpcUrl) {
+    throw new Error(`RPC URL not configured for ${chainId}`);
+  }
+
+  const { web3, splToken } = await loadSolanaSdk();
+  const connection = new web3.Connection(chain.rpcUrl, SOLANA_COMMITMENT);
+  const owner = new web3.PublicKey(address);
+
+  if (!token.address || token.address === 'native') {
+    const rawBalance = await connection.getBalance(owner, SOLANA_COMMITMENT);
+    return BigInt(rawBalance.toString());
+  }
+
+  const mint = new web3.PublicKey(token.address);
+  const tokenAccount = splToken.getAssociatedTokenAddressSync(
+    mint,
+    owner,
+    false,
+    splToken.TOKEN_PROGRAM_ID,
+    splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  const tokenAccountInfo = await connection.getAccountInfo(tokenAccount, SOLANA_COMMITMENT);
+  if (!tokenAccountInfo) {
+    return 0n;
+  }
+
+  const rawBalance = await connection.getTokenAccountBalance(tokenAccount, SOLANA_COMMITMENT);
+  return BigInt(rawBalance.value.amount);
+}
+
 export async function syncOnChainBalance(options, context) {
   const { store, registry } = context;
   const {
@@ -477,9 +529,9 @@ export async function syncOnChainBalance(options, context) {
     apply = true,
   } = options;
 
-  if (!isEvmChain(chainId)) {
+  if (!isEvmChain(chainId) && !isSolanaChain(chainId)) {
     throw new Error(
-      `On-chain sync currently supported only for EVM chains. ${chainId} is not EVM.`,
+      `On-chain sync currently supports EVM and Solana chains. ${chainId} is not supported.`,
     );
   }
 
@@ -490,7 +542,9 @@ export async function syncOnChainBalance(options, context) {
 
   const wallet = await getOrCreateWallet(agentId, chainId, { configDir });
   const address = wallet.address;
-  const onChainBalance = await fetchEvmBalance(chainId, token, address);
+  const onChainBalance = isEvmChain(chainId)
+    ? await fetchEvmBalance(chainId, token, address)
+    : await fetchSolanaBalance(chainId, token, address);
 
   const ledgerBalance = store.getBalance({
     agentId,

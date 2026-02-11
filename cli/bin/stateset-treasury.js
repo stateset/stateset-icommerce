@@ -552,7 +552,7 @@ program
   .command('sync')
   .description('Sync on-chain balances and record deltas')
   .requiredOption('--agent <id>', 'Agent ID')
-  .requiredOption('--chain <chain>', 'Chain ID (EVM only)')
+  .requiredOption('--chain <chain>', 'Chain ID (EVM or Solana)')
   .requiredOption('--token <symbol>', 'Token symbol')
   .action(async (options) => {
     const { jsonOutput, outputPath } = resolveOutputOptions(options);
@@ -607,6 +607,8 @@ program
     console.log(`   Ledger: ${result.ledger}`);
     console.log(`   Applied: ${result.applied ? 'yes' : 'no'}`);
   });
+
+const pricing = program.command('pricing').description('Configure per-tool pricing');
 
 pricing
   .command('set')
@@ -715,8 +717,6 @@ pricing
   });
 
 const identity = program.command('identity').description('ERC-8004 identity registry helpers');
-
-const pricing = program.command('pricing').description('Configure per-tool pricing');
 
 identity
   .command('register')

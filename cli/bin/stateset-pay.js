@@ -46,7 +46,7 @@ const options = {
   // Payment options
   to: { type: 'string', short: 't', description: 'Recipient wallet address' },
   amount: { type: 'string', short: 'a', description: 'Amount to send (e.g., 100.00)' },
-  chain: { type: 'string', short: 'c', default: 'solana', description: 'Blockchain network' },
+  chain: { type: 'string', short: 'c', default: 'set_chain', description: 'Blockchain network' },
   token: { type: 'string', description: 'Token symbol (default: chain stablecoin)' },
 
   // Agent options
@@ -85,7 +85,7 @@ ${chalk.bold('USAGE:')}
 ${chalk.bold('PAYMENT OPTIONS:')}
   -t, --to <address>      Recipient wallet address
   -a, --amount <amount>   Amount to send (e.g., 50.00)
-  -c, --chain <chain>     Blockchain network (default: solana)
+  -c, --chain <chain>     Blockchain network (default: set_chain)
       --token <symbol>    Token symbol (default: chain's stablecoin)
       --order <id>        Order ID for audit trail
       --customer <id>     Customer ID for audit trail
@@ -112,17 +112,17 @@ ${chalk.bold('SUPPORTED CHAINS:')}
   ${chalk.green('arbitrum')}       Arbitrum L2 (USDC) - Fast, cheap
 
 ${chalk.bold('EXAMPLES:')}
-  ${chalk.dim('# Send 50 USDC on Solana (simulated)')}
-  stateset pay --to 9WzD...WWWM --amount 50.00 --chain solana
+  ${chalk.dim('# Send 50 ssUSD on SET Chain (simulated)')}
+  stateset pay --to 0x1234...5678 --amount 50.00 --chain set_chain
 
-  ${chalk.dim('# Actually execute payment')}
-  stateset pay --apply --to 9WzD...WWWM --amount 50.00
+  ${chalk.dim('# Actually execute payment on the default chain (set_chain)')}
+  stateset pay --apply --to 0x1234...5678 --amount 50.00
 
   ${chalk.dim('# Send ssUSD on SET Chain')}
   stateset pay --apply --to 0x1234...5678 --amount 100 --chain set_chain
 
   ${chalk.dim('# Check balance')}
-  stateset pay --balance --chain solana
+  stateset pay --balance --chain set_chain
 
   ${chalk.dim('# Show wallet addresses for all chains')}
   stateset pay --wallet

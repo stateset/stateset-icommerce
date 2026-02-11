@@ -389,11 +389,11 @@ describe('ConversationContext', () => {
       assert.ok(suggestions.some((s) => s.action === 'get_stock'));
     });
 
-    it('suggests process_payment when pending orders exist', () => {
+    it('suggests create_payment when pending orders exist', () => {
       ctx.trackResource('order', 'ORD-1', () => {});
       ctx.recordToolCall('some_tool', {}, { success: true });
       const suggestions = ctx.suggestNextActions();
-      assert.ok(suggestions.some((s) => s.action === 'process_payment'));
+      assert.ok(suggestions.some((s) => s.action === 'create_payment'));
     });
 
     it('suggests verify order after create_order', () => {

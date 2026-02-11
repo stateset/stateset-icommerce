@@ -224,8 +224,8 @@ describe('AgentDebugger — analyzeToolContext', () => {
     assert.ok(ctx.preamble.includes('updating order status'));
   });
 
-  it('returns context for process_payment', () => {
-    const ctx = dbg.analyzeToolContext('process_payment', new Error('test'));
+  it('returns context for create_payment', () => {
+    const ctx = dbg.analyzeToolContext('create_payment', new Error('test'));
     assert.ok(ctx.preamble.includes('processing payment'));
   });
 

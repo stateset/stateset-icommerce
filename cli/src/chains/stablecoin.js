@@ -1,17 +1,12 @@
 /**
  * Stablecoin Payment Execution for StateSet iCommerce
  *
- * Handles:
- * - Payment intent creation (VES event)
- * - Transaction signing with agent wallet
- * - On-chain submission
- * - Confirmation polling
- * - VES audit trail
- *
- * Supports: Solana (USDC), SET Chain (ssUSD), Base (USDC)
+ * Live settlement is supported on EVM chains and Solana.
+ * Other chains can be simulated for planning but are not executed.
  */
 
-import crypto from 'crypto';
+import { randomUUID } from 'node:crypto';
+import { Contract, JsonRpcProvider, Wallet } from 'ethers';
 import { deriveWallet } from './wallet.js';
 import {
   getChain,
@@ -20,10 +15,7 @@ import {
   toSmallestUnit,
   fromSmallestUnit,
   getExplorerTxUrl,
-  isEd25519Chain,
   isEvmChain,
-  isZcashChain,
-  isBitcoinChain,
 } from './config.js';
 import {
   ValidationError,
@@ -34,83 +26,201 @@ import {
   validateAddress,
 } from './validation.js';
 
-// =============================================================================
-// PAYMENT INTENT
-// =============================================================================
+const ERC20_ABI = [
+  'function transfer(address to, uint256 amount) returns (bool)',
+  'function balanceOf(address owner) view returns (uint256)',
+];
+
+const DEFAULT_CONFIRMATION_ATTEMPTS = 60;
+const DEFAULT_POLL_INTERVAL_MS = 2_000;
+const MAX_SAFE_U64_AS_NUMBER = BigInt(Number.MAX_SAFE_INTEGER);
+const SOLANA_COMMITMENT = 'confirmed';
+
+let solanaSdkPromise = null;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function requireEvmExecution(chainId) {
+  if (!isEvmChain(chainId)) {
+    throw new Error(
+      `EVM execution expected for chain ${chainId}. Supported live settlement targets are EVM chains and Solana.`,
+    );
+  }
+}
+
+function isSolanaChain(chainId) {
+  return chainId === 'solana' || chainId === 'solana_devnet';
+}
+
+function requireSolanaExecution(chainId) {
+  if (!isSolanaChain(chainId)) {
+    throw new Error(
+      `Live Solana execution is only available on solana/solana_devnet. ${chainId} is not supported.`,
+    );
+  }
+}
+
+function createEvmProvider(chainId) {
+  const chain = getChain(chainId);
+  if (!chain?.rpcUrl) {
+    throw new Error(`RPC URL is not configured for chain ${chainId}`);
+  }
+  return new JsonRpcProvider(chain.rpcUrl, chain.chainId || undefined);
+}
+
+async function loadSolanaSdk() {
+  if (!solanaSdkPromise) {
+    solanaSdkPromise = Promise.all([import('@solana/web3.js'), import('@solana/spl-token')])
+      .then(([web3, splToken]) => ({ web3, splToken }))
+      .catch((error) => {
+        solanaSdkPromise = null;
+        throw new Error(
+          `Solana support requires @solana/web3.js and @solana/spl-token. Install them in cli/: ${error.message}`,
+        );
+      });
+  }
+  return solanaSdkPromise;
+}
+
+async function createSolanaConnection(chainId) {
+  requireSolanaExecution(chainId);
+  const chain = getChain(chainId);
+  if (!chain?.rpcUrl) {
+    throw new Error(`RPC URL is not configured for chain ${chainId}`);
+  }
+  const { web3 } = await loadSolanaSdk();
+  return new web3.Connection(chain.rpcUrl, SOLANA_COMMITMENT);
+}
+
+async function createSolanaSigner(wallet, chainId) {
+  requireSolanaExecution(chainId);
+  const { web3 } = await loadSolanaSdk();
+  if (!wallet?.privateKey || wallet.privateKey.length !== 32) {
+    throw new Error('Invalid Solana private key material');
+  }
+
+  const signer = web3.Keypair.fromSeed(Uint8Array.from(wallet.privateKey));
+  const expectedAddress = signer.publicKey.toBase58();
+  if (expectedAddress !== wallet.address) {
+    throw new Error('Derived wallet address does not match Solana signer public key');
+  }
+
+  return signer;
+}
+
+function createEvmSigner(wallet, provider) {
+  const privateKeyHex = `0x${wallet.privateKey.toString('hex')}`;
+  const signer = new Wallet(privateKeyHex, provider);
+
+  if (signer.address.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new Error('Derived wallet address does not match EVM signer address');
+  }
+
+  return signer;
+}
+
+function applyFeeData(request, feeData) {
+  if (
+    feeData?.maxFeePerGas !== null &&
+    feeData?.maxFeePerGas !== undefined &&
+    feeData?.maxPriorityFeePerGas !== null &&
+    feeData?.maxPriorityFeePerGas !== undefined
+  ) {
+    request.maxFeePerGas = feeData.maxFeePerGas;
+    request.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+    return;
+  }
+
+  if (feeData?.gasPrice !== null && feeData?.gasPrice !== undefined) {
+    request.gasPrice = feeData.gasPrice;
+  }
+}
+
+function addGasMargin(estimatedGas) {
+  const estimate =
+    typeof estimatedGas === 'bigint' ? estimatedGas : BigInt(estimatedGas.toString());
+  const extra = estimate / 5n; // 20% buffer
+  return estimate + (extra > 0n ? extra : 1n);
+}
+
+function buildUnsupportedPreviewTransaction(intent, chainId) {
+  return {
+    type: 'unsupported_live_chain',
+    chainId,
+    fromAddress: intent.fromAddress,
+    toAddress: intent.toAddress,
+    amountSmallest: intent.amountSmallest.toString(),
+    reason: 'Simulation only: live execution is currently implemented for EVM and Solana chains.',
+  };
+}
 
 /**
  * @typedef {Object} PaymentIntent
- * @property {string} intentId - Unique intent identifier
- * @property {string} chainId - Blockchain network
- * @property {string} tokenSymbol - Token to transfer (USDC, ssUSD)
- * @property {string} fromAddress - Sender wallet address
- * @property {string} toAddress - Recipient wallet address
- * @property {string} amount - Human-readable amount (e.g., "100.00")
- * @property {bigint} amountSmallest - Amount in smallest units
- * @property {string} currency - Currency code (usually USD)
- * @property {Object} [metadata] - Additional metadata (order_id, customer_id)
- * @property {string} createdAt - ISO timestamp
- * @property {string} status - pending, signed, submitted, confirmed, failed
+ * @property {string} intentId
+ * @property {string} chainId
+ * @property {string} tokenSymbol
+ * @property {string} fromAddress
+ * @property {string} toAddress
+ * @property {string} amount
+ * @property {bigint} amountSmallest
+ * @property {string} currency
+ * @property {Object} [metadata]
+ * @property {string} createdAt
+ * @property {string} status
  */
 
 /**
  * @typedef {Object} PaymentResult
  * @property {boolean} success
  * @property {string} intentId
- * @property {string} [txHash] - Transaction hash/signature
- * @property {string} [explorerUrl] - Block explorer URL
+ * @property {string} [txHash]
+ * @property {string} [explorerUrl]
  * @property {number} [blockNumber]
  * @property {number} [confirmations]
  * @property {string} [error]
- * @property {Array<string>} vesEventIds - VES event IDs for audit trail
+ * @property {Array<string>} vesEventIds
  */
 
 /**
  * Create a payment intent
  * @param {Object} params
- * @param {string} params.agentId - Agent identifier
- * @param {string} params.chainId - Chain to use (solana, set_chain, base)
- * @param {string} params.toAddress - Recipient wallet address
- * @param {string|number} params.amount - Amount to send (human-readable)
- * @param {string} [params.tokenSymbol] - Token symbol (default: chain's default stablecoin)
- * @param {Object} [params.metadata] - Additional metadata
+ * @param {string} params.agentId
+ * @param {string} params.chainId
+ * @param {string} params.toAddress
+ * @param {string|number} params.amount
+ * @param {string} [params.tokenSymbol]
+ * @param {Object} [params.metadata]
  * @param {Object} [options]
  * @returns {Promise<PaymentIntent>}
  */
 export async function createPaymentIntent(params, options = {}) {
   const { agentId, chainId, toAddress, amount, tokenSymbol, metadata = {} } = params;
-
   const { configDir = '.stateset' } = options;
 
-  // Validate agent ID
   if (!agentId || typeof agentId !== 'string') {
     throw new ValidationError(ValidationErrorCodes.MISSING_REQUIRED, 'Agent ID is required', {
       field: 'agentId',
     });
   }
 
-  // Validate chain using comprehensive validator
   validateChainId(chainId);
   getChain(chainId);
 
-  // Validate token
   validateToken(chainId, tokenSymbol);
-
-  // Get token config
   const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
 
-  // Validate amount (returns parsed number)
-  const amountNum = validateAmount(amount);
-
-  // Validate recipient address
+  validateAmount(amount);
   validateAddress(toAddress, chainId);
 
-  // Derive agent wallet
   const wallet = await deriveWallet(agentId, chainId, { configDir });
 
-  // Check for self-transfer
-  const fromNormalized = wallet.address.toLowerCase();
-  const toNormalized = toAddress.toLowerCase();
+  const caseInsensitiveAddressCompare = isEvmChain(chainId);
+  const fromNormalized = caseInsensitiveAddressCompare
+    ? wallet.address.toLowerCase()
+    : wallet.address;
+  const toNormalized = caseInsensitiveAddressCompare ? toAddress.toLowerCase() : toAddress;
   if (fromNormalized === toNormalized) {
     throw new ValidationError(
       ValidationErrorCodes.SELF_TRANSFER,
@@ -119,19 +229,18 @@ export async function createPaymentIntent(params, options = {}) {
     );
   }
 
-  // Convert amount to smallest units
-  const amountSmallest = toSmallestUnit(amountNum, token.decimals);
+  const amountSmallest = toSmallestUnit(amount, token.decimals);
+  const normalizedAmount = fromSmallestUnit(amountSmallest, token.decimals);
 
-  // Create intent
-  const intent = {
-    intentId: crypto.randomUUID(),
+  return {
+    intentId: randomUUID(),
     chainId,
     tokenSymbol: token.symbol,
     tokenAddress: token.address,
     tokenDecimals: token.decimals,
     fromAddress: wallet.address,
     toAddress,
-    amount: amountNum.toFixed(token.decimals),
+    amount: normalizedAmount,
     amountSmallest,
     currency: 'USD',
     metadata: {
@@ -141,48 +250,31 @@ export async function createPaymentIntent(params, options = {}) {
     createdAt: new Date().toISOString(),
     status: 'pending',
   };
-
-  return intent;
 }
-
-// =============================================================================
-// PAYMENT EXECUTION
-// =============================================================================
 
 /**
  * Execute a stablecoin payment
- *
- * This is a high-level function that:
- * 1. Creates a payment intent
- * 2. Signs the transaction with agent wallet
- * 3. Submits to the blockchain
- * 4. Waits for confirmation
- * 5. Records VES events for audit trail
- *
  * @param {Object} params
- * @param {string} params.agentId - Agent identifier
- * @param {string} params.chainId - Chain to use
- * @param {string} params.toAddress - Recipient address
- * @param {string|number} params.amount - Amount to send
- * @param {string} [params.tokenSymbol] - Token symbol
- * @param {Object} [params.metadata] - Order/customer metadata
+ * @param {string} params.agentId
+ * @param {string} params.chainId
+ * @param {string} params.toAddress
+ * @param {string|number} params.amount
+ * @param {string} [params.tokenSymbol]
+ * @param {Object} [params.metadata]
  * @param {Object} [options]
- * @param {boolean} [options.simulate] - Dry run (don't actually send)
- * @param {Function} [options.onProgress] - Progress callback
+ * @param {boolean} [options.simulate]
+ * @param {Function} [options.onProgress]
  * @returns {Promise<PaymentResult>}
  */
 export async function executePayment(params, options = {}) {
   const { agentId, chainId, toAddress, amount, tokenSymbol, metadata = {} } = params;
-
   const { configDir = '.stateset', simulate = false, onProgress = () => {} } = options;
 
   const vesEventIds = [];
   let intent;
 
   try {
-    // Step 1: Create payment intent
     onProgress({ step: 'creating_intent', message: 'Creating payment intent...' });
-
     intent = await createPaymentIntent(
       {
         agentId,
@@ -201,9 +293,7 @@ export async function executePayment(params, options = {}) {
       intent,
     });
 
-    // Step 2: Get wallet for signing
     onProgress({ step: 'deriving_wallet', message: 'Deriving agent wallet...' });
-
     const wallet = await deriveWallet(agentId, chainId, { configDir });
 
     onProgress({
@@ -211,18 +301,9 @@ export async function executePayment(params, options = {}) {
       message: `Wallet: ${wallet.address}`,
     });
 
-    // Step 3: Build transaction
     onProgress({ step: 'building_tx', message: 'Building transaction...' });
+    const txData = await buildTransaction(intent, wallet, chainId, { simulate });
 
-    const txData = await buildTransaction(intent, wallet, chainId);
-
-    // Step 4: Sign transaction
-    onProgress({ step: 'signing', message: 'Signing transaction...' });
-
-    const signedTx = await signTransaction(txData, wallet, chainId);
-    intent.status = 'signed';
-
-    // If simulating, stop here
     if (simulate) {
       onProgress({
         step: 'simulated',
@@ -234,13 +315,16 @@ export async function executePayment(params, options = {}) {
         intentId: intent.intentId,
         simulated: true,
         intent,
+        txPreview: txData,
         vesEventIds,
       };
     }
 
-    // Step 5: Submit transaction
-    onProgress({ step: 'submitting', message: 'Submitting to network...' });
+    onProgress({ step: 'signing', message: 'Signing transaction...' });
+    const signedTx = await signTransaction(txData, wallet, chainId);
+    intent.status = 'signed';
 
+    onProgress({ step: 'submitting', message: 'Submitting to network...' });
     const submitResult = await submitTransaction(signedTx, chainId);
     intent.status = 'submitted';
 
@@ -250,18 +334,14 @@ export async function executePayment(params, options = {}) {
       txHash: submitResult.txHash,
     });
 
-    // Step 6: Wait for confirmation
     onProgress({ step: 'confirming', message: 'Waiting for confirmation...' });
-
     const confirmation = await waitForConfirmation(submitResult.txHash, chainId, {
       onProgress,
-      isMock: submitResult.isMock,
+      ...submitResult,
     });
-
     intent.status = 'confirmed';
 
     const explorerUrl = getExplorerTxUrl(chainId, submitResult.txHash);
-
     onProgress({
       step: 'confirmed',
       message: `Confirmed! ${confirmation.confirmations} confirmations`,
@@ -301,376 +381,389 @@ export async function executePayment(params, options = {}) {
   }
 }
 
-// =============================================================================
-// TRANSACTION BUILDING
-// =============================================================================
+async function buildTransaction(intent, wallet, chainId, options = {}) {
+  const { simulate = false } = options;
 
-/**
- * Build a transaction for the payment
- * @param {PaymentIntent} intent
- * @param {Object} wallet
- * @param {string} chainId
- * @returns {Promise<Object>}
- */
-async function buildTransaction(intent, wallet, chainId) {
-  if (isEd25519Chain(chainId)) {
-    return buildSolanaTransaction(intent, wallet);
-  } else if (isZcashChain(chainId)) {
-    return buildZcashTransaction(intent, wallet, chainId);
-  } else if (isBitcoinChain(chainId)) {
-    return buildBitcoinTransaction(intent, wallet, chainId);
-  } else if (isEvmChain(chainId)) {
+  if (isEvmChain(chainId)) {
     return buildEvmTransaction(intent, wallet, chainId);
   }
 
-  throw new Error(`Unsupported chain for transaction building: ${chainId}`);
+  if (isSolanaChain(chainId)) {
+    return buildSolanaTransaction(intent, wallet, chainId);
+  }
+
+  if (simulate) {
+    return buildUnsupportedPreviewTransaction(intent, chainId);
+  }
+
+  throw new Error(
+    `Live payment execution is not implemented for chain ${chainId}. Supported live chains: EVM + Solana.`,
+  );
 }
 
-/**
- * Build Solana SPL token transfer transaction
- * Note: In production, use @solana/web3.js and @solana/spl-token
- */
-async function buildSolanaTransaction(intent, _wallet) {
-  // This is a simplified representation
-  // In production, use proper Solana SDK
+function ensureSafeNumberAmount(amount, fieldLabel) {
+  if (amount > MAX_SAFE_U64_AS_NUMBER) {
+    throw new Error(
+      `${fieldLabel} exceeds JavaScript safe integer range and cannot be submitted safely`,
+    );
+  }
+  return Number(amount);
+}
+
+async function buildSolanaTransaction(intent, wallet, chainId) {
+  requireSolanaExecution(chainId);
+  const connection = await createSolanaConnection(chainId);
+  const signer = await createSolanaSigner(wallet, chainId);
+  const { web3, splToken } = await loadSolanaSdk();
+
+  const fromPubkey = signer.publicKey;
+  const toPubkey = new web3.PublicKey(intent.toAddress);
+  const transaction = new web3.Transaction();
+
+  if (!intent.tokenAddress || intent.tokenAddress === 'native') {
+    const lamports = ensureSafeNumberAmount(intent.amountSmallest, 'SOL transfer amount');
+    transaction.add(
+      web3.SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports,
+      }),
+    );
+
+    const latestBlockhash = await connection.getLatestBlockhash(SOLANA_COMMITMENT);
+    transaction.recentBlockhash = latestBlockhash.blockhash;
+    transaction.feePayer = fromPubkey;
+
+    return {
+      type: 'solana_native_transfer',
+      connection,
+      transaction,
+      signer,
+      latestBlockhash,
+    };
+  }
+
+  const mint = new web3.PublicKey(intent.tokenAddress);
+  const sourceAta = splToken.getAssociatedTokenAddressSync(
+    mint,
+    fromPubkey,
+    false,
+    splToken.TOKEN_PROGRAM_ID,
+    splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  const destinationAta = splToken.getAssociatedTokenAddressSync(
+    mint,
+    toPubkey,
+    false,
+    splToken.TOKEN_PROGRAM_ID,
+    splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+
+  const sourceAccount = await connection.getAccountInfo(sourceAta);
+  if (!sourceAccount) {
+    throw new Error(
+      `Source token account does not exist for ${intent.tokenSymbol}. Fund ${sourceAta.toBase58()} first.`,
+    );
+  }
+
+  const destinationAccount = await connection.getAccountInfo(destinationAta);
+  if (!destinationAccount) {
+    transaction.add(
+      splToken.createAssociatedTokenAccountInstruction(
+        fromPubkey,
+        destinationAta,
+        toPubkey,
+        mint,
+        splToken.TOKEN_PROGRAM_ID,
+        splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
+      ),
+    );
+  }
+
+  transaction.add(
+    splToken.createTransferInstruction(
+      sourceAta,
+      destinationAta,
+      fromPubkey,
+      intent.amountSmallest,
+      [],
+      splToken.TOKEN_PROGRAM_ID,
+    ),
+  );
+
+  const latestBlockhash = await connection.getLatestBlockhash(SOLANA_COMMITMENT);
+  transaction.recentBlockhash = latestBlockhash.blockhash;
+  transaction.feePayer = fromPubkey;
 
   return {
     type: 'solana_spl_transfer',
-    fromAddress: intent.fromAddress,
-    toAddress: intent.toAddress,
-    tokenMint: intent.tokenAddress,
-    amount: intent.amountSmallest.toString(),
-    decimals: intent.tokenDecimals,
-    // In production: include recent blockhash, instruction data, etc.
-    mockTx: true,
+    connection,
+    transaction,
+    signer,
+    latestBlockhash,
   };
 }
 
-/**
- * Build EVM token transfer transaction
- * Note: In production, use ethers.js or viem
- */
 async function buildEvmTransaction(intent, wallet, chainId) {
+  requireEvmExecution(chainId);
   const chain = getChain(chainId);
+  const provider = createEvmProvider(chainId);
+  const signer = createEvmSigner(wallet, provider);
+  const feeData = await provider.getFeeData();
+  const nonce = await provider.getTransactionCount(intent.fromAddress, 'pending');
 
-  // ERC20 transfer function signature: transfer(address,uint256)
-  const transferSelector = '0xa9059cbb';
+  const request = {
+    chainId: chain.chainId,
+    nonce,
+    from: intent.fromAddress,
+  };
 
-  // Encode parameters (simplified)
-  const toAddressPadded = intent.toAddress.slice(2).padStart(64, '0');
-  const amountHex = intent.amountSmallest.toString(16).padStart(64, '0');
+  if (!intent.tokenAddress || intent.tokenAddress === 'native') {
+    request.to = intent.toAddress;
+    request.value = intent.amountSmallest;
+    const gasEstimate = await provider.estimateGas(request);
+    request.gasLimit = addGasMargin(gasEstimate);
+    applyFeeData(request, feeData);
 
-  const data = transferSelector + toAddressPadded + amountHex;
+    return {
+      type: 'evm_native_transfer',
+      request,
+      signerAddress: signer.address,
+    };
+  }
+
+  const contract = new Contract(intent.tokenAddress, ERC20_ABI, provider);
+  const populated = await contract.transfer.populateTransaction(
+    intent.toAddress,
+    intent.amountSmallest,
+  );
+
+  request.to = intent.tokenAddress;
+  request.data = populated.data || '0x';
+  request.value = 0n;
+  const gasEstimate = await provider.estimateGas(request);
+  request.gasLimit = addGasMargin(gasEstimate);
+  applyFeeData(request, feeData);
 
   return {
     type: 'evm_erc20_transfer',
-    chainId: chain.chainId,
-    from: intent.fromAddress,
-    to: intent.tokenAddress, // Token contract
-    data,
-    value: '0x0',
-    // In production: include gas estimation, nonce, etc.
-    mockTx: true,
+    request,
+    signerAddress: signer.address,
   };
 }
 
-/**
- * Build Zcash transparent transaction
- * Note: In production, use zcash libraries (e.g., librustzcash bindings or zcash-primitives)
- */
-async function buildZcashTransaction(intent, wallet, chainId) {
-  return {
-    type: 'zcash_t_transfer',
-    fromAddress: intent.fromAddress,
-    toAddress: intent.toAddress,
-    amount: intent.amountSmallest.toString(),
-    chainId,
-    // Zcash uses UTXO model like Bitcoin
-    // In production: include UTXO inputs, outputs, fee calculation, etc.
-    mockTx: true,
-  };
-}
-
-/**
- * Build Bitcoin P2PKH transaction
- * Note: In production, use bitcoinjs-lib or similar
- */
-async function buildBitcoinTransaction(intent, wallet, chainId) {
-  return {
-    type: 'bitcoin_p2pkh_transfer',
-    fromAddress: intent.fromAddress,
-    toAddress: intent.toAddress,
-    amount: intent.amountSmallest.toString(),
-    chainId,
-    // Bitcoin uses UTXO model
-    // In production: include UTXO inputs, outputs, fee calculation, script signing, etc.
-    mockTx: true,
-  };
-}
-
-// =============================================================================
-// TRANSACTION SIGNING
-// =============================================================================
-
-/**
- * Sign a transaction with the wallet's private key
- */
 async function signTransaction(txData, wallet, chainId) {
-  if (txData.mockTx) {
-    // For mock transactions, create a deterministic "signature"
-    const mockSig = crypto
-      .createHash('sha256')
-      .update(JSON.stringify(txData))
-      .update(wallet.privateKey)
-      .digest('hex');
+  if (isSolanaChain(chainId)) {
+    const signer = await createSolanaSigner(wallet, chainId);
+    txData.transaction.sign(signer);
+    const serializedTransaction = txData.transaction.serialize();
 
     return {
       ...txData,
-      signature: mockSig,
+      serializedTransaction,
       signedAt: new Date().toISOString(),
     };
   }
 
-  // In production, use proper chain-specific signing
-  if (isEd25519Chain(chainId)) {
-    return signSolanaTransaction(txData, wallet);
-  } else if (isZcashChain(chainId)) {
-    return signZcashTransaction(txData, wallet);
-  } else if (isBitcoinChain(chainId)) {
-    return signBitcoinTransaction(txData, wallet);
-  } else {
-    return signEvmTransaction(txData, wallet);
-  }
-}
+  requireEvmExecution(chainId);
 
-async function signSolanaTransaction(txData, wallet) {
-  // In production: use @solana/web3.js Transaction.sign()
-  const message = Buffer.from(JSON.stringify(txData), 'utf8');
-
-  const keyObj = crypto.createPrivateKey({
-    key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), wallet.privateKey]),
-    format: 'der',
-    type: 'pkcs8',
-  });
-
-  const signature = crypto.sign(null, message, keyObj);
+  const signer = createEvmSigner(wallet);
+  const signedRawTransaction = await signer.signTransaction(txData.request);
 
   return {
     ...txData,
-    signature: signature.toString('base64'),
+    signedRawTransaction,
     signedAt: new Date().toISOString(),
   };
 }
 
-async function signEvmTransaction(txData, _wallet) {
-  // In production: use ethers.js Wallet.signTransaction()
-  // For now, create a mock signature
-  const message = Buffer.from(JSON.stringify(txData), 'utf8');
-  const hash = crypto.createHash('sha256').update(message).digest();
-
-  return {
-    ...txData,
-    signature: '0x' + hash.toString('hex'),
-    signedAt: new Date().toISOString(),
-  };
-}
-
-async function signZcashTransaction(txData, _wallet) {
-  // In production: use secp256k1 ECDSA signature
-  // Zcash uses Bitcoin-style transaction signing (SIGHASH_ALL)
-  const message = Buffer.from(JSON.stringify(txData), 'utf8');
-
-  // Create ECDSA-style signature using the wallet's secp256k1 private key
-  // For mock, we use double SHA256 hash as signature placeholder
-  const hash = crypto
-    .createHash('sha256')
-    .update(crypto.createHash('sha256').update(message).digest())
-    .digest();
-
-  return {
-    ...txData,
-    signature: hash.toString('hex'),
-    signedAt: new Date().toISOString(),
-  };
-}
-
-async function signBitcoinTransaction(txData, _wallet) {
-  // In production: use secp256k1 ECDSA signature with SIGHASH_ALL
-  // Bitcoin uses DER-encoded signatures with sighash byte appended
-  const message = Buffer.from(JSON.stringify(txData), 'utf8');
-
-  // Create ECDSA-style signature using the wallet's secp256k1 private key
-  // For mock, we use double SHA256 hash as signature placeholder
-  const hash = crypto
-    .createHash('sha256')
-    .update(crypto.createHash('sha256').update(message).digest())
-    .digest();
-
-  return {
-    ...txData,
-    signature: hash.toString('hex'),
-    signedAt: new Date().toISOString(),
-  };
-}
-
-// =============================================================================
-// TRANSACTION SUBMISSION
-// =============================================================================
-
-/**
- * Submit a signed transaction to the network
- */
 async function submitTransaction(signedTx, chainId) {
-  if (signedTx.mockTx) {
-    // Mock submission - generate a fake tx hash with a prefix we can detect
-    let mockTxHash;
-    if (isEd25519Chain(chainId)) {
-      mockTxHash = crypto.randomBytes(64).toString('base64'); // Solana signatures are 64 bytes
-    } else if (isZcashChain(chainId)) {
-      mockTxHash = crypto.randomBytes(32).toString('hex'); // Zcash uses 32-byte txids (64 hex chars)
-    } else if (isBitcoinChain(chainId)) {
-      mockTxHash = crypto.randomBytes(32).toString('hex'); // Bitcoin uses 32-byte txids (64 hex chars)
-    } else {
-      mockTxHash = '0xMOCK' + crypto.randomBytes(30).toString('hex'); // EVM with MOCK prefix
-    }
-
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  if (isSolanaChain(chainId)) {
+    const connection = signedTx.connection || (await createSolanaConnection(chainId));
+    const txHash = await connection.sendRawTransaction(signedTx.serializedTransaction, {
+      skipPreflight: false,
+      preflightCommitment: SOLANA_COMMITMENT,
+      maxRetries: 3,
+    });
 
     return {
-      txHash: mockTxHash,
+      txHash,
       submittedAt: new Date().toISOString(),
-      isMock: true,
+      connection,
+      latestBlockhash: signedTx.latestBlockhash || null,
     };
   }
 
-  // In production, submit to actual RPC endpoint
-  if (isEd25519Chain(chainId)) {
-    // Solana: sendTransaction RPC call
-    throw new Error('Production Solana submission not implemented. Use @solana/web3.js.');
-  } else if (isZcashChain(chainId)) {
-    // Zcash: sendrawtransaction RPC call
-    throw new Error('Production Zcash submission not implemented. Use zcash-rpc or librustzcash.');
-  } else if (isBitcoinChain(chainId)) {
-    // Bitcoin: sendrawtransaction RPC call
-    throw new Error('Production Bitcoin submission not implemented. Use bitcoinjs-lib.');
-  } else {
-    // EVM: eth_sendRawTransaction
-    throw new Error('Production EVM submission not implemented. Use ethers.js.');
-  }
+  requireEvmExecution(chainId);
+
+  const provider = createEvmProvider(chainId);
+  const response = await provider.broadcastTransaction(signedTx.signedRawTransaction);
+
+  return {
+    txHash: response.hash,
+    submittedAt: new Date().toISOString(),
+  };
 }
 
-// =============================================================================
-// CONFIRMATION POLLING
-// =============================================================================
-
-/**
- * Wait for transaction confirmation
- */
 async function waitForConfirmation(txHash, chainId, options = {}) {
   const {
     onProgress = () => {},
-    maxAttempts = 60,
-    pollInterval = 2000,
-    isMock: isMockFromSubmit,
+    maxAttempts = DEFAULT_CONFIRMATION_ATTEMPTS,
+    pollInterval = DEFAULT_POLL_INTERVAL_MS,
   } = options;
+
+  if (!isSolanaChain(chainId)) {
+    requireEvmExecution(chainId);
+  }
 
   const chain = getChain(chainId);
   const requiredConfirmations = chain?.confirmations || 1;
 
-  // For mock transactions, simulate confirmation
-  // Detect mock from: submit result flag, MOCK prefix in hash, or non-hex hash (Solana base64)
-  const isMock =
-    isMockFromSubmit || txHash.includes('MOCK') || (!txHash.startsWith('0x') && txHash.length > 20); // Base64 Solana sigs
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const status = await getTransactionStatus(txHash, chainId, options);
 
-  if (isMock || process.env.MOCK_BLOCKCHAIN === 'true') {
-    // Simulate confirmation delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (status.confirmed && status.confirmations >= requiredConfirmations) {
+      return status;
+    }
 
     onProgress({
       step: 'confirmation_update',
-      confirmations: requiredConfirmations,
+      confirmations: status.confirmations || 0,
       required: requiredConfirmations,
     });
 
-    return {
-      confirmed: true,
-      blockNumber: Math.floor(Date.now() / 1000),
-      confirmations: requiredConfirmations,
-      confirmedAt: new Date().toISOString(),
-    };
-  }
-
-  // Production confirmation polling
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const status = await getTransactionStatus(txHash, chainId);
-
-      if (status.confirmed && status.confirmations >= requiredConfirmations) {
-        return status;
-      }
-
-      onProgress({
-        step: 'confirmation_update',
-        confirmations: status.confirmations || 0,
-        required: requiredConfirmations,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    } catch {
-      // Transaction might not be indexed yet
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
+    await sleep(pollInterval);
   }
 
   throw new Error(`Transaction not confirmed after ${maxAttempts} attempts`);
 }
 
-/**
- * Get transaction status from blockchain
- */
-async function getTransactionStatus(_txHash, _chainId) {
-  // In production, query the RPC endpoint
-  throw new Error('Production transaction status check not implemented.');
-}
+async function getTransactionStatus(txHash, chainId, options = {}) {
+  if (isSolanaChain(chainId)) {
+    const connection = options.connection || (await createSolanaConnection(chainId));
+    const response = await connection.getSignatureStatuses([txHash], {
+      searchTransactionHistory: true,
+    });
+    const status = response?.value?.[0] || null;
 
-// =============================================================================
-// BALANCE CHECKING
-// =============================================================================
+    if (!status) {
+      return {
+        confirmed: false,
+        confirmations: 0,
+      };
+    }
+
+    if (status.err) {
+      throw new Error(`Transaction ${txHash} failed on-chain: ${JSON.stringify(status.err)}`);
+    }
+
+    const chain = getChain(chainId);
+    const requiredConfirmations = chain?.confirmations || 1;
+    const confirmationStatus = status.confirmationStatus || null;
+    const rawConfirmations = status.confirmations;
+    const finalized = confirmationStatus === 'finalized';
+    const confirmations =
+      rawConfirmations === null
+        ? finalized
+          ? requiredConfirmations
+          : 0
+        : Number(rawConfirmations || 0);
+    const confirmed = finalized || confirmations >= requiredConfirmations;
+
+    return {
+      confirmed,
+      blockNumber: status.slot,
+      confirmations,
+      confirmedAt: new Date().toISOString(),
+    };
+  }
+
+  requireEvmExecution(chainId);
+
+  const provider = createEvmProvider(chainId);
+  const receipt = await provider.getTransactionReceipt(txHash);
+
+  if (!receipt) {
+    return {
+      confirmed: false,
+      confirmations: 0,
+    };
+  }
+
+  if (receipt.status === 0) {
+    throw new Error(`Transaction ${txHash} reverted on-chain`);
+  }
+
+  const latestBlock = await provider.getBlockNumber();
+  const confirmations = Math.max(0, latestBlock - receipt.blockNumber + 1);
+
+  return {
+    confirmed: true,
+    blockNumber: receipt.blockNumber,
+    confirmations,
+    confirmedAt: new Date().toISOString(),
+  };
+}
 
 /**
  * Get token balance for an address
- * @param {string} address - Wallet address
- * @param {string} chainId - Chain identifier
- * @param {string} [tokenSymbol] - Token symbol (default: chain's default stablecoin)
+ * @param {string} address
+ * @param {string} chainId
+ * @param {string} [tokenSymbol]
  * @returns {Promise<{balance: string, balanceSmallest: bigint, symbol: string}>}
  */
 export async function getBalance(address, chainId, tokenSymbol) {
-  // Validate chain
   validateChainId(chainId);
-  const chain = getChain(chainId);
-
-  // Validate token
   validateToken(chainId, tokenSymbol);
-
-  // Validate address
   validateAddress(address, chainId);
 
   const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
 
-  // In production, query the blockchain
-  // For now, return mock balance
+  let balanceSmallest;
+  if (isSolanaChain(chainId)) {
+    const connection = await createSolanaConnection(chainId);
+    const { web3, splToken } = await loadSolanaSdk();
+    const owner = new web3.PublicKey(address);
 
-  if (process.env.MOCK_BLOCKCHAIN === 'true' || !chain.rpcUrl) {
-    const mockBalance = BigInt('1000000000'); // 1000 USDC
-    return {
-      balance: fromSmallestUnit(mockBalance, token.decimals),
-      balanceSmallest: mockBalance,
-      symbol: token.symbol,
-    };
+    if (!token.address || token.address === 'native') {
+      const rawBalance = await connection.getBalance(owner, SOLANA_COMMITMENT);
+      balanceSmallest = BigInt(rawBalance.toString());
+    } else {
+      const mint = new web3.PublicKey(token.address);
+      const tokenAccount = splToken.getAssociatedTokenAddressSync(
+        mint,
+        owner,
+        false,
+        splToken.TOKEN_PROGRAM_ID,
+        splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
+      );
+      const tokenAccountInfo = await connection.getAccountInfo(tokenAccount);
+      if (!tokenAccountInfo) {
+        balanceSmallest = 0n;
+      } else {
+        const raw = await connection.getTokenAccountBalance(tokenAccount, SOLANA_COMMITMENT);
+        balanceSmallest = BigInt(raw.value.amount);
+      }
+    }
+  } else {
+    requireEvmExecution(chainId);
+    const provider = createEvmProvider(chainId);
+
+    let rawBalance;
+    if (!token.address || token.address === 'native') {
+      rawBalance = await provider.getBalance(address);
+    } else {
+      const contract = new Contract(token.address, ERC20_ABI, provider);
+      rawBalance = await contract.balanceOf(address);
+    }
+
+    balanceSmallest = typeof rawBalance === 'bigint' ? rawBalance : BigInt(rawBalance.toString());
   }
-
-  throw new Error('Production balance check not implemented. Use chain-specific SDK.');
+  return {
+    balance: fromSmallestUnit(balanceSmallest, token.decimals),
+    balanceSmallest,
+    symbol: token.symbol,
+  };
 }
 
 /**
@@ -678,9 +771,7 @@ export async function getBalance(address, chainId, tokenSymbol) {
  */
 export async function hasSufficientBalance(address, chainId, amount, tokenSymbol) {
   const { balanceSmallest, symbol } = await getBalance(address, chainId, tokenSymbol);
-
   const token = tokenSymbol ? getToken(chainId, tokenSymbol) : getDefaultStablecoin(chainId);
-
   const requiredAmount = toSmallestUnit(amount, token.decimals);
 
   return {
@@ -690,10 +781,6 @@ export async function hasSufficientBalance(address, chainId, amount, tokenSymbol
     symbol,
   };
 }
-
-// =============================================================================
-// EXPORTS
-// =============================================================================
 
 export default {
   createPaymentIntent,

@@ -93,6 +93,7 @@ export class TreasuryStore {
     this._insertStmt = null;
     this._listStmt = null;
     this._listByAgentStmt = null;
+    this._findByTxStmt = null;
   }
 
   init() {
@@ -126,6 +127,19 @@ export class TreasuryStore {
       FROM treasury_transactions
       WHERE agent_id = ?
         AND (? IS NULL OR chain_id = ?)
+    `);
+
+    this._findByTxStmt = this.db.prepare(`
+      SELECT *
+      FROM treasury_transactions
+      WHERE agent_id = ?
+        AND chain_id = ?
+        AND token_symbol = ?
+        AND direction = ?
+        AND source = ?
+        AND tx_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
     `);
   }
 
@@ -213,6 +227,30 @@ export class TreasuryStore {
       ...row,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
     }));
+  }
+
+  /**
+   * Find the latest transaction by tx hash plus ledger dimensions.
+   * @param {Object} query
+   * @returns {Object|null}
+   */
+  findByTx(query = {}) {
+    if (!this.db) {
+      this.init();
+    }
+
+    const { agentId, chainId, tokenSymbol, direction, source, txId } = query;
+    if (!agentId || !chainId || !tokenSymbol || !direction || !source || !txId) {
+      return null;
+    }
+
+    const row = this._findByTxStmt.get(agentId, chainId, tokenSymbol, direction, source, txId);
+    if (!row) return null;
+
+    return {
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    };
   }
 
   /**

@@ -57,6 +57,18 @@ describe('permissions', () => {
     it('should have delete permissions for cancel operations', () => {
       assert.strictEqual(TOOL_PERMISSIONS.cancel_order, 'delete');
     });
+
+    it('should treat x402 on-chain settlement as a write operation', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.x402_settle_intent_onchain, 'write');
+    });
+
+    it('should treat x402 incoming settlement recording as a write operation', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.x402_record_incoming_settlement, 'write');
+    });
+
+    it('should treat x402 end-to-end execution as a write operation', () => {
+      assert.strictEqual(TOOL_PERMISSIONS.x402_execute_agent_payment, 'write');
+    });
   });
 
   describe('PermissionGate', () => {
@@ -236,6 +248,18 @@ describe('permissions', () => {
         gate.guardrails.maxToolCallsPerMinute,
         DEFAULT_GUARDRAILS.maxToolCallsPerMinute,
       );
+    });
+
+    it('default guardrails require approval for x402 on-chain settlement', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('x402_settle_intent_onchain'));
+    });
+
+    it('default guardrails require approval for x402 incoming settlement recording', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('x402_record_incoming_settlement'));
+    });
+
+    it('default guardrails require approval for x402 end-to-end execution', () => {
+      assert.ok(DEFAULT_GUARDRAILS.requireApprovalFor.includes('x402_execute_agent_payment'));
     });
   });
 

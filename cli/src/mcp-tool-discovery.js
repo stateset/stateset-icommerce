@@ -73,7 +73,7 @@ export class ToolDiscoveryEngine {
         'create_cart',
         'add_cart_item',
         'set_cart_shipping_address',
-        'checkout_to_order',
+        'complete_checkout',
       ],
       get_insights: [
         'get_sales_summary',
@@ -87,10 +87,30 @@ export class ToolDiscoveryEngine {
         'reserve_inventory',
         'create_inventory_item',
       ],
-      handle_payments: ['list_payments', 'get_payment', 'process_payment', 'refund_payment'],
+      handle_payments: [
+        'list_payments',
+        'get_payment',
+        'create_payment',
+        'complete_payment',
+        'create_refund',
+      ],
+      stablecoin_payments: [
+        'get_agent_wallet',
+        'get_wallet_balance',
+        'create_stablecoin_payment',
+        'list_supported_chains',
+      ],
+      agentic_payments: [
+        'x402_execute_agent_payment',
+        'x402_create_payment_intent',
+        'x402_sign_intent',
+        'x402_settle_intent_onchain',
+        'x402_record_incoming_settlement',
+        'x402_get_intent',
+      ],
       manage_subscriptions: ['list_subscriptions', 'create_subscription', 'cancel_subscription'],
-      apply_promotions: ['list_promotions', 'validate_coupon', 'apply_discount'],
-      calculate_taxes: ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'apply_tax_to_cart'],
+      apply_promotions: ['list_promotions', 'validate_coupon', 'apply_cart_promotions'],
+      calculate_taxes: ['get_tax_rate', 'list_tax_rates', 'calculate_tax', 'calculate_cart_tax'],
       semantic_search_products: ['vector_search_products'],
       semantic_search_customers: ['vector_search_customers'],
       semantic_search_orders: ['vector_search_orders'],
@@ -118,7 +138,7 @@ export class ToolDiscoveryEngine {
         'set_cart_shipping_address', // Step 5: Set shipping address
         'get_shipping_rates', // Step 6: Get shipping options
         'calculate_cart_tax', // Step 7: Calculate taxes
-        'checkout_to_order', // Step 8: Convert cart to order
+        'complete_checkout', // Step 8: Convert cart to order
       ],
       order_fulfillment: [
         'get_order', // Step 1: Get order details
@@ -135,8 +155,12 @@ export class ToolDiscoveryEngine {
         'create_return', // Step 3: Create return if needed
         'approve_return', // Step 4: Approve return
         'returns_receive_items', // Step 5: Mark as received
-        ' refund_payment', // Step 6: Refund customer
+        'create_refund', // Step 6: Refund customer
         'restock_inventory', // Step 7: Return to stock
+      ],
+      agent_to_agent_payment: [
+        'x402_execute_agent_payment', // Step 1: Create, sign, settle, and (optionally) credit incoming settlement
+        'x402_get_intent', // Step 2: Verify settlement details
       ],
       inventory_replenishment: [
         'get_stock', // Step 1: Check current levels
@@ -175,15 +199,22 @@ export class ToolDiscoveryEngine {
   getExecutionOrder(toolName) {
     const orderRules = {
       create_order: { mustPrecede: ['update_order_status', 'ship_order', 'cancel_order'] },
-      create_cart: { mustPrecede: ['add_cart_item', 'checkout_to_order'] },
-      add_cart_item: { mustFollow: ['create_cart'], mustPrecede: ['checkout_to_order'] },
-      checkout_to_order: {
+      create_cart: { mustPrecede: ['add_cart_item', 'complete_checkout'] },
+      add_cart_item: { mustFollow: ['create_cart'], mustPrecede: ['complete_checkout'] },
+      complete_checkout: {
         mustFollow: ['create_cart', 'add_cart_item'],
         mustPrecede: ['update_order_status'],
       },
       reserve_inventory: { mustPrecede: ['confirm_reservation'] },
-      approve_return: { mustPrecede: ['refund_payment', 'restock_inventory'] },
+      approve_return: { mustPrecede: ['create_refund', 'restock_inventory'] },
       create_purchase_order: { mustPrecede: ['receive_shipment'] },
+      x402_create_payment_intent: { mustPrecede: ['x402_sign_intent'] },
+      x402_sign_intent: {
+        mustFollow: ['x402_create_payment_intent'],
+        mustPrecede: ['x402_settle_intent_onchain'],
+      },
+      x402_settle_intent_onchain: { mustFollow: ['x402_sign_intent'] },
+      x402_execute_agent_payment: { mustPrecede: ['x402_get_intent'] },
     };
 
     return orderRules[toolName] || {};
@@ -234,7 +265,7 @@ export class ToolDiscoveryEngine {
       create_order: { avgLatency: '100ms', p99: '500ms', recommended: true },
       get_stock: { avgLatency: '20ms', p99: '50ms', recommended: true },
       reserve_inventory: { avgLatency: '30ms', p99: '100ms', recommended: true },
-      checkout_to_order: { avgLatency: '200ms', p99: '1s', recommended: true },
+      complete_checkout: { avgLatency: '200ms', p99: '1s', recommended: true },
       adjust_inventory: { avgLatency: '40ms', p99: '150ms', recommended: true },
     };
 

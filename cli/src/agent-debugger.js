@@ -166,7 +166,7 @@ export class AgentDebugger extends EventEmitter {
         solution: 'retry_payment',
         description: 'Retry payment processing',
         action: async (params) => ({
-          tool: 'process_payment',
+          tool: 'create_payment',
           params: {
             orderId: params.orderId,
             amount: params.amount,
@@ -322,7 +322,7 @@ export class AgentDebugger extends EventEmitter {
         ],
       },
 
-      process_payment: {
+      create_payment: {
         preamble: 'Failed while processing payment.',
         commonCauses: [
           'Invalid payment method details',
