@@ -30,7 +30,7 @@
 //! ```
 
 use chrono::{DateTime, NaiveDate, Utc};
-use rust_decimal::Decimal;
+use rust_decimal::{prelude::ToPrimitive, Decimal};
 use stateset_core::{
     // Cart types
     AddCartItem,
@@ -423,6 +423,7 @@ use stateset_core::{
     Zone,
 };
 use stateset_db::PostgresDatabase;
+use stateset_observability::{init_metrics, Metrics, MetricsConfig, MetricsSnapshot};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -453,6 +454,7 @@ use stateset_core::{
 /// ```
 pub struct AsyncCommerce {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncCommerce {
@@ -463,7 +465,10 @@ impl AsyncCommerce {
     /// * `url` - PostgreSQL connection string (e.g., "postgres://user:pass@localhost/db")
     pub async fn connect(url: &str) -> Result<Self> {
         let db = PostgresDatabase::connect(url).await?;
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            metrics: init_metrics(MetricsConfig::default()),
+        })
     }
 
     /// Connect with custom options.
@@ -480,32 +485,38 @@ impl AsyncCommerce {
     ) -> Result<Self> {
         let db = PostgresDatabase::connect_with_options(url, max_connections, acquire_timeout_secs)
             .await?;
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            metrics: init_metrics(MetricsConfig::default()),
+        })
     }
 
     /// Create from an existing PostgresDatabase instance.
     pub fn from_database(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+        Self {
+            db,
+            metrics: init_metrics(MetricsConfig::default()),
+        }
     }
 
     /// Access async order operations.
     pub fn orders(&self) -> AsyncOrders {
-        AsyncOrders::new(self.db.clone())
+        AsyncOrders::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async inventory operations.
     pub fn inventory(&self) -> AsyncInventory {
-        AsyncInventory::new(self.db.clone())
+        AsyncInventory::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async customer operations.
     pub fn customers(&self) -> AsyncCustomers {
-        AsyncCustomers::new(self.db.clone())
+        AsyncCustomers::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async product operations.
     pub fn products(&self) -> AsyncProducts {
-        AsyncProducts::new(self.db.clone())
+        AsyncProducts::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async custom objects operations (custom states / metaobjects).
@@ -520,17 +531,17 @@ impl AsyncCommerce {
 
     /// Access async return operations.
     pub fn returns(&self) -> AsyncReturns {
-        AsyncReturns::new(self.db.clone())
+        AsyncReturns::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async shipment operations.
     pub fn shipments(&self) -> AsyncShipments {
-        AsyncShipments::new(self.db.clone())
+        AsyncShipments::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async payment operations.
     pub fn payments(&self) -> AsyncPayments {
-        AsyncPayments::new(self.db.clone())
+        AsyncPayments::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async warranty operations.
@@ -560,7 +571,7 @@ impl AsyncCommerce {
 
     /// Access async cart operations.
     pub fn carts(&self) -> AsyncCarts {
-        AsyncCarts::new(self.db.clone())
+        AsyncCarts::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async analytics operations.
@@ -585,7 +596,7 @@ impl AsyncCommerce {
 
     /// Access async subscriptions operations.
     pub fn subscriptions(&self) -> AsyncSubscriptions {
-        AsyncSubscriptions::new(self.db.clone())
+        AsyncSubscriptions::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access async quality operations.
@@ -652,6 +663,16 @@ impl AsyncCommerce {
     pub fn database(&self) -> &PostgresDatabase {
         &self.db
     }
+
+    /// Access async metrics handle.
+    pub fn metrics(&self) -> &Metrics {
+        &self.metrics
+    }
+
+    /// Return a point-in-time metrics snapshot.
+    pub fn metrics_snapshot(&self) -> MetricsSnapshot {
+        self.metrics.snapshot()
+    }
 }
 
 // ============================================================================
@@ -661,16 +682,22 @@ impl AsyncCommerce {
 /// Async order operations.
 pub struct AsyncOrders {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncOrders {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new order.
     pub async fn create(&self, input: CreateOrder) -> Result<Order> {
-        self.db.orders().create_async(input).await
+        let order = self.db.orders().create_async(input).await?;
+        self.metrics.record_order_created(
+            &order.customer_id.to_string(),
+            order.total_amount.to_f64().unwrap_or(0.0),
+        );
+        Ok(order)
     }
 
     /// Get an order by ID.
@@ -793,11 +820,12 @@ impl AsyncOrders {
 /// Async inventory operations.
 pub struct AsyncInventory {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncInventory {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new inventory item.
@@ -834,7 +862,11 @@ impl AsyncInventory {
 
     /// Adjust inventory quantity.
     pub async fn adjust_inventory(&self, input: AdjustInventory) -> Result<InventoryTransaction> {
-        self.db.inventory().adjust_async(input).await
+        let sku = input.sku.clone();
+        let delta = input.quantity.to_f64().unwrap_or(0.0);
+        let transaction = self.db.inventory().adjust_async(input).await?;
+        self.metrics.record_inventory_adjusted(&sku, delta);
+        Ok(transaction)
     }
 
     /// Convenience method to adjust inventory by SKU.
@@ -918,16 +950,20 @@ impl AsyncInventory {
 /// Async customer operations.
 pub struct AsyncCustomers {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncCustomers {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new customer.
     pub async fn create(&self, input: CreateCustomer) -> Result<Customer> {
-        self.db.customers().create_async(input).await
+        let customer = self.db.customers().create_async(input).await?;
+        self.metrics
+            .record_customer_created(&customer.id.to_string());
+        Ok(customer)
     }
 
     /// Get customer by ID.
@@ -978,16 +1014,19 @@ impl AsyncCustomers {
 /// Async product operations.
 pub struct AsyncProducts {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncProducts {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new product.
     pub async fn create(&self, input: CreateProduct) -> Result<Product> {
-        self.db.products().create_async(input).await
+        let product = self.db.products().create_async(input).await?;
+        self.metrics.record_product_created(&product.id.to_string());
+        Ok(product)
     }
 
     /// Get product by ID.
@@ -1172,16 +1211,19 @@ impl AsyncCustomObjects {
 /// Async return operations.
 pub struct AsyncReturns {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncReturns {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new return.
     pub async fn create(&self, input: CreateReturn) -> Result<Return> {
-        self.db.returns().create_async(input).await
+        let ret = self.db.returns().create_async(input).await?;
+        self.metrics.record_return_requested(&ret.id.to_string());
+        Ok(ret)
     }
 
     /// Get return by ID.
@@ -1232,16 +1274,20 @@ impl AsyncReturns {
 /// Async shipment operations.
 pub struct AsyncShipments {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncShipments {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new shipment.
     pub async fn create(&self, input: CreateShipment) -> Result<Shipment> {
-        self.db.shipments().create_async(input).await
+        let shipment = self.db.shipments().create_async(input).await?;
+        self.metrics
+            .record_shipment_created(&shipment.id.to_string());
+        Ok(shipment)
     }
 
     /// Get shipment by ID.
@@ -1312,7 +1358,10 @@ impl AsyncShipments {
 
     /// Mark shipment as delivered.
     pub async fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_delivered_async(id).await
+        let shipment = self.db.shipments().mark_delivered_async(id).await?;
+        self.metrics
+            .record_shipment_delivered(&shipment.id.to_string());
+        Ok(shipment)
     }
 
     /// Mark shipment as failed.
@@ -1379,11 +1428,12 @@ impl AsyncShipments {
 /// Async payment operations.
 pub struct AsyncPayments {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncPayments {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new payment.
@@ -1436,7 +1486,12 @@ impl AsyncPayments {
 
     /// Mark payment as completed.
     pub async fn mark_completed(&self, id: Uuid) -> Result<Payment> {
-        self.db.payments().mark_completed_async(id).await
+        let payment = self.db.payments().mark_completed_async(id).await?;
+        self.metrics.record_payment_completed(
+            &payment.id.to_string(),
+            payment.amount.to_f64().unwrap_or(0.0),
+        );
+        Ok(payment)
     }
 
     /// Mark payment as failed.
@@ -2216,16 +2271,19 @@ impl AsyncInvoices {
 /// Async cart operations.
 pub struct AsyncCarts {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncCarts {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new cart.
     pub async fn create(&self, input: CreateCart) -> Result<Cart> {
-        self.db.carts().create_async(input).await
+        let cart = self.db.carts().create_async(input).await?;
+        self.metrics.record_cart_created(&cart.id.to_string());
+        Ok(cart)
     }
 
     /// Get cart by ID.
@@ -2333,7 +2391,12 @@ impl AsyncCarts {
 
     /// Complete checkout (creates order).
     pub async fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        self.db.carts().complete_async(id).await
+        let result = self.db.carts().complete_async(id).await?;
+        self.metrics.record_cart_checkout_completed(
+            &result.cart_id.to_string(),
+            &result.order_id.to_string(),
+        );
+        Ok(result)
     }
 
     /// Cancel a cart.
@@ -2776,11 +2839,12 @@ impl AsyncPromotions {
 /// Async subscriptions operations.
 pub struct AsyncSubscriptions {
     db: Arc<PostgresDatabase>,
+    metrics: Metrics,
 }
 
 impl AsyncSubscriptions {
-    pub(crate) fn new(db: Arc<PostgresDatabase>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<PostgresDatabase>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     pub async fn create_plan(&self, input: CreateSubscriptionPlan) -> Result<SubscriptionPlan> {
@@ -2819,10 +2883,14 @@ impl AsyncSubscriptions {
     }
 
     pub async fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
-        self.db
+        let subscription = self
+            .db
             .subscriptions()
             .create_subscription_async(input)
-            .await
+            .await?;
+        self.metrics
+            .record_subscription_created(&subscription.id.to_string());
+        Ok(subscription)
     }
 
     pub async fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {

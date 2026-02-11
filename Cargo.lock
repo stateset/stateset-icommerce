@@ -3908,6 +3908,7 @@ dependencies = [
  "sqlx",
  "stateset-core",
  "stateset-db",
+ "stateset-observability",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -4039,6 +4040,8 @@ name = "stateset-observability"
 version = "0.7.0"
 dependencies = [
  "thiserror 1.0.69",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

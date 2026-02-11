@@ -12,6 +12,7 @@ mod tests;
 use std::sync::Arc;
 
 use stateset_db::Database;
+use stateset_observability::Metrics;
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
@@ -20,6 +21,18 @@ use crate::events::EventSystem;
 use stateset_db::SqliteDatabase;
 
 pub use builder::CommerceBuilder;
+pub use introspection::CommerceHealth;
+
+/// Active database backend used by a [`Commerce`] instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommerceBackend {
+    /// Embedded SQLite backend.
+    Sqlite,
+    /// PostgreSQL backend.
+    Postgres,
+    /// Caller-provided database implementation.
+    External,
+}
 
 /// The main commerce interface.
 ///
@@ -44,6 +57,8 @@ pub use builder::CommerceBuilder;
 /// ```
 pub struct Commerce {
     db: Arc<dyn Database>,
+    backend: CommerceBackend,
+    metrics: Metrics,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
     #[cfg(all(feature = "sqlite", feature = "vector"))]

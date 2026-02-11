@@ -5,6 +5,7 @@ use stateset_core::{
     Result, UpdateProduct,
 };
 use stateset_db::Database;
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,19 +17,28 @@ use stateset_core::CommerceEvent;
 /// Product operations interface.
 pub struct Products {
     db: Arc<dyn Database>,
+    metrics: Metrics,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
 
 impl Products {
     #[cfg(feature = "events")]
-    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
-        Self { db, event_system }
+    pub(crate) fn new(
+        db: Arc<dyn Database>,
+        event_system: Arc<EventSystem>,
+        metrics: Metrics,
+    ) -> Self {
+        Self {
+            db,
+            metrics,
+            event_system,
+        }
     }
 
     #[cfg(not(feature = "events"))]
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     #[cfg(feature = "events")]
@@ -82,6 +92,7 @@ impl Products {
     /// ```
     pub fn create(&self, input: CreateProduct) -> Result<Product> {
         let product = self.db.products().create(input)?;
+        self.metrics.record_product_created(&product.id.to_string());
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::ProductCreated {

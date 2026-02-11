@@ -42,6 +42,197 @@ fn test_builder() {
 
 #[test]
 #[cfg(feature = "sqlite")]
+fn test_builder_can_disable_metrics() {
+    let commerce = Commerce::builder()
+        .database(":memory:")
+        .disable_metrics()
+        .build()
+        .unwrap();
+
+    assert!(!commerce.metrics().is_enabled());
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
+fn test_metrics_record_key_engine_operations() {
+    use rust_decimal_macros::dec;
+    use stateset_core::{
+        AddCartItem, BillingInterval, CreateCart, CreateCustomer, CreateInventoryItem, CreateOrder,
+        CreateOrderItem, CreatePayment, CreateProduct, CreateProductVariant, CreateReturn,
+        CreateReturnItem, CreateShipment, CreateShipmentItem, CreateSubscription,
+        CreateSubscriptionPlan, PaymentMethodType, ReturnReason, ShippingCarrier,
+    };
+    use uuid::Uuid;
+
+    let commerce = Commerce::new(":memory:").unwrap();
+
+    let customer = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "metrics@example.com".into(),
+            first_name: "Metric".into(),
+            last_name: "Tester".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+    let order = commerce
+        .orders()
+        .create(CreateOrder {
+            customer_id: customer.id,
+            items: vec![CreateOrderItem {
+                product_id: Uuid::new_v4(),
+                sku: "SKU-METRIC".into(),
+                name: "Metric Widget".into(),
+                quantity: 2,
+                unit_price: dec!(29.99),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+    commerce
+        .products()
+        .create(CreateProduct {
+            name: "Metric Widget".into(),
+            variants: Some(vec![CreateProductVariant {
+                sku: "SKU-METRIC".into(),
+                price: dec!(29.99),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+
+    commerce
+        .inventory()
+        .create_item(CreateInventoryItem {
+            sku: "SKU-METRIC".into(),
+            name: "Metric Widget".into(),
+            initial_quantity: Some(dec!(10)),
+            ..Default::default()
+        })
+        .unwrap();
+
+    commerce
+        .inventory()
+        .adjust("SKU-METRIC", dec!(-2), "order allocation")
+        .unwrap();
+
+    let payment = commerce
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            payment_method: PaymentMethodType::CreditCard,
+            amount: dec!(59.98),
+            ..Default::default()
+        })
+        .unwrap();
+    commerce.payments().mark_completed(payment.id).unwrap();
+
+    commerce
+        .returns()
+        .create(CreateReturn {
+            order_id: order.id,
+            reason: ReturnReason::Defective,
+            items: vec![CreateReturnItem {
+                order_item_id: order.items[0].id,
+                quantity: 1,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+    let cart = commerce
+        .carts()
+        .create(CreateCart {
+            customer_id: Some(customer.id),
+            customer_email: Some(customer.email.clone()),
+            items: Some(vec![AddCartItem {
+                sku: "SKU-METRIC-CART".into(),
+                name: "Cart Metric Item".into(),
+                quantity: 1,
+                unit_price: dec!(9.99),
+                requires_shipping: Some(false),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+    commerce.carts().complete(cart.id).unwrap();
+
+    let shipment = commerce
+        .shipments()
+        .create(CreateShipment {
+            order_id: order.id,
+            carrier: Some(ShippingCarrier::Ups),
+            recipient_name: "Metric Tester".into(),
+            shipping_address: "123 Metric Way, Testville, ST 12345".into(),
+            items: Some(vec![CreateShipmentItem {
+                sku: "SKU-METRIC".into(),
+                name: "Metric Widget".into(),
+                quantity: 1,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+    commerce.shipments().mark_delivered(shipment.id).unwrap();
+
+    let plan = commerce
+        .subscriptions()
+        .create_plan(CreateSubscriptionPlan {
+            name: "Metrics Monthly Plan".into(),
+            billing_interval: BillingInterval::Monthly,
+            price: dec!(19.99),
+            ..Default::default()
+        })
+        .unwrap();
+    commerce.subscriptions().activate_plan(plan.id).unwrap();
+    commerce
+        .subscriptions()
+        .subscribe(CreateSubscription {
+            customer_id: customer.id,
+            plan_id: plan.id,
+            ..Default::default()
+        })
+        .unwrap();
+
+    let snapshot = commerce.metrics_snapshot();
+    assert_eq!(snapshot.orders_created, 1);
+    assert_eq!(snapshot.customers_created, 1);
+    assert_eq!(snapshot.products_created, 1);
+    assert_eq!(snapshot.carts_created, 1);
+    assert_eq!(snapshot.cart_checkouts_completed, 1);
+    assert_eq!(snapshot.returns_requested, 1);
+    assert_eq!(snapshot.shipments_created, 1);
+    assert_eq!(snapshot.shipments_delivered, 1);
+    assert_eq!(snapshot.subscriptions_created, 1);
+    assert_eq!(snapshot.payments_completed, 1);
+    assert_eq!(snapshot.inventory_adjustments, 1);
+    assert!((snapshot.order_amount_total - 59.98).abs() < 1e-9);
+    assert!((snapshot.payment_amount_total - 59.98).abs() < 1e-9);
+    assert!((snapshot.inventory_delta_total - -2.0).abs() < 1e-9);
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
+fn test_health_check_reports_engine_state() {
+    let commerce = Commerce::new(":memory:").unwrap();
+    let health = commerce.health_check();
+
+    assert!(health.healthy);
+    assert_eq!(health.backend, CommerceBackend::Sqlite);
+    assert!(health.database_reachable);
+    assert!(health.database_error.is_none());
+    #[cfg(feature = "events")]
+    assert_eq!(health.event_subscribers, 0);
+}
+
+#[test]
+#[cfg(feature = "sqlite")]
 fn test_bom_operations() {
     use rust_decimal_macros::dec;
     use stateset_core::{BomStatus, CreateBom, CreateBomComponent};

@@ -9,4 +9,5 @@ description = "Observability utilities for StateSet iCommerce (metrics + tracing
 
 [dependencies]
 thiserror = { workspace = true }
-
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

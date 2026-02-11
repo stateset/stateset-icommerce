@@ -1,9 +1,10 @@
-use super::{Commerce, CommerceBuilder};
+use super::{Commerce, CommerceBackend, CommerceBuilder};
 
 use std::sync::Arc;
 
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
+use stateset_observability::{init_metrics, MetricsConfig};
 
 #[cfg(feature = "events")]
 use crate::events::EventSystem;
@@ -43,9 +44,12 @@ impl Commerce {
 
         let sqlite_db = Arc::new(SqliteDatabase::new(&config)?);
         let db: Arc<dyn Database> = sqlite_db.clone();
+        let metrics = init_metrics(MetricsConfig::default());
 
         Ok(Self {
             db,
+            backend: CommerceBackend::Sqlite,
+            metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
             #[cfg(all(feature = "sqlite", feature = "vector"))]
@@ -163,9 +167,12 @@ impl Commerce {
 
         let db = rt.block_on(PostgresDatabase::connect(url))?;
         let db: Arc<dyn Database> = Arc::new(db);
+        let metrics = init_metrics(MetricsConfig::default());
 
         Ok(Self {
             db,
+            backend: CommerceBackend::Postgres,
+            metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
             #[cfg(all(feature = "sqlite", feature = "vector"))]
@@ -208,9 +215,12 @@ impl Commerce {
             acquire_timeout_secs,
         ))?;
         let db: Arc<dyn Database> = Arc::new(db);
+        let metrics = init_metrics(MetricsConfig::default());
 
         Ok(Self {
             db,
+            backend: CommerceBackend::Postgres,
+            metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
             #[cfg(all(feature = "sqlite", feature = "vector"))]
@@ -223,8 +233,11 @@ impl Commerce {
     /// This is useful when you want to manage the database connection yourself.
     /// Note: Tax operations and vector search will not be available when using this method.
     pub fn with_database(db: Arc<dyn Database>) -> Self {
+        let metrics = init_metrics(MetricsConfig::default());
         Self {
             db,
+            backend: CommerceBackend::External,
+            metrics,
             #[cfg(feature = "events")]
             event_system: Arc::new(EventSystem::new()),
             #[cfg(all(feature = "sqlite", feature = "vector"))]

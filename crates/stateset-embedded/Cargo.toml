@@ -11,6 +11,7 @@ autobenches = false
 [dependencies]
 stateset-core = { workspace = true }
 stateset-db = { workspace = true }
+stateset-observability = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }

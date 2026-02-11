@@ -35,17 +35,19 @@ use stateset_core::{
     AddShipmentEvent, CreateShipment, CreateShipmentItem, Result, Shipment, ShipmentEvent,
     ShipmentFilter, ShipmentItem,
 };
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Shipment operations for order fulfillment and delivery tracking
 pub struct Shipments {
     db: Arc<dyn Database>,
+    metrics: Metrics,
 }
 
 impl Shipments {
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new shipment for an order
@@ -75,7 +77,10 @@ impl Shipments {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateShipment) -> Result<Shipment> {
-        self.db.shipments().create(input)
+        let shipment = self.db.shipments().create(input)?;
+        self.metrics
+            .record_shipment_created(&shipment.id.to_string());
+        Ok(shipment)
     }
 
     /// Get a shipment by ID
@@ -157,7 +162,10 @@ impl Shipments {
     ///
     /// This records the delivery timestamp and marks the shipment complete.
     pub fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_delivered(id)
+        let shipment = self.db.shipments().mark_delivered(id)?;
+        self.metrics
+            .record_shipment_delivered(&shipment.id.to_string());
+        Ok(shipment)
     }
 
     /// Mark shipment as failed delivery

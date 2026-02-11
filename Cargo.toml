@@ -71,5 +71,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "blo
 stateset-core = { path = "crates/stateset-core", version = "0.7.0" }
 stateset-db = { path = "crates/stateset-db", version = "0.7.0" }
 stateset-embedded = { path = "crates/stateset-embedded", version = "0.7.0" }
+stateset-observability = { path = "crates/stateset-observability", version = "0.7.0" }
 
 # Note: Testing dependencies (criterion, proptest) are added to individual crates

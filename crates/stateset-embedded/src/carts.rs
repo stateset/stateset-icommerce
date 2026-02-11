@@ -50,17 +50,19 @@ use stateset_core::{
     AddCartItem, Cart, CartAddress, CartFilter, CartItem, CheckoutResult, CreateCart, Result,
     SetCartPayment, SetCartShipping, ShippingRate, UpdateCart, UpdateCartItem,
 };
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Cart and Checkout operations
 pub struct Carts {
     db: Arc<dyn Database>,
+    metrics: Metrics,
 }
 
 impl Carts {
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new cart/checkout session
@@ -97,7 +99,9 @@ impl Carts {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create(&self, input: CreateCart) -> Result<Cart> {
-        self.db.carts().create(input)
+        let cart = self.db.carts().create(input)?;
+        self.metrics.record_cart_created(&cart.id.to_string());
+        Ok(cart)
     }
 
     /// Get a cart by ID
@@ -296,7 +300,12 @@ impl Carts {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        self.db.carts().complete(id)
+        let result = self.db.carts().complete(id)?;
+        self.metrics.record_cart_checkout_completed(
+            &result.cart_id.to_string(),
+            &result.order_id.to_string(),
+        );
+        Ok(result)
     }
 
     /// Cancel the cart

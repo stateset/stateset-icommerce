@@ -36,11 +36,15 @@ impl Commerce {
     pub fn orders(&self) -> Orders {
         #[cfg(feature = "events")]
         {
-            Orders::new(self.db.clone(), self.event_system.clone())
+            Orders::new(
+                self.db.clone(),
+                self.event_system.clone(),
+                self.metrics.clone(),
+            )
         }
         #[cfg(not(feature = "events"))]
         {
-            Orders::new(self.db.clone())
+            Orders::new(self.db.clone(), self.metrics.clone())
         }
     }
 
@@ -72,11 +76,15 @@ impl Commerce {
     pub fn inventory(&self) -> Inventory {
         #[cfg(feature = "events")]
         {
-            Inventory::new(self.db.clone(), self.event_system.clone())
+            Inventory::new(
+                self.db.clone(),
+                self.event_system.clone(),
+                self.metrics.clone(),
+            )
         }
         #[cfg(not(feature = "events"))]
         {
-            Inventory::new(self.db.clone())
+            Inventory::new(self.db.clone(), self.metrics.clone())
         }
     }
 
@@ -100,11 +108,15 @@ impl Commerce {
     pub fn customers(&self) -> Customers {
         #[cfg(feature = "events")]
         {
-            Customers::new(self.db.clone(), self.event_system.clone())
+            Customers::new(
+                self.db.clone(),
+                self.event_system.clone(),
+                self.metrics.clone(),
+            )
         }
         #[cfg(not(feature = "events"))]
         {
-            Customers::new(self.db.clone())
+            Customers::new(self.db.clone(), self.metrics.clone())
         }
     }
 
@@ -133,11 +145,15 @@ impl Commerce {
     pub fn products(&self) -> Products {
         #[cfg(feature = "events")]
         {
-            Products::new(self.db.clone(), self.event_system.clone())
+            Products::new(
+                self.db.clone(),
+                self.event_system.clone(),
+                self.metrics.clone(),
+            )
         }
         #[cfg(not(feature = "events"))]
         {
-            Products::new(self.db.clone())
+            Products::new(self.db.clone(), self.metrics.clone())
         }
     }
 
@@ -183,11 +199,15 @@ impl Commerce {
     pub fn returns(&self) -> Returns {
         #[cfg(feature = "events")]
         {
-            Returns::new(self.db.clone(), self.event_system.clone())
+            Returns::new(
+                self.db.clone(),
+                self.event_system.clone(),
+                self.metrics.clone(),
+            )
         }
         #[cfg(not(feature = "events"))]
         {
-            Returns::new(self.db.clone())
+            Returns::new(self.db.clone(), self.metrics.clone())
         }
     }
 
@@ -277,7 +297,7 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn shipments(&self) -> Shipments {
-        Shipments::new(self.db.clone())
+        Shipments::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access payment operations.
@@ -305,7 +325,7 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn payments(&self) -> Payments {
-        Payments::new(self.db.clone())
+        Payments::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access warranty operations.
@@ -454,7 +474,7 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn carts(&self) -> Carts {
-        Carts::new(self.db.clone())
+        Carts::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access analytics and forecasting operations.
@@ -674,7 +694,7 @@ impl Commerce {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn subscriptions(&self) -> Subscriptions {
-        Subscriptions::new(self.db.clone())
+        Subscriptions::new(self.db.clone(), self.metrics.clone())
     }
 
     /// Access quality control operations.

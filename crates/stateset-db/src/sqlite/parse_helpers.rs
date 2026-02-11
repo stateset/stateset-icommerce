@@ -285,27 +285,6 @@ macro_rules! parse_ctx {
 }
 
 // ============================================================================
-// Legacy Backward-Compatible Functions (for gradual migration)
-// These match the old signatures but return Decimal::ZERO / nil UUID on failure
-// TODO: Remove these once all modules are migrated to the new _row variants
-// ============================================================================
-
-/// Legacy parse_decimal for backward compatibility during migration.
-/// Logs a warning on parse failure instead of silently returning default.
-#[allow(dead_code)]
-#[deprecated(note = "Use parse_decimal_row for proper error handling")]
-pub fn parse_decimal_legacy(s: &str) -> Decimal {
-    match s.parse::<Decimal>() {
-        Ok(d) => d,
-        Err(_) => {
-            // In production, this should be logged
-            // For now, return zero but at least the code is marked for migration
-            Decimal::ZERO
-        }
-    }
-}
-
-// ============================================================================
 // Rusqlite-compatible variants (for use in row_to_* functions)
 // ============================================================================
 

@@ -184,7 +184,7 @@ pub use analytics::Analytics;
 pub use backorder::Backorders;
 pub use bom::Bom;
 pub use carts::Carts;
-pub use commerce::{Commerce, CommerceBuilder};
+pub use commerce::{Commerce, CommerceBackend, CommerceBuilder, CommerceHealth};
 pub use cost_accounting::CostAccounting;
 pub use credit::Credit;
 pub use currency::CurrencyOps;
@@ -226,6 +226,8 @@ pub use async_commerce::{
 
 // Re-export Database trait for advanced users who want to bring their own database
 pub use stateset_db::Database;
+// Re-export observability primitives used by Commerce diagnostics/metrics APIs
+pub use stateset_observability::{Metrics, MetricsConfig, MetricsSnapshot};
 
 // Re-export core types for convenience
 pub use stateset_core::{

@@ -1,11 +1,13 @@
 //! Inventory operations
 
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use stateset_core::{
     CreateInventoryItem, InventoryFilter, InventoryItem, InventoryReservation,
     InventoryTransaction, Result, StockLevel,
 };
 use stateset_db::Database;
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -19,19 +21,28 @@ use stateset_core::CommerceEvent;
 /// Inventory operations interface.
 pub struct Inventory {
     db: Arc<dyn Database>,
+    metrics: Metrics,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
 
 impl Inventory {
     #[cfg(feature = "events")]
-    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
-        Self { db, event_system }
+    pub(crate) fn new(
+        db: Arc<dyn Database>,
+        event_system: Arc<EventSystem>,
+        metrics: Metrics,
+    ) -> Self {
+        Self {
+            db,
+            metrics,
+            event_system,
+        }
     }
 
     #[cfg(not(feature = "events"))]
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     #[cfg(feature = "events")]
@@ -182,6 +193,8 @@ impl Inventory {
             reference_type: None,
             reference_id: None,
         })?;
+        self.metrics
+            .record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);
@@ -205,6 +218,8 @@ impl Inventory {
             reference_type: None,
             reference_id: None,
         })?;
+        self.metrics
+            .record_inventory_adjusted(sku, quantity.to_f64().unwrap_or(0.0));
         #[cfg(feature = "events")]
         {
             self.emit_adjustment_events(&transaction, sku, reason);

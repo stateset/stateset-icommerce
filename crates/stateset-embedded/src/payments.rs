@@ -33,21 +33,24 @@
 //! ```
 
 use crate::Database;
+use rust_decimal::prelude::ToPrimitive;
 use stateset_core::{
     CreatePayment, CreatePaymentMethod, CreateRefund, Payment, PaymentFilter, PaymentMethod,
     Refund, Result,
 };
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Payment operations for transaction processing and refunds
 pub struct Payments {
     db: Arc<dyn Database>,
+    metrics: Metrics,
 }
 
 impl Payments {
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     /// Create a new payment
@@ -125,7 +128,12 @@ impl Payments {
     #[tracing::instrument(skip(self), fields(payment_id = %id))]
     pub fn mark_completed(&self, id: Uuid) -> Result<Payment> {
         tracing::info!("marking payment as completed");
-        self.db.payments().mark_completed(id)
+        let payment = self.db.payments().mark_completed(id)?;
+        self.metrics.record_payment_completed(
+            &payment.id.to_string(),
+            payment.amount.to_f64().unwrap_or(0.0),
+        );
+        Ok(payment)
     }
 
     /// Mark payment as failed

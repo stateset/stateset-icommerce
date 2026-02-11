@@ -1,9 +1,10 @@
-use super::Commerce;
+use super::{Commerce, CommerceBackend};
 
 use std::sync::Arc;
 
 use stateset_core::CommerceError;
 use stateset_db::{Database, DatabaseConfig};
+use stateset_observability::{init_metrics, MetricsConfig};
 
 #[cfg(feature = "events")]
 use crate::events::{EventConfig, EventSystem};
@@ -25,6 +26,7 @@ pub struct CommerceBuilder {
     acquire_timeout_secs: Option<u64>,
     #[cfg(feature = "events")]
     event_config: Option<EventConfig>,
+    metrics_config: MetricsConfig,
 }
 
 impl CommerceBuilder {
@@ -66,6 +68,18 @@ impl CommerceBuilder {
     /// Set the maximum number of database connections.
     pub fn max_connections(mut self, count: u32) -> Self {
         self.max_connections = Some(count);
+        self
+    }
+
+    /// Configure in-process engine metrics collection.
+    pub fn metrics_config(mut self, config: MetricsConfig) -> Self {
+        self.metrics_config = config;
+        self
+    }
+
+    /// Disable in-process engine metrics collection.
+    pub fn disable_metrics(mut self) -> Self {
+        self.metrics_config.enabled = false;
         self
     }
 
@@ -120,6 +134,8 @@ impl CommerceBuilder {
 
     /// Build the Commerce instance.
     pub fn build(self) -> Result<Commerce, CommerceError> {
+        let metrics = init_metrics(self.metrics_config.clone());
+
         // Create event system if events feature is enabled
         #[cfg(feature = "events")]
         let event_system = Arc::new(
@@ -143,6 +159,8 @@ impl CommerceBuilder {
 
             return Ok(Commerce {
                 db,
+                backend: CommerceBackend::Postgres,
+                metrics,
                 #[cfg(feature = "events")]
                 event_system,
                 #[cfg(all(feature = "sqlite", feature = "vector"))]
@@ -170,6 +188,8 @@ impl CommerceBuilder {
             let db: Arc<dyn Database> = sqlite_db.clone();
             Ok(Commerce {
                 db,
+                backend: CommerceBackend::Sqlite,
+                metrics,
                 #[cfg(feature = "events")]
                 event_system,
                 #[cfg(all(feature = "sqlite", feature = "vector"))]

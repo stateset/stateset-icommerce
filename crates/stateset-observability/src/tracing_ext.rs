@@ -4,6 +4,7 @@
 //! imposing a tracing backend on downstream applications.
 
 use crate::{ObservabilityError, Result};
+use tracing_subscriber::EnvFilter;
 
 /// Tracing configuration parameters.
 #[derive(Debug, Clone)]
@@ -33,8 +34,11 @@ impl TracingConfig {
 
 /// Initialize tracing with the provided identifiers.
 ///
-/// This function is a no-op placeholder that validates inputs and returns `Ok(())`.
-/// Integrations should wrap or replace it with their preferred tracing pipeline.
+/// This function configures a global `tracing_subscriber` formatter using
+/// `RUST_LOG` if present, or `info` as a default level.
+///
+/// If a global subscriber is already configured by the host application,
+/// this function is a no-op and returns `Ok(())`.
 pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Result<()> {
     if service_name.is_empty() {
         return Err(ObservabilityError::InvalidConfig(
@@ -51,10 +55,56 @@ pub fn init_tracing(service_name: &str, environment: &str, region: &str) -> Resu
             "region must be non-empty".to_string(),
         ));
     }
-    Ok(())
+
+    if tracing::dispatcher::has_been_set() {
+        return Ok(());
+    }
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .finish();
+
+    match tracing::subscriber::set_global_default(subscriber) {
+        Ok(()) => {
+            tracing::info!(
+                service_name = service_name,
+                environment = environment,
+                region = region,
+                "initialized tracing subscriber"
+            );
+            Ok(())
+        }
+        Err(_err) if tracing::dispatcher::has_been_set() => Ok(()),
+        Err(err) => Err(ObservabilityError::TracingInitError(err.to_string())),
+    }
 }
 
 /// Initialize tracing from a configuration struct.
 pub fn init_tracing_with(config: TracingConfig) -> Result<()> {
     init_tracing(&config.service_name, &config.environment, &config.region)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_service_name() {
+        let result = init_tracing("", "test", "local");
+        assert!(matches!(result, Err(ObservabilityError::InvalidConfig(_))));
+    }
+
+    #[test]
+    fn rejects_empty_environment() {
+        let result = init_tracing("stateset", "", "local");
+        assert!(matches!(result, Err(ObservabilityError::InvalidConfig(_))));
+    }
+
+    #[test]
+    fn rejects_empty_region() {
+        let result = init_tracing("stateset", "test", "");
+        assert!(matches!(result, Err(ObservabilityError::InvalidConfig(_))));
+    }
 }

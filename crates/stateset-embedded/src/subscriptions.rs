@@ -46,17 +46,19 @@ use stateset_core::{
     UpdateSubscription, UpdateSubscriptionPlan,
 };
 use stateset_db::Database;
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Subscription management interface.
 pub struct Subscriptions {
     db: Arc<dyn Database>,
+    metrics: Metrics,
 }
 
 impl Subscriptions {
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     // ========================================================================
@@ -156,7 +158,10 @@ impl Subscriptions {
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn subscribe(&self, input: CreateSubscription) -> Result<Subscription> {
-        self.db.subscriptions().create_subscription(input)
+        let subscription = self.db.subscriptions().create_subscription(input)?;
+        self.metrics
+            .record_subscription_created(&subscription.id.to_string());
+        Ok(subscription)
     }
 
     /// Get a subscription by ID.

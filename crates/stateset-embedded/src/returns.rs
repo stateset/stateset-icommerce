@@ -2,6 +2,7 @@
 
 use stateset_core::{CreateReturn, Result, Return, ReturnFilter, ReturnStatus, UpdateReturn};
 use stateset_db::Database;
+use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,19 +16,28 @@ use stateset_core::CommerceEvent;
 /// Return operations interface.
 pub struct Returns {
     db: Arc<dyn Database>,
+    metrics: Metrics,
     #[cfg(feature = "events")]
     event_system: Arc<EventSystem>,
 }
 
 impl Returns {
     #[cfg(feature = "events")]
-    pub(crate) fn new(db: Arc<dyn Database>, event_system: Arc<EventSystem>) -> Self {
-        Self { db, event_system }
+    pub(crate) fn new(
+        db: Arc<dyn Database>,
+        event_system: Arc<EventSystem>,
+        metrics: Metrics,
+    ) -> Self {
+        Self {
+            db,
+            metrics,
+            event_system,
+        }
     }
 
     #[cfg(not(feature = "events"))]
-    pub(crate) fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+    pub(crate) fn new(db: Arc<dyn Database>, metrics: Metrics) -> Self {
+        Self { db, metrics }
     }
 
     #[cfg(feature = "events")]
@@ -68,6 +78,7 @@ impl Returns {
     /// ```
     pub fn create(&self, input: CreateReturn) -> Result<Return> {
         let ret = self.db.returns().create(input)?;
+        self.metrics.record_return_requested(&ret.id.to_string());
         #[cfg(feature = "events")]
         {
             self.emit(CommerceEvent::ReturnRequested {

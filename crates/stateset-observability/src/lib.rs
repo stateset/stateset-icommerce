@@ -6,11 +6,10 @@
 //!
 //! # Features
 //!
-//! - **OpenTelemetry Integration**: Distributed tracing with OTLP exporters
-//! - **Key Performance Metrics**: Query latency, pool utilization, error rates
-//! - **Contextual Tracing**: Instrumented operations with span propagation
-//! - **Custom Metrics Framework**: Business metrics (orders, revenue, inventory)
-//! - **Performance Monitoring**: Connection pool health, query execution time
+//! - **Structured Tracing Bootstrap**: `tracing_subscriber` initialization with `RUST_LOG`
+//! - **Business Metric Counters**: Order/payment/inventory event totals
+//! - **Runtime Toggle**: Enable/disable in-process metrics collection
+//! - **Snapshot API**: Read consistent metric values for export or diagnostics
 //!
 //! # Usage
 //!
