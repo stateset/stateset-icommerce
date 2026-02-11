@@ -70,13 +70,22 @@ async fn postgres_x402_payment_intent_smoke() {
         .expect("intent for idempotency");
     assert_eq!(by_key.id, intent.id);
 
+    let mut local_signed = intent.clone();
+    local_signed
+        .sign_with_ed25519(&[11u8; 32])
+        .expect("sign intent locally");
+
     let signed = repo
         .sign_async(
             intent.id,
             SignX402PaymentIntent {
                 intent_id: intent.id,
-                signature: "deadbeef".to_string(),
-                public_key: "cafebabe".to_string(),
+                signature: local_signed
+                    .payer_signature
+                    .expect("generated signature"),
+                public_key: local_signed
+                    .payer_public_key
+                    .expect("generated public key"),
             },
         )
         .await

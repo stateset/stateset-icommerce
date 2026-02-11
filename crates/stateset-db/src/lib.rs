@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! # StateSet DB
 //!
 //! Database implementations for StateSet iCommerce.

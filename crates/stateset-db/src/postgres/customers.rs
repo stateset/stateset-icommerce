@@ -100,6 +100,10 @@ impl PgCustomerRepository {
             CommerceError::DatabaseError(format!("Invalid customer.status '{}': {}", row.status, e))
         })?;
 
+        let tags = serde_json::from_value(row.tags).map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid customer.tags JSON: {}", e))
+        })?;
+
         Ok(Customer {
             id: row.id,
             email: row.email,
@@ -109,7 +113,7 @@ impl PgCustomerRepository {
             status,
             accepts_marketing: row.accepts_marketing,
             email_verified: row.email_verified,
-            tags: serde_json::from_value(row.tags).unwrap_or_default(),
+            tags,
             metadata: row.metadata,
             default_shipping_address_id: row.default_shipping_address_id,
             default_billing_address_id: row.default_billing_address_id,
@@ -187,7 +191,7 @@ impl PgCustomerRepository {
         .map_err(map_db_error)?;
 
         if let Some(row) = inserted {
-            return Ok(Self::row_to_customer(row)?);
+            return Self::row_to_customer(row);
         }
 
         // Conflict: return the existing customer row.
@@ -197,7 +201,7 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?;
 
-        Ok(Self::row_to_customer(row)?)
+        Self::row_to_customer(row)
     }
 
     /// Create a new customer (async)

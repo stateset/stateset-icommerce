@@ -915,9 +915,11 @@ impl SqlitePromotionRepository {
                     }
                 } else {
                     // No max, check if this is better than current
-                    if applicable_tier.is_none()
-                        || tier.min_value > applicable_tier.unwrap().min_value
-                    {
+                    let is_better = match applicable_tier {
+                        Some(current) => tier.min_value > current.min_value,
+                        None => true,
+                    };
+                    if is_better {
                         applicable_tier = Some(tier);
                     }
                 }

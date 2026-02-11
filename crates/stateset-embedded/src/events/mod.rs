@@ -203,7 +203,10 @@ impl EventSystem {
         self.event_store.as_deref()
     }
 
-    /// Emit an event (async, non-blocking)
+    /// Emit an event.
+    ///
+    /// Broadcast delivery is non-blocking. Webhook delivery is dispatched to a background task.
+    /// Event persistence (if enabled) is best-effort and may block depending on the configured store.
     pub fn emit(&self, event: CommerceEvent) {
         if let Some(store) = &self.event_store {
             if let Err(err) = store.append(&event) {

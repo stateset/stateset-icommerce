@@ -111,7 +111,15 @@ impl PgX402PaymentIntentRepository {
 
         let inclusion_proof = row
             .inclusion_proof
-            .map(|v| serde_json::from_value::<Vec<String>>(v).unwrap_or_default());
+            .map(|v| {
+                serde_json::from_value::<Vec<String>>(v).map_err(|e| {
+                    CommerceError::DatabaseError(format!(
+                        "Invalid JSON for x402_intent.inclusion_proof: {}",
+                        e
+                    ))
+                })
+            })
+            .transpose()?;
 
         Ok(X402PaymentIntent {
             id: row.id,
@@ -273,6 +281,12 @@ impl PgX402PaymentIntentRepository {
         id: Uuid,
         input: SignX402PaymentIntent,
     ) -> Result<X402PaymentIntent> {
+        if input.intent_id != id {
+            return Err(CommerceError::ValidationError(
+                "Sign intent_id does not match target payment intent".to_string(),
+            ));
+        }
+
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let row = sqlx::query_as::<_, IntentRow>(
             "SELECT * FROM x402_payment_intents WHERE id = $1 FOR UPDATE",
@@ -309,6 +323,19 @@ impl PgX402PaymentIntentRepository {
                 .map(|b| format!("{:02x}", b))
                 .collect::<String>()
         );
+
+        // Validate signature/public key pair against the intent hash before persisting.
+        let mut signed_intent = intent.clone();
+        signed_intent.signing_hash = Some(signing_hash.clone());
+        signed_intent.payer_signature = Some(input.signature.clone());
+        signed_intent.payer_public_key = Some(input.public_key.clone());
+
+        let is_valid_signature = signed_intent.verify_signature().unwrap_or(false);
+        if !is_valid_signature {
+            return Err(CommerceError::ValidationError(
+                "Invalid Ed25519 signature for payment intent".to_string(),
+            ));
+        }
 
         sqlx::query(
             "UPDATE x402_payment_intents SET status = $1, signing_hash = $2, payer_signature = $3, payer_public_key = $4, updated_at = $5 WHERE id = $6",

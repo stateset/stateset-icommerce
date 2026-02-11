@@ -41,7 +41,7 @@ impl Counter {
     /// Add a value to the counter for the given label values
     pub fn add(&self, label_values: &[&str], value: u64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap();
+        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
         values
             .entry(key)
             .or_insert_with(|| AtomicU64::new(0))
@@ -51,7 +51,7 @@ impl Counter {
     /// Get the current counter value for the given label values
     pub fn get(&self, label_values: &[&str]) -> u64 {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let values = self.values.read().unwrap();
+        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
         values
             .get(&key)
             .map(|v| v.load(Ordering::SeqCst))
@@ -63,7 +63,7 @@ impl Counter {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} counter\n", self.name));
 
-        let values = self.values.read().unwrap();
+        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
         for (labels, value) in values.iter() {
             let label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
@@ -111,7 +111,7 @@ impl Gauge {
     /// Set the gauge to an absolute value
     pub fn set(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap();
+        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
         values.insert(key, value);
     }
 
@@ -128,7 +128,7 @@ impl Gauge {
     /// Add a delta to the gauge
     pub fn add(&self, label_values: &[&str], delta: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut values = self.values.write().unwrap();
+        let mut values = self.values.write().unwrap_or_else(|e| e.into_inner());
         let current = values.get(&key).copied().unwrap_or(0.0);
         values.insert(key, current + delta);
     }
@@ -136,7 +136,7 @@ impl Gauge {
     /// Get the current gauge value for the given labels
     pub fn get(&self, label_values: &[&str]) -> f64 {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let values = self.values.read().unwrap();
+        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
         values.get(&key).copied().unwrap_or(0.0)
     }
 
@@ -145,7 +145,7 @@ impl Gauge {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} gauge\n", self.name));
 
-        let values = self.values.read().unwrap();
+        let values = self.values.read().unwrap_or_else(|e| e.into_inner());
         for (labels, value) in values.iter() {
             let label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self
@@ -204,7 +204,10 @@ impl Histogram {
     /// Record an observation value for the histogram
     pub fn observe(&self, label_values: &[&str], value: f64) {
         let key: Vec<String> = label_values.iter().map(|s| s.to_string()).collect();
-        let mut observations = self.observations.write().unwrap();
+        let mut observations = self
+            .observations
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
 
         let data = observations.entry(key).or_insert_with(|| {
             let mut bucket_counts = Vec::with_capacity(self.buckets.len());
@@ -238,7 +241,7 @@ impl Histogram {
         let mut output = format!("# HELP {} {}\n", self.name, self.help);
         output.push_str(&format!("# TYPE {} histogram\n", self.name));
 
-        let observations = self.observations.read().unwrap();
+        let observations = self.observations.read().unwrap_or_else(|e| e.into_inner());
         for (labels, data) in observations.iter() {
             let base_label_str = if !labels.is_empty() && !self.labels.is_empty() {
                 let pairs: Vec<String> = self

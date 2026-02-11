@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! Metrics and observability layer for StateSet iCommerce
 //!
 //! Provides structured metrics, tracing, and telemetry for production monitoring.

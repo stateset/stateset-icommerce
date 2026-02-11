@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! # StateSet Core
 //!
 //! Pure domain models and business logic for commerce operations.

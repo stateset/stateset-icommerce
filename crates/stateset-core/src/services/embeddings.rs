@@ -171,13 +171,16 @@ impl EmbeddingService {
             });
         }
 
-        if ordered.iter().any(|e| e.is_none()) {
-            return Err(CommerceError::ExternalServiceError(
-                "OpenAI response missing embeddings".to_string(),
-            ));
-        }
-
-        Ok(ordered.into_iter().map(|e| e.unwrap()).collect())
+        ordered
+            .into_iter()
+            .map(|maybe| {
+                maybe.ok_or_else(|| {
+                    CommerceError::ExternalServiceError(
+                        "OpenAI response missing embeddings".to_string(),
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Generate embedding for a single text
@@ -213,7 +216,7 @@ impl EmbeddingService {
     pub fn order_text(order: &Order) -> String {
         let mut text = format!("{} {}", order.order_number, order.status);
         if let Some(notes) = &order.notes {
-            text.push_str(" ");
+            text.push(' ');
             text.push_str(notes);
         }
         text
@@ -223,7 +226,7 @@ impl EmbeddingService {
     pub fn inventory_item_text(item: &InventoryItem) -> String {
         let mut text = format!("{} {}", item.sku, item.name);
         if let Some(desc) = &item.description {
-            text.push_str(" ");
+            text.push(' ');
             text.push_str(desc);
         }
         text

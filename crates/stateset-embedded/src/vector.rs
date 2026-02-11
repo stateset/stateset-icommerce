@@ -109,7 +109,7 @@ impl Vector {
         for chunk in products.chunks(100) {
             let texts: Vec<String> = chunk
                 .iter()
-                .map(|p| EmbeddingService::product_text(p))
+                .map(EmbeddingService::product_text)
                 .collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
@@ -170,7 +170,7 @@ impl Vector {
         for chunk in customers.chunks(100) {
             let texts: Vec<String> = chunk
                 .iter()
-                .map(|c| EmbeddingService::customer_text(c))
+                .map(EmbeddingService::customer_text)
                 .collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
@@ -230,7 +230,7 @@ impl Vector {
         for chunk in orders.chunks(100) {
             let texts: Vec<String> = chunk
                 .iter()
-                .map(|o| EmbeddingService::order_text(o))
+                .map(EmbeddingService::order_text)
                 .collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;
@@ -291,7 +291,7 @@ impl Vector {
         for chunk in items.chunks(100) {
             let texts: Vec<String> = chunk
                 .iter()
-                .map(|i| EmbeddingService::inventory_item_text(i))
+                .map(EmbeddingService::inventory_item_text)
                 .collect();
 
             let results = self.embedding_service.embed_batch(&texts)?;

@@ -3,7 +3,7 @@
 //! Read-only analytics queries against existing commerce tables.
 
 use super::map_db_error;
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use stateset_core::{
@@ -24,72 +24,70 @@ impl PgAnalyticsRepository {
         Self { pool }
     }
 
+    fn start_of_day(date: NaiveDate) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
+    }
+
+    fn end_of_day(date: NaiveDate) -> DateTime<Utc> {
+        Self::start_of_day(date) + Duration::days(1) - Duration::seconds(1)
+    }
+
+    fn first_day_of_month(date: NaiveDate) -> NaiveDate {
+        date.with_day(1).unwrap_or(date)
+    }
+
+    fn first_day_of_year(date: NaiveDate) -> NaiveDate {
+        date.with_month(1)
+            .and_then(|d| d.with_day(1))
+            .unwrap_or_else(|| Self::first_day_of_month(date))
+    }
+
+    fn all_time_start() -> DateTime<Utc> {
+        if let Some(date) = NaiveDate::from_ymd_opt(2000, 1, 1) {
+            return Self::start_of_day(date);
+        }
+        if let Some(epoch) = DateTime::<Utc>::from_timestamp(0, 0) {
+            return epoch;
+        }
+        Utc::now()
+    }
+
     /// Get date range from query parameters
     fn get_date_range(&self, query: &AnalyticsQuery) -> (DateTime<Utc>, DateTime<Utc>) {
         let now = Utc::now();
         let period = query.period.unwrap_or(TimePeriod::Last30Days);
 
         match period {
-            TimePeriod::Today => (
-                now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc(),
-                now,
-            ),
+            TimePeriod::Today => (Self::start_of_day(now.date_naive()), now),
             TimePeriod::Yesterday => {
                 let yesterday = now - Duration::days(1);
                 (
-                    yesterday
-                        .date_naive()
-                        .and_hms_opt(0, 0, 0)
-                        .unwrap()
-                        .and_utc(),
-                    yesterday
-                        .date_naive()
-                        .and_hms_opt(23, 59, 59)
-                        .unwrap()
-                        .and_utc(),
+                    Self::start_of_day(yesterday.date_naive()),
+                    Self::end_of_day(yesterday.date_naive()),
                 )
             }
             TimePeriod::Last7Days => (now - Duration::days(7), now),
             TimePeriod::Last30Days => (now - Duration::days(30), now),
             TimePeriod::ThisMonth => {
-                let start = now
-                    .date_naive()
-                    .with_day(1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc();
+                let start = Self::start_of_day(Self::first_day_of_month(now.date_naive()));
                 (start, now)
             }
             TimePeriod::LastMonth => {
-                let this_month_start = now.date_naive().with_day(1).unwrap();
+                let this_month_start = Self::first_day_of_month(now.date_naive());
                 let last_month_end = this_month_start - Duration::days(1);
-                let last_month_start = last_month_end.with_day(1).unwrap();
+                let last_month_start = Self::first_day_of_month(last_month_end);
                 (
-                    last_month_start.and_hms_opt(0, 0, 0).unwrap().and_utc(),
-                    last_month_end.and_hms_opt(23, 59, 59).unwrap().and_utc(),
+                    Self::start_of_day(last_month_start),
+                    Self::end_of_day(last_month_end),
                 )
             }
             TimePeriod::ThisQuarter | TimePeriod::LastQuarter => (now - Duration::days(90), now),
             TimePeriod::ThisYear => {
-                let start = now
-                    .date_naive()
-                    .with_month(1)
-                    .unwrap()
-                    .with_day(1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc();
+                let start = Self::start_of_day(Self::first_day_of_year(now.date_naive()));
                 (start, now)
             }
             TimePeriod::LastYear => (now - Duration::days(365), now),
-            TimePeriod::AllTime => (
-                DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z")
-                    .unwrap()
-                    .with_timezone(&Utc),
-                now,
-            ),
+            TimePeriod::AllTime => (Self::all_time_start(), now),
             TimePeriod::Custom => {
                 if let Some(ref range) = query.date_range {
                     (
@@ -631,11 +629,7 @@ impl PgAnalyticsRepository {
         &self,
         _query: AnalyticsQuery,
     ) -> Result<FulfillmentMetrics> {
-        let today_start = Utc::now()
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc();
+        let today_start = Self::start_of_day(Utc::now().date_naive());
 
         let shipped_today: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM orders WHERE status = 'shipped' AND updated_at >= $1",

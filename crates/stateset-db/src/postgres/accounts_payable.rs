@@ -1,7 +1,7 @@
 //! PostgreSQL implementation for Accounts Payable
 
 use super::{block_on, map_db_error};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
@@ -1358,5 +1358,5 @@ fn to_date(dt: DateTime<Utc>) -> NaiveDate {
 }
 
 fn from_date(date: NaiveDate) -> DateTime<Utc> {
-    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
+    DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
 }

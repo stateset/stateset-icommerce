@@ -32,8 +32,26 @@ impl SqliteX402PaymentIntentRepository {
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    fn parse_inclusion_proof(value: Option<String>) -> rusqlite::Result<Option<Vec<String>>> {
+        value
+            .map(|raw| {
+                serde_json::from_str::<Vec<String>>(&raw).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid JSON for x402_intent.inclusion_proof: {}", e),
+                        )),
+                    )
+                })
+            })
+            .transpose()
+    }
+
     fn row_to_intent(row: &rusqlite::Row) -> rusqlite::Result<X402PaymentIntent> {
-        let inclusion_proof: Option<String> = row.get("inclusion_proof")?;
+        let inclusion_proof: Option<Vec<String>> =
+            Self::parse_inclusion_proof(row.get("inclusion_proof")?)?;
 
         Ok(X402PaymentIntent {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "x402_intent", "id")?,
@@ -96,7 +114,7 @@ impl SqliteX402PaymentIntentRepository {
                 "batch_id",
             )?,
             batch_merkle_root: row.get("batch_merkle_root")?,
-            inclusion_proof: inclusion_proof.map(|s| serde_json::from_str(&s).unwrap_or_default()),
+            inclusion_proof,
 
             tx_hash: row.get("tx_hash")?,
             block_number: row.get::<_, Option<i64>>("block_number")?.map(|n| n as u64),
@@ -212,6 +230,12 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
     fn sign(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
         let conn = self.conn()?;
 
+        if input.intent_id != id {
+            return Err(CommerceError::ValidationError(
+                "Sign intent_id does not match target payment intent".to_string(),
+            ));
+        }
+
         // Verify intent exists and is in Created status
         let intent = self.get(id)?.ok_or(CommerceError::NotFound)?;
         if intent.status != X402IntentStatus::Created {
@@ -238,6 +262,19 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
                 .map(|b| format!("{:02x}", b))
                 .collect::<String>()
         );
+
+        // Validate signature/public key pair against the intent hash before persisting.
+        let mut signed_intent = intent.clone();
+        signed_intent.signing_hash = Some(signing_hash.clone());
+        signed_intent.payer_signature = Some(input.signature.clone());
+        signed_intent.payer_public_key = Some(input.public_key.clone());
+
+        let is_valid_signature = signed_intent.verify_signature().unwrap_or(false);
+        if !is_valid_signature {
+            return Err(CommerceError::ValidationError(
+                "Invalid Ed25519 signature for payment intent".to_string(),
+            ));
+        }
 
         conn.execute(
             "UPDATE x402_payment_intents SET

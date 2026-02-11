@@ -142,7 +142,11 @@ impl EventStore for InMemoryEventStore {
             stateset_core::CommerceError::Internal(format!("Failed to serialize event: {}", e))
         })?;
 
-        let mut sequence = self.sequence.write().unwrap();
+        let mut sequence = self.sequence.write().map_err(|_| {
+            stateset_core::CommerceError::Internal(
+                "InMemoryEventStore sequence lock poisoned".to_string(),
+            )
+        })?;
         *sequence += 1;
         let seq = *sequence;
 
@@ -156,7 +160,11 @@ impl EventStore for InMemoryEventStore {
             stored_at: Utc::now(),
         };
 
-        let mut events = self.events.write().unwrap();
+        let mut events = self.events.write().map_err(|_| {
+            stateset_core::CommerceError::Internal(
+                "InMemoryEventStore events lock poisoned".to_string(),
+            )
+        })?;
         if events.len() >= self.max_events {
             events.pop_front();
         }
@@ -166,7 +174,11 @@ impl EventStore for InMemoryEventStore {
     }
 
     fn get_events_since(&self, sequence: u64, limit: u32) -> Result<Vec<(u64, CommerceEvent)>> {
-        let events = self.events.read().unwrap();
+        let events = self.events.read().map_err(|_| {
+            stateset_core::CommerceError::Internal(
+                "InMemoryEventStore events lock poisoned".to_string(),
+            )
+        })?;
         let result = events
             .iter()
             .filter(|e| e.sequence > sequence)
@@ -190,7 +202,11 @@ impl EventStore for InMemoryEventStore {
         aggregate_type: &str,
         aggregate_id: &str,
     ) -> Result<Vec<CommerceEvent>> {
-        let events = self.events.read().unwrap();
+        let events = self.events.read().map_err(|_| {
+            stateset_core::CommerceError::Internal(
+                "InMemoryEventStore events lock poisoned".to_string(),
+            )
+        })?;
         let result = events
             .iter()
             .filter(|e| {
@@ -210,7 +226,11 @@ impl EventStore for InMemoryEventStore {
     }
 
     fn latest_sequence(&self) -> Result<u64> {
-        Ok(*self.sequence.read().unwrap())
+        Ok(*self.sequence.read().map_err(|_| {
+            stateset_core::CommerceError::Internal(
+                "InMemoryEventStore sequence lock poisoned".to_string(),
+            )
+        })?)
     }
 }
 
@@ -520,9 +540,9 @@ impl PostgresEventStore {
         sequence: u64,
         limit: u32,
     ) -> Result<Vec<(u64, CommerceEvent)>> {
-        let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as(
+        let rows: Vec<(i64, Uuid, serde_json::Value)> = sqlx::query_as(
             r#"
-            SELECT sequence, data FROM commerce_events
+            SELECT sequence, id, data FROM commerce_events
             WHERE sequence > $1
             ORDER BY sequence ASC
             LIMIT $2
@@ -537,10 +557,13 @@ impl PostgresEventStore {
         })?;
 
         let mut events = Vec::new();
-        for (seq, data) in rows {
-            if let Ok(event) = serde_json::from_value(data) {
-                events.push((seq as u64, event));
-            }
+        for (seq, id, data) in rows {
+            let event: CommerceEvent = serde_json::from_value(data).map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to deserialize event {id} at sequence {seq}: {e}"
+                ))
+            })?;
+            events.push((seq as u64, event));
         }
 
         Ok(events)
@@ -552,9 +575,9 @@ impl PostgresEventStore {
         aggregate_type: &str,
         aggregate_id: &str,
     ) -> Result<Vec<CommerceEvent>> {
-        let rows: Vec<(serde_json::Value,)> = sqlx::query_as(
+        let rows: Vec<(i64, Uuid, serde_json::Value)> = sqlx::query_as(
             r#"
-            SELECT data FROM commerce_events
+            SELECT sequence, id, data FROM commerce_events
             WHERE aggregate_type = $1 AND aggregate_id = $2
             ORDER BY sequence ASC
             "#,
@@ -568,10 +591,13 @@ impl PostgresEventStore {
         })?;
 
         let mut events = Vec::new();
-        for (data,) in rows {
-            if let Ok(event) = serde_json::from_value(data) {
-                events.push(event);
-            }
+        for (seq, id, data) in rows {
+            let event: CommerceEvent = serde_json::from_value(data).map_err(|e| {
+                stateset_core::CommerceError::DatabaseError(format!(
+                    "Failed to deserialize event {id} at sequence {seq}: {e}"
+                ))
+            })?;
+            events.push(event);
         }
 
         Ok(events)
@@ -595,13 +621,31 @@ impl PostgresEventStore {
 }
 
 #[cfg(feature = "postgres")]
+fn block_on<F, T>(fut: F) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(stateset_core::CommerceError::NotPermitted(
+            "Blocking Postgres event store call inside an async runtime; use the async methods instead"
+                .to_string(),
+        ));
+    }
+
+    let rt = tokio::runtime::Runtime::new().map_err(|e| {
+        stateset_core::CommerceError::Internal(format!("Failed to create runtime: {}", e))
+    })?;
+    rt.block_on(fut)
+}
+
+#[cfg(feature = "postgres")]
 impl EventStore for PostgresEventStore {
     fn append(&self, event: &CommerceEvent) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.append_async(event))
+        block_on(self.append_async(event))
     }
 
     fn get_events_since(&self, sequence: u64, limit: u32) -> Result<Vec<(u64, CommerceEvent)>> {
-        tokio::runtime::Handle::current().block_on(self.get_events_since_async(sequence, limit))
+        block_on(self.get_events_since_async(sequence, limit))
     }
 
     fn get_events_for_aggregate(
@@ -609,12 +653,11 @@ impl EventStore for PostgresEventStore {
         aggregate_type: &str,
         aggregate_id: &str,
     ) -> Result<Vec<CommerceEvent>> {
-        tokio::runtime::Handle::current()
-            .block_on(self.get_events_for_aggregate_async(aggregate_type, aggregate_id))
+        block_on(self.get_events_for_aggregate_async(aggregate_type, aggregate_id))
     }
 
     fn latest_sequence(&self) -> Result<u64> {
-        tokio::runtime::Handle::current().block_on(self.latest_sequence_async())
+        block_on(self.latest_sequence_async())
     }
 }
 

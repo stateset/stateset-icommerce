@@ -7,8 +7,8 @@
 
 use once_cell::sync::Lazy;
 use prometheus::{
-    register_histogram_vec, register_int_counter_vec, register_int_gauge, Encoder, HistogramVec,
-    IntCounterVec, IntGauge, TextEncoder,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge, Encoder, HistogramOpts,
+    HistogramVec, IntCounterVec, IntGauge, Opts, TextEncoder,
 };
 use std::time::Instant;
 
@@ -16,45 +16,120 @@ use std::time::Instant;
 // Metrics Registry
 // ============================================================================
 
-/// Histogram for measuring operation latency in milliseconds
-pub static OPERATION_LATENCY: Lazy<HistogramVec> = Lazy::new(|| {
-    register_histogram_vec!(
+/// Histogram for measuring operation latency in milliseconds.
+///
+/// Metrics are best-effort: if registration/creation fails, this is `None`
+/// and callers should skip recording rather than panic.
+pub static OPERATION_LATENCY: Lazy<Option<HistogramVec>> = Lazy::new(|| {
+    register_histogram_vec_resilient(
         "stateset_operation_duration_milliseconds",
         "Duration of commerce operations in milliseconds",
         &["operation", "domain"],
         vec![0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0],
     )
-    .expect("Failed to register OPERATION_LATENCY histogram")
 });
 
 /// Counter for successful operations
-pub static OPERATIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
-    register_int_counter_vec!(
+pub static OPERATIONS_TOTAL: Lazy<Option<IntCounterVec>> = Lazy::new(|| {
+    register_int_counter_vec_resilient(
         "stateset_operations_total",
         "Total number of commerce operations",
         &["operation", "domain"],
     )
-    .expect("Failed to register OPERATIONS_TOTAL counter")
 });
 
 /// Counter for failed operations
-pub static OPERATIONS_FAILED: Lazy<IntCounterVec> = Lazy::new(|| {
-    register_int_counter_vec!(
+pub static OPERATIONS_FAILED: Lazy<Option<IntCounterVec>> = Lazy::new(|| {
+    register_int_counter_vec_resilient(
         "stateset_operations_failed_total",
         "Total number of failed commerce operations",
         &["operation", "domain"],
     )
-    .expect("Failed to register OPERATIONS_FAILED counter")
 });
 
 /// Gauge for active reservations
-pub static ACTIVE_RESERVATIONS: Lazy<IntGauge> = Lazy::new(|| {
-    register_int_gauge!(
+pub static ACTIVE_RESERVATIONS: Lazy<Option<IntGauge>> = Lazy::new(|| {
+    register_int_gauge_resilient(
         "stateset_inventory_active_reservations",
         "Total number of active inventory reservations",
     )
-    .expect("Failed to register ACTIVE_RESERVATIONS gauge")
 });
+
+fn register_histogram_vec_resilient(
+    name: &str,
+    help: &str,
+    labels: &[&str],
+    buckets: Vec<f64>,
+) -> Option<HistogramVec> {
+    match register_histogram_vec!(name, help, labels, buckets.clone()) {
+        Ok(metric) => Some(metric),
+        Err(err) => {
+            eprintln!(
+                "stateset-core metrics: failed to register histogram '{}' ({}); using local fallback collector",
+                name, err
+            );
+            let opts = HistogramOpts::new(name, help).buckets(buckets);
+            match HistogramVec::new(opts, labels) {
+                Ok(metric) => Some(metric),
+                Err(create_err) => {
+                    eprintln!(
+                        "stateset-core metrics: failed to create fallback histogram '{}' ({}); disabling metric",
+                        name, create_err
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+fn register_int_counter_vec_resilient(
+    name: &str,
+    help: &str,
+    labels: &[&str],
+) -> Option<IntCounterVec> {
+    match register_int_counter_vec!(name, help, labels) {
+        Ok(metric) => Some(metric),
+        Err(err) => {
+            eprintln!(
+                "stateset-core metrics: failed to register counter '{}' ({}); using local fallback collector",
+                name, err
+            );
+            match IntCounterVec::new(Opts::new(name, help), labels) {
+                Ok(metric) => Some(metric),
+                Err(create_err) => {
+                    eprintln!(
+                        "stateset-core metrics: failed to create fallback counter '{}' ({}); disabling metric",
+                        name, create_err
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+fn register_int_gauge_resilient(name: &str, help: &str) -> Option<IntGauge> {
+    match register_int_gauge!(name, help) {
+        Ok(metric) => Some(metric),
+        Err(err) => {
+            eprintln!(
+                "stateset-core metrics: failed to register gauge '{}' ({}); using local fallback collector",
+                name, err
+            );
+            match IntGauge::new(name, help) {
+                Ok(metric) => Some(metric),
+                Err(create_err) => {
+                    eprintln!(
+                        "stateset-core metrics: failed to create fallback gauge '{}' ({}); disabling metric",
+                        name, create_err
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
 
 // ============================================================================
 // Timer for Latency Measurement
@@ -84,9 +159,11 @@ impl Drop for OperationTimer {
         // Millisecond precision as a float (supports sub-ms durations).
         let duration = self.start.elapsed().as_secs_f64() * 1000.0;
         let domain = domain_from_labels(&self.labels);
-        OPERATION_LATENCY
-            .with_label_values(&[self.operation, domain])
-            .observe(duration);
+        if let Some(metric) = OPERATION_LATENCY.as_ref() {
+            metric
+                .with_label_values(&[self.operation, domain])
+                .observe(duration);
+        }
     }
 }
 
@@ -112,16 +189,16 @@ macro_rules! track_operation {
         match result {
             Ok(value) => {
                 let domain = $crate::metrics::domain_from_labels(&$labels);
-                $crate::metrics::OPERATIONS_TOTAL
-                    .with_label_values(&[$op, domain])
-                    .inc();
+                if let Some(metric) = $crate::metrics::OPERATIONS_TOTAL.as_ref() {
+                    metric.with_label_values(&[$op, domain]).inc();
+                }
                 Ok(value)
             }
             Err(error) => {
                 let domain = $crate::metrics::domain_from_labels(&$labels);
-                $crate::metrics::OPERATIONS_FAILED
-                    .with_label_values(&[$op, domain])
-                    .inc();
+                if let Some(metric) = $crate::metrics::OPERATIONS_FAILED.as_ref() {
+                    metric.with_label_values(&[$op, domain]).inc();
+                }
                 Err(error)
             }
         }
@@ -154,16 +231,18 @@ pub mod orders {
 
     /// Track an order creation event
     pub fn track_order_creation(_customer_id: &str) {
-        OPERATIONS_TOTAL
-            .with_label_values(&["orders.create", "orders"])
-            .inc();
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric.with_label_values(&["orders.create", "orders"]).inc();
+        }
     }
 
     /// Track an order status transition
     pub fn track_order_status_transition(_order_id: &str, _from: &str, _to: &str) {
-        OPERATIONS_TOTAL
-            .with_label_values(&["orders.status_transition", "orders"])
-            .inc();
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric
+                .with_label_values(&["orders.status_transition", "orders"])
+                .inc();
+        }
     }
 }
 
@@ -173,17 +252,19 @@ pub mod inventory {
 
     /// Track an inventory reservation
     pub fn track_reservation(_sku: &str, _quantity: f64) {
-        ACTIVE_RESERVATIONS.inc();
-        OPERATIONS_TOTAL
-            .with_label_values(&["inventory.reserve", "inventory"])
-            .inc();
+        if let Some(metric) = ACTIVE_RESERVATIONS.as_ref() {
+            metric.inc();
+        }
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric.with_label_values(&["inventory.reserve", "inventory"]).inc();
+        }
     }
 
     /// Track an inventory stock adjustment
     pub fn track_stock_adjustment(_sku: &str, _delta: f64) {
-        OPERATIONS_TOTAL
-            .with_label_values(&["inventory.adjust", "inventory"])
-            .inc();
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric.with_label_values(&["inventory.adjust", "inventory"]).inc();
+        }
     }
 }
 
@@ -193,16 +274,16 @@ pub mod payments {
 
     /// Track a payment processing operation
     pub fn track_payment_processing(_order_id: &str, _amount: f64) {
-        OPERATIONS_TOTAL
-            .with_label_values(&["payments.process", "payments"])
-            .inc();
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric.with_label_values(&["payments.process", "payments"]).inc();
+        }
     }
 
     /// Track a payment refund operation
     pub fn track_refund(_payment_id: &str, _amount: f64) {
-        OPERATIONS_TOTAL
-            .with_label_values(&["payments.refund", "payments"])
-            .inc();
+        if let Some(metric) = OPERATIONS_TOTAL.as_ref() {
+            metric.with_label_values(&["payments.refund", "payments"]).inc();
+        }
     }
 }
 

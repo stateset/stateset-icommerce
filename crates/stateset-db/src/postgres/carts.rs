@@ -459,7 +459,6 @@ impl PgCartRepository {
                     notes: cart.notes.clone(),
                     payment_method: cart.payment_method.clone(),
                     shipping_method: cart.shipping_method.clone(),
-                    ..Default::default()
                 },
             )
             .await?;

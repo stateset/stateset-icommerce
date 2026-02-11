@@ -16,6 +16,7 @@ use uuid::Uuid;
 // ============================================================================
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_bulk_order_creation() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
@@ -77,6 +78,7 @@ fn stress_test_bulk_order_creation() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_bulk_customer_creation() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let customer_count = 1000;
@@ -112,6 +114,7 @@ fn stress_test_bulk_customer_creation() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_bulk_inventory_adjustments() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
@@ -155,6 +158,7 @@ fn stress_test_bulk_inventory_adjustments() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_bulk_product_creation() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
     let product_count = 500;
@@ -187,6 +191,7 @@ fn stress_test_bulk_product_creation() {
 // ============================================================================
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_concurrent_orders() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
@@ -270,6 +275,7 @@ fn stress_test_concurrent_orders() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_concurrent_inventory_reservations() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
@@ -340,6 +346,7 @@ fn stress_test_concurrent_inventory_reservations() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_read_heavy_workload() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
@@ -388,6 +395,7 @@ fn stress_test_read_heavy_workload() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_mixed_workload() {
     let commerce = Arc::new(Commerce::new(":memory:").expect("Failed to create commerce"));
 
@@ -475,6 +483,7 @@ fn stress_test_mixed_workload() {
 // ============================================================================
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_repeated_open_close() {
     let iterations = 100;
     let start = Instant::now();
@@ -504,6 +513,7 @@ fn stress_test_repeated_open_close() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_large_batch_insert() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
@@ -556,6 +566,7 @@ fn stress_test_large_batch_insert() {
 }
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_query_performance() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
@@ -611,6 +622,7 @@ fn stress_test_query_performance() {
 // ============================================================================
 
 #[test]
+#[ignore = "slow; run with: cargo test -p stateset-embedded --test stress_test -- --ignored --nocapture"]
 fn stress_test_long_running_operations() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 

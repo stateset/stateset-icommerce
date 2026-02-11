@@ -536,13 +536,15 @@ impl X402 {
         }
     }
 
-    /// Verify an intent's signature (placeholder - actual verification requires ed25519)
+    /// Verify an intent's Ed25519 signature against its canonical signing hash.
     ///
-    /// Note: Full signature verification requires the ed25519-dalek crate.
-    /// This method checks that the intent has a signature and public key.
+    /// Returns `false` for missing, malformed, or invalid cryptographic fields.
     pub fn has_valid_signature(&self, id: Uuid) -> Result<bool> {
         if let Some(intent) = self.get_intent(id)? {
-            Ok(intent.payer_signature.is_some() && intent.payer_public_key.is_some())
+            if !intent.is_signed() {
+                return Ok(false);
+            }
+            Ok(intent.verify_signature().unwrap_or(false))
         } else {
             Ok(false)
         }
@@ -598,27 +600,116 @@ mod tests {
             })
             .unwrap();
 
+        let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        locally_signed.sign_with_ed25519(&[3u8; 32]).unwrap();
+        let signature = locally_signed.payer_signature.unwrap();
+        let public_key = locally_signed.payer_public_key.unwrap();
+
         let signed = commerce
             .x402()
             .sign_intent(
                 intent.id,
                 SignX402PaymentIntent {
                     intent_id: intent.id,
-                    signature: "test_signature_base64".into(),
-                    public_key: "test_pubkey_base64".into(),
+                    signature: signature.clone(),
+                    public_key: public_key.clone(),
                 },
             )
             .unwrap();
 
         assert_eq!(signed.status, X402IntentStatus::Signed);
-        assert_eq!(
-            signed.payer_signature,
-            Some("test_signature_base64".to_string())
+        assert_eq!(signed.payer_signature, Some(signature));
+        assert_eq!(signed.payer_public_key, Some(public_key));
+    }
+
+    #[test]
+    fn test_has_valid_signature_true_for_ed25519_signature() {
+        let commerce = setup_commerce();
+
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xSigner".into(),
+                payee_address: "0xPayee".into(),
+                amount: 1_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut to_sign = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        to_sign.sign_with_ed25519(&[7u8; 32]).unwrap();
+
+        let signed = commerce
+            .x402()
+            .sign_intent(
+                intent.id,
+                SignX402PaymentIntent {
+                    intent_id: intent.id,
+                    signature: to_sign.payer_signature.unwrap(),
+                    public_key: to_sign.payer_public_key.unwrap(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(signed.status, X402IntentStatus::Signed);
+        assert!(commerce.x402().has_valid_signature(intent.id).unwrap());
+    }
+
+    #[test]
+    fn test_sign_intent_rejects_malformed_signature() {
+        let commerce = setup_commerce();
+
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xSigner".into(),
+                payee_address: "0xPayee".into(),
+                amount: 1_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let result = commerce
+            .x402()
+            .sign_intent(
+                intent.id,
+                SignX402PaymentIntent {
+                    intent_id: intent.id,
+                    signature: "not-hex-signature".into(),
+                    public_key: "not-hex-public-key".into(),
+                },
+            );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sign_intent_rejects_mismatched_intent_id() {
+        let commerce = setup_commerce();
+
+        let intent = commerce
+            .x402()
+            .create_intent(CreateX402PaymentIntent {
+                payer_address: "0xSigner".into(),
+                payee_address: "0xPayee".into(),
+                amount: 1_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        locally_signed.sign_with_ed25519(&[15u8; 32]).unwrap();
+
+        let result = commerce.x402().sign_intent(
+            intent.id,
+            SignX402PaymentIntent {
+                intent_id: Uuid::new_v4(),
+                signature: locally_signed.payer_signature.unwrap(),
+                public_key: locally_signed.payer_public_key.unwrap(),
+            },
         );
-        assert_eq!(
-            signed.payer_public_key,
-            Some("test_pubkey_base64".to_string())
-        );
+
+        assert!(result.is_err());
     }
 
     #[test]
@@ -637,14 +728,17 @@ mod tests {
             .unwrap();
 
         // Sign first
+        let mut locally_signed = commerce.x402().get_intent(intent.id).unwrap().unwrap();
+        locally_signed.sign_with_ed25519(&[9u8; 32]).unwrap();
+
         commerce
             .x402()
             .sign_intent(
                 intent.id,
                 SignX402PaymentIntent {
                     intent_id: intent.id,
-                    signature: "sig".into(),
-                    public_key: "pk".into(),
+                    signature: locally_signed.payer_signature.unwrap(),
+                    public_key: locally_signed.payer_public_key.unwrap(),
                 },
             )
             .unwrap();

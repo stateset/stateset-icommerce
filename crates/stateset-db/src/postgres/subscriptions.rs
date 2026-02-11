@@ -1008,10 +1008,10 @@ impl PgSubscriptionRepository {
         )
         .await?;
 
-        if trial_ends_at.is_some() {
+        if let Some(trial_end) = trial_ends_at {
             let desc = format!(
                 "Trial started, ends on {}",
-                trial_ends_at.unwrap().format("%Y-%m-%d")
+                trial_end.format("%Y-%m-%d")
             );
             self.record_event_tx(
                 &mut tx,

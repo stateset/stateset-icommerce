@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! # StateSet iCommerce
 //!
 //! The SQLite of commerce operations. An embeddable commerce library

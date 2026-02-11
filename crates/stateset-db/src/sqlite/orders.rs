@@ -349,7 +349,11 @@ impl SqliteOrderRepository {
 
         with_immediate_transaction(&self.pool, |tx| {
             let inserted = if idempotent_by_cart_id {
-                let cart_id_str = cart_id_str.as_ref().expect("cart_id_str");
+                let cart_id_str = cart_id_str.as_deref().ok_or_else(|| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        "cart_id was required but missing (internal error)".into(),
+                    )))
+                })?;
                 let rows_affected = tx.execute(
                     "INSERT OR IGNORE INTO orders (id, order_number, customer_id, status, order_date, total_amount,
                                      currency, payment_status, fulfillment_status, payment_method,
@@ -409,7 +413,11 @@ impl SqliteOrderRepository {
             };
 
             if !inserted {
-                let cart_id_str = cart_id_str.as_ref().expect("cart_id_str");
+                let cart_id_str = cart_id_str.as_deref().ok_or_else(|| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
+                        "cart_id was required but missing (internal error)".into(),
+                    )))
+                })?;
                 let result = tx.query_row(
                     "SELECT * FROM orders WHERE cart_id = ?",
                     [cart_id_str],

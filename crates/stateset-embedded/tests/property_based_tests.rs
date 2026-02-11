@@ -13,10 +13,28 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     Commerce, CreateCustomer, CreateInventoryItem, CreateOrder, CreateOrderItem, Currency,
-    OrderFilter,
+    OrderFilter, SetExchangeRate,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
+
+fn currency_test_commerce() -> &'static Commerce {
+    static COMMERCE: OnceLock<Commerce> = OnceLock::new();
+    COMMERCE.get_or_init(|| {
+        let commerce = Commerce::new(":memory:").unwrap();
+        // Seed a known exchange rate so this property test always exercises conversion logic.
+        commerce
+            .currency()
+            .set_rate(SetExchangeRate {
+                base_currency: Currency::USD,
+                quote_currency: Currency::EUR,
+                rate: dec!(0.92),
+                source: Some("test".into()),
+            })
+            .unwrap();
+        commerce
+    })
+}
 
 proptest! {
     #[test]
@@ -81,47 +99,33 @@ proptest! {
     fn prop_currency_conversion_preserves_quantity(
         amount in -1000000i64..1000000i64
     ) {
-        let commerce = Commerce::new(":memory:").unwrap();
+        let commerce = currency_test_commerce();
 
         // Test conversion chains preserve value
         let usd_amount = Decimal::from(amount);
 
-        let conversion = commerce
+        let eur_amount = commerce
             .currency()
-            .convert_amount(
-                usd_amount,
-                Currency::USD,
-                Currency::EUR,
-            );
+            .convert_amount(usd_amount, Currency::USD, Currency::EUR)
+            .unwrap();
+        let back_to_usd = commerce
+            .currency()
+            .convert_amount(eur_amount, Currency::EUR, Currency::USD)
+            .unwrap();
 
-        // If conversion succeeds, round-trip should work
-        if conversion.is_ok() {
-            let eur_amount = conversion.unwrap();
-            let round_trip = commerce
-                .currency()
-                .convert_amount(
-                    eur_amount,
-                    Currency::EUR,
-                    Currency::USD,
-                );
-
-            if round_trip.is_ok() {
-                let back_to_usd = round_trip.unwrap();
-                // Allow small rounding differences
-                let diff = (back_to_usd - usd_amount).abs();
-                let relative_tolerance = usd_amount.abs() * dec!(0.005);
-                let tolerance = if relative_tolerance > dec!(0.01) {
-                    relative_tolerance
-                } else {
-                    dec!(0.01)
-                };
-                prop_assert!(
-                    diff <= tolerance,
-                    "Currency conversion lost precision: {} -> {} -> {} (diff {}, tolerance {})",
-                    usd_amount, eur_amount, back_to_usd, diff, tolerance
-                );
-            }
-        }
+        // Allow small rounding differences
+        let diff = (back_to_usd - usd_amount).abs();
+        let relative_tolerance = usd_amount.abs() * dec!(0.005);
+        let tolerance = if relative_tolerance > dec!(0.01) {
+            relative_tolerance
+        } else {
+            dec!(0.01)
+        };
+        prop_assert!(
+            diff <= tolerance,
+            "Currency conversion lost precision: {} -> {} -> {} (diff {}, tolerance {})",
+            usd_amount, eur_amount, back_to_usd, diff, tolerance
+        );
     }
 
     #[test]

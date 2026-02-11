@@ -207,14 +207,28 @@ impl WebhookManager {
     /// Register a new webhook
     pub fn register(&self, webhook: Webhook) -> Uuid {
         let id = webhook.id;
-        self.webhooks.write().unwrap().insert(id, webhook);
+        let mut webhooks = match self.webhooks.write() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (write); recovering");
+                poison.into_inner()
+            }
+        };
+        webhooks.insert(id, webhook);
         tracing::info!(webhook_id = %id, "Webhook registered");
         id
     }
 
     /// Unregister a webhook
     pub fn unregister(&self, id: Uuid) -> bool {
-        let removed = self.webhooks.write().unwrap().remove(&id).is_some();
+        let mut webhooks = match self.webhooks.write() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (write); recovering");
+                poison.into_inner()
+            }
+        };
+        let removed = webhooks.remove(&id).is_some();
         if removed {
             tracing::info!(webhook_id = %id, "Webhook unregistered");
         }
@@ -223,18 +237,38 @@ impl WebhookManager {
 
     /// Get a webhook by ID
     pub fn get(&self, id: Uuid) -> Option<Webhook> {
-        self.webhooks.read().unwrap().get(&id).cloned()
+        let webhooks = match self.webhooks.read() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (read); recovering");
+                poison.into_inner()
+            }
+        };
+        webhooks.get(&id).cloned()
     }
 
     /// List all webhooks
     pub fn list(&self) -> Vec<Webhook> {
-        self.webhooks.read().unwrap().values().cloned().collect()
+        let webhooks = match self.webhooks.read() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (read); recovering");
+                poison.into_inner()
+            }
+        };
+        webhooks.values().cloned().collect()
     }
 
     /// Update a webhook
     pub fn update(&self, webhook: Webhook) -> bool {
         let id = webhook.id;
-        let mut webhooks = self.webhooks.write().unwrap();
+        let mut webhooks = match self.webhooks.write() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (write); recovering");
+                poison.into_inner()
+            }
+        };
         if let std::collections::hash_map::Entry::Occupied(mut e) = webhooks.entry(id) {
             e.insert(webhook);
             true
@@ -245,7 +279,13 @@ impl WebhookManager {
 
     /// Enable/disable a webhook
     pub fn set_active(&self, id: Uuid, active: bool) -> bool {
-        let mut webhooks = self.webhooks.write().unwrap();
+        let mut webhooks = match self.webhooks.write() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (write); recovering");
+                poison.into_inner()
+            }
+        };
         if let Some(webhook) = webhooks.get_mut(&id) {
             webhook.active = active;
             true
@@ -258,10 +298,14 @@ impl WebhookManager {
     pub fn deliver(&self, event: CommerceEvent) {
         use futures::stream::{self, StreamExt};
 
-        let webhooks: Vec<Webhook> = self
-            .webhooks
-            .read()
-            .unwrap()
+        let webhooks_guard = match self.webhooks.read() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                tracing::error!("WebhookManager webhooks lock poisoned (read); recovering");
+                poison.into_inner()
+            }
+        };
+        let webhooks: Vec<Webhook> = webhooks_guard
             .values()
             .filter(|w| w.should_receive(&event))
             .cloned()
@@ -316,10 +360,16 @@ async fn deliver_to_webhook(
 
     for attempt in 0..=config.max_retries {
         if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                config.retry_delay_ms * (1 << (attempt - 1)), // Exponential backoff
-            ))
-            .await;
+            // Exponential backoff with saturation + cap to avoid overflows or ridiculous delays.
+            const MAX_BACKOFF_MS: u64 = 60_000;
+            let exp = attempt.saturating_sub(1);
+            let shift = exp.min(16);
+            let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+            let delay_ms = config
+                .retry_delay_ms
+                .saturating_mul(factor)
+                .min(MAX_BACKOFF_MS);
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
 
         let mut request = client
@@ -332,8 +382,9 @@ async fn deliver_to_webhook(
 
         // Add HMAC signature if secret is configured
         if let Some(ref secret) = webhook.secret {
-            let signature = compute_signature(secret, &body);
-            request = request.header("X-Signature", signature);
+            if let Some(signature) = compute_signature(secret, &body) {
+                request = request.header("X-Signature", signature);
+            }
         }
 
         // Add custom headers
@@ -395,18 +446,23 @@ struct WebhookPayload {
 }
 
 /// Compute HMAC-SHA256 signature for webhook payload
-fn compute_signature(secret: &str, body: &str) -> String {
+fn compute_signature(secret: &str, body: &str) -> Option<String> {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(err) => {
+            tracing::error!(error = %err, "Failed to initialize webhook HMAC");
+            return None;
+        }
+    };
     mac.update(body.as_bytes());
     let result = mac.finalize();
 
-    format!("sha256={}", hex::encode(result.into_bytes()))
+    Some(format!("sha256={}", hex::encode(result.into_bytes())))
 }
 
 #[cfg(test)]
@@ -455,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_compute_signature() {
-        let signature = compute_signature("secret", "test body");
+        let signature = compute_signature("secret", "test body").expect("signature");
         assert!(signature.starts_with("sha256="));
     }
 }
