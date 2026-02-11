@@ -45,7 +45,7 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^3.5.1"
   },
   "files": [
     "index.js",
