@@ -332,18 +332,4 @@ export const manufacturingTools = [
   },
 ];
 
-/**
- * Get all manufacturing tools
- */
-export function getManufacturingTools() {
-  return manufacturingTools;
-}
-
-/**
- * Get manufacturing tool by name
- */
-export function getManufacturingTool(name) {
-  return manufacturingTools.find((t) => t.name === name);
-}
-
 export default manufacturingTools;

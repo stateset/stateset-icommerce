@@ -46,10 +46,24 @@ export class AgentKeyManager {
   }
 
   /**
+   * Validate agentId to prevent path traversal.
+   * @param {string} agentId
+   */
+  _validateAgentId(agentId) {
+    if (!agentId || typeof agentId !== 'string') {
+      throw new Error('agentId is required');
+    }
+    if (/[/\\]|\.\./.test(agentId)) {
+      throw new Error('Invalid agentId: must not contain path separators or ".."');
+    }
+  }
+
+  /**
    * Ensure keys directory exists for an agent
    * @param {string} agentId
    */
   async _ensureAgentDir(agentId) {
+    this._validateAgentId(agentId);
     const agentDir = path.join(this.keysDir, agentId);
     await fs.mkdir(agentDir, { recursive: true });
     return agentDir;
@@ -61,6 +75,7 @@ export class AgentKeyManager {
    * @param {'signing'|'encryption'} keyType
    */
   _keyFilePath(agentId, keyType) {
+    this._validateAgentId(agentId);
     return path.join(this.keysDir, agentId, `${keyType}-keys.json`);
   }
 

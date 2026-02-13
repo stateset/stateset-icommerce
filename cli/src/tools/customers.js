@@ -114,18 +114,4 @@ export const customerTools = [
   },
 ];
 
-/**
- * Get all customer tools
- */
-export function getCustomerTools() {
-  return customerTools;
-}
-
-/**
- * Get customer tool by name
- */
-export function getCustomerTool(name) {
-  return customerTools.find((t) => t.name === name);
-}
-
 export default customerTools;

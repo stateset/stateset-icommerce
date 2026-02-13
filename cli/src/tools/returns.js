@@ -162,12 +162,4 @@ export const returnTools = [
   },
 ];
 
-export function getReturnTools() {
-  return returnTools;
-}
-
-export function getReturnTool(name) {
-  return returnTools.find((t) => t.name === name);
-}
-
 export default returnTools;

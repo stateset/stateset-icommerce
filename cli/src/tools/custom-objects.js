@@ -346,18 +346,4 @@ export const customObjectTools = [
   },
 ];
 
-/**
- * Get all custom object tools
- */
-export function getCustomObjectTools() {
-  return customObjectTools;
-}
-
-/**
- * Get custom object tool by name
- */
-export function getCustomObjectTool(name) {
-  return customObjectTools.find((t) => t.name === name);
-}
-
 export default customObjectTools;

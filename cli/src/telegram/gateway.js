@@ -7,6 +7,7 @@
 
 import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
+import { isSafeDisplayUrl } from '../utils/url-validator.js';
 
 /**
  * Start the Telegram gateway.
@@ -98,7 +99,7 @@ export async function startTelegramGateway({
         opts.reply_markup = {
           inline_keyboard: [
             richMsg.buttons.map((btn) => {
-              if (btn.url) return { text: btn.label, url: btn.url };
+              if (btn.url && isSafeDisplayUrl(btn.url)) return { text: btn.label, url: btn.url };
               return { text: btn.label, callback_data: btn.action || btn.label };
             }),
           ],

@@ -1,0 +1,39 @@
+{
+  "name": "create-stateset-app",
+  "version": "0.1.0",
+  "description": "Create StateSet-powered commerce storefronts with one command",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stateset/stateset-icommerce.git",
+    "directory": "packages/create-stateset-app"
+  },
+  "type": "module",
+  "bin": {
+    "create-stateset-app": "./bin/create-stateset-app.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/"
+  ],
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "keywords": [
+    "stateset",
+    "commerce",
+    "ecommerce",
+    "storefront",
+    "nextjs",
+    "create",
+    "scaffold",
+    "usdc",
+    "web3",
+    "embedded",
+    "sqlite"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -247,18 +247,4 @@ export const orderTools = [
   },
 ];
 
-/**
- * Get all order tools
- */
-export function getOrderTools() {
-  return orderTools;
-}
-
-/**
- * Get order tool by name
- */
-export function getOrderTool(name) {
-  return orderTools.find((t) => t.name === name);
-}
-
 export default orderTools;

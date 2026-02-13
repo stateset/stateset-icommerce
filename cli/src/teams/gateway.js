@@ -17,6 +17,7 @@ import http from 'node:http';
 import { createSessionManager, createMessageHandler, BOT_PREFIX } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
+import { isSafeDisplayUrl } from '../utils/url-validator.js';
 
 // ============================================================================
 // Bot Framework REST helpers
@@ -443,7 +444,7 @@ export async function startTeamsGateway({
       const actions = [];
       if (richMsg.buttons && richMsg.buttons.length > 0) {
         for (const btn of richMsg.buttons.slice(0, 6)) {
-          if (btn.url) {
+          if (btn.url && isSafeDisplayUrl(btn.url)) {
             actions.push({
               type: 'Action.OpenUrl',
               title: btn.label,

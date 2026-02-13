@@ -8,6 +8,7 @@
 import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
 import { richMessageToPlainText } from '../channels/rich-messages.js';
+import { isSafeDisplayUrl } from '../utils/url-validator.js';
 
 /**
  * Start the Slack gateway.
@@ -166,7 +167,7 @@ export async function startSlackGateway({
       // Buttons
       if (richMsg.buttons && richMsg.buttons.length > 0) {
         const elements = richMsg.buttons.slice(0, 5).map((btn) => {
-          if (btn.url) {
+          if (btn.url && isSafeDisplayUrl(btn.url)) {
             return {
               type: 'button',
               text: { type: 'plain_text', text: btn.label },

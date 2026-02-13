@@ -92,18 +92,4 @@ export const warrantyTools = [
   },
 ];
 
-/**
- * Get all warranty tools
- */
-export function getWarrantyTools() {
-  return warrantyTools;
-}
-
-/**
- * Get warranty tool by name
- */
-export function getWarrantyTool(name) {
-  return warrantyTools.find((t) => t.name === name);
-}
-
 export default warrantyTools;

@@ -262,10 +262,4 @@ export const analyticsTools = [
   },
 ];
 
-export function getAnalyticsTools() {
-  return analyticsTools;
-}
-export function getAnalyticsTool(name) {
-  return analyticsTools.find((t) => t.name === name);
-}
 export default analyticsTools;

@@ -28,7 +28,7 @@ export const agentCardTools = [
         .array(z.string())
         .optional()
         .describe('A2A skills: sell, buy, quote, fulfill, deliver'),
-      endpointUrl: z.string().optional().describe('A2A endpoint URL'),
+      endpointUrl: z.string().url().optional().describe('A2A endpoint URL (must be https)'),
       description: z.string().optional().describe('Agent description'),
     },
     permission: 'write',
@@ -38,6 +38,17 @@ export const agentCardTools = [
           error: 'Registering agent card requires --apply flag.',
           wouldRegister: { name: params.name, walletAddress: params.walletAddress },
         };
+      }
+
+      if (params.endpointUrl) {
+        try {
+          const parsed = new URL(params.endpointUrl);
+          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+            return { error: 'endpointUrl must use http or https protocol.' };
+          }
+        } catch {
+          return { error: 'endpointUrl is not a valid URL.' };
+        }
       }
 
       const card = await commerce.x402().registerAgent({
@@ -201,19 +212,5 @@ export const agentCardTools = [
     },
   },
 ];
-
-/**
- * Get all agent card tools
- */
-export function getAgentCardTools() {
-  return agentCardTools;
-}
-
-/**
- * Get agent card tool by name
- */
-export function getAgentCardTool(name) {
-  return agentCardTools.find((t) => t.name === name);
-}
 
 export default agentCardTools;

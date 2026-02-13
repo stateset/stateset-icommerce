@@ -65,18 +65,4 @@ export const shipmentTools = [
   },
 ];
 
-/**
- * Get all shipment tools
- */
-export function getShipmentTools() {
-  return shipmentTools;
-}
-
-/**
- * Get shipment tool by name
- */
-export function getShipmentTool(name) {
-  return shipmentTools.find((t) => t.name === name);
-}
-
 export default shipmentTools;

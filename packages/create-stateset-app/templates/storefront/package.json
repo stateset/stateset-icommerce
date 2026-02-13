@@ -1,0 +1,37 @@
+{
+  "name": "{{PACKAGE_NAME}}",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.2.12",
+    "@ai-sdk/react": "^1.2.12",
+    "@stateset/embedded": "^0.1.4",
+    "@tanstack/react-query": "^5.90.12",
+    "ai": "^4.3.19",
+    "lucide-react": "^0.563.0",
+    "next": "15.4.8",
+    "react": "^19",
+    "react-dom": "^19",
+    "viem": "^2.43.2",
+    "wagmi": "^3.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10",
+    "better-sqlite3": "^12.5.0",
+    "postcss": "^8",
+    "tailwindcss": "^3",
+    "typescript": "^5"
+  }
+}

@@ -1525,18 +1525,4 @@ export const x402Tools = [
   },
 ];
 
-/**
- * Get all x402 tools
- */
-export function getX402Tools() {
-  return x402Tools;
-}
-
-/**
- * Get x402 tool by name
- */
-export function getX402Tool(name) {
-  return x402Tools.find((t) => t.name === name);
-}
-
 export default x402Tools;

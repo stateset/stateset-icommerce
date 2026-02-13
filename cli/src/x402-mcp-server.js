@@ -3,6 +3,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { X402SequencerClient, createX402Agent, BudgetExceededError } from './x402/index.js';
@@ -61,7 +62,18 @@ function loadKeyFromJson(keyJson) {
 async function resolveSigningKey({ agentId, keyId, configDir, keyJson, keyPath }) {
   if (keyJson) return loadKeyFromJson(keyJson);
   if (keyPath) {
-    const raw = fs.readFileSync(keyPath, 'utf8');
+    const resolved = path.resolve(keyPath);
+    // Prevent path traversal: keyPath must be under cwd or configDir
+    const cwd = process.cwd();
+    const cfgBase = configDir ? path.resolve(configDir) : null;
+    if (
+      !resolved.startsWith(cwd + path.sep) &&
+      resolved !== cwd &&
+      !(cfgBase && resolved.startsWith(cfgBase + path.sep))
+    ) {
+      throw new Error('keyPath must be within the current working directory or config directory');
+    }
+    const raw = fs.readFileSync(resolved, 'utf8');
     return loadKeyFromJson(JSON.parse(raw));
   }
   if (!agentId) {

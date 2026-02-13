@@ -11,6 +11,23 @@
  * @param {string} url - The URL to validate
  * @throws {Error} If the URL is blocked
  */
+/**
+ * Check if a URL is safe to display in chat embeds/buttons.
+ * Only allows http: and https: protocols — blocks javascript:, data:, file:, etc.
+ *
+ * @param {string} url - The URL to validate
+ * @returns {boolean} true if safe to display
+ */
+export function isSafeDisplayUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function validateFetchUrl(url) {
   const parsed = new URL(url);
   if (!['http:', 'https:'].includes(parsed.protocol)) {

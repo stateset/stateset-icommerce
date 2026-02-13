@@ -150,18 +150,4 @@ export const erc8004Tools = [
   },
 ];
 
-/**
- * Get all ERC-8004 tools
- */
-export function getErc8004Tools() {
-  return erc8004Tools;
-}
-
-/**
- * Get ERC-8004 tool by name
- */
-export function getErc8004Tool(name) {
-  return erc8004Tools.find((t) => t.name === name);
-}
-
 export default erc8004Tools;

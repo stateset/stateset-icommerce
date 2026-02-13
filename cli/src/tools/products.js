@@ -126,18 +126,4 @@ export const productTools = [
   },
 ];
 
-/**
- * Get all product tools
- */
-export function getProductTools() {
-  return productTools;
-}
-
-/**
- * Get product tool by name
- */
-export function getProductTool(name) {
-  return productTools.find((t) => t.name === name);
-}
-
 export default productTools;

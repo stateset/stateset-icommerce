@@ -107,18 +107,4 @@ export const invoiceTools = [
   },
 ];
 
-/**
- * Get all invoice tools
- */
-export function getInvoiceTools() {
-  return invoiceTools;
-}
-
-/**
- * Get invoice tool by name
- */
-export function getInvoiceTool(name) {
-  return invoiceTools.find((t) => t.name === name);
-}
-
 export default invoiceTools;

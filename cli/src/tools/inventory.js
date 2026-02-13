@@ -211,12 +211,4 @@ export const inventoryTools = [
   },
 ];
 
-export function getInventoryTools() {
-  return inventoryTools;
-}
-
-export function getInventoryTool(name) {
-  return inventoryTools.find((t) => t.name === name);
-}
-
 export default inventoryTools;

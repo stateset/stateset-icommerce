@@ -123,18 +123,4 @@ export const supplierTools = [
   },
 ];
 
-/**
- * Get all supplier tools
- */
-export function getSupplierTools() {
-  return supplierTools;
-}
-
-/**
- * Get supplier tool by name
- */
-export function getSupplierTool(name) {
-  return supplierTools.find((t) => t.name === name);
-}
-
 export default supplierTools;

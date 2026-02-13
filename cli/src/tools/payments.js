@@ -110,18 +110,4 @@ export const paymentTools = [
   },
 ];
 
-/**
- * Get all payment tools
- */
-export function getPaymentTools() {
-  return paymentTools;
-}
-
-/**
- * Get payment tool by name
- */
-export function getPaymentTool(name) {
-  return paymentTools.find((t) => t.name === name);
-}
-
 export default paymentTools;

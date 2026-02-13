@@ -45,3 +45,16 @@ export {
   assertHasField,
   assertListCount,
 } from './assertions.js';
+
+export {
+  createMockSessionManager,
+  createMockMessageHandler,
+  createMockNotifier,
+  createMockGatewayDeps,
+  createMockChannelAdapter,
+  createMockDiscordClient,
+  createMockTelegramBot,
+  createMockSlackApp,
+} from './gateway-mocks.js';
+
+export { MockDatabase } from './sqlite-mock.js';

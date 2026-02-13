@@ -460,12 +460,4 @@ export const cartTools = [
   },
 ];
 
-export function getCartTools() {
-  return cartTools;
-}
-
-export function getCartTool(name) {
-  return cartTools.find((t) => t.name === name);
-}
-
 export default cartTools;

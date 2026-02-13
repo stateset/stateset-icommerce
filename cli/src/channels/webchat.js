@@ -458,7 +458,7 @@ header button:hover {
     var rendered = role === "agent" ? renderMarkdown(text) : escapeHtml(text);
     var now = new Date();
     var ts = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    div.innerHTML = rendered + '<span class="ts">' + ts + "</span>";
+    div.innerHTML = rendered + '<span class="ts">' + escapeHtml(ts) + "</span>";
     messagesEl.appendChild(div);
     scrollToBottom();
     return div;

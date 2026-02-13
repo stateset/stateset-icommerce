@@ -215,18 +215,4 @@ export const stablecoinTools = [
   },
 ];
 
-/**
- * Get all stablecoin tools
- */
-export function getStablecoinTools() {
-  return stablecoinTools;
-}
-
-/**
- * Get stablecoin tool by name
- */
-export function getStablecoinTool(name) {
-  return stablecoinTools.find((t) => t.name === name);
-}
-
 export default stablecoinTools;

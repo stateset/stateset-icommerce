@@ -7,6 +7,7 @@
 
 import { createSessionManager, createMessageHandler } from '../channels/base.js';
 import { getNotifier } from '../channels/notifier.js';
+import { isSafeDisplayUrl } from '../utils/url-validator.js';
 
 /**
  * Start the Discord gateway.
@@ -108,7 +109,7 @@ export async function startDiscordGateway({
       if (richMsg.description) embed.setDescription(richMsg.description);
       if (richMsg.color) embed.setColor(parseInt(richMsg.color.replace('#', ''), 16));
       if (richMsg.footer) embed.setFooter({ text: richMsg.footer });
-      if (richMsg.imageUrl) embed.setImage(richMsg.imageUrl);
+      if (richMsg.imageUrl && isSafeDisplayUrl(richMsg.imageUrl)) embed.setImage(richMsg.imageUrl);
 
       if (richMsg.fields) {
         for (const f of richMsg.fields) {
@@ -122,7 +123,7 @@ export async function startDiscordGateway({
         const row = new ActionRowBuilder();
         for (const btn of richMsg.buttons.slice(0, 5)) {
           const b = new ButtonBuilder().setLabel(btn.label);
-          if (btn.url) {
+          if (btn.url && isSafeDisplayUrl(btn.url)) {
             b.setStyle(ButtonStyle.Link).setURL(btn.url);
           } else {
             b.setStyle(ButtonStyle.Primary).setCustomId(btn.action || btn.label);

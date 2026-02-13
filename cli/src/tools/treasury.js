@@ -208,18 +208,4 @@ export const treasuryTools = [
   },
 ];
 
-/**
- * Get all treasury tools
- */
-export function getTreasuryTools() {
-  return treasuryTools;
-}
-
-/**
- * Get treasury tool by name
- */
-export function getTreasuryTool(name) {
-  return treasuryTools.find((t) => t.name === name);
-}
-
 export default treasuryTools;
