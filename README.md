@@ -29,6 +29,26 @@ npm run check                # root quality checks
 
 ---
 
+## What's New in v0.7.0
+
+**Agent-to-Agent (A2A) Commerce** — AI agents can now autonomously pay, quote, subscribe, split payments, and negotiate with each other.
+
+| Feature | Description |
+|---------|-------------|
+| **A2A Payments** | Direct agent-to-agent transfers (USDC, USDT, ssUSD, DAI) across SET Chain, Base, Ethereum, Arbitrum |
+| **A2A Quotes** | Request → provide → accept/decline → fulfill negotiation flow |
+| **A2A Subscriptions** | Recurring inter-agent billing with trial periods, pause/resume, weekly-to-annual intervals |
+| **A2A Split Payments** | Multi-party splits (percentage or fixed) with platform fees and drift prevention |
+| **A2A Escrow** | Conditional payments (seller_fulfilled, buyer_confirmed, time_lock, milestone) with dispute resolution |
+| **A2A Webhooks** | HMAC-SHA256 signed notifications with SSRF validation and exponential backoff retry |
+| **A2A Event Streaming** | Real-time SSE push with wildcard filtering and persistent event log |
+| **Agent Discovery** | Find agents by capability, reputation scoring, trust-level gating |
+| **232 MCP Tools** | Up from 175 — 53 new A2A tools across 26 modular domain modules |
+| **Modular MCP Server** | Rewritten from 9,340 to 470 lines (95% reduction) with `adaptTool()` composition |
+| **4,300+ Tests** | 500+ new A2A tests, 60+ test files across the CLI |
+
+---
+
 ## Documentation
 
 - mdBook docs live in `docs/` (see `docs/README.md`).
@@ -86,8 +106,9 @@ stateset-icommerce/
 │   ├── go/                  # Go (cgo)
 │   └── wasm/                # WebAssembly (browser + Node)
 └── cli/
-    ├── bin/                 # CLI programs (stateset, stateset-daemon, stateset-skills, ...)
-    ├── src/                 # MCP server (87 tools)
+    ├── bin/                 # CLI programs (40 entry points)
+    ├── src/                 # MCP server (232 tools)
+    ├── src/a2a/             # Agent-to-Agent commerce (payments, subscriptions, splits, events)
     ├── src/channels/        # 9-channel messaging gateway
     │   ├── base.js          # Shared sessions, commands, pipeline
     │   ├── webchat.js       # HTTP-based web chat gateway
@@ -130,9 +151,14 @@ stateset-icommerce/
 │  │ 254 types   │  │SQLite/Postgres│ │Deterministic│             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │  87 MCP     │  │  8 Agents   │  │  38 Skills  │             │
+│  │  232 MCP    │  │  8 Agents   │  │  38 Skills  │             │
 │  │   Tools     │  │ Specialized │  │  Knowledge  │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
+│  ┌─────────────────────────────────────────────────┐            │
+│  │         Agent-to-Agent (A2A) Commerce            │            │
+│  │  Payments · Quotes · Subscriptions · Splits      │            │
+│  │  Webhooks · Event Streaming · Escrow · Trust     │            │
+│  └─────────────────────────────────────────────────┘            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │  Voice Mode │  │  Memory     │  │  Browser    │             │
 │  │  STT + TTS  │  │ Persistent  │  │  CDP Tools  │             │
@@ -569,6 +595,51 @@ stateset --apply "create work order from BOM-001 quantity 50"
 stateset --apply "complete work order WO-001 with 48 units produced"
 ```
 
+### Agent-to-Agent (A2A) Commerce
+
+AI agents can pay, quote, subscribe, and negotiate with each other autonomously.
+
+```bash
+# Direct agent-to-agent payment
+stateset --apply "pay 10 USDC to 0x1234...5678 on Set Chain"
+
+# Request payment from another agent
+stateset --apply "request 50 USDC from 0xBuyer for API credits"
+
+# Quotes — request, provide, accept
+stateset --apply "request quote from data provider for 100 API credits"
+stateset --apply "provide quote of $150 for premium data access"
+stateset --apply "accept quote QT-001 and pay"
+
+# Recurring subscriptions between agents
+stateset --apply "create monthly subscription for 0xSubscriber at $49.99 with 14-day trial"
+stateset "list active a2a subscriptions"
+stateset --apply "pause a2a subscription SUB-001"
+stateset --apply "cancel a2a subscription SUB-001"
+
+# Split payments (multi-party)
+stateset --apply "create split payment of $100: 70% to 0xSeller, 20% to 0xAffiliate, 10% platform fee"
+stateset --apply "execute split payment SPLIT-001"
+
+# Escrow with conditions
+stateset --apply "create escrow payment of 100 USDC with condition seller_fulfilled"
+stateset --apply "fulfill escrow condition on ESCROW-001"
+stateset --apply "release escrow ESCROW-001"
+
+# Agent discovery and trust
+stateset "discover agents that can process payments on Set Chain"
+stateset "find verified sellers with USDC support"
+stateset "get reputation for agent 0xSeller"
+
+# Webhook notifications
+stateset --apply "configure webhook for agent 0xMyAgent to https://hooks.example.com/a2a"
+stateset "list a2a notifications for agent 0xMyAgent"
+
+# Event streaming
+stateset --apply "subscribe to a2a_payment.* events"
+stateset "get a2a event history for last 24 hours"
+```
+
 ### Sync CLI (VES v1.0)
 
 Verifiable Event Sync (VES) enables local SQLite databases to synchronize with the `stateset-sequencer` service, providing deterministic event ordering, conflict resolution, and cryptographic audit trails.
@@ -773,7 +844,7 @@ stateset --provider ollama --model llama3 "check inventory"
 stateset "ship order #12345"
 ```
 
-Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 87 MCP tools.
+Non-Claude providers operate in chat-only mode (no MCP tool calls). Claude uses the Agent SDK with full access to all 232 MCP tools.
 
 ### Validation & Errors
 
@@ -827,10 +898,13 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 | **Tax** | TaxJurisdiction, TaxRate, TaxExemption | US/EU/CA tax calculation |
 | **Promotions** | Promotion, Coupon, DiscountRule | Campaigns, coupons, discounts |
 | **Subscriptions** | SubscriptionPlan, Subscription, BillingCycle | Recurring billing management |
+| **Stablecoin** | AgentWallet, StablecoinPayment | Native crypto payments (USDC, ssUSD) |
+| **x402** | PaymentIntent, IntentSignature | AI agent payment protocol |
+| **A2A Commerce** | AgentCard, A2APayment, Quote, Escrow, Split | Agent-to-Agent autonomous commerce |
 
 ---
 
-## Database Schema (53 Tables)
+## Database Schema (60 Tables)
 
 **Core:** customers, customer_addresses, products, product_variants, orders, order_items
 
@@ -848,13 +922,15 @@ Order status updates enforce the core state machine (cancel before shipment, ref
 
 **Subscriptions:** subscription_plans, subscriptions, billing_cycles, subscription_events
 
+**A2A Commerce:** notification_log, webhook_config, subscriptions (a2a), split_payments, split_recipients, event_subscriptions, event_log
+
 **Other:** warranties, warranty_claims, carts, cart_items, exchange_rates, store_currency_settings, product_currency_prices, exchange_rate_history, events
 
 ---
 
-## MCP Tools (87 Total)
+## MCP Tools (232 Total)
 
-The MCP server exposes 87 tools for AI agent integration:
+The MCP server exposes 232 tools across 26 domain modules for AI agent integration:
 
 | Domain | Tools | Count |
 |--------|-------|-------|
@@ -875,6 +951,23 @@ The MCP server exposes 87 tools for AI agent integration:
 | **Invoices** | list_invoices, create_invoice, send_invoice, record_invoice_payment, get_overdue_invoices | 5 |
 | **Warranties** | list_warranties, create_warranty, create_warranty_claim, approve_warranty_claim | 4 |
 | **Manufacturing** | list_boms, get_bom, create_bom, add_bom_component, activate_bom, list_work_orders, get_work_order, create_work_order, start_work_order, complete_work_order, cancel_work_order | 11 |
+| **Stablecoin** | get_agent_wallet, get_wallet_balance, create_stablecoin_payment, list_supported_chains | 4 |
+| **x402** | x402_create_payment_intent, x402_sign_intent, x402_get_intent, x402_list_intents, x402_mark_settled, x402_get_next_nonce | 6 |
+| **Agent Cards** | register_agent_card, discover_agents, get_agent_card, verify_agent, list_agent_cards | 5 |
+| **A2A Payments** | a2a_pay, a2a_request_payment, a2a_pay_request | 3 |
+| **A2A Quotes** | a2a_request_quote, a2a_provide_quote, a2a_accept_quote, a2a_decline_quote, a2a_fulfill_quote | 5 |
+| **A2A Subscriptions** | a2a_create_subscription, a2a_list_subscriptions, a2a_get_subscription, a2a_pause_subscription, a2a_resume_subscription, a2a_cancel_subscription, a2a_skip_billing, a2a_list_billing_cycles | 8 |
+| **A2A Splits** | a2a_create_split_payment, a2a_execute_split_payment, a2a_list_split_payments, a2a_get_split_payment, a2a_add_split_recipient, a2a_get_split_recipients | 6 |
+| **A2A Notifications** | a2a_configure_webhooks, a2a_send_notification, a2a_list_notifications, a2a_retry_notifications | 4 |
+| **A2A Events** | a2a_subscribe_events, a2a_push_event, a2a_get_event_history, a2a_list_event_subscriptions, a2a_handle_sse_connection | 5 |
+| **A2A Escrow** | a2a_create_escrow_payment, a2a_fulfill_condition, a2a_release_escrow, a2a_dispute_escrow, a2a_get_dispute_status | 5 |
+| **A2A Discovery** | a2a_discover_agents, a2a_register_service, a2a_list_services, a2a_list_payments, a2a_list_payment_requests, a2a_list_quotes, a2a_get_balance | 7 |
+| **A2A Reputation** | a2a_get_reputation, a2a_list_reputation_records, a2a_create_reputation_record, a2a_update_trust_level, a2a_get_trust_profile | 5 |
+| **Treasury** | treasury tools (budget, allocation, reporting) | 9 |
+| **Custom Objects** | custom_objects CRUD and schema management | 8 |
+| **Vector Search** | vector_upsert, vector_search, vector_delete and more | 6 |
+| **Sync** | sync push, pull, status, verify, rebase and more | 9 |
+| **ERC-8004** | tokenized commerce operations | 8 |
 
 ---
 
@@ -1007,9 +1100,21 @@ Eight specialized agents for different commerce domains:
 - Per-route permission levels: none < read < preview < write < delete < admin
 - Sandbox mode to block dangerous routes (browser automation, shell execution)
 
+### Agent-to-Agent (A2A) Commerce
+- Direct agent-to-agent payments (USDC, USDT, ssUSD, DAI across SET Chain, Base, Ethereum, Arbitrum)
+- Quote/negotiate workflow (request → provide → accept/decline → fulfill)
+- Recurring subscriptions between agents (weekly → annual intervals, trial periods, pause/resume)
+- Multi-party split payments with percentage or fixed-amount splits and platform fees
+- Conditional payments with escrow (seller_fulfilled, buyer_confirmed, time_lock, milestone)
+- HMAC-SHA256 signed webhook notifications with SSRF validation and exponential backoff retry
+- Real-time SSE event streaming with wildcard/prefix filtering and persistent event log
+- Agent discovery by capability, reputation scoring, and trust-level gating
+- Idempotency keys to prevent duplicate payments
+- 53 dedicated MCP tools for the full A2A lifecycle
+
 ### AI-Ready Architecture
 - Deterministic operations for agent reliability
-- MCP protocol integration (87 tools)
+- MCP protocol integration (232 tools across 26 modules)
 - Safety architecture (--apply flag for writes)
 - Event-driven for full auditability
 - Portable state in single database file
@@ -1305,6 +1410,18 @@ cd bindings/node && npm ci && npm test
 cd bindings/python && python -m pip install maturin pytest && maturin develop --release && pytest -q
 ```
 
+CLI (4,300+ tests):
+
+```bash
+cd cli
+npm test                    # All tests
+npm run test:unit           # Unit tests only
+npm run test:integration    # Integration tests
+npm run test:e2e            # End-to-end tests
+npm run lint                # ESLint
+npm run typecheck           # JSDoc type checking
+```
+
 ---
 
 ## Project Structure
@@ -1333,14 +1450,24 @@ stateset-icommerce/
 │   ├── go/                    # cgo bindings (stateset Go module)
 │   └── wasm/                  # WebAssembly bindings (@stateset/embedded-wasm)
 ├── cli/
-│   ├── bin/                   # CLI programs (stateset, stateset-daemon, stateset-skills, ...)
-│   ├── src/mcp-server.js      # 87 MCP tools
+│   ├── bin/                   # 40 CLI entry points
+│   ├── src/mcp-server.js      # MCP orchestrator (232 tools, 470 lines)
+│   ├── src/tools/             # 26 modular tool modules
+│   ├── src/a2a/               # Agent-to-Agent commerce
+│   │   ├── index.js           # Direct payments, quotes, escrow, conditions
+│   │   ├── store.js           # SQLite persistence (7 tables)
+│   │   ├── notifications.js   # HMAC-SHA256 signed webhooks
+│   │   ├── subscriptions.js   # Recurring agent subscriptions
+│   │   ├── splits.js          # Multi-party split payments
+│   │   └── event-stream.js    # SSE push, event log, subscriptions
 │   ├── src/channels/          # 9-channel messaging gateway
 │   ├── src/providers/         # Multi-provider AI (Claude, OpenAI, Gemini, Ollama)
 │   ├── src/voice/             # Voice mode (STT + TTS)
 │   ├── src/memory/            # Persistent conversation memory
 │   ├── src/browser/           # Chrome DevTools Protocol automation
 │   ├── src/skills/            # Skills loader, registry, marketplace
+│   ├── src/chains/            # Blockchain integration (Solana, Base, SET Chain, etc.)
+│   ├── src/x402/              # x402 AI agent payment protocol
 │   ├── src/imessage/          # iMessage gateway (BlueBubbles)
 │   ├── src/matrix/            # Matrix protocol gateway
 │   ├── src/teams/             # Microsoft Teams gateway (Bot Framework)

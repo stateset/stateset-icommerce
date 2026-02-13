@@ -12,7 +12,7 @@ import * as crypto from 'node:crypto';
 /**
  * Default session directory
  */
-const DEFAULT_SESSION_DIR = path.join(os.homedir(), '.stateset', 'sessions');
+export const DEFAULT_SESSION_DIR = path.join(os.homedir(), '.stateset', 'sessions');
 
 /**
  * Session metadata schema

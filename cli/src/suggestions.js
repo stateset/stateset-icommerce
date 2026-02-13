@@ -8,7 +8,7 @@
 /**
  * Common commerce intents and their mappings
  */
-const INTENT_PATTERNS = {
+export const INTENT_PATTERNS = {
   // Customer intents
   list_customers: [
     /show\s*(all\s*)?(my\s*)?customers?/i,
@@ -148,7 +148,7 @@ const INTENT_PATTERNS = {
 /**
  * Command aliases and corrections
  */
-const COMMAND_ALIASES = {
+export const COMMAND_ALIASES = {
   // Typos and variations
   costumers: 'customers',
   cutomers: 'customers',
