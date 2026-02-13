@@ -237,6 +237,81 @@ export const TOOL_PERMISSIONS = {
   register_agent_card: 'write',
   verify_agent: 'admin',
 
+  // A2A Commerce — Payments & Quotes
+  a2a_pay: 'write',
+  a2a_request_payment: 'write',
+  a2a_pay_request: 'write',
+  a2a_request_quote: 'write',
+  a2a_provide_quote: 'write',
+  a2a_accept_quote: 'write',
+  a2a_decline_quote: 'write',
+  a2a_fulfill_quote: 'write',
+  a2a_list_payments: 'read',
+  a2a_list_payment_requests: 'read',
+  a2a_list_quotes: 'read',
+  a2a_get_balance: 'read',
+  a2a_discover_agents: 'read',
+
+  // A2A Negotiation
+  a2a_counter_quote: 'write',
+  a2a_revise_quote: 'write',
+
+  // A2A Escrow
+  a2a_create_escrow: 'write',
+  a2a_fund_escrow: 'write',
+  a2a_release_escrow: 'write',
+  a2a_refund_escrow: 'write',
+  a2a_dispute_escrow: 'write',
+  a2a_get_escrow: 'read',
+  a2a_list_escrows: 'read',
+
+  // A2A Disputes
+  a2a_file_dispute: 'write',
+  a2a_submit_evidence: 'write',
+  a2a_resolve_dispute: 'write',
+  a2a_get_dispute: 'read',
+  a2a_list_disputes: 'read',
+
+  // A2A Reputation
+  a2a_rate_agent: 'write',
+  a2a_get_reputation: 'read',
+  a2a_respond_to_feedback: 'write',
+
+  // A2A Services
+  a2a_register_service: 'write',
+  a2a_list_services: 'read',
+  a2a_get_service: 'read',
+
+  // A2A Notifications
+  a2a_send_notification: 'write',
+  a2a_list_notification_log: 'read',
+  a2a_configure_webhooks: 'write',
+
+  // A2A Agent Subscriptions
+  a2a_create_agent_subscription: 'write',
+  a2a_pause_agent_subscription: 'write',
+  a2a_resume_agent_subscription: 'write',
+  a2a_cancel_agent_subscription: 'write',
+  a2a_get_agent_subscription: 'read',
+  a2a_list_agent_subscriptions: 'read',
+  a2a_process_subscription_billing: 'write',
+
+  // A2A Split Payments
+  a2a_create_split_payment: 'write',
+  a2a_execute_split_payment: 'write',
+  a2a_get_split_payment: 'read',
+  a2a_list_split_payments: 'read',
+
+  // A2A Conditional Payments
+  a2a_create_conditional_payment: 'write',
+  a2a_check_payment_conditions: 'read',
+  a2a_settle_conditional_payment: 'write',
+
+  // A2A Event Streaming
+  a2a_subscribe_events: 'write',
+  a2a_list_event_subscriptions: 'read',
+  a2a_get_event_history: 'read',
+
   // Stablecoin Payments
   get_agent_wallet: 'read',
   get_wallet_balance: 'read',
@@ -328,6 +403,13 @@ export const DEFAULT_GUARDRAILS = {
     'x402_mark_settled',
     'x402_credit_debit',
     'erc8004_register_identity',
+    'a2a_fund_escrow',
+    'a2a_release_escrow',
+    'a2a_refund_escrow',
+    'a2a_resolve_dispute',
+    'a2a_settle_conditional_payment',
+    'a2a_process_subscription_billing',
+    'a2a_execute_split_payment',
     'vector_index_all_products',
     'vector_index_all_customers',
     'vector_index_all_orders',

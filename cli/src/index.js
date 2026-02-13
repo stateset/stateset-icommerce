@@ -278,3 +278,10 @@ export {
 
 export { createA2AService } from './a2a/index.js';
 export { A2AStore, defaultA2ADbPath } from './a2a/store.js';
+export { createEscrowService } from './a2a/escrow.js';
+export { createDisputeService } from './a2a/disputes.js';
+export { createReputationService } from './a2a/reputation.js';
+export { createNotificationService } from './a2a/notifications.js';
+export { createA2ASubscriptionService } from './a2a/subscriptions.js';
+export { createSplitPaymentService } from './a2a/splits.js';
+export { createEventStreamService } from './a2a/event-stream.js';

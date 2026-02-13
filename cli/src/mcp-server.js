@@ -144,6 +144,66 @@ export function createStatesetMcpServer({
       getQuote: (id) => a2aStore.getQuote(id),
       updateQuote: (id, u) => a2aStore.updateQuote(id, u),
       listQuotes: (f) => a2aStore.listQuotes(f),
+      // Escrow methods
+      createEscrow: (e) => a2aStore.createEscrow(e),
+      getEscrow: (id) => a2aStore.getEscrow(id),
+      updateEscrow: (id, u) => a2aStore.updateEscrow(id, u),
+      listEscrows: (f) => a2aStore.listEscrows(f),
+      // Dispute methods
+      createDispute: (d) => a2aStore.createDispute(d),
+      getDispute: (id) => a2aStore.getDispute(id),
+      updateDispute: (id, u) => a2aStore.updateDispute(id, u),
+      listDisputes: (f) => a2aStore.listDisputes(f),
+      createEvidence: (e) => a2aStore.createEvidence(e),
+      getEvidence: (id) => a2aStore.getEvidence(id),
+      listEvidenceByDispute: (id) => a2aStore.listEvidenceByDispute(id),
+      // Feedback / reputation methods
+      createFeedback: (f) => a2aStore.createFeedback(f),
+      getFeedback: (id) => a2aStore.getFeedback(id),
+      updateFeedback: (id, u) => a2aStore.updateFeedback(id, u),
+      listFeedback: (f) => a2aStore.listFeedback(f),
+      getReputationScore: (addr) => a2aStore.getReputationScore(addr),
+      upsertReputationScore: (s) => a2aStore.upsertReputationScore(s),
+      // Service methods
+      createService: (s) => a2aStore.createService(s),
+      getService: (id) => a2aStore.getService(id),
+      updateService: (id, u) => a2aStore.updateService(id, u),
+      listServices: (f) => a2aStore.listServices(f),
+      // Notification log methods
+      createNotificationLog: (n) => a2aStore.createNotificationLog(n),
+      getNotificationLog: (id) => a2aStore.getNotificationLog(id),
+      updateNotificationLog: (id, u) => a2aStore.updateNotificationLog(id, u),
+      listNotificationLog: (f) => a2aStore.listNotificationLog(f),
+      getPendingNotifications: (max, lim) => a2aStore.getPendingNotifications(max, lim),
+      // Webhook config methods
+      upsertWebhookConfig: (c) => a2aStore.upsertWebhookConfig(c),
+      getWebhookConfig: (addr) => a2aStore.getWebhookConfig(addr),
+      listWebhookConfigs: (f) => a2aStore.listWebhookConfigs(f),
+      // Subscription methods
+      createSubscription: (s) => a2aStore.createSubscription(s),
+      getSubscription: (id) => a2aStore.getSubscription(id),
+      updateSubscription: (id, u) => a2aStore.updateSubscription(id, u),
+      listSubscriptions: (f) => a2aStore.listSubscriptions(f),
+      getDueSubscriptions: (now) => a2aStore.getDueSubscriptions(now),
+      getExpiredTrials: (now) => a2aStore.getExpiredTrials(now),
+      // Split payment methods
+      createSplitPayment: (s) => a2aStore.createSplitPayment(s),
+      getSplitPayment: (id) => a2aStore.getSplitPayment(id),
+      updateSplitPayment: (id, u) => a2aStore.updateSplitPayment(id, u),
+      listSplitPayments: (f) => a2aStore.listSplitPayments(f),
+      createSplitRecipient: (r) => a2aStore.createSplitRecipient(r),
+      getSplitRecipient: (id) => a2aStore.getSplitRecipient(id),
+      updateSplitRecipient: (id, u) => a2aStore.updateSplitRecipient(id, u),
+      listSplitRecipients: (f) => a2aStore.listSplitRecipients(f),
+      // Event subscription methods
+      createEventSubscription: (s) => a2aStore.createEventSubscription(s),
+      getEventSubscription: (id) => a2aStore.getEventSubscription(id),
+      updateEventSubscription: (id, u) => a2aStore.updateEventSubscription(id, u),
+      listEventSubscriptions: (f) => a2aStore.listEventSubscriptions(f),
+      // Event log methods
+      createEventLog: (e) => a2aStore.createEventLog(e),
+      getEventLog: (id) => a2aStore.getEventLog(id),
+      listEventLog: (f) => a2aStore.listEventLog(f),
     }),
   };
   // ---------------------------------------------------------------------------

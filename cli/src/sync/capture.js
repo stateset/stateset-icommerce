@@ -60,6 +60,42 @@ const EVENT_MAPPINGS = {
   'carts.checkout': 'cart.checked_out',
   'carts.cancel': 'cart.cancelled',
   'carts.abandon': 'cart.abandoned',
+
+  // A2A Commerce
+  'a2a.pay': 'a2a_payment.created',
+  'a2a.requestPayment': 'a2a_payment_request.created',
+  'a2a.payRequest': 'a2a_payment_request.paid',
+  'a2a.requestQuote': 'a2a_quote.requested',
+  'a2a.provideQuote': 'a2a_quote.provided',
+  'a2a.acceptQuote': 'a2a_quote.accepted',
+  'a2a.declineQuote': 'a2a_quote.declined',
+  'a2a.fulfillQuote': 'a2a_quote.fulfilled',
+  'a2a.counterQuote': 'a2a_quote.countered',
+  'a2a.reviseQuote': 'a2a_quote.revised',
+  'a2a.createEscrow': 'a2a_escrow.created',
+  'a2a.fundEscrow': 'a2a_escrow.funded',
+  'a2a.releaseEscrow': 'a2a_escrow.released',
+  'a2a.refundEscrow': 'a2a_escrow.refunded',
+  'a2a.disputeEscrow': 'a2a_escrow.disputed',
+  'a2a.fileDispute': 'a2a_dispute.filed',
+  'a2a.submitEvidence': 'a2a_dispute.evidence_submitted',
+  'a2a.resolveDispute': 'a2a_dispute.resolved',
+  'a2a.escalateDispute': 'a2a_dispute.escalated',
+  'a2a.rateAgent': 'a2a_feedback.submitted',
+  'a2a.registerService': 'a2a_service.registered',
+
+  // A2A Phase B — Notifications, Subscriptions, Splits, Conditional, Events
+  'a2a.sendNotification': 'a2a_notification.sent',
+  'a2a.createSubscription': 'a2a_subscription.created',
+  'a2a.pauseSubscription': 'a2a_subscription.paused',
+  'a2a.resumeSubscription': 'a2a_subscription.resumed',
+  'a2a.cancelSubscription': 'a2a_subscription.cancelled',
+  'a2a.processBilling': 'a2a_subscription.billed',
+  'a2a.createSplitPayment': 'a2a_split_payment.created',
+  'a2a.executeSplitPayment': 'a2a_split_payment.executed',
+  'a2a.createConditionalPayment': 'a2a_conditional_payment.created',
+  'a2a.settleConditionalPayment': 'a2a_conditional_payment.settled',
+  'a2a.subscribeEvents': 'a2a_event_subscription.created',
 };
 
 /**
@@ -75,6 +111,7 @@ const ENTITY_TYPES = {
   carts: 'cart',
   subscriptions: 'subscription',
   promotions: 'promotion',
+  a2a: 'a2a',
 };
 
 /**

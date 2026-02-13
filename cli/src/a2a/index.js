@@ -157,7 +157,16 @@ export function createA2AService(commerce, config) {
    * @returns {Promise<Object>} Payment result
    */
   async function pay(params) {
-    const { to, amount, asset = defaultAsset, network = defaultNetwork, memo, referenceType, referenceId, idempotencyKey } = params;
+    const {
+      to,
+      amount,
+      asset = defaultAsset,
+      network = defaultNetwork,
+      memo,
+      referenceType,
+      referenceId,
+      idempotencyKey,
+    } = params;
 
     if (!to) {
       throw new Error('Recipient (to) is required');
@@ -500,7 +509,8 @@ export function createA2AService(commerce, config) {
 
     await commerce.a2a().createQuote(quote);
 
-    // TODO: Notify seller agent via their endpoint or messaging
+    // Notification: seller is notified via webhook in the MCP tool layer
+    // (see tools/a2a.js a2a_request_quote handler)
 
     return {
       success: true,
@@ -537,7 +547,15 @@ export function createA2AService(commerce, config) {
       throw new Error('Only the seller can provide a quote');
     }
 
-    const { total, fees = 0, tax = 0, expiresInHours = 48, terms, estimatedDelivery, message } = params;
+    const {
+      total,
+      fees = 0,
+      tax = 0,
+      expiresInHours = 48,
+      terms,
+      estimatedDelivery,
+      message,
+    } = params;
 
     const decimals = getAssetDecimals(quote.asset);
     const totalSmallest = toSmallestUnit(total, decimals);
@@ -622,6 +640,155 @@ export function createA2AService(commerce, config) {
         total: fromSmallestUnit(quote.total, decimals),
         asset: quote.asset,
       },
+    };
+  }
+
+  /**
+   * Counter-offer a quote (buyer proposes a different price)
+   *
+   * @param {string} quoteId - Quote ID to counter
+   * @param {Object} params - Counter-offer parameters
+   * @param {number} params.total - Proposed total amount
+   * @param {string} [params.message] - Message to seller
+   * @returns {Promise<Object>} Updated quote with negotiation round
+   */
+  async function counterQuote(quoteId, params) {
+    const { total, message } = params;
+
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.status !== 'quoted') {
+      throw new Error(`Cannot counter a quote in status: ${quote.status}. Must be 'quoted'.`);
+    }
+
+    // Verify this agent is the buyer
+    if (quote.buyer_address !== walletAddress) {
+      throw new Error('Only the buyer can counter a quote');
+    }
+
+    const maxRounds = quote.max_rounds || 5;
+    const counterCount = quote.counter_count || 0;
+
+    if (counterCount >= maxRounds) {
+      throw new Error(
+        `Maximum negotiation rounds reached (${maxRounds}). Accept, decline, or start a new quote.`,
+      );
+    }
+
+    if (new Date(quote.expires_at) < new Date()) {
+      throw new Error('Quote has expired');
+    }
+
+    const decimals = getAssetDecimals(quote.asset);
+    const totalSmallest = toSmallestUnit(total, decimals);
+    const now = new Date().toISOString();
+    const newRound = counterCount + 1;
+
+    // Build negotiation history
+    const history = Array.isArray(quote.negotiation_history) ? quote.negotiation_history : [];
+    history.push({
+      round: newRound,
+      type: 'counter',
+      from: 'buyer',
+      amount: total,
+      message: message || null,
+      timestamp: now,
+    });
+
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'counter_offered',
+      total: totalSmallest,
+      total_decimal: total,
+      counter_count: newRound,
+      negotiation_history: history,
+      updated_at: now,
+    });
+
+    const updated = await commerce.a2a().getQuote(quoteId);
+
+    return {
+      success: true,
+      quote: formatQuote(updated),
+      round: newRound,
+    };
+  }
+
+  /**
+   * Revise a quote after a counter-offer (seller adjusts price)
+   *
+   * @param {string} quoteId - Quote ID to revise
+   * @param {Object} params - Revision parameters
+   * @param {number} params.total - Revised total amount
+   * @param {number} [params.fees] - Revised fees
+   * @param {number} [params.tax] - Revised tax
+   * @param {string} [params.message] - Message to buyer
+   * @returns {Promise<Object>} Updated quote with negotiation round
+   */
+  async function reviseQuote(quoteId, params) {
+    const { total, fees = 0, tax = 0, message } = params;
+
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.status !== 'counter_offered') {
+      throw new Error(
+        `Cannot revise a quote in status: ${quote.status}. Must be 'counter_offered'.`,
+      );
+    }
+
+    // Verify this agent is the seller
+    if (quote.seller_address !== walletAddress) {
+      throw new Error('Only the seller can revise a quote');
+    }
+
+    if (new Date(quote.expires_at) < new Date()) {
+      throw new Error('Quote has expired');
+    }
+
+    const decimals = getAssetDecimals(quote.asset);
+    const totalSmallest = toSmallestUnit(total, decimals);
+    const feesSmallest = toSmallestUnit(fees, decimals);
+    const taxSmallest = toSmallestUnit(tax, decimals);
+    const now = new Date().toISOString();
+    const counterCount = quote.counter_count || 0;
+    const newRound = counterCount + 1;
+
+    // Build negotiation history
+    const history = Array.isArray(quote.negotiation_history) ? quote.negotiation_history : [];
+    history.push({
+      round: newRound,
+      type: 'revision',
+      from: 'seller',
+      amount: total,
+      fees,
+      tax,
+      message: message || null,
+      timestamp: now,
+    });
+
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'quoted',
+      total: totalSmallest,
+      total_decimal: total,
+      fees: feesSmallest,
+      tax: taxSmallest,
+      counter_count: newRound,
+      negotiation_history: history,
+      quoted_at: now,
+      updated_at: now,
+    });
+
+    const updated = await commerce.a2a().getQuote(quoteId);
+
+    return {
+      success: true,
+      quote: formatQuote(updated),
+      round: newRound,
     };
   }
 
@@ -766,7 +933,10 @@ export function createA2AService(commerce, config) {
       status: p.status,
       from: p.sender_address,
       to: p.recipient_address,
-      amount: typeof p.amount_decimal === 'number' ? p.amount_decimal : fromSmallestUnit(p.amount, decimals),
+      amount:
+        typeof p.amount_decimal === 'number'
+          ? p.amount_decimal
+          : fromSmallestUnit(p.amount, decimals),
       asset: p.asset,
       network: p.network,
       memo: p.memo,
@@ -783,7 +953,10 @@ export function createA2AService(commerce, config) {
       status: r.status,
       from: r.requester_address,
       payer: r.payer_address,
-      amount: typeof r.amount_decimal === 'number' ? r.amount_decimal : fromSmallestUnit(r.amount, decimals),
+      amount:
+        typeof r.amount_decimal === 'number'
+          ? r.amount_decimal
+          : fromSmallestUnit(r.amount, decimals),
       amountPaid: fromSmallestUnit(r.amount_paid, decimals),
       asset: r.asset,
       description: r.description,
@@ -805,7 +978,8 @@ export function createA2AService(commerce, config) {
       subtotal: fromSmallestUnit(q.subtotal, decimals),
       fees: fromSmallestUnit(q.fees, decimals),
       tax: fromSmallestUnit(q.tax, decimals),
-      total: typeof q.total_decimal === 'number' ? q.total_decimal : fromSmallestUnit(q.total, decimals),
+      total:
+        typeof q.total_decimal === 'number' ? q.total_decimal : fromSmallestUnit(q.total, decimals),
       asset: q.asset,
       expiresAt: q.expires_at,
       terms: q.terms,
@@ -826,8 +1000,223 @@ export function createA2AService(commerce, config) {
         body: JSON.stringify(payload),
       });
     } catch (error) {
-      console.error('Callback failed:', error.message);
+      console.warn('Callback failed:', error.message);
     }
+  }
+
+  // ===========================================================================
+  // Conditional Payments (escrow + x402 intent linking)
+  // ===========================================================================
+
+  /**
+   * Create a conditional payment backed by escrow with optional x402 intent.
+   * Combines escrow creation, funding, and x402 intent in one step.
+   *
+   * @param {Object} params
+   * @param {string} params.sellerAddress - Seller wallet address
+   * @param {number} params.amount - Payment amount (human-readable)
+   * @param {string} [params.asset] - Asset (default: USDC)
+   * @param {string} [params.network] - Network (default: set_chain)
+   * @param {Array} [params.conditions] - Release conditions
+   * @param {number} [params.expiresInHours] - Escrow expiry (default: 72)
+   * @param {string} [params.quoteId] - Optional linked quote
+   * @param {string} [params.memo] - Payment memo
+   * @returns {Promise<Object>} Created escrow with intent details
+   */
+  async function createConditionalPayment(params) {
+    const {
+      sellerAddress,
+      amount,
+      asset = defaultAsset,
+      network = defaultNetwork,
+      conditions = [],
+      expiresInHours = 72,
+      quoteId,
+      memo,
+    } = params;
+
+    if (!sellerAddress) throw new Error('sellerAddress is required');
+    if (!amount || amount <= 0) throw new Error('amount must be positive');
+
+    const decimals = getAssetDecimals(asset);
+    const amountSmallest = toSmallestUnit(amount, decimals);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000);
+
+    // Build release conditions with defaults
+    const releaseConditions = [...conditions];
+    if (quoteId && !releaseConditions.some((c) => c.type === 'seller_fulfilled')) {
+      releaseConditions.push({ type: 'seller_fulfilled', quoteId });
+    }
+
+    // Create escrow
+    const escrow = await commerce.a2a().createEscrow({
+      buyer_address: walletAddress,
+      seller_address: sellerAddress,
+      amount: amountSmallest,
+      amount_decimal: amount,
+      asset: asset.toUpperCase(),
+      network,
+      release_conditions: releaseConditions,
+      expires_at: expiresAt.toISOString(),
+      quote_id: quoteId || null,
+      metadata: memo ? JSON.stringify({ memo }) : null,
+    });
+
+    // Create x402 payment intent if sequencer available
+    let intentId = null;
+    if (sequencerClient && signingKey) {
+      try {
+        const intent = await commerce.x402().createIntent({
+          payer_address: walletAddress,
+          payee_address: sellerAddress,
+          amount: amountSmallest,
+          asset: asset.toUpperCase(),
+          network,
+          description: memo || `Conditional payment (escrow ${escrow.id})`,
+        });
+        intentId = intent.id;
+
+        // Link intent to escrow
+        await commerce.a2a().updateEscrow(escrow.id, { intent_id: intentId });
+      } catch (err) {
+        console.warn('x402 intent creation failed (escrow still created):', err.message);
+      }
+    }
+
+    // Fund the escrow (transition to funded/active)
+    await commerce.a2a().updateEscrow(escrow.id, {
+      status: 'funded',
+      funded_at: now.toISOString(),
+    });
+
+    const funded = await commerce.a2a().getEscrow(escrow.id);
+
+    return {
+      success: true,
+      escrow: {
+        id: funded.id,
+        status: funded.status,
+        buyerAddress: funded.buyer_address,
+        sellerAddress: funded.seller_address,
+        amount,
+        asset: funded.asset,
+        network: funded.network,
+        conditions: funded.release_conditions,
+        expiresAt: funded.expires_at,
+        intentId,
+        createdAt: funded.created_at,
+      },
+    };
+  }
+
+  /**
+   * Check if all conditions for a conditional payment are met.
+   *
+   * @param {string} escrowId - Escrow ID to check
+   * @returns {Promise<Object>} Condition status
+   */
+  async function checkPaymentConditions(escrowId) {
+    if (!escrowId) throw new Error('escrowId is required');
+
+    const escrow = await commerce.a2a().getEscrow(escrowId);
+    if (!escrow) throw new Error('Escrow not found');
+
+    const conditions = Array.isArray(escrow.release_conditions)
+      ? escrow.release_conditions
+      : JSON.parse(escrow.release_conditions || '[]');
+
+    const evaluated = [];
+    let allMet = true;
+
+    for (const condition of conditions) {
+      let met = false;
+
+      switch (condition.type) {
+        case 'seller_fulfilled': {
+          if (condition.quoteId) {
+            const quote = await commerce.a2a().getQuote(condition.quoteId);
+            met = quote?.status === 'fulfilled';
+          }
+          break;
+        }
+        case 'buyer_confirmed':
+          met = condition.completed === true;
+          break;
+        case 'time_lock':
+          met = condition.releaseAfter ? new Date() >= new Date(condition.releaseAfter) : false;
+          break;
+        case 'milestone':
+          met = condition.completed === true;
+          break;
+        default:
+          met = false;
+      }
+
+      evaluated.push({ ...condition, met });
+      if (!met) allMet = false;
+    }
+
+    return {
+      escrowId,
+      status: escrow.status,
+      allMet,
+      conditions: evaluated,
+      intentId: escrow.intent_id || null,
+    };
+  }
+
+  /**
+   * Settle a conditional payment by releasing escrow when conditions are met.
+   *
+   * @param {string} escrowId - Escrow ID to settle
+   * @returns {Promise<Object>} Settlement result
+   */
+  async function settleConditionalPayment(escrowId) {
+    if (!escrowId) throw new Error('escrowId is required');
+
+    const conditionStatus = await checkPaymentConditions(escrowId);
+
+    if (!conditionStatus.allMet) {
+      const unmet = conditionStatus.conditions.filter((c) => !c.met);
+      throw new Error(
+        `Cannot settle: ${unmet.length} condition(s) not met — ${unmet.map((c) => c.type).join(', ')}`,
+      );
+    }
+
+    const escrow = await commerce.a2a().getEscrow(escrowId);
+
+    if (!['funded', 'active'].includes(escrow.status)) {
+      throw new Error(`Cannot settle escrow in status: ${escrow.status}`);
+    }
+
+    // Release the escrow
+    await commerce.a2a().updateEscrow(escrowId, {
+      status: 'released',
+      released_at: new Date().toISOString(),
+    });
+
+    // If linked to x402 intent, mark it settled
+    let intentSettled = false;
+    if (escrow.intent_id && sequencerClient) {
+      try {
+        await commerce.x402().updateIntent(escrow.intent_id, { status: 'settled' });
+        intentSettled = true;
+      } catch (err) {
+        console.warn('x402 intent settlement update failed:', err.message);
+      }
+    }
+
+    return {
+      success: true,
+      escrowId,
+      status: 'released',
+      amount: escrow.amount_decimal,
+      asset: escrow.asset,
+      sellerAddress: escrow.seller_address,
+      intentId: escrow.intent_id || null,
+      intentSettled,
+    };
   }
 
   return {
@@ -842,6 +1231,15 @@ export function createA2AService(commerce, config) {
     acceptQuote,
     declineQuote,
     fulfillQuote,
+
+    // Negotiation operations
+    counterQuote,
+    reviseQuote,
+
+    // Conditional payment operations
+    createConditionalPayment,
+    checkPaymentConditions,
+    settleConditionalPayment,
 
     // Query operations
     getPayments,
