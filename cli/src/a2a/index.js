@@ -1,0 +1,861 @@
+/**
+ * Agent-to-Agent (A2A) Commerce Module
+ *
+ * High-level API for agent-to-agent payments, quotes, and commerce negotiations.
+ * Makes it dead simple for AI agents to pay each other.
+ *
+ * @example
+ * ```javascript
+ * const a2a = createA2AService(commerce, agentConfig);
+ *
+ * // Direct payment
+ * await a2a.pay({ to: 'agent-wallet-address', amount: 10.00, memo: 'API call' });
+ *
+ * // Request payment
+ * const request = await a2a.requestPayment({
+ *   from: 'buyer-agent-wallet',
+ *   amount: 25.00,
+ *   description: 'Data processing fee'
+ * });
+ *
+ * // Quote flow
+ * const quote = await a2a.requestQuote({
+ *   seller: 'vendor-agent',
+ *   items: [{ description: 'Widget', quantity: 2 }]
+ * });
+ * const payment = await a2a.acceptQuote(quote.id);
+ * ```
+ */
+
+import { randomUUID } from 'node:crypto';
+
+// Default asset and network
+const DEFAULT_ASSET = 'USDC';
+const DEFAULT_NETWORK = 'set_chain';
+const DEFAULT_DECIMALS = 6;
+
+/**
+ * Convert human-readable amount to smallest unit
+ */
+function toSmallestUnit(amount, decimals = DEFAULT_DECIMALS) {
+  if (typeof amount === 'string') {
+    amount = parseFloat(amount);
+  }
+  return Math.round(amount * Math.pow(10, decimals));
+}
+
+/**
+ * Convert smallest unit to human-readable amount
+ */
+function fromSmallestUnit(amount, decimals = DEFAULT_DECIMALS) {
+  return amount / Math.pow(10, decimals);
+}
+
+/**
+ * Get decimals for an asset
+ */
+function getAssetDecimals(asset) {
+  const upper = String(asset).toUpperCase();
+  switch (upper) {
+    case 'USDC':
+    case 'USDT':
+    case 'SSUSD':
+    case 'WSSUSD':
+      return 6;
+    case 'DAI':
+    case 'ETH':
+      return 18;
+    default:
+      return 6;
+  }
+}
+
+/**
+ * Create an A2A commerce service instance
+ *
+ * @param {Object} commerce - The Commerce instance from stateset-embedded
+ * @param {Object} config - Agent configuration
+ * @param {string} config.agentId - This agent's ID
+ * @param {string} config.walletAddress - This agent's wallet address
+ * @param {Object} config.signingKey - Ed25519 signing key { privateKey, publicKey }
+ * @param {Object} [config.sequencerClient] - Sequencer client for settlement
+ * @param {string} [config.tenantId] - Tenant ID for sequencer
+ * @param {string} [config.storeId] - Store ID for sequencer
+ */
+export function createA2AService(commerce, config) {
+  const {
+    agentId,
+    walletAddress,
+    signingKey,
+    sequencerClient,
+    tenantId,
+    storeId,
+    defaultAsset = DEFAULT_ASSET,
+    defaultNetwork = DEFAULT_NETWORK,
+  } = config;
+
+  if (!walletAddress) {
+    throw new Error('walletAddress is required for A2A service');
+  }
+
+  /**
+   * Resolve an agent reference to a wallet address
+   * Accepts: agent ID, wallet address, or agent card object
+   */
+  async function resolveAgentAddress(agentRef) {
+    if (!agentRef) {
+      throw new Error('Agent reference is required');
+    }
+
+    // If it's already a wallet address (starts with 0x or is a valid address format)
+    if (typeof agentRef === 'string') {
+      if (agentRef.startsWith('0x') || agentRef.length === 42) {
+        return { address: agentRef, agentId: null };
+      }
+
+      // Try to look up as agent ID (UUID format)
+      if (agentRef.includes('-') && agentRef.length === 36) {
+        const agent = await commerce.x402().getAgent(agentRef);
+        if (agent) {
+          return { address: agent.wallet_address, agentId: agent.id };
+        }
+      }
+
+      // Try to look up by wallet address
+      const agentByWallet = await commerce.x402().getAgentByWallet(agentRef);
+      if (agentByWallet) {
+        return { address: agentByWallet.wallet_address, agentId: agentByWallet.id };
+      }
+
+      // Assume it's a wallet address
+      return { address: agentRef, agentId: null };
+    }
+
+    // If it's an agent card object
+    if (agentRef.wallet_address || agentRef.walletAddress) {
+      return {
+        address: agentRef.wallet_address || agentRef.walletAddress,
+        agentId: agentRef.id,
+      };
+    }
+
+    throw new Error(`Cannot resolve agent reference: ${JSON.stringify(agentRef)}`);
+  }
+
+  /**
+   * Pay another agent directly
+   *
+   * @param {Object} params - Payment parameters
+   * @param {string} params.to - Recipient agent ID, wallet address, or agent card
+   * @param {number} params.amount - Amount to pay (human-readable, e.g., 10.00)
+   * @param {string} [params.asset] - Asset to pay with (default: USDC)
+   * @param {string} [params.network] - Network for settlement
+   * @param {string} [params.memo] - Payment memo/description
+   * @param {string} [params.referenceType] - Type of reference (quote, order, etc.)
+   * @param {string} [params.referenceId] - Reference ID
+   * @param {string} [params.idempotencyKey] - Idempotency key for deduplication
+   * @returns {Promise<Object>} Payment result
+   */
+  async function pay(params) {
+    const { to, amount, asset = defaultAsset, network = defaultNetwork, memo, referenceType, referenceId, idempotencyKey } = params;
+
+    if (!to) {
+      throw new Error('Recipient (to) is required');
+    }
+    if (amount === undefined || amount === null) {
+      throw new Error('Amount is required');
+    }
+    if (amount <= 0) {
+      throw new Error('Amount must be positive');
+    }
+
+    const recipient = await resolveAgentAddress(to);
+    const decimals = getAssetDecimals(asset);
+    const amountSmallest = toSmallestUnit(amount, decimals);
+    const now = new Date().toISOString();
+    const paymentId = randomUUID();
+
+    // Create payment record
+    const payment = {
+      id: paymentId,
+      status: 'pending',
+      sender_agent_id: agentId,
+      sender_address: walletAddress,
+      recipient_agent_id: recipient.agentId,
+      recipient_address: recipient.address,
+      amount: amountSmallest,
+      amount_decimal: amount,
+      asset: asset.toUpperCase(),
+      network,
+      memo: memo || null,
+      reference_type: referenceType || null,
+      reference_id: referenceId || null,
+      idempotency_key: idempotencyKey || `a2a-pay-${paymentId}`,
+      intent_id: null,
+      tx_hash: null,
+      block_number: null,
+      metadata: null,
+      created_at: now,
+      updated_at: now,
+      completed_at: null,
+    };
+
+    // Store the payment record
+    await commerce.a2a().createPayment(payment);
+
+    // If we have a sequencer client, create and submit the x402 payment intent
+    if (sequencerClient && signingKey) {
+      try {
+        // Create x402 payment intent
+        const intent = await commerce.x402().createIntent({
+          payer_address: walletAddress,
+          payee_address: recipient.address,
+          amount: amountSmallest,
+          asset,
+          network,
+          description: memo,
+          idempotency_key: payment.idempotency_key,
+        });
+
+        // Sign the intent
+        const signedIntent = await commerce.x402().signIntent(intent.id, signingKey);
+
+        // Submit to sequencer
+        const submitResult = await sequencerClient.submitPaymentIntent({
+          tenant_id: tenantId,
+          store_id: storeId,
+          agent_id: agentId,
+          ...signedIntent,
+        });
+
+        // Update payment with intent info
+        await commerce.a2a().updatePayment(paymentId, {
+          status: 'submitted',
+          intent_id: intent.id,
+        });
+
+        payment.status = 'submitted';
+        payment.intent_id = intent.id;
+
+        // Optionally wait for settlement
+        // For now, we return after submission
+
+        return {
+          success: true,
+          payment: formatPayment(payment),
+          intent: {
+            id: intent.id,
+            signingHash: signedIntent.signing_hash,
+          },
+        };
+      } catch (error) {
+        // Update payment as failed
+        await commerce.a2a().updatePayment(paymentId, {
+          status: 'failed',
+          metadata: JSON.stringify({ error: error.message }),
+        });
+
+        throw new Error(`Payment failed: ${error.message}`);
+      }
+    }
+
+    // Without sequencer, just record the intent locally
+    // The payment will be settled out-of-band
+    return {
+      success: true,
+      payment: formatPayment(payment),
+      note: 'Payment recorded locally. Connect sequencer for on-chain settlement.',
+    };
+  }
+
+  /**
+   * Request payment from another agent
+   *
+   * @param {Object} params - Request parameters
+   * @param {string} [params.from] - Payer agent (optional - open request if not specified)
+   * @param {number} params.amount - Amount to request
+   * @param {string} params.description - What the payment is for
+   * @param {string} [params.asset] - Asset to request
+   * @param {Array} [params.lineItems] - Itemized breakdown
+   * @param {number} [params.expiresInHours] - Hours until expiry (default: 24)
+   * @param {boolean} [params.allowPartial] - Allow partial payments
+   * @param {string} [params.callbackUrl] - Webhook URL for payment notifications
+   * @returns {Promise<Object>} Payment request
+   */
+  async function requestPayment(params) {
+    const {
+      from,
+      amount,
+      description,
+      asset = defaultAsset,
+      lineItems,
+      expiresInHours = 24,
+      allowPartial = false,
+      minimumAmount,
+      callbackUrl,
+      metadata,
+    } = params;
+
+    if (!description) {
+      throw new Error('Description is required');
+    }
+    if (amount === undefined || amount === null) {
+      throw new Error('Amount is required');
+    }
+
+    let payer = null;
+    if (from) {
+      payer = await resolveAgentAddress(from);
+    }
+
+    const decimals = getAssetDecimals(asset);
+    const amountSmallest = toSmallestUnit(amount, decimals);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000);
+
+    const request = {
+      id: randomUUID(),
+      status: 'pending',
+      requester_agent_id: agentId,
+      requester_address: walletAddress,
+      payer_agent_id: payer?.agentId || null,
+      payer_address: payer?.address || null,
+      amount: amountSmallest,
+      amount_decimal: amount,
+      asset: asset.toUpperCase(),
+      accepted_networks: [defaultNetwork],
+      description,
+      line_items: lineItems ? JSON.stringify(lineItems) : null,
+      reference_type: null,
+      reference_id: null,
+      expires_at: expiresAt.toISOString(),
+      allow_partial: allowPartial,
+      minimum_amount: minimumAmount ? toSmallestUnit(minimumAmount, decimals) : null,
+      amount_paid: 0,
+      payment_ids: [],
+      callback_url: callbackUrl || null,
+      metadata: metadata ? JSON.stringify(metadata) : null,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      paid_at: null,
+    };
+
+    await commerce.a2a().createPaymentRequest(request);
+
+    return {
+      success: true,
+      request: formatPaymentRequest(request),
+      paymentUrl: `a2a://pay/${request.id}`,
+    };
+  }
+
+  /**
+   * Pay a payment request
+   *
+   * @param {string} requestId - Payment request ID
+   * @param {Object} [options] - Payment options
+   * @param {number} [options.amount] - Amount to pay (for partial payments)
+   * @returns {Promise<Object>} Payment result
+   */
+  async function payRequest(requestId, options = {}) {
+    const request = await commerce.a2a().getPaymentRequest(requestId);
+    if (!request) {
+      throw new Error('Payment request not found');
+    }
+
+    if (request.status === 'paid') {
+      throw new Error('Payment request already paid');
+    }
+    if (request.status === 'expired' || new Date(request.expires_at) < new Date()) {
+      throw new Error('Payment request has expired');
+    }
+    if (request.status === 'cancelled') {
+      throw new Error('Payment request was cancelled');
+    }
+
+    const decimals = getAssetDecimals(request.asset);
+    const amountToPay = options.amount
+      ? toSmallestUnit(options.amount, decimals)
+      : request.amount - request.amount_paid;
+
+    if (amountToPay <= 0) {
+      throw new Error('Invalid payment amount');
+    }
+
+    if (!request.allow_partial && amountToPay < request.amount - request.amount_paid) {
+      throw new Error('Partial payments not allowed for this request');
+    }
+
+    // Make the payment
+    const paymentResult = await pay({
+      to: request.requester_address,
+      amount: fromSmallestUnit(amountToPay, decimals),
+      asset: request.asset,
+      memo: `Payment for: ${request.description}`,
+      referenceType: 'payment_request',
+      referenceId: requestId,
+    });
+
+    // Update the request
+    const newAmountPaid = request.amount_paid + amountToPay;
+    const isFullyPaid = newAmountPaid >= request.amount;
+
+    await commerce.a2a().updatePaymentRequest(requestId, {
+      status: isFullyPaid ? 'paid' : 'processing',
+      amount_paid: newAmountPaid,
+      payment_ids: [...(request.payment_ids || []), paymentResult.payment.id],
+      paid_at: isFullyPaid ? new Date().toISOString() : null,
+    });
+
+    // Trigger callback if configured
+    if (request.callback_url && isFullyPaid) {
+      triggerCallback(request.callback_url, {
+        event: 'payment_request.paid',
+        request_id: requestId,
+        payment_id: paymentResult.payment.id,
+        amount: amountToPay,
+        total_paid: newAmountPaid,
+      }).catch(() => {}); // Fire and forget
+    }
+
+    return {
+      success: true,
+      payment: paymentResult.payment,
+      request: {
+        id: requestId,
+        status: isFullyPaid ? 'paid' : 'processing',
+        amountPaid: fromSmallestUnit(newAmountPaid, decimals),
+        amountRemaining: fromSmallestUnit(request.amount - newAmountPaid, decimals),
+        fullyPaid: isFullyPaid,
+      },
+    };
+  }
+
+  /**
+   * Request a quote from another agent
+   *
+   * @param {Object} params - Quote request parameters
+   * @param {string} params.seller - Seller agent ID or wallet
+   * @param {Array} params.items - Items to quote
+   * @param {string} [params.asset] - Preferred asset
+   * @param {string} [params.message] - Message to seller
+   * @returns {Promise<Object>} Quote request
+   */
+  async function requestQuote(params) {
+    const { seller, items, asset = defaultAsset, message, metadata } = params;
+
+    if (!seller) {
+      throw new Error('Seller is required');
+    }
+    if (!items || items.length === 0) {
+      throw new Error('At least one item is required');
+    }
+
+    const sellerAgent = await resolveAgentAddress(seller);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+
+    // Convert items to quote format
+    const quoteItems = items.map((item) => ({
+      description: item.description || item.name,
+      sku: item.sku || null,
+      quantity: item.quantity || 1,
+      unit_price: item.unitPrice ? toSmallestUnit(item.unitPrice, getAssetDecimals(asset)) : 0,
+      metadata: item.metadata ? JSON.stringify(item.metadata) : null,
+    }));
+
+    const subtotal = quoteItems.reduce((sum, item) => sum + item.unit_price * item.quantity, 0);
+
+    const quote = {
+      id: randomUUID(),
+      status: 'requested',
+      buyer_agent_id: agentId,
+      buyer_address: walletAddress,
+      seller_agent_id: sellerAgent.agentId,
+      seller_address: sellerAgent.address,
+      items: quoteItems,
+      subtotal,
+      fees: 0,
+      tax: 0,
+      total: subtotal,
+      total_decimal: fromSmallestUnit(subtotal, getAssetDecimals(asset)),
+      asset: asset.toUpperCase(),
+      accepted_networks: [defaultNetwork],
+      expires_at: expiresAt.toISOString(),
+      terms: null,
+      estimated_delivery: null,
+      delivery_method: null,
+      fulfillment_instructions: null,
+      payment_id: null,
+      payment_request_id: null,
+      request_message: message || null,
+      response_message: null,
+      metadata: metadata ? JSON.stringify(metadata) : null,
+      created_at: now.toISOString(),
+      quoted_at: null,
+      accepted_at: null,
+      fulfilled_at: null,
+      updated_at: now.toISOString(),
+    };
+
+    await commerce.a2a().createQuote(quote);
+
+    // TODO: Notify seller agent via their endpoint or messaging
+
+    return {
+      success: true,
+      quote: formatQuote(quote),
+    };
+  }
+
+  /**
+   * Provide a quote (seller responding to quote request)
+   *
+   * @param {string} quoteId - Quote ID to respond to
+   * @param {Object} params - Quote parameters
+   * @param {number} params.total - Total amount
+   * @param {number} [params.fees] - Fees
+   * @param {number} [params.tax] - Tax
+   * @param {number} [params.expiresInHours] - Hours until quote expires
+   * @param {string} [params.terms] - Terms and conditions
+   * @param {string} [params.estimatedDelivery] - Estimated delivery time
+   * @param {string} [params.message] - Message to buyer
+   * @returns {Promise<Object>} Updated quote
+   */
+  async function provideQuote(quoteId, params) {
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.status !== 'requested') {
+      throw new Error(`Cannot provide quote in status: ${quote.status}`);
+    }
+
+    // Verify this agent is the seller
+    if (quote.seller_address !== walletAddress) {
+      throw new Error('Only the seller can provide a quote');
+    }
+
+    const { total, fees = 0, tax = 0, expiresInHours = 48, terms, estimatedDelivery, message } = params;
+
+    const decimals = getAssetDecimals(quote.asset);
+    const totalSmallest = toSmallestUnit(total, decimals);
+    const feesSmallest = toSmallestUnit(fees, decimals);
+    const taxSmallest = toSmallestUnit(tax, decimals);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000);
+
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'quoted',
+      total: totalSmallest,
+      total_decimal: total,
+      fees: feesSmallest,
+      tax: taxSmallest,
+      expires_at: expiresAt.toISOString(),
+      terms: terms || null,
+      estimated_delivery: estimatedDelivery || null,
+      response_message: message || null,
+      quoted_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    });
+
+    const updatedQuote = await commerce.a2a().getQuote(quoteId);
+
+    return {
+      success: true,
+      quote: formatQuote(updatedQuote),
+    };
+  }
+
+  /**
+   * Accept a quote and pay
+   *
+   * @param {string} quoteId - Quote ID to accept
+   * @returns {Promise<Object>} Payment result
+   */
+  async function acceptQuote(quoteId) {
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.status !== 'quoted') {
+      throw new Error(`Cannot accept quote in status: ${quote.status}`);
+    }
+
+    if (new Date(quote.expires_at) < new Date()) {
+      throw new Error('Quote has expired');
+    }
+
+    // Verify this agent is the buyer
+    if (quote.buyer_address !== walletAddress) {
+      throw new Error('Only the buyer can accept a quote');
+    }
+
+    const decimals = getAssetDecimals(quote.asset);
+
+    // Make the payment
+    const paymentResult = await pay({
+      to: quote.seller_address,
+      amount: fromSmallestUnit(quote.total, decimals),
+      asset: quote.asset,
+      memo: `Payment for quote ${quoteId}`,
+      referenceType: 'quote',
+      referenceId: quoteId,
+    });
+
+    // Update the quote
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'accepted',
+      payment_id: paymentResult.payment.id,
+      accepted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      payment: paymentResult.payment,
+      quote: {
+        id: quoteId,
+        status: 'accepted',
+        total: fromSmallestUnit(quote.total, decimals),
+        asset: quote.asset,
+      },
+    };
+  }
+
+  /**
+   * Decline a quote
+   *
+   * @param {string} quoteId - Quote ID to decline
+   * @param {string} [reason] - Reason for declining
+   * @returns {Promise<Object>} Result
+   */
+  async function declineQuote(quoteId, reason) {
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.buyer_address !== walletAddress) {
+      throw new Error('Only the buyer can decline a quote');
+    }
+
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'declined',
+      metadata: reason ? JSON.stringify({ declineReason: reason }) : null,
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      quote: {
+        id: quoteId,
+        status: 'declined',
+      },
+    };
+  }
+
+  /**
+   * Mark a quote as fulfilled
+   *
+   * @param {string} quoteId - Quote ID
+   * @returns {Promise<Object>} Result
+   */
+  async function fulfillQuote(quoteId) {
+    const quote = await commerce.a2a().getQuote(quoteId);
+    if (!quote) {
+      throw new Error('Quote not found');
+    }
+
+    if (quote.status !== 'accepted') {
+      throw new Error(`Cannot fulfill quote in status: ${quote.status}`);
+    }
+
+    if (quote.seller_address !== walletAddress) {
+      throw new Error('Only the seller can mark a quote as fulfilled');
+    }
+
+    await commerce.a2a().updateQuote(quoteId, {
+      status: 'fulfilled',
+      fulfilled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      quote: {
+        id: quoteId,
+        status: 'fulfilled',
+      },
+    };
+  }
+
+  /**
+   * Get payment history
+   *
+   * @param {Object} [filter] - Filter options
+   * @returns {Promise<Array>} Payments
+   */
+  async function getPayments(filter = {}) {
+    const payments = await commerce.a2a().listPayments({
+      ...filter,
+      sender_address: filter.sent ? walletAddress : filter.sender_address,
+      recipient_address: filter.received ? walletAddress : filter.recipient_address,
+    });
+
+    return payments.map(formatPayment);
+  }
+
+  /**
+   * Get payment requests
+   *
+   * @param {Object} [filter] - Filter options
+   * @returns {Promise<Array>} Payment requests
+   */
+  async function getPaymentRequests(filter = {}) {
+    const requests = await commerce.a2a().listPaymentRequests({
+      ...filter,
+      requester_address: filter.created ? walletAddress : filter.requester_address,
+      payer_address: filter.received ? walletAddress : filter.payer_address,
+    });
+
+    return requests.map(formatPaymentRequest);
+  }
+
+  /**
+   * Get quotes
+   *
+   * @param {Object} [filter] - Filter options
+   * @returns {Promise<Array>} Quotes
+   */
+  async function getQuotes(filter = {}) {
+    const quotes = await commerce.a2a().listQuotes({
+      ...filter,
+      buyer_address: filter.asBuyer ? walletAddress : filter.buyer_address,
+      seller_address: filter.asSeller ? walletAddress : filter.seller_address,
+    });
+
+    return quotes.map(formatQuote);
+  }
+
+  /**
+   * Get balance/summary for this agent
+   */
+  async function getBalance() {
+    const [sent, received] = await Promise.all([
+      commerce.a2a().sumPayments({ sender_address: walletAddress, status: 'completed' }),
+      commerce.a2a().sumPayments({ recipient_address: walletAddress, status: 'completed' }),
+    ]);
+
+    return {
+      walletAddress,
+      agentId,
+      totalSent: sent,
+      totalReceived: received,
+      netFlow: received - sent,
+    };
+  }
+
+  // Format functions for consistent output
+  function formatPayment(p) {
+    const decimals = getAssetDecimals(p.asset);
+    return {
+      id: p.id,
+      status: p.status,
+      from: p.sender_address,
+      to: p.recipient_address,
+      amount: typeof p.amount_decimal === 'number' ? p.amount_decimal : fromSmallestUnit(p.amount, decimals),
+      asset: p.asset,
+      network: p.network,
+      memo: p.memo,
+      txHash: p.tx_hash,
+      createdAt: p.created_at,
+      completedAt: p.completed_at,
+    };
+  }
+
+  function formatPaymentRequest(r) {
+    const decimals = getAssetDecimals(r.asset);
+    return {
+      id: r.id,
+      status: r.status,
+      from: r.requester_address,
+      payer: r.payer_address,
+      amount: typeof r.amount_decimal === 'number' ? r.amount_decimal : fromSmallestUnit(r.amount, decimals),
+      amountPaid: fromSmallestUnit(r.amount_paid, decimals),
+      asset: r.asset,
+      description: r.description,
+      expiresAt: r.expires_at,
+      allowPartial: r.allow_partial,
+      createdAt: r.created_at,
+      paidAt: r.paid_at,
+    };
+  }
+
+  function formatQuote(q) {
+    const decimals = getAssetDecimals(q.asset);
+    return {
+      id: q.id,
+      status: q.status,
+      buyer: q.buyer_address,
+      seller: q.seller_address,
+      items: q.items,
+      subtotal: fromSmallestUnit(q.subtotal, decimals),
+      fees: fromSmallestUnit(q.fees, decimals),
+      tax: fromSmallestUnit(q.tax, decimals),
+      total: typeof q.total_decimal === 'number' ? q.total_decimal : fromSmallestUnit(q.total, decimals),
+      asset: q.asset,
+      expiresAt: q.expires_at,
+      terms: q.terms,
+      estimatedDelivery: q.estimated_delivery,
+      createdAt: q.created_at,
+      quotedAt: q.quoted_at,
+      acceptedAt: q.accepted_at,
+      fulfilledAt: q.fulfilled_at,
+    };
+  }
+
+  // Trigger webhook callback
+  async function triggerCallback(url, payload) {
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error('Callback failed:', error.message);
+    }
+  }
+
+  return {
+    // Core payment operations
+    pay,
+    requestPayment,
+    payRequest,
+
+    // Quote operations
+    requestQuote,
+    provideQuote,
+    acceptQuote,
+    declineQuote,
+    fulfillQuote,
+
+    // Query operations
+    getPayments,
+    getPaymentRequests,
+    getQuotes,
+    getBalance,
+
+    // Utilities
+    resolveAgentAddress,
+
+    // Config
+    walletAddress,
+    agentId,
+  };
+}
+
+export default { createA2AService };

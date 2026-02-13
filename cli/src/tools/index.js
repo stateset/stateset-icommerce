@@ -36,6 +36,7 @@ const TOOL_MODULES = {
   erc8004: () => import('./erc8004.js').then((m) => m.default),
   x402: () => import('./x402.js').then((m) => m.default),
   'agent-cards': () => import('./agent-cards.js').then((m) => m.default),
+  a2a: () => import('./a2a.js').then((m) => m.default),
   shipments: () => import('./shipments.js').then((m) => m.default),
   suppliers: () => import('./suppliers.js').then((m) => m.default),
   invoices: () => import('./invoices.js').then((m) => m.default),
@@ -206,6 +207,9 @@ export const AGENT_TOOL_CATEGORIES = {
     'invoices',
     'warranties',
     'vector',
+    'a2a',
+    'agent-cards',
+    'x402',
   ],
   checkout: [
     'carts',
@@ -233,8 +237,9 @@ export const AGENT_TOOL_CATEGORIES = {
   tax: ['tax', 'currency'],
   sync: ['sync'],
   stablecoin: ['stablecoin'],
-  x402: ['x402', 'agent-cards'],
-  'agent-cards': ['agent-cards'],
+  x402: ['x402', 'agent-cards', 'a2a'],
+  'agent-cards': ['agent-cards', 'a2a'],
+  a2a: ['a2a', 'agent-cards', 'x402'],
   vector: ['vector', 'products', 'customers'],
 };
 
