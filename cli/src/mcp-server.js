@@ -7,6 +7,7 @@
 
 import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { getSharedRuntime } from './channels/plugin-runtime.js';
+import { A2AStore } from './a2a/store.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -30,6 +31,7 @@ import { treasuryTools } from './tools/treasury.js';
 import { erc8004Tools } from './tools/erc8004.js';
 import { x402Tools } from './tools/x402.js';
 import { agentCardTools } from './tools/agent-cards.js';
+import { a2aTools } from './tools/a2a.js';
 import { shipmentTools } from './tools/shipments.js';
 import { supplierTools } from './tools/suppliers.js';
 import { invoiceTools } from './tools/invoices.js';
@@ -59,6 +61,7 @@ const ALL_TOOL_DEFS = [
   ...erc8004Tools,
   ...x402Tools,
   ...agentCardTools,
+  ...a2aTools,
   ...shipmentTools,
   ...supplierTools,
   ...invoiceTools,
@@ -104,6 +107,10 @@ function autoIndexEntity(entityType, entity) {
  * @param {import('./channels/plugin-api.js').HookRunner} options.hookRunner - Hook runner instance
  * @param {string} options.dbPath - Commerce database path (used for ERC-8004 lookups)
  * @param {Object} options.treasury - Treasury configuration (agentId, dbPath, ERC-8004 registry)
+ * @param {Object} options.agentConfig - Agent configuration for A2A payments
+ * @param {string} options.agentConfig.agentId - This agent's ID
+ * @param {string} options.agentConfig.walletAddress - This agent's wallet address
+ * @param {Object} options.agentConfig.signingKey - Ed25519 signing key { privateKey, publicKey }
  */
 export function createStatesetMcpServer({
   commerce,
@@ -113,7 +120,32 @@ export function createStatesetMcpServer({
   hookRunner = null,
   dbPath = './store.db',
   treasury = null,
+  agentConfig = null,
 }) {
+  // ---------------------------------------------------------------------------
+  // A2A Store initialization
+  // ---------------------------------------------------------------------------
+  const a2aStore = new A2AStore({ dbPath: dbPath.replace('.db', '-a2a.db') });
+
+  // Create a commerce wrapper that includes A2A methods
+  const commerceWithA2A = {
+    ...commerce,
+    a2a: () => ({
+      createPayment: (p) => a2aStore.createPayment(p),
+      getPayment: (id) => a2aStore.getPayment(id),
+      updatePayment: (id, u) => a2aStore.updatePayment(id, u),
+      listPayments: (f) => a2aStore.listPayments(f),
+      sumPayments: (f) => a2aStore.sumPayments(f),
+      createPaymentRequest: (r) => a2aStore.createPaymentRequest(r),
+      getPaymentRequest: (id) => a2aStore.getPaymentRequest(id),
+      updatePaymentRequest: (id, u) => a2aStore.updatePaymentRequest(id, u),
+      listPaymentRequests: (f) => a2aStore.listPaymentRequests(f),
+      createQuote: (q) => a2aStore.createQuote(q),
+      getQuote: (id) => a2aStore.getQuote(id),
+      updateQuote: (id, u) => a2aStore.updateQuote(id, u),
+      listQuotes: (f) => a2aStore.listQuotes(f),
+    }),
+  };
   // ---------------------------------------------------------------------------
   // Permission helpers
   // ---------------------------------------------------------------------------
@@ -420,13 +452,14 @@ export function createStatesetMcpServer({
    * Context object passed to every domain tool handler.
    */
   const toolContext = {
-    commerce,
+    commerce: commerceWithA2A,
     allowApply,
     autoIndexEntity,
     resolveTreasuryAgentId,
     treasuryContextOptions,
     buildAuditContext,
     buildTreasuryIdentityMetadata,
+    agentConfig,
   };
 
   /**

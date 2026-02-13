@@ -271,3 +271,10 @@ export {
   createContextLogger,
   createContextMiddleware,
 } from './context.js';
+
+// ============================================================================
+// A2A Commerce (Agent-to-Agent Payments)
+// ============================================================================
+
+export { createA2AService } from './a2a/index.js';
+export { A2AStore, defaultA2ADbPath } from './a2a/store.js';

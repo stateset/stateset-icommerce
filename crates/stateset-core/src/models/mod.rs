@@ -1,5 +1,6 @@
 //! Domain models for commerce operations
 
+pub mod a2a;
 pub mod a2a_skill;
 pub mod accounts_payable;
 pub mod accounts_receivable;
@@ -38,6 +39,7 @@ pub mod warehouse;
 pub mod warranty;
 pub mod x402;
 
+pub use a2a::*;
 pub use a2a_skill::*;
 pub use accounts_payable::*;
 pub use accounts_receivable::*;
