@@ -18,8 +18,9 @@ StateSet x402 MCP Server
 USAGE:
   stateset-x402-mcp [options]
 
-OPTIONS:
+  OPTIONS:
   --config-dir <path>   Config directory for keys (default: .stateset)
+  --policy-dir <path>   Policy store directory (default: STATESET_POLICY_DIR/.stateset)
   --help, -h            Show this help
   --version, -v         Show version
 
@@ -52,6 +53,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       'config-dir': { type: 'string' },
+      'policy-dir': { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -69,7 +71,12 @@ async function main() {
   }
 
   const configDir = values['config-dir'] || process.env.STATESET_CONFIG_DIR || '.stateset';
-  const server = createX402McpServer({ env: process.env, configDir });
+  const policyDir = values['policy-dir'] || process.env.STATESET_POLICY_DIR || configDir;
+  const server = createX402McpServer({
+    env: process.env,
+    configDir,
+    policyStorePath: policyDir,
+  });
   const transport = new StdioServerTransport();
   const instance = server?.instance || server?.server || server;
 

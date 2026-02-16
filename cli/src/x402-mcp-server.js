@@ -10,6 +10,7 @@ import { X402SequencerClient, createX402Agent, BudgetExceededError } from './x40
 import { createBudgetState, getDefaultBudgetStateFile } from './x402/budget.js';
 import { loadX402Config, resolveX402ConfigPath, pickConfigValue } from './x402/config.js';
 import { getKeyManager } from './sync/keys.js';
+import { PolicyEngine } from './policies/engine.js';
 
 const MAX_RESPONSE_CHARS = 12000;
 
@@ -108,7 +109,12 @@ function errorResult(error) {
   };
 }
 
-export function createX402McpServer({ env = process.env, configDir = '.stateset' } = {}) {
+export function createX402McpServer({
+  env = process.env,
+  configDir = '.stateset',
+  policyEngine = null,
+  policyStorePath = null,
+} = {}) {
   const configPath = resolveX402ConfigPath({ env, configDir });
   const fileConfig = loadX402Config(configPath);
 
@@ -267,6 +273,127 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
     };
   };
 
+  const applyPolicyTransform = (input, transform) => {
+    if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
+      return input;
+    }
+
+    const output = { ...(input || {}) };
+    for (const [key, value] of Object.entries(transform)) {
+      if (
+        output[key] !== null &&
+        output[key] !== undefined &&
+        typeof output[key] === 'object' &&
+        !Array.isArray(output[key]) &&
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value)
+      ) {
+        output[key] = { ...output[key], ...value };
+      } else {
+        output[key] = value;
+      }
+    }
+
+    return output;
+  };
+
+  const resolvePolicyStorePath =
+    policyStorePath || process.env.STATESET_POLICY_DIR || path.resolve(configDir || '.stateset');
+  const policyEngineInstance =
+    policyEngine ||
+    (resolvePolicyStorePath
+      ? new PolicyEngine({
+          storePath: resolvePolicyStorePath,
+        })
+      : null);
+  const policyLoad =
+    policyEngineInstance && !policyEngine
+      ? policyEngineInstance.load().catch(() => null)
+      : Promise.resolve();
+
+  const evaluatePolicy = async (toolName, params, extra = {}) => {
+    if (!policyEngineInstance) return { allowed: true, params };
+
+    await policyLoad;
+
+    const context = {
+      domain: 'x402',
+      tool: toolName,
+      params,
+      requestId: extra?.requestId || null,
+      sessionId: extra?.sessionId || null,
+    };
+
+    let result;
+    try {
+      result = await policyEngineInstance.evaluate('x402', context);
+    } catch {
+      return { allowed: true, params };
+    }
+
+    const actions = Array.isArray(result?.actions) ? result.actions : [];
+    let transformedParams = params;
+    for (const action of actions) {
+      if (action?.type === 'transform') {
+        transformedParams = applyPolicyTransform(transformedParams, action.transform);
+      }
+    }
+
+    if (result?.shouldDeny) {
+      const reason = actions
+        .filter((action) => action?.type === 'deny')
+        .map((action) => action?.reason || action?.metadata?.reason || 'Tool denied by policy')
+        .filter(Boolean)
+        .join('; ');
+
+      return {
+        allowed: false,
+        params: transformedParams,
+        reason: reason || 'Tool denied by policy',
+        actions,
+        evaluation: result,
+      };
+    }
+
+    return {
+      allowed: true,
+      params: transformedParams,
+      actions,
+      evaluation: result,
+    };
+  };
+
+  const policyError = (toolName, policy) => ({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(
+          {
+            error: policy.reason || 'Tool execution blocked by policy',
+            tool: toolName,
+            policy: {
+              domain: 'x402',
+              actions: policy.actions || [],
+              evaluation: policy.evaluation || null,
+            },
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+    isError: true,
+  });
+
+  const withPolicy = (toolName, handler) => async (args, extra) => {
+    const policy = await evaluatePolicy(toolName, args, extra);
+    if (!policy.allowed) {
+      return policyError(toolName, policy);
+    }
+    return handler(policy.params, extra);
+  };
+
   return createSdkMcpServer({
     name: 'stateset-x402',
     version: '1.0.0',
@@ -282,76 +409,79 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
           maxAmount: z.number().optional().describe('Override max amount for this call'),
           requireReceipt: z.boolean().optional().describe('Wait for payment receipt'),
         },
-        async ({
-          url,
-          method = 'GET',
-          headers = {},
-          body,
-          maxAmount: perCallMax,
-          requireReceipt: perCallReceipt,
-        }) => {
-          try {
-            const config = await ensureConfig();
-            const agent = createX402Agent({
-              ...config,
-              maxAmount: perCallMax ?? config.maxAmount,
-              requireReceipt: perCallReceipt ?? config.requireReceipt,
-            });
+        withPolicy(
+          'x402_call',
+          async ({
+            url,
+            method = 'GET',
+            headers = {},
+            body,
+            maxAmount: perCallMax,
+            requireReceipt: perCallReceipt,
+          }) => {
+            try {
+              const config = await ensureConfig();
+              const agent = createX402Agent({
+                ...config,
+                maxAmount: perCallMax ?? config.maxAmount,
+                requireReceipt: perCallReceipt ?? config.requireReceipt,
+              });
 
-            const requestHeaders = { ...headers };
-            let requestBody = body;
-            if (body && typeof body === 'object' && !(body instanceof Buffer)) {
-              requestBody = JSON.stringify(body);
-              if (!requestHeaders['content-type']) {
-                requestHeaders['content-type'] = 'application/json';
+              const requestHeaders = { ...headers };
+              let requestBody = body;
+              if (body && typeof body === 'object' && !(body instanceof Buffer)) {
+                requestBody = JSON.stringify(body);
+                if (!requestHeaders['content-type']) {
+                  requestHeaders['content-type'] = 'application/json';
+                }
               }
+
+              const response = await agent.fetch(url, {
+                method,
+                headers: requestHeaders,
+                body: requestBody,
+              });
+
+              const contentType = response.headers.get('content-type') || '';
+              let parsedBody = null;
+              if (contentType.includes('application/json')) {
+                parsedBody = await response.json();
+              } else {
+                parsedBody = await response.text();
+              }
+
+              return result({
+                success: response.ok,
+                status: response.status,
+                statusText: response.statusText,
+                url: response.url,
+                contentType,
+                headers: Object.fromEntries(response.headers.entries()),
+                body: truncateBody(parsedBody),
+                budget: agent.budget
+                  ? {
+                      spentToday: agent.budget.getSpentToday(),
+                      dailyBudget,
+                      balance: agent.budget.getBalance(),
+                    }
+                  : null,
+              });
+            } catch (error) {
+              const message =
+                error instanceof BudgetExceededError
+                  ? `Budget exceeded: ${error.message}`
+                  : error.message;
+              return errorResult(message);
             }
-
-            const response = await agent.fetch(url, {
-              method,
-              headers: requestHeaders,
-              body: requestBody,
-            });
-
-            const contentType = response.headers.get('content-type') || '';
-            let parsedBody = null;
-            if (contentType.includes('application/json')) {
-              parsedBody = await response.json();
-            } else {
-              parsedBody = await response.text();
-            }
-
-            return result({
-              success: response.ok,
-              status: response.status,
-              statusText: response.statusText,
-              url: response.url,
-              contentType,
-              headers: Object.fromEntries(response.headers.entries()),
-              body: truncateBody(parsedBody),
-              budget: agent.budget
-                ? {
-                    spentToday: agent.budget.getSpentToday(),
-                    dailyBudget,
-                    balance: agent.budget.getBalance(),
-                  }
-                : null,
-            });
-          } catch (error) {
-            const message =
-              error instanceof BudgetExceededError
-                ? `Budget exceeded: ${error.message}`
-                : error.message;
-            return errorResult(message);
-          }
-        },
+          },
+        ),
       ),
 
       tool(
         'x402_budget_status',
         'Show remaining daily/per-call budget and local balance tracking.',
         {},
-        async () => {
+        withPolicy('x402_budget_status', () => {
           if (!budgetState) {
             return result({
               success: true,
@@ -369,7 +499,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
               stateFile: budgetState.filePath,
             },
           });
-        },
+        }),
       ),
 
       tool(
@@ -378,7 +508,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
         {
           limit: z.number().optional().describe('Number of entries to return (default: 50)'),
         },
-        async ({ limit = 50 }) => {
+        withPolicy('x402_history', ({ limit = 50 }) => {
           if (!budgetState) {
             return result({
               success: true,
@@ -391,7 +521,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
             count: budgetState.listHistory(limit).length,
             history: budgetState.listHistory(limit),
           });
-        },
+        }),
       ),
 
       tool(
@@ -400,7 +530,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
         {
           intentId: z.string().describe('Payment intent ID'),
         },
-        async ({ intentId }) => {
+        withPolicy('x402_receipt', async ({ intentId }) => {
           try {
             if (!sequencerClient) throw new Error('X402_SEQUENCER_URL is required');
             const receipt = await sequencerClient.getPaymentReceipt(intentId);
@@ -408,7 +538,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
           } catch (error) {
             return errorResult(error.message);
           }
-        },
+        }),
       ),
 
       tool(
@@ -425,7 +555,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
             .optional()
             .describe('Wallet address (defaults to X402_PAYER_ADDRESS)'),
         },
-        async ({ chain, token, address }) => {
+        withPolicy('x402_balance', async ({ chain, token, address }) => {
           if (!chain) {
             return result({
               success: true,
@@ -452,7 +582,7 @@ export function createX402McpServer({ env = process.env, configDir = '.stateset'
           } catch (error) {
             return errorResult(error.message);
           }
-        },
+        }),
       ),
     ],
   });

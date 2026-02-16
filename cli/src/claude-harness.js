@@ -13,6 +13,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import path from 'path';
 import { DEFAULT_MODEL, THINK_LEVELS } from './config.js';
 import { createStatesetMcpServer } from './mcp-server.js';
 import { createX402McpServer, X402_MCP_TOOL_NAMES } from './x402-mcp-server.js';
@@ -45,6 +46,13 @@ import { AGENTS } from './agent-definitions.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 
 const require = createRequire(import.meta.url);
+
+function resolvePolicyStorePath(dbPath, override = null) {
+  if (override) return override;
+  if (process.env.STATESET_POLICY_DIR) return process.env.STATESET_POLICY_DIR;
+  const resolvedDbPath = dbPath ? path.resolve(dbPath) : path.resolve('./store.db');
+  return path.join(path.dirname(resolvedDbPath), '.stateset');
+}
 
 /** @type {any} */
 let _CommerceCtor = null;
@@ -168,6 +176,8 @@ async function* __runQueryWithCleanArgv(generatorFactory) {
  * @param {Object} options.hookRunner - HookRunner instance for prompt/tool hooks
  * @param {boolean} options.enablePlugins - Enable harness plugin loading
  * @param {Object} options.contextGuardOptions - Override context guard thresholds
+ * @param {PolicyEngine} options.policyEngine - Custom policy engine for MCP tools
+ * @param {string} options.policyStorePath - Path to policy store directory
  * @param {Function} options.onEvent - Event callback for agent lifecycle events
  */
 export async function runAgentLoop({
@@ -215,9 +225,12 @@ export async function runAgentLoop({
   hookRunner = null,
   enablePlugins = null,
   contextGuardOptions = null,
+  policyEngine = null,
+  policyStorePath = null,
   onEvent = null,
   treasury = null,
 }) {
+  const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
   const retrySettings = { ...resolvedSettings.retry, ...(retry || {}) };
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
@@ -593,6 +606,8 @@ export async function runAgentLoop({
     telemetry: telem,
     permissionGate: gate,
     hookRunner: hooks,
+    policyEngine,
+    policyStorePath: effectivePolicyStorePath,
     treasury: treasuryConfig,
   });
 
@@ -616,7 +631,12 @@ export async function runAgentLoop({
 
   if (shouldEnableX402) {
     const configDir = process.env.STATESET_CONFIG_DIR || '.stateset';
-    const x402Server = createX402McpServer({ env: process.env, configDir });
+    const x402Server = createX402McpServer({
+      env: process.env,
+      configDir,
+      policyEngine,
+      policyStorePath: effectivePolicyStorePath,
+    });
     mcpServers['stateset-x402'] = x402Server;
     allowedTools.push(...X402_MCP_TOOL_NAMES.map((name) => `mcp__stateset-x402__${name}`));
   }
@@ -1512,8 +1532,11 @@ export async function* runAgentStream({
   getApiKey = null,
   abortController = null,
   signal = null,
+  policyEngine = null,
+  policyStorePath = null,
   onEvent = null,
 }) {
+  const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
@@ -1709,6 +1732,8 @@ export async function* runAgentStream({
     allowApply,
     permissionGate: gate,
     hookRunner: hooks,
+    policyEngine,
+    policyStorePath: effectivePolicyStorePath,
   });
 
   // Determine which agent to use
@@ -1939,9 +1964,12 @@ export function createAgentStreamSession(options = {}) {
     getApiKey = null,
     abortController = null,
     signal = null,
+    policyEngine = null,
+    policyStorePath = null,
     onEvent = null,
   } = options;
 
+  const effectivePolicyStorePath = resolvePolicyStorePath(dbPath, policyStorePath);
   const resolvedSettings = loadAgentSettings(settings || {});
   const privacySettings = { ...resolvedSettings.privacy, ...(privacy || {}) };
   const eventRedact = privacySettings.redactLogs;
@@ -2012,6 +2040,8 @@ export function createAgentStreamSession(options = {}) {
     allowApply,
     permissionGate: gate,
     hookRunner: hooks,
+    policyEngine,
+    policyStorePath: effectivePolicyStorePath,
   });
 
   const streamThinkTokens = THINK_LEVELS[effectiveThinkLevel] || 0;

@@ -6,8 +6,13 @@
  */
 
 import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'path';
+import { z } from 'zod';
 import { getSharedRuntime } from './channels/plugin-runtime.js';
 import { A2AStore } from './a2a/store.js';
+import { PolicyEngine } from './policies/engine.js';
 
 // Domain tool modules
 import { customerTools } from './tools/customers.js';
@@ -40,6 +45,146 @@ import { warrantyTools } from './tools/warranties.js';
 /**
  * All domain tool definitions, collected from modules.
  */
+const AGENTIC_RUNTIME_TOOLS = [
+  {
+    name: 'agentic_runtime_contract',
+    description:
+      'Return a deterministic runtime contract for AI agents: capabilities, side effects, and replay metadata.',
+    inputSchema: {
+      tool: z.string().optional().describe('Optional tool name to filter contract metadata'),
+      includeLegacyDefaults: z.boolean().optional().default(false),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, getAgenticRuntimeContract }) => {
+      const payload = getAgenticRuntimeContract({
+        tool: params?.tool,
+        includeLegacyDefaults: params?.includeLegacyDefaults || false,
+      });
+      return payload;
+    },
+  },
+  {
+    name: 'agentic_plan',
+    description:
+      'Evaluate a proposed tool sequence for deterministic simulation: policy, permission, and replayability checks.',
+    inputSchema: {
+      steps: z.array(
+        z.object({
+          tool: z.string().describe('Tool name without server prefix'),
+          params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
+          policyDomain: z.string().optional().describe('Optional override policy domain'),
+        }),
+      ),
+      costBudget: z
+        .record(
+          z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
+          z.union([z.number(), z.string()]),
+        )
+        .optional()
+        .describe('Optional plan-level per-currency cost cap values'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, simulateAgenticPlan }) => {
+      return simulateAgenticPlan({
+        steps: params?.steps || [],
+        costBudget: params?.costBudget,
+      });
+    },
+  },
+  {
+    name: 'agentic_replay',
+    description: 'Read recent deterministic execution events for auditability and replay tooling.',
+    inputSchema: {
+      limit: z.number().optional().default(20).describe('Max events to return'),
+      tool: z.string().optional().describe('Filter by tool name'),
+      requestId: z.string().optional().describe('Filter by request/session id'),
+      sessionId: z.string().optional().describe('Filter by MCP session id'),
+      planSignature: z.string().optional().describe('Filter by plan signature'),
+      executionSignature: z.string().optional().describe('Filter by execution signature'),
+      status: z
+        .enum([
+          'success',
+          'error',
+          'blocked',
+          'preview',
+          'policy_block',
+          'permission_block',
+          'treasury_block',
+          'rollback_success',
+          'rollback_failed',
+          'dry_run_success',
+          'dry_run_blocked',
+        ])
+        .optional(),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, getAgenticReplayLog }) => {
+      return getAgenticReplayLog({
+        limit: params?.limit,
+        tool: params?.tool,
+        requestId: params?.requestId,
+        sessionId: params?.sessionId,
+        planSignature: params?.planSignature,
+        executionSignature: params?.executionSignature,
+        status: params?.status,
+      });
+    },
+  },
+  {
+    name: 'agentic_execute_plan',
+    description:
+      'Execute a tool sequence deterministically with optional dry-run and best-effort rollback.',
+    inputSchema: {
+      steps: z.array(
+        z.object({
+          tool: z.string().describe('Tool name without server prefix'),
+          params: z.record(z.string(), z.any()).default({}).describe('Tool parameters'),
+          policyDomain: z.string().optional().describe('Optional override policy domain'),
+        }),
+      ),
+      dryRun: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Dry-run only; do not execute write calls'),
+      sessionId: z.string().optional().describe('Correlation session id'),
+      stopOnFailure: z.boolean().optional().default(true).describe('Stop when a step fails'),
+      rollbackOnFailure: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Attempt best-effort rollback using compensation hints'),
+      requestId: z.string().optional().describe('Optional correlation id'),
+      costBudget: z
+        .record(
+          z.string().describe('Currency key (tokenSymbol or chainId:tokenSymbol)'),
+          z.union([z.number(), z.string()]),
+        )
+        .optional()
+        .describe('Optional plan-level per-currency cost cap values'),
+    },
+    permission: 'read',
+    policyDomain: 'agentic',
+    handler: async ({ params, executeAgenticPlan }) => {
+      return executeAgenticPlan({
+        steps: params?.steps || [],
+        dryRun: params?.dryRun ?? true,
+        stopOnFailure: params?.stopOnFailure ?? true,
+        rollbackOnFailure: params?.rollbackOnFailure ?? true,
+        requestId: params?.requestId,
+        sessionId: params?.sessionId,
+        costBudget: params?.costBudget,
+      });
+    },
+  },
+];
+
+const AGENTIC_REPLAY_LOG_FILE = 'agentic-tool-calls.jsonl';
+const AGENTIC_REPLAY_BUFFER_SIZE = 400;
+
 const ALL_TOOL_DEFS = [
   ...customerTools,
   ...orderTools,
@@ -67,7 +212,471 @@ const ALL_TOOL_DEFS = [
   ...invoiceTools,
   ...warrantyTools,
   ...vectorTools,
+  ...AGENTIC_RUNTIME_TOOLS,
 ];
+
+const AGENTIC_COMPENSATION_HINTS = {
+  create_order: ['cancel_order'],
+  create_cart: ['cancel_cart'],
+  ship_order: ['cancel_order'],
+  reserve_inventory: ['release_reservation'],
+  confirm_reservation: ['release_reservation'],
+  add_cart_item: ['remove_cart_item'],
+  create_return: ['reject_return'],
+  approve_return: ['reject_return'],
+  create_payment: ['create_refund'],
+};
+
+const AGENTIC_COMPENSATION_PARAM_HINTS = {
+  cancel_order: ['orderId'],
+  cancel_cart: ['cartId'],
+  release_reservation: ['reservationId'],
+  remove_cart_item: ['itemId'],
+  reject_return: ['returnId'],
+  create_refund: ['paymentId'],
+};
+
+const AGENTIC_IDEMPOTENCY_HINTS = new Set([
+  'create_payment',
+  'create_stablecoin_payment',
+  'create_refund',
+]);
+
+const TOOL_DEFS_BY_NAME = new Map(ALL_TOOL_DEFS.map((tool) => [tool?.name, tool]).filter(Boolean));
+
+const coerceReplayIdSource = (value) => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'number') return `${value}`;
+  return undefined;
+};
+
+const extractReplayIdFromSource = (source, keyCandidates) => {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const key of keyCandidates) {
+    const candidate = coerceReplayIdSource(source[key]);
+    if (candidate) return candidate;
+  }
+  return undefined;
+};
+
+const extractFirstIdLikeValue = (source) => {
+  if (!source || typeof source !== 'object') return undefined;
+  const directId = coerceReplayIdSource(source.id);
+  if (directId) return directId;
+  for (const [key, value] of Object.entries(source)) {
+    if (!key.toLowerCase().endsWith('id')) continue;
+    const candidate = coerceReplayIdSource(value);
+    if (candidate) return candidate;
+  }
+  return undefined;
+};
+
+const buildCompensationParams = (compensationTool, params, result) => {
+  const sources = [
+    params || {},
+    result || {},
+    result?.order || {},
+    result?.cart || {},
+    result?.reservation || {},
+    result?.item || {},
+    result?.payment || {},
+    result?.invoice || {},
+    result?.customer || {},
+    result?.return || {},
+    result?.refund || {},
+  ];
+  const candidates = AGENTIC_COMPENSATION_PARAM_HINTS[compensationTool];
+  const output = {};
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    for (const key of candidates) {
+      if (!key || typeof key !== 'string') continue;
+      for (const source of sources) {
+        const exact = extractReplayIdFromSource(source, [key]);
+        if (exact) {
+          output[key] = exact;
+          break;
+        }
+        const idLike = extractReplayIdFromSource(source, ['id']);
+        if (idLike && key.toLowerCase().endsWith('id')) {
+          output[key] = idLike;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!Object.keys(output).length) {
+    const fallback = extractReplayIdFromSource(
+      {
+        ...params,
+        ...(result || {}),
+      },
+      [
+        'id',
+        'orderId',
+        'paymentId',
+        'cartId',
+        'reservationId',
+        'returnId',
+        'invoiceId',
+        'customerId',
+        'itemId',
+      ],
+    );
+    if (fallback) {
+      output.id = fallback;
+    }
+  }
+
+  if (!Object.keys(output).length) return null;
+  return output;
+};
+
+const stableStringify = (value) => {
+  const normalize = (input) => {
+    if (input === null || input === undefined) return input;
+    if (Array.isArray(input)) {
+      return input.map((item) => normalize(item));
+    }
+    if (typeof input !== 'object') return input;
+    const sorted = Object.keys(input)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = normalize(input[key]);
+        return acc;
+      }, {});
+    return sorted;
+  };
+
+  return JSON.stringify(normalize(value));
+};
+
+const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
+
+const REDACT_REPLAY_KEYS = new Set([
+  'api_key',
+  'apiKey',
+  'apikey',
+  'auth',
+  'authorization',
+  'credential',
+  'credentials',
+  'password',
+  'private',
+  'private_key',
+  'privateKey',
+  'secret',
+  'secret_key',
+  'secretKey',
+  'seed',
+  'signature',
+  'token',
+  'wallet_private_key',
+]);
+
+const MAX_REPLAY_ARRAY_ITEMS = 25;
+const MAX_REPLAY_OBJECT_KEYS = 80;
+const MAX_REPLAY_STRING_CHARS = 240;
+
+const sanitizeReplayValue = (value, depth = 4, seen = new Set()) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    if (value.length <= MAX_REPLAY_STRING_CHARS) return value;
+    return `${value.slice(0, MAX_REPLAY_STRING_CHARS)}...`;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') return `${value.toString()}n`;
+  if (typeof value === 'symbol' || typeof value === 'function') return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Map)
+    return {
+      _type: 'Map',
+      size: value.size,
+      entries: Array.from(value.entries()).map(([k, v]) => [
+        sanitizeReplayValue(k, depth - 1, seen),
+        sanitizeReplayValue(v, depth - 1, seen),
+      ]),
+    };
+  if (value instanceof Set)
+    return {
+      _type: 'Set',
+      size: value.size,
+      values: Array.from(value.values()).map((entry) =>
+        sanitizeReplayValue(entry, depth - 1, seen),
+      ),
+    };
+  if (Buffer.isBuffer(value)) return `<Buffer ${value.length}>`;
+
+  if (typeof value !== 'object') return String(value);
+  if (depth <= 0 || seen.has(value)) return '[truncated]';
+  seen.add(value);
+
+  const output = {};
+  const keys = Object.keys(value);
+  const keysToCopy = keys.slice(0, MAX_REPLAY_OBJECT_KEYS);
+  for (const key of keysToCopy) {
+    if (REDACT_REPLAY_KEYS.has(key) || key.toLowerCase().includes('secret')) {
+      output[key] = '[REDACTED]';
+      continue;
+    }
+    output[key] = sanitizeReplayValue(value[key], depth - 1, seen);
+  }
+  if (keys.length > MAX_REPLAY_OBJECT_KEYS) {
+    output.__truncatedKeys = keys.length - MAX_REPLAY_OBJECT_KEYS;
+  }
+  return output;
+};
+
+const compactReplayValue = (value, depth = 4, seen = new Set()) => {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    if (depth <= 0 || seen.has(value)) return '[truncated]';
+    seen.add(value);
+    const values = value
+      .slice(0, MAX_REPLAY_ARRAY_ITEMS)
+      .map((entry) => compactReplayValue(entry, depth - 1, seen));
+    if (value.length > MAX_REPLAY_ARRAY_ITEMS) {
+      values.push(`[+${value.length - MAX_REPLAY_ARRAY_ITEMS} more items]`);
+    }
+    return values;
+  }
+  return sanitizeReplayValue(value, depth, seen);
+};
+
+const MAX_PLAN_STEPS = 200;
+const AGENTIC_PLAN_PARAM_TEMPLATE = /^\{\{\s*([^}]+)\s*\}\}$/;
+
+const getByPath = (value, pathSegments) => {
+  let current = value;
+  for (const segment of pathSegments) {
+    if (current === null || current === undefined) return undefined;
+    if (typeof current === 'object' || Array.isArray(current)) {
+      current = current?.[segment];
+      continue;
+    }
+    return undefined;
+  }
+  return current;
+};
+
+const resolveAgenticPlanPath = (context, rawPath) => {
+  if (!context || typeof rawPath !== 'string') return undefined;
+  const pathExpression = rawPath.trim().replace(/\[(\d+)\]/g, '.$1');
+  const pathParts = pathExpression.split('.').filter(Boolean);
+  if (!pathParts.length) return undefined;
+
+  if (pathParts[0] === 'steps') {
+    if (pathParts.length < 2) return undefined;
+    const stepIndex = Number(pathParts[1]);
+    if (!Number.isInteger(stepIndex) || stepIndex < 0) return undefined;
+    return getByPath(context.steps?.[stepIndex], pathParts.slice(2));
+  }
+
+  if (pathParts[0] === 'latest') {
+    return getByPath(context.latest, pathParts.slice(1));
+  }
+
+  if (pathParts[0] === 'tool') {
+    if (pathParts.length < 2) return undefined;
+    return getByPath(context.byTool?.[pathParts[1]], pathParts.slice(2));
+  }
+
+  return undefined;
+};
+
+const resolveAgenticPlanValue = (value, context, location = '$') => {
+  if (value === null || value === undefined) return { value, unresolved: [] };
+  if (typeof value === 'string') {
+    const match = value.match(AGENTIC_PLAN_PARAM_TEMPLATE);
+    if (!match) return { value, unresolved: [] };
+
+    const resolved = resolveAgenticPlanPath(context, match[1]);
+    if (resolved === undefined) {
+      return {
+        value: null,
+        unresolved: [`${location} -> ${match[1]}`],
+      };
+    }
+
+    return { value: resolved, unresolved: [] };
+  }
+
+  if (typeof value !== 'object') return { value, unresolved: [] };
+  if (
+    value instanceof Date ||
+    Buffer.isBuffer(value) ||
+    value instanceof Map ||
+    value instanceof Set
+  ) {
+    return { value, unresolved: [] };
+  }
+
+  if (Array.isArray(value)) {
+    const output = [];
+    const unresolved = [];
+    for (let i = 0; i < value.length; i += 1) {
+      const child = resolveAgenticPlanValue(value[i], context, `${location}[${i}]`);
+      output.push(child.value);
+      unresolved.push(...child.unresolved);
+    }
+    return { value: output, unresolved };
+  }
+
+  const output = {};
+  const unresolved = [];
+  for (const [key, childValue] of Object.entries(value)) {
+    const child = resolveAgenticPlanValue(childValue, context, `${location}.${key}`);
+    output[key] = child.value;
+    unresolved.push(...child.unresolved);
+  }
+
+  return { value: output, unresolved };
+};
+
+const addCostSummaryEntry = (summary, entry = {}) => {
+  const chainId = entry.chainId || 'unknown';
+  const tokenSymbol = entry.tokenSymbol || 'UNKNOWN';
+  const key = `${chainId}:${tokenSymbol}`;
+  const amount = entry.amount;
+  const parsedAmount =
+    typeof amount === 'number' || typeof amount === 'string' ? Number(amount) : NaN;
+  if (!summary.totals[key]) {
+    summary.totals[key] = {
+      chainId,
+      tokenSymbol,
+      amount: 0,
+      amountText: null,
+      entries: 0,
+    };
+  }
+  const bucket = summary.totals[key];
+  bucket.entries += 1;
+  if (Number.isFinite(parsedAmount)) {
+    bucket.amount += parsedAmount;
+  } else if (amount !== undefined && amount !== null) {
+    bucket.amountText = amount;
+  }
+
+  summary.entries.push({
+    step: entry.stepIndex ?? null,
+    tool: entry.tool || null,
+    status: entry.status || null,
+    chainId,
+    tokenSymbol,
+    amount: amount ?? null,
+    amountNumeric: Number.isFinite(parsedAmount) ? parsedAmount : null,
+    charged: Boolean(entry.charged),
+    blocked: Boolean(entry.blocked),
+    blockedReason: entry.blockedReason || null,
+    source: entry.source || null,
+    rule: entry.rule || null,
+  });
+
+  summary.totalEntries = (summary.totalEntries || 0) + 1;
+  if (entry.charged) summary.chargedEntries = (summary.chargedEntries || 0) + 1;
+  if (entry.blocked) summary.blockedEntries = (summary.blockedEntries || 0) + 1;
+};
+
+const normalizeCostBudgetValue = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+};
+
+const normalizeCostBudgetKey = (rawKey) => {
+  if (typeof rawKey !== 'string') return null;
+  const trimmed = rawKey.trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  if (!upper.includes(':')) return upper;
+  const [rawChain, rawToken] = upper.split(':').map((part) => part.trim());
+  if (!rawChain || !rawToken) return null;
+  return `${rawChain}:${rawToken}`;
+};
+
+const normalizeCostBudget = (costBudget = null) => {
+  if (!costBudget || typeof costBudget !== 'object' || Array.isArray(costBudget)) return {};
+  const normalized = {};
+  for (const [rawKey, rawLimit] of Object.entries(costBudget)) {
+    const key = normalizeCostBudgetKey(rawKey);
+    const limit = normalizeCostBudgetValue(rawLimit);
+    if (!key || !Number.isFinite(limit)) continue;
+    normalized[key] = limit;
+  }
+  return normalized;
+};
+
+const resolveCostBudgetLimit = (costBudget = {}, chainId = null, tokenSymbol = null) => {
+  const chain = String(chainId || '*').trim();
+  const token = String(tokenSymbol || '*')
+    .trim()
+    .toUpperCase();
+  const exact = costBudget[`${chain}:${token}`];
+  if (Number.isFinite(exact)) return exact;
+  const tokenOnly = costBudget[token];
+  if (Number.isFinite(tokenOnly)) return tokenOnly;
+  const chainOnly = costBudget[`${chain}:*`];
+  if (Number.isFinite(chainOnly)) return chainOnly;
+  const global = costBudget['*'];
+  if (Number.isFinite(global)) return global;
+  return null;
+};
+
+const createCostSummary = (mode) => ({
+  mode,
+  totalEntries: 0,
+  chargedEntries: 0,
+  blockedEntries: 0,
+  entries: [],
+  totals: {},
+});
+
+const replayEventHash = (value) => sha256(stableStringify(compactReplayValue(value)));
+
+const TOOL_DOMAIN_BY_TOOL_NAME = (() => {
+  const entries = [
+    ['customers', customerTools],
+    ['orders', orderTools],
+    ['products', productTools],
+    ['inventory', inventoryTools],
+    ['custom_objects', customObjectTools],
+    ['returns', returnTools],
+    ['carts', cartTools],
+    ['analytics', analyticsTools],
+    ['currency', currencyTools],
+    ['tax', taxTools],
+    ['promotions', promotionTools],
+    ['subscriptions', subscriptionTools],
+    ['sync', syncTools],
+    ['manufacturing', manufacturingTools],
+    ['payments', paymentTools],
+    ['stablecoin', stablecoinTools],
+    ['treasury', treasuryTools],
+    ['erc8004', erc8004Tools],
+    ['x402', x402Tools],
+    ['agent_cards', agentCardTools],
+    ['a2a', a2aTools],
+    ['shipments', shipmentTools],
+    ['suppliers', supplierTools],
+    ['invoices', invoiceTools],
+    ['warranties', warrantyTools],
+    ['vector', vectorTools],
+  ];
+
+  const map = {};
+  for (const [domain, tools] of entries) {
+    for (const tool of tools) {
+      if (tool?.name) {
+        map[tool.name] = domain;
+      }
+    }
+  }
+  return map;
+})();
 
 /**
  * Set of read-only tool names, derived from module permission metadata.
@@ -105,6 +714,8 @@ function autoIndexEntity(entityType, entity) {
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
  * @param {import('./channels/plugin-api.js').HookRunner} options.hookRunner - Hook runner instance
+ * @param {PolicyEngine} options.policyEngine - PolicyEngine instance (optional)
+ * @param {string} options.policyStorePath - Policy store root path (optional)
  * @param {string} options.dbPath - Commerce database path (used for ERC-8004 lookups)
  * @param {Object} options.treasury - Treasury configuration (agentId, dbPath, ERC-8004 registry)
  * @param {Object} options.agentConfig - Agent configuration for A2A payments
@@ -118,6 +729,8 @@ export function createStatesetMcpServer({
   telemetry = null,
   permissionGate = null,
   hookRunner = null,
+  policyEngine = null,
+  policyStorePath = null,
   dbPath = './store.db',
   treasury = null,
   agentConfig = null,
@@ -250,6 +863,1768 @@ export function createStatesetMcpServer({
       });
     }
     return result;
+  };
+
+  const POLICY_DOMAIN_BY_TOKEN = {
+    customer: 'customers',
+    customers: 'customers',
+    order: 'orders',
+    orders: 'orders',
+    product: 'products',
+    products: 'products',
+    inventory: 'inventory',
+    custom: 'custom_objects',
+    custom_object: 'custom_objects',
+    custom_objects: 'custom_objects',
+    returns: 'returns',
+    return: 'returns',
+    cart: 'carts',
+    carts: 'carts',
+    analytics: 'analytics',
+    currency: 'currency',
+    currencies: 'currency',
+    tax: 'tax',
+    promotion: 'promotions',
+    promotions: 'promotions',
+    subscription: 'subscriptions',
+    subscriptions: 'subscriptions',
+    sync: 'sync',
+    manufacturing: 'manufacturing',
+    payment: 'payments',
+    payments: 'payments',
+    stablecoin: 'stablecoin',
+    treasury: 'treasury',
+    erc8004: 'erc8004',
+    x402: 'x402',
+    agent: 'agent_cards',
+    agent_card: 'agent_cards',
+    agent_cards: 'agent_cards',
+    a2a: 'a2a',
+    shipment: 'shipments',
+    shipments: 'shipments',
+    supplier: 'suppliers',
+    suppliers: 'suppliers',
+    invoice: 'invoices',
+    invoices: 'invoices',
+    warranty: 'warranties',
+    warranties: 'warranties',
+    vector: 'vector',
+    create: 'commerce',
+    get: 'commerce',
+    list: 'commerce',
+    update: 'commerce',
+    delete: 'commerce',
+    set: 'commerce',
+    ship: 'orders',
+    cancel: 'orders',
+    request: 'a2a',
+    provide: 'a2a',
+    accept: 'a2a',
+    decline: 'a2a',
+    pause: 'subscriptions',
+    resume: 'subscriptions',
+    skip: 'subscriptions',
+  };
+
+  const inferPolicyDomain = (toolName) => {
+    if (!toolName || typeof toolName !== 'string') return 'commerce';
+
+    if (TOOL_DOMAIN_BY_TOOL_NAME[toolName]) {
+      return TOOL_DOMAIN_BY_TOOL_NAME[toolName];
+    }
+
+    const parts = toolName.split('_').filter(Boolean);
+    if (parts.length === 0) return 'commerce';
+
+    if (parts.length >= 2 && parts[0] === 'a2a') return 'a2a';
+    if (parts.length >= 2 && parts[0] === 'agent' && parts[1] === 'card') return 'agent_cards';
+    if (parts.length >= 2 && parts[0] === 'custom' && parts[1] === 'object')
+      return 'custom_objects';
+
+    for (const part of parts) {
+      if (POLICY_DOMAIN_BY_TOKEN[part]) return POLICY_DOMAIN_BY_TOKEN[part];
+    }
+
+    return 'commerce';
+  };
+
+  const normalizeToolName = (toolName) => {
+    if (!toolName || typeof toolName !== 'string') return '';
+    return toolName.trim().replace(/^mcp__[a-z0-9_-]+__/, '');
+  };
+
+  const applyPolicyTransform = (input, transform) => {
+    if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
+      return input;
+    }
+
+    const output = { ...(input || {}) };
+    for (const [key, value] of Object.entries(transform)) {
+      if (
+        output[key] !== null &&
+        output[key] !== undefined &&
+        typeof output[key] === 'object' &&
+        !Array.isArray(output[key]) &&
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value)
+      ) {
+        output[key] = { ...output[key], ...value };
+      } else {
+        output[key] = value;
+      }
+    }
+
+    return output;
+  };
+
+  const resolvePolicyPath =
+    policyStorePath || (dbPath ? path.join(path.dirname(path.resolve(dbPath)), '.stateset') : null);
+
+  const policyEngineInstance =
+    policyEngine || (resolvePolicyPath ? new PolicyEngine({ storePath: resolvePolicyPath }) : null);
+
+  const policyLoad =
+    policyEngineInstance && !policyEngine
+      ? policyEngineInstance.load().catch((error) => {
+          if (telemetry) {
+            telemetry.logCustomEvent('policy_load_failed', {
+              error: error.message,
+              storePath: resolvePolicyPath,
+            });
+          }
+          return null;
+        })
+      : Promise.resolve();
+
+  const fallbackAgenticDir = resolvePolicyPath || path.join(process.cwd(), '.stateset');
+  const agenticReplayLogPath = path.join(fallbackAgenticDir, AGENTIC_REPLAY_LOG_FILE);
+  const agenticReplayRingBuffer = [];
+  let pendingReplayAppend = Promise.resolve();
+  let agenticPricingCache = null;
+
+  const getAgenticReplayLogPath = () => agenticReplayLogPath;
+
+  const persistAgenticReplayEvent = async (event) => {
+    pendingReplayAppend = pendingReplayAppend
+      .catch(() => {})
+      .then(async () => {
+        await fs.mkdir(path.dirname(agenticReplayLogPath), { recursive: true });
+        await fs.appendFile(agenticReplayLogPath, `${JSON.stringify(event)}\n`);
+      });
+    return pendingReplayAppend;
+  };
+
+  const addAgenticReplayEvent = async (event) => {
+    if (!event || typeof event !== 'object') return;
+    const sanitized = {
+      ...event,
+      paramsHash: event.paramsHash || replayEventHash(event.params || {}),
+      resultHash: event.resultHash || replayEventHash(event.result || {}),
+    };
+    agenticReplayRingBuffer.push(sanitized);
+    if (agenticReplayRingBuffer.length > AGENTIC_REPLAY_BUFFER_SIZE) {
+      agenticReplayRingBuffer.shift();
+    }
+    await persistAgenticReplayEvent(sanitized);
+  };
+
+  const listAgenticReplayEvents = async (options = {}) => {
+    const limit = Math.max(1, Math.min(AGENTIC_REPLAY_BUFFER_SIZE, Number(options.limit) || 20));
+    const targetTool = options?.tool || null;
+    const requestId = options?.requestId || null;
+    const sessionId = options?.sessionId || null;
+    const status = options?.status || null;
+    const targetPlanSignature = options?.planSignature || null;
+    const targetExecutionSignature = options?.executionSignature || null;
+
+    const matches = (event) => {
+      if (targetTool && event?.tool !== targetTool) return false;
+      if (requestId && event?.requestId !== requestId) return false;
+      if (sessionId && event?.sessionId !== sessionId) return false;
+      if (status && event?.status !== status) return false;
+      if (targetPlanSignature) {
+        const eventPlanSignature = event?.planSignature || event?.notes?.planSignature;
+        if (!eventPlanSignature || eventPlanSignature !== targetPlanSignature) {
+          return false;
+        }
+      }
+      if (targetExecutionSignature) {
+        const eventExecutionSignature =
+          event?.executionSignature || event?.notes?.executionSignature;
+        if (!eventExecutionSignature || eventExecutionSignature !== targetExecutionSignature) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    let fileEvents = [];
+    try {
+      const raw = await fs.readFile(agenticReplayLogPath, 'utf8');
+      if (raw?.trim()) {
+        fileEvents = raw
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => {
+            try {
+              return JSON.parse(line);
+            } catch (error) {
+              return { _parseError: error.message, raw: line };
+            }
+          })
+          .filter(matches);
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        if (telemetry) {
+          telemetry.logCustomEvent('agentic_replay_read_error', {
+            error: error.message,
+            path: agenticReplayLogPath,
+          });
+        }
+      }
+    }
+
+    const merged = [...fileEvents, ...agenticReplayRingBuffer].filter(matches);
+    const deduped = [];
+    const seen = new Set();
+    for (const evt of merged) {
+      if (!evt?.eventId) {
+        deduped.push(evt);
+        continue;
+      }
+      if (seen.has(evt.eventId)) continue;
+      seen.add(evt.eventId);
+      deduped.push(evt);
+    }
+
+    const order = deduped
+      .filter((event) => event.occurredAt)
+      .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1));
+    const remaining = limit ? order.slice(0, limit) : order;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: remaining.length,
+      events: remaining,
+      filters: {
+        limit,
+        tool: targetTool || null,
+        requestId,
+        sessionId,
+        planSignature: targetPlanSignature,
+        executionSignature: targetExecutionSignature,
+        status,
+      },
+      source: {
+        path: getAgenticReplayLogPath(),
+        inMemoryBuffer: agenticReplayRingBuffer.length,
+      },
+    };
+  };
+
+  const loadAgenticPricingState = async () => {
+    if (agenticPricingCache !== null) return agenticPricingCache;
+    try {
+      const { loadTreasuryContext } = await import('./treasury/index.js');
+      const ctx = await loadTreasuryContext(treasuryContextOptions);
+      agenticPricingCache = {
+        loaded: true,
+        pricing: ctx.pricing,
+        registry: ctx.registry,
+        loadedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      agenticPricingCache = { loaded: false, error: error.message };
+    }
+    return agenticPricingCache;
+  };
+
+  const getToolRuntimeMeta = (toolName) => {
+    const candidate = TOOL_DEFS_BY_NAME.get(toolName);
+    if (!candidate) {
+      return {
+        name: toolName,
+        permission: 'unknown',
+        policyDomain: inferPolicyDomain(toolName),
+        sideEffect: 'unknown',
+        compensations: [],
+        idempotent: false,
+      };
+    }
+    const permission = candidate?.permission || 'unknown';
+    return {
+      name: candidate.name,
+      permission,
+      policyDomain:
+        candidate?.policyDomain ||
+        TOOL_DOMAIN_BY_TOOL_NAME[toolName] ||
+        inferPolicyDomain(toolName),
+      sideEffect: permission === 'read' ? 'read' : 'write',
+      description: candidate.description || '',
+      compensations: AGENTIC_COMPENSATION_HINTS[toolName] || [],
+      idempotent: AGENTIC_IDEMPOTENCY_HINTS.has(toolName),
+      replay: {
+        paramsHash: true,
+        resultHash: true,
+      },
+    };
+  };
+
+  const getAgenticToolPricing = async (toolName) => {
+    const state = await loadAgenticPricingState();
+    if (!state?.loaded || !state.pricing || !toolName) {
+      return null;
+    }
+    try {
+      const { getToolPricing, resolveToken, toSmallestUnit } = await import('./treasury/index.js');
+      const rule = getToolPricing(state.pricing, toolName);
+      if (!rule) return null;
+      const token = resolveToken(rule.chainId, rule.tokenSymbol, state.registry);
+      if (!token) return null;
+      const amount = Number(rule.amount);
+      const amountSmallest = toSmallestUnit(amount, token.decimals);
+      return {
+        enabled: true,
+        chainId: rule.chainId,
+        tokenSymbol: rule.tokenSymbol,
+        amount,
+        amountSmallest: amountSmallest?.toString?.() || amountSmallest,
+        token: {
+          symbol: token.symbol,
+          chainId: token.chainId,
+          address: token.address || null,
+          decimals: token.decimals,
+        },
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const getAgenticRuntimeContract = async ({ tool, includeLegacyDefaults = false } = {}) => {
+    const normalizedTools = await Promise.all(
+      ALL_TOOL_DEFS.filter((candidate) => !tool || candidate?.name === tool)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(async (candidate) => {
+          const meta = getToolRuntimeMeta(candidate?.name);
+          const pricing = await getAgenticToolPricing(candidate?.name);
+          return {
+            ...meta,
+            pricing: pricing
+              ? {
+                  enabled: pricing.enabled,
+                  chainId: pricing.chainId,
+                  tokenSymbol: pricing.tokenSymbol,
+                  amount: pricing.amount,
+                  amountSmallest: pricing.amountSmallest,
+                }
+              : null,
+          };
+        }),
+    );
+
+    const includeLegacy = includeLegacyDefaults
+      ? ['create', 'read', 'update', 'delete', 'list']
+      : [];
+    const contract = {
+      engine: 'stateset-icommerce',
+      purpose: 'agentic_runtime_contract',
+      generatedAt: new Date().toISOString(),
+      includeLegacyDefaults,
+      legacyDefaults: includeLegacy,
+      totalTools: normalizedTools.length,
+      tools: normalizedTools,
+    };
+    if (includeLegacy) {
+      contract.legacy = {
+        deprecatedPrefixes: includeLegacy,
+      };
+    }
+    contract.contractHash = replayEventHash(stableStringify({ tools: contract.tools }));
+    return contract;
+  };
+
+  const simulateAgenticPlan = async ({ steps, costBudget }) => {
+    const costBudgetLimits = normalizeCostBudget(costBudget);
+    let budgetExceeded = false;
+    const budgetViolations = [];
+    const sequence = Array.isArray(steps) ? steps : [];
+    const normalizedSteps = sequence
+      .map((step) => step || {})
+      .map((step, index) => {
+        const resolvedToolName = normalizeToolName(typeof step?.tool === 'string' ? step.tool : '');
+        const rawParams = step.params && typeof step.params === 'object' ? step.params : {};
+        const policyDomain = step.policyDomain || inferPolicyDomain(resolvedToolName);
+        return {
+          index,
+          tool: resolvedToolName,
+          params: rawParams,
+          policyDomain,
+        };
+      });
+
+    if (normalizedSteps.length > MAX_PLAN_STEPS) {
+      return {
+        generatedAt: new Date().toISOString(),
+        engine: 'stateset-icommerce',
+        tool: 'agentic_plan',
+        executable: false,
+        totalSteps: normalizedSteps.length,
+        failedSteps: 1,
+        costSummary: null,
+        outcomes: [
+          {
+            index: 0,
+            tool: 'agentic_plan',
+            status: 'invalid',
+            error: `agentic_plan currently supports at most ${MAX_PLAN_STEPS} steps.`,
+            runtime: {
+              policyDomain: 'agentic',
+              sideEffect: 'write',
+              compensations: [],
+              idempotent: false,
+            },
+            simulation: true,
+            params: compactReplayValue({
+              maxSteps: normalizedSteps.length,
+              limit: MAX_PLAN_STEPS,
+            }),
+            paramsHash: replayEventHash({
+              maxSteps: normalizedSteps.length,
+              limit: MAX_PLAN_STEPS,
+            }),
+            result: null,
+            resultHash: null,
+          },
+        ],
+        budgetExceeded: false,
+        budgetViolations: [],
+        costBudget: costBudgetLimits,
+        planSignature: null,
+      };
+    }
+
+    const outcomes = [];
+    let executable = true;
+    const costSummary = createCostSummary('simulate');
+    const resolvedPlanBlueprint = [];
+    const executionContext = {
+      steps: [],
+      latest: null,
+      byTool: {},
+    };
+
+    for (const step of normalizedSteps) {
+      const resolvedParamsResult = resolveAgenticPlanValue(
+        step.params,
+        executionContext,
+        `steps.${step.index}.params`,
+      );
+      const effectiveParams =
+        resolvedParamsResult.unresolved.length > 0 ? step.params : resolvedParamsResult.value;
+      const stepTemplate = {
+        index: step.index,
+        tool: step.tool,
+        policyDomain: step.policyDomain,
+        params: compactReplayValue(effectiveParams),
+      };
+      resolvedPlanBlueprint.push(stepTemplate);
+      const stepSignature = sha256(stableStringify(stepTemplate));
+      if (!step.tool) {
+        const missing = {
+          index: step.index,
+          tool: step.tool,
+          status: 'invalid',
+          error: 'Step.tool is required',
+          policy: null,
+          permission: null,
+          treasury: null,
+          stepSignature,
+          simulation: true,
+        };
+        executable = false;
+        outcomes.push(missing);
+        executionContext.steps[step.index] = {
+          ...stepTemplate,
+          status: missing.status,
+          result: null,
+          error: missing.error,
+        };
+        executionContext.latest = executionContext.steps[step.index];
+        continue;
+      }
+
+      if (resolvedParamsResult.unresolved.length > 0) {
+        const unresolvedResult = {
+          index: step.index,
+          tool: step.tool,
+          status: 'invalid',
+          error: `Unresolved plan parameter reference(s): ${resolvedParamsResult.unresolved.join(', ')}`,
+          policy: null,
+          permission: null,
+          treasury: null,
+          stepSignature,
+          simulation: true,
+          notes: {
+            unresolvedParams: resolvedParamsResult.unresolved,
+            availableContext: {
+              latestStep: executionContext.latest ? executionContext.latest.index : null,
+              stepsAvailable: executionContext.steps.length,
+            },
+          },
+        };
+        executable = false;
+        outcomes.push(unresolvedResult);
+        executionContext.steps[step.index] = {
+          ...stepTemplate,
+          status: unresolvedResult.status,
+          result: null,
+          error: unresolvedResult.error,
+        };
+        executionContext.latest = executionContext.steps[step.index];
+        executionContext.byTool[step.tool] = executionContext.steps[step.index];
+        continue;
+      }
+
+      const meta = getToolRuntimeMeta(step.tool);
+      if (meta.permission === 'unknown') {
+        const unknown = {
+          index: step.index,
+          tool: step.tool,
+          status: 'invalid',
+          error: `Unknown tool '${step.tool}'`,
+          policy: null,
+          permission: null,
+          treasury: null,
+          runtime: null,
+          simulation: true,
+          stepSignature,
+          ...stepTemplate,
+        };
+        executable = false;
+        outcomes.push(unknown);
+        executionContext.steps[step.index] = {
+          ...stepTemplate,
+          status: unknown.status,
+          result: null,
+          error: unknown.error,
+        };
+        executionContext.latest = executionContext.steps[step.index];
+        executionContext.byTool[step.tool] = executionContext.steps[step.index];
+        continue;
+      }
+
+      const simulatedRequest = {
+        requestId: 'agentic_plan',
+        sessionId: 'agentic_plan',
+      };
+      const policy = await evaluatePolicy(
+        step.tool,
+        effectiveParams,
+        simulatedRequest,
+        step.policyDomain,
+      );
+      const permission = await checkPermission(step.tool, policy?.params || effectiveParams);
+      const treasury =
+        policy.allowed && permission.allowed ? await getAgenticToolPricing(step.tool) : null;
+      let status = !policy?.allowed
+        ? 'policy_block'
+        : !permission.allowed
+          ? permission.preview
+            ? 'preview'
+            : 'permission_block'
+          : 'success';
+      let budgetLimit = null;
+      let budgetInfo = null;
+      let budgetError = null;
+      if (status === 'success' && treasury) {
+        budgetLimit = resolveCostBudgetLimit(
+          costBudgetLimits,
+          treasury.chainId,
+          treasury.tokenSymbol,
+        );
+        const treasuryAmount = Number(treasury.amount);
+        if (budgetLimit !== null && Number.isFinite(treasuryAmount)) {
+          const budgetBucketKey = `${treasury.chainId}:${treasury.tokenSymbol}`;
+          const currentTotal = Number(costSummary.totals[budgetBucketKey]?.amount || 0);
+          const projectedTotal = currentTotal + treasuryAmount;
+          if (
+            Number.isFinite(currentTotal) &&
+            Number.isFinite(projectedTotal) &&
+            projectedTotal > budgetLimit
+          ) {
+            status = 'treasury_block';
+            executable = false;
+            budgetExceeded = true;
+            budgetInfo = {
+              chainId: treasury.chainId,
+              tokenSymbol: treasury.tokenSymbol,
+              currentTotal,
+              projectedTotal,
+              budgetLimit,
+            };
+            budgetError = `Cost budget exceeded for ${treasury.chainId}:${treasury.tokenSymbol}. Estimated total ${projectedTotal} would exceed ${budgetLimit}.`;
+            budgetViolations.push({
+              step: step.index,
+              tool: step.tool,
+              ...budgetInfo,
+            });
+          }
+        }
+      }
+
+      if (status !== 'success') executable = false;
+      if (treasury) {
+        const rule = {
+          chainId: treasury.chainId,
+          tokenSymbol: treasury.tokenSymbol,
+          amount: treasury.amount,
+        };
+        if (budgetLimit !== null) rule.budgetLimit = budgetLimit;
+        if (budgetInfo?.projectedTotal !== null && budgetInfo?.projectedTotal !== undefined) {
+          rule.projectedTotal = budgetInfo.projectedTotal;
+        }
+        addCostSummaryEntry(costSummary, {
+          stepIndex: step.index,
+          tool: step.tool,
+          status,
+          chainId: treasury.chainId,
+          tokenSymbol: treasury.tokenSymbol,
+          amount: treasury.amount,
+          charged: false,
+          blocked: status === 'treasury_block',
+          blockedReason: budgetError,
+          source: 'simulate',
+          rule,
+        });
+      }
+
+      const outcome = {
+        index: step.index,
+        tool: step.tool,
+        status,
+        policy: {
+          allowed: policy.allowed,
+          domain: policy.domain || inferPolicyDomain(step.tool),
+          reason: policy.reason || null,
+        },
+        permission: {
+          allowed: permission.allowed,
+          preview: permission.preview || false,
+          reason: permission.reason || null,
+        },
+        treasury: treasury
+          ? {
+              required: true,
+              chainId: treasury.chainId,
+              tokenSymbol: treasury.tokenSymbol,
+              amount: treasury.amount,
+            }
+          : null,
+        replay: {
+          paramsHash: replayEventHash(sanitizeReplayValue(effectiveParams)),
+          deterministicSignature: sha256(
+            stableStringify({
+              tool: step.tool,
+              policyDomain: step.policyDomain,
+              params: sanitizeReplayValue(effectiveParams),
+            }),
+          ),
+          params: compactReplayValue(effectiveParams),
+        },
+        runtime: {
+          policyDomain: meta.policyDomain,
+          sideEffect: meta.sideEffect,
+          compensations: meta.compensations,
+          idempotent: meta.idempotent,
+        },
+        stepSignature,
+        simulation: true,
+        error: budgetError || null,
+        params: compactReplayValue(effectiveParams),
+        paramsHash: replayEventHash(effectiveParams || {}),
+        notes: budgetInfo
+          ? {
+              budget: budgetInfo,
+            }
+          : null,
+      };
+      outcomes.push(outcome);
+      executionContext.steps[step.index] = {
+        ...stepTemplate,
+        status,
+        result: compactReplayValue({ status: outcome.status, ...outcome.treasury }),
+        error:
+          status === 'success' ? null : outcome.error || permission.reason || policy.reason || null,
+      };
+      executionContext.latest = executionContext.steps[step.index];
+      executionContext.byTool[step.tool] = executionContext.steps[step.index];
+    }
+
+    const planSignature = replayEventHash(
+      stableStringify({
+        steps: resolvedPlanBlueprint,
+        options: { mode: 'simulate', costBudget: costBudgetLimits },
+      }),
+    );
+
+    return {
+      generatedAt: new Date().toISOString(),
+      engine: 'stateset-icommerce',
+      tool: 'agentic_plan',
+      executable,
+      totalSteps: normalizedSteps.length,
+      failedSteps: outcomes.filter((entry) => entry.status !== 'success').length,
+      budgetExceeded,
+      budgetViolations,
+      costBudget: costBudgetLimits,
+      costSummary,
+      outcomes,
+      planSignature,
+    };
+  };
+
+  const executeToolStepInPlan = async ({
+    toolName,
+    params,
+    policyDomain,
+    requestId,
+    sessionId,
+    dryRun,
+    stepIndex,
+    includeHooks = true,
+    isRollback = false,
+    extra = {},
+  }) => {
+    const startedAt = Date.now();
+    const resolvedToolName = normalizeToolName(toolName);
+    const effectivePolicyDomain = policyDomain || inferPolicyDomain(resolvedToolName);
+    const baseMeta = getToolRuntimeMeta(resolvedToolName);
+    if (baseMeta.permission === 'unknown') {
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: 'invalid',
+        elapsedMs: Date.now() - startedAt,
+        error: `Unknown tool '${toolName}'`,
+        simulation: false,
+      };
+    }
+
+    const toolDef = TOOL_DEFS_BY_NAME.get(resolvedToolName);
+    if (!toolDef || typeof toolDef.handler !== 'function') {
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: 'invalid',
+        elapsedMs: Date.now() - startedAt,
+        error: `No executable handler for tool '${toolName}'`,
+        simulation: false,
+      };
+    }
+
+    let nextArgs = params || {};
+    let policy = null;
+    let permission = null;
+    let charge = null;
+
+    try {
+      if (includeHooks && hookRunner?.hasHooks?.('before_tool_call')) {
+        const hookResult = await hookRunner.run('before_tool_call', {
+          tool: resolvedToolName,
+          params: nextArgs,
+          allowApply,
+          requestId,
+          sessionId,
+        });
+        if (hookResult?.params) nextArgs = hookResult.params;
+        if (hookResult?.blocked || hookResult?.allowed === false) {
+          return {
+            index: stepIndex,
+            tool: resolvedToolName,
+            status: 'blocked',
+            elapsedMs: Date.now() - startedAt,
+            policy: null,
+            permission: null,
+            charge: null,
+            result: null,
+            error: hookResult?.reason || 'Tool execution blocked by hook',
+            runtime: {
+              policyDomain: effectivePolicyDomain,
+              sideEffect: baseMeta.sideEffect,
+              compensations: baseMeta.compensations,
+              idempotent: baseMeta.idempotent,
+            },
+            params: compactReplayValue(nextArgs),
+            paramsHash: replayEventHash(nextArgs),
+            resultHash: null,
+            simulation: false,
+            notes: {
+              hook: {
+                allowed: hookResult?.allowed,
+                reason: hookResult?.reason || null,
+                blocked: true,
+              },
+            },
+          };
+        }
+      }
+
+      policy = await evaluatePolicy(
+        resolvedToolName,
+        nextArgs,
+        { requestId, sessionId },
+        effectivePolicyDomain,
+      );
+      if (!policy.allowed) {
+        return {
+          index: stepIndex,
+          tool: resolvedToolName,
+          status: 'policy_block',
+          elapsedMs: Date.now() - startedAt,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            reason: policy.reason || null,
+            actions: policy.actions || [],
+          },
+          permission: null,
+          charge: null,
+          params: compactReplayValue(nextArgs),
+          paramsHash: replayEventHash(nextArgs),
+          resultHash: null,
+          result: null,
+          runtime: {
+            policyDomain: effectivePolicyDomain,
+            sideEffect: baseMeta.sideEffect,
+            compensations: baseMeta.compensations,
+            idempotent: baseMeta.idempotent,
+          },
+          simulation: dryRun,
+          error: policy.reason || 'Tool execution blocked by policy',
+        };
+      }
+
+      nextArgs = policy.params;
+
+      permission = await checkPermission(resolvedToolName, nextArgs);
+      if (!permission.allowed) {
+        const payload = {
+          status: permission.preview ? 'preview' : 'permission_block',
+          elapsedMs: Date.now() - startedAt,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+          },
+          permission: {
+            allowed: permission.allowed,
+            preview: permission.preview || false,
+            reason: permission.reason || null,
+          },
+          charge: null,
+          params: compactReplayValue(nextArgs),
+          paramsHash: replayEventHash(nextArgs),
+          result: null,
+          resultHash: null,
+          runtime: {
+            policyDomain: effectivePolicyDomain,
+            sideEffect: baseMeta.sideEffect,
+            compensations: baseMeta.compensations,
+            idempotent: baseMeta.idempotent,
+          },
+          simulation: dryRun,
+          error: permission.reason || 'Permission denied',
+          wouldDo: permission.wouldDo || null,
+        };
+        if (dryRun && permission.preview) {
+          payload.status = 'dry_run_blocked';
+        }
+        return {
+          index: stepIndex,
+          tool: resolvedToolName,
+          ...payload,
+        };
+      }
+
+      charge = await maybeChargeForTool(resolvedToolName, { requestId, sessionId });
+      if (charge?.blocked) {
+        return {
+          index: stepIndex,
+          tool: resolvedToolName,
+          status: dryRun ? 'dry_run_blocked' : 'treasury_block',
+          elapsedMs: Date.now() - startedAt,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+          },
+          permission: {
+            allowed: permission.allowed,
+            preview: permission.preview || false,
+            reason: permission.reason || null,
+          },
+          charge: {
+            charged: charge.charged,
+            blocked: charge.blocked,
+            reason: charge.reason || null,
+          },
+          params: compactReplayValue(nextArgs),
+          paramsHash: replayEventHash(nextArgs),
+          result: null,
+          resultHash: null,
+          runtime: {
+            policyDomain: effectivePolicyDomain,
+            sideEffect: baseMeta.sideEffect,
+            compensations: baseMeta.compensations,
+            idempotent: baseMeta.idempotent,
+          },
+          simulation: dryRun,
+          error: charge.reason || 'Treasury charge blocked',
+        };
+      }
+
+      if (dryRun) {
+        return {
+          index: stepIndex,
+          tool: resolvedToolName,
+          status: 'dry_run_success',
+          elapsedMs: Date.now() - startedAt,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+          },
+          permission: {
+            allowed: permission.allowed,
+            preview: permission.preview || false,
+            reason: permission.reason || null,
+          },
+          charge: {
+            charged: charge.charged,
+            blocked: false,
+            rule: charge.rule || null,
+          },
+          params: compactReplayValue(nextArgs),
+          paramsHash: replayEventHash(nextArgs),
+          result: {
+            dryRun: true,
+            wouldExecute: resolvedToolName,
+            policyDomain: effectivePolicyDomain,
+          },
+          resultHash: replayEventHash({ dryRun: true, wouldExecute: resolvedToolName }),
+          runtime: {
+            policyDomain: effectivePolicyDomain,
+            sideEffect: baseMeta.sideEffect,
+            compensations: baseMeta.compensations,
+            idempotent: baseMeta.idempotent,
+          },
+          simulation: true,
+          requestId,
+        };
+      }
+
+      const toolPayload = {
+        ...toolContext,
+        params: nextArgs,
+        extra: {
+          requestId,
+          sessionId,
+          ...extra,
+        },
+      };
+      const wrapped = wrapWithTelemetry(resolvedToolName, (payload) => toolDef.handler(payload));
+      const result = await wrapped(toolPayload);
+      if (includeHooks && hookRunner?.hasHooks?.('after_tool_call')) {
+        await hookRunner.run('after_tool_call', {
+          tool: resolvedToolName,
+          params: nextArgs,
+          result,
+          requestId,
+          sessionId,
+        });
+      }
+
+      const failed = !!(result && typeof result === 'object' && result.error);
+      const failure = failed ? result.error : null;
+      const finalStatus = isRollback
+        ? failed
+          ? 'rollback_failed'
+          : 'rollback_success'
+        : failed
+          ? 'error'
+          : 'success';
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: finalStatus,
+        elapsedMs: Date.now() - startedAt,
+        policy: {
+          allowed: policy.allowed,
+          domain: policy.domain,
+          actions: policy.actions || [],
+        },
+        permission: {
+          allowed: permission.allowed,
+          preview: permission.preview || false,
+          reason: permission.reason || null,
+        },
+        charge: {
+          charged: charge.charged,
+          blocked: charge.blocked || false,
+          rule: charge.rule || null,
+        },
+        params: compactReplayValue(nextArgs),
+        paramsHash: replayEventHash(nextArgs),
+        result: compactReplayValue(result),
+        resultHash: replayEventHash(compactReplayValue(result)),
+        runtime: {
+          policyDomain: effectivePolicyDomain,
+          sideEffect: baseMeta.sideEffect,
+          compensations: baseMeta.compensations,
+          idempotent: baseMeta.idempotent,
+        },
+        simulation: false,
+        resultSuccess: !failed,
+        error: failure,
+        isRollback: Boolean(isRollback),
+        requestId,
+      };
+    } catch (error) {
+      if (includeHooks && hookRunner?.hasHooks?.('after_tool_call')) {
+        await hookRunner.run('after_tool_call', {
+          tool: resolvedToolName,
+          params: nextArgs,
+          error: error.message,
+          requestId,
+          sessionId,
+        });
+      }
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: isRollback ? 'rollback_failed' : 'error',
+        elapsedMs: Date.now() - startedAt,
+        policy: policy
+          ? {
+              allowed: policy.allowed,
+              domain: policy.domain,
+              actions: policy.actions || [],
+            }
+          : null,
+        permission: permission
+          ? {
+              allowed: permission.allowed,
+              preview: permission.preview || false,
+              reason: permission.reason || null,
+            }
+          : null,
+        charge: charge
+          ? {
+              charged: charge.charged,
+              blocked: charge.blocked || false,
+              rule: charge.rule || null,
+            }
+          : null,
+        params: compactReplayValue(nextArgs),
+        paramsHash: replayEventHash(nextArgs),
+        result: null,
+        resultHash: null,
+        runtime: {
+          policyDomain: effectivePolicyDomain,
+          sideEffect: baseMeta.sideEffect,
+          compensations: baseMeta.compensations,
+          idempotent: baseMeta.idempotent,
+        },
+        simulation: false,
+        error: error.message,
+        isRollback: Boolean(isRollback),
+      };
+    }
+  };
+
+  const executeAgenticPlan = async ({
+    steps,
+    dryRun = true,
+    stopOnFailure = true,
+    rollbackOnFailure = true,
+    requestId = null,
+    sessionId = null,
+    costBudget = null,
+  }) => {
+    const costBudgetLimits = normalizeCostBudget(costBudget);
+    const normalizedSteps = (Array.isArray(steps) ? steps : []).map((step, index) => {
+      const toolName = typeof step?.tool === 'string' ? step.tool : '';
+      const resolvedToolName = normalizeToolName(toolName);
+      const params = step?.params && typeof step?.params === 'object' ? step.params : {};
+      const resolvedPolicyDomain = step?.policyDomain || inferPolicyDomain(resolvedToolName);
+      return {
+        index,
+        tool: resolvedToolName,
+        params,
+        policyDomain: resolvedPolicyDomain,
+      };
+    });
+
+    const executionRequestId = requestId || randomUUID();
+    const executionSessionId = sessionId || executionRequestId;
+
+    if (normalizedSteps.length > MAX_PLAN_STEPS) {
+      return {
+        generatedAt: new Date().toISOString(),
+        engine: 'stateset-icommerce',
+        tool: 'agentic_execute_plan',
+        requestId: executionRequestId,
+        sessionId: executionSessionId,
+        dryRun,
+        stopOnFailure,
+        rollbackOnFailure,
+        totalSteps: normalizedSteps.length,
+        completedSteps: 0,
+        failedSteps: 1,
+        finalStatus: 'failed',
+        steps: [
+          {
+            index: 0,
+            tool: 'agentic_execute_plan',
+            status: 'invalid',
+            error: `agentic_execute_plan currently supports at most ${MAX_PLAN_STEPS} steps.`,
+            runtime: {
+              policyDomain: 'agentic',
+              sideEffect: 'write',
+              compensations: [],
+              idempotent: false,
+            },
+            elapsedMs: 0,
+            simulation: false,
+            params: compactReplayValue({
+              maxSteps: normalizedSteps.length,
+              limit: MAX_PLAN_STEPS,
+            }),
+            paramsHash: replayEventHash({
+              maxSteps: normalizedSteps.length,
+              limit: MAX_PLAN_STEPS,
+            }),
+            result: null,
+            resultHash: null,
+          },
+        ],
+        rollback: null,
+        planSignature: null,
+        executionSignature: null,
+        costSummary: null,
+        costBudget: costBudgetLimits,
+        budgetExceeded: false,
+        budgetViolations: [],
+      };
+    }
+
+    const stepResults = [];
+    const executedForRollback = [];
+    const resolvedPlanBlueprint = [];
+    const costSummary = createCostSummary('execute');
+    let budgetExceeded = false;
+    const budgetViolations = [];
+    const executionStartedAt = Date.now();
+    const executionContext = {
+      steps: [],
+      latest: null,
+      byTool: {},
+    };
+
+    for (const step of normalizedSteps) {
+      const resolvedParamsResult = resolveAgenticPlanValue(
+        step.params,
+        executionContext,
+        `steps.${step.index}.params`,
+      );
+      const resolvedParams = resolvedParamsResult.unresolved.length
+        ? null
+        : resolvedParamsResult.value;
+      const effectiveParams =
+        resolvedParamsResult.unresolved.length > 0 ? step.params : resolvedParams;
+      const meta = getToolRuntimeMeta(step.tool);
+      const stepTemplate = {
+        index: step.index,
+        tool: step.tool,
+        policyDomain: step.policyDomain,
+        params: compactReplayValue(effectiveParams),
+      };
+      resolvedPlanBlueprint.push(stepTemplate);
+      const stepSignature = replayEventHash(stableStringify(stepTemplate));
+      const resolvedPlanSignature = replayEventHash(
+        stableStringify({
+          steps: resolvedPlanBlueprint,
+          options: {
+            dryRun,
+            stopOnFailure,
+            rollbackOnFailure,
+            costBudget: costBudgetLimits,
+          },
+        }),
+      );
+      let budgetPricing = null;
+      let budgetLimit = null;
+      let budgetInfo = null;
+      let budgetError = null;
+      if (resolvedParamsResult.unresolved.length === 0) {
+        budgetPricing = await getAgenticToolPricing(step.tool);
+        if (budgetPricing) {
+          budgetLimit = resolveCostBudgetLimit(
+            costBudgetLimits,
+            budgetPricing.chainId,
+            budgetPricing.tokenSymbol,
+          );
+          const parsedAmount = Number(budgetPricing.amount);
+          if (budgetLimit !== null && Number.isFinite(parsedAmount)) {
+            const bucketKey = `${budgetPricing.chainId}:${budgetPricing.tokenSymbol}`;
+            const currentTotal = Number(costSummary.totals[bucketKey]?.amount || 0);
+            const projectedTotal = currentTotal + parsedAmount;
+            if (
+              Number.isFinite(currentTotal) &&
+              Number.isFinite(projectedTotal) &&
+              projectedTotal > budgetLimit
+            ) {
+              budgetExceeded = true;
+              budgetError = `Cost budget exceeded for ${budgetPricing.chainId}:${budgetPricing.tokenSymbol}. Estimated total ${projectedTotal} would exceed ${budgetLimit}.`;
+              budgetInfo = {
+                chainId: budgetPricing.chainId,
+                tokenSymbol: budgetPricing.tokenSymbol,
+                currentTotal,
+                projectedTotal,
+                budgetLimit,
+                amount: parsedAmount,
+              };
+              budgetViolations.push({
+                step: step.index,
+                tool: step.tool,
+                ...budgetInfo,
+              });
+            }
+          }
+        }
+      }
+
+      let outcome;
+      if (resolvedParamsResult.unresolved.length > 0) {
+        outcome = {
+          index: step.index,
+          tool: step.tool,
+          status: 'invalid',
+          elapsedMs: 0,
+          policy: null,
+          permission: null,
+          charge: null,
+          params: compactReplayValue(step.params),
+          paramsHash: replayEventHash(step.params || {}),
+          result: null,
+          resultHash: null,
+          runtime: {
+            policyDomain: meta?.policyDomain || step.policyDomain || inferPolicyDomain(step.tool),
+            sideEffect: meta.sideEffect || 'write',
+            compensations: meta.compensations || [],
+            idempotent: meta.idempotent || false,
+          },
+          simulation: false,
+          error: `Unresolved plan parameter reference(s): ${resolvedParamsResult.unresolved.join(', ')}`,
+          notes: {
+            unresolvedParams: resolvedParamsResult.unresolved,
+            availableContext: {
+              latestStep: executionContext.latest ? executionContext.latest.index : null,
+              stepsAvailable: executionContext.steps.length,
+            },
+          },
+          requestId: executionRequestId,
+        };
+      } else if (budgetInfo) {
+        outcome = {
+          index: step.index,
+          tool: step.tool,
+          status: 'treasury_block',
+          elapsedMs: 0,
+          policy: null,
+          permission: null,
+          charge: {
+            charged: false,
+            blocked: true,
+            reason: budgetError,
+            rule: {
+              chainId: budgetPricing?.chainId || null,
+              tokenSymbol: budgetPricing?.tokenSymbol || null,
+              amount: budgetPricing?.amount || null,
+              budgetLimit,
+              currentTotal: budgetInfo.currentTotal,
+              projectedTotal: budgetInfo.projectedTotal,
+            },
+          },
+          params: compactReplayValue(effectiveParams),
+          paramsHash: replayEventHash(effectiveParams || {}),
+          result: null,
+          resultHash: null,
+          runtime: {
+            policyDomain: meta?.policyDomain || step.policyDomain || inferPolicyDomain(step.tool),
+            sideEffect: meta.sideEffect || 'write',
+            compensations: meta.compensations || [],
+            idempotent: meta.idempotent || false,
+          },
+          simulation: false,
+          error: budgetError,
+          requestId: executionRequestId,
+          notes: {
+            budget: budgetInfo,
+          },
+        };
+      } else {
+        outcome = await executeToolStepInPlan({
+          toolName: step.tool,
+          params: resolvedParams,
+          policyDomain: step.policyDomain,
+          requestId: executionRequestId,
+          sessionId: executionSessionId,
+          dryRun,
+          stepIndex: step.index,
+          includeHooks: true,
+        });
+      }
+
+      outcome.stepSignature = stepSignature;
+      if (outcome?.charge?.rule) {
+        addCostSummaryEntry(costSummary, {
+          stepIndex: step.index,
+          tool: outcome.tool,
+          status: outcome.status,
+          chainId: outcome?.charge?.rule?.chainId || null,
+          tokenSymbol: outcome?.charge?.rule?.tokenSymbol || null,
+          amount: outcome?.charge?.rule?.amount || null,
+          charged: Boolean(outcome?.charge?.charged),
+          blocked: Boolean(outcome?.charge?.blocked),
+          blockedReason: outcome?.charge?.reason || null,
+          source: 'execute',
+          rule: outcome?.charge?.rule || null,
+        });
+      }
+
+      stepResults.push({
+        ...outcome,
+        rollbackTarget: AGENTIC_COMPENSATION_HINTS[step.tool] || [],
+      });
+
+      executionContext.steps[step.index] = {
+        index: step.index,
+        tool: step.tool,
+        policyDomain: step.policyDomain,
+        params: compactReplayValue(effectiveParams),
+        status: outcome.status,
+        result: compactReplayValue(outcome.result),
+        error: outcome.error || null,
+      };
+      executionContext.latest = executionContext.steps[step.index];
+      if (step.tool) {
+        executionContext.byTool[step.tool] = executionContext.steps[step.index];
+      }
+
+      await addAgenticReplayEvent({
+        eventId: randomUUID(),
+        tool: 'agentic_execute_plan',
+        status: outcome.status,
+        requestId: executionRequestId,
+        sessionId: executionSessionId,
+        policyDomain: step.policyDomain,
+        occurredAt: new Date().toISOString(),
+        elapsedMs: outcome.elapsedMs || 0,
+        params: compactReplayValue({
+          step: outcome.tool,
+          params: effectiveParams,
+          resolved: resolvedParamsResult.unresolved.length === 0,
+          source: { step: step.index },
+        }),
+        paramsHash: replayEventHash(effectiveParams || {}),
+        result: compactReplayValue(outcome),
+        resultHash: replayEventHash(outcome),
+        policy: compactReplayValue(outcome.policy || null),
+        permission: compactReplayValue(outcome.permission || null),
+        charge: compactReplayValue(outcome.charge || null),
+        error: outcome.error || null,
+        planSignature: resolvedPlanSignature,
+        notes: {
+          dryRun,
+          stopOnFailure,
+          rollbackOnFailure,
+          executedBy: 'agentic_execute_plan',
+          index: step.index,
+          sourceStep: step.tool,
+          stepSignature,
+        },
+        source: 'agentic_execute_plan',
+        agentic: true,
+      });
+
+      if (outcome.status === 'success' || outcome.status === 'dry_run_success') {
+        executedForRollback.push({
+          step,
+          outcome,
+        });
+      }
+
+      const failed = !(
+        outcome.status === 'success' ||
+        outcome.status === 'dry_run_success' ||
+        outcome.status === 'rollback_success'
+      );
+      if (failed && stopOnFailure) {
+        break;
+      }
+      if (dryRun && outcome.status !== 'dry_run_success') {
+        break;
+      }
+    }
+
+    const planSignature = replayEventHash(
+      stableStringify({
+        steps: resolvedPlanBlueprint,
+        options: {
+          dryRun,
+          stopOnFailure,
+          rollbackOnFailure,
+          costBudget: costBudgetLimits,
+        },
+      }),
+    );
+    const executionSignature = replayEventHash(stableStringify(stepResults));
+
+    const finalStatus =
+      stepResults.some((entry) => entry.status === 'error') ||
+      stepResults.some((entry) => entry.status === 'dry_run_blocked') ||
+      stepResults.some((entry) => entry.status === 'preview') ||
+      stepResults.some((entry) => entry.status === 'treasury_block') ||
+      stepResults.some((entry) => entry.status === 'permission_block') ||
+      stepResults.some((entry) => entry.status === 'policy_block') ||
+      stepResults.some((entry) => entry.status === 'blocked') ||
+      stepResults.some((entry) => entry.status === 'rollback_failed')
+        ? 'failed'
+        : stepResults.some((entry) => entry.status === 'dry_run_success')
+          ? 'dry_run'
+          : 'success';
+
+    let rollback = null;
+    if (!dryRun && rollbackOnFailure && finalStatus === 'failed') {
+      const rollbackCandidates = executedForRollback.filter((entry) => {
+        return (AGENTIC_COMPENSATION_HINTS[entry.step.tool] || []).length > 0;
+      });
+
+      const rollbackSteps = [];
+      for (const completed of rollbackCandidates.reverse()) {
+        const compensationTools = AGENTIC_COMPENSATION_HINTS[completed.step.tool] || [];
+        const availableCompensationTools = compensationTools.filter((candidate) =>
+          TOOL_DEFS_BY_NAME.has(candidate),
+        );
+        let compensated = false;
+        let lastCompensationResult = {
+          status: 'rollback_failed',
+          reason: 'No compensation tool candidates',
+        };
+        let lastCompensationParams = null;
+        for (const compensationTool of availableCompensationTools) {
+          const compensationParams = buildCompensationParams(
+            compensationTool,
+            completed.step.params,
+            completed.outcome.result,
+          );
+          lastCompensationParams = compensationParams;
+          if (!compensationParams) {
+            lastCompensationResult = {
+              status: 'rollback_failed',
+              reason: 'No compensation parameters',
+              tool: compensationTool,
+            };
+            continue;
+          }
+          const compensationResult = await executeToolStepInPlan({
+            toolName: compensationTool,
+            params: compensationParams,
+            policyDomain: inferPolicyDomain(compensationTool),
+            requestId: executionRequestId,
+            sessionId: executionSessionId,
+            dryRun: false,
+            stepIndex: completed.step.index,
+            includeHooks: true,
+            isRollback: true,
+          });
+          lastCompensationResult = compensationResult;
+          if (compensationResult?.charge?.rule) {
+            addCostSummaryEntry(costSummary, {
+              stepIndex: completed.step.index,
+              tool: compensationResult.tool,
+              status: compensationResult.status,
+              chainId: compensationResult?.charge?.rule?.chainId || null,
+              tokenSymbol: compensationResult?.charge?.rule?.tokenSymbol || null,
+              amount: compensationResult?.charge?.rule?.amount || null,
+              charged: Boolean(compensationResult?.charge?.charged),
+              blocked: Boolean(compensationResult?.charge?.blocked),
+              blockedReason: compensationResult?.charge?.reason || null,
+              source: 'rollback',
+              rule: compensationResult?.charge?.rule || null,
+            });
+          }
+          if (
+            compensationResult.status === 'success' ||
+            compensationResult.status === 'rollback_success'
+          ) {
+            compensated = true;
+            break;
+          }
+        }
+        rollbackSteps.push({
+          ...lastCompensationResult,
+          source: completed.step.tool,
+          compensationTools: availableCompensationTools,
+          compensationParams: lastCompensationParams,
+        });
+        await addAgenticReplayEvent({
+          eventId: randomUUID(),
+          tool: 'agentic_execute_plan',
+          status: lastCompensationResult?.status || 'rollback_failed',
+          requestId: executionRequestId,
+          sessionId: executionSessionId,
+          policyDomain: inferPolicyDomain(lastCompensationResult?.tool || completed.step.tool),
+          occurredAt: new Date().toISOString(),
+          elapsedMs: lastCompensationResult?.elapsedMs || 0,
+          params: compactReplayValue({
+            source: completed.step.tool,
+            compensationTool: lastCompensationResult?.tool,
+            compensationParams: lastCompensationParams,
+          }),
+          paramsHash: replayEventHash({
+            source: completed.step.tool,
+            compensationTool: lastCompensationResult?.tool,
+            compensationParams: lastCompensationParams,
+          }),
+          result: compactReplayValue(lastCompensationResult),
+          resultHash: replayEventHash(lastCompensationResult || {}),
+          policy: compactReplayValue(lastCompensationResult?.policy || null),
+          permission: compactReplayValue(lastCompensationResult?.permission || null),
+          charge: compactReplayValue(lastCompensationResult?.charge || null),
+          error: lastCompensationResult?.error || null,
+          planSignature,
+          notes: {
+            phase: 'rollback',
+            compensated,
+            index: completed.step.index,
+            source: completed.step.tool,
+          },
+          source: 'agentic_execute_plan',
+          agentic: true,
+        });
+        if (compensated) continue;
+      }
+      rollback = {
+        attempted: rollbackCandidates.length,
+        steps: rollbackSteps,
+        fullyReverted: rollbackSteps.every(
+          (step) => step.status === 'success' || step.status === 'rollback_success',
+        ),
+      };
+    }
+
+    const completedSteps = stepResults.filter((entry) =>
+      ['success', 'dry_run_success', 'rollback_success'].includes(entry.status),
+    ).length;
+    const failedSteps = stepResults.filter(
+      (entry) => !['success', 'dry_run_success', 'rollback_success'].includes(entry.status),
+    ).length;
+
+    await addAgenticReplayEvent({
+      eventId: randomUUID(),
+      tool: 'agentic_execute_plan',
+      status: finalStatus,
+      requestId: executionRequestId,
+      sessionId: executionSessionId,
+      policyDomain: 'agentic',
+      occurredAt: new Date().toISOString(),
+      elapsedMs: Date.now() - executionStartedAt,
+      params: compactReplayValue({
+        dryRun,
+        stopOnFailure,
+        rollbackOnFailure,
+        costBudget: costBudgetLimits,
+        totalSteps: normalizedSteps.length,
+        completedSteps,
+        failedSteps,
+      }),
+      paramsHash: replayEventHash({
+        dryRun,
+        stopOnFailure,
+        rollbackOnFailure,
+        costBudget: costBudgetLimits,
+        totalSteps: normalizedSteps.length,
+        completedSteps,
+        failedSteps,
+      }),
+      result: compactReplayValue({
+        finalStatus,
+        stepStatuses: stepResults.map((entry) => entry.status),
+        executionSignature,
+        planSignature,
+        rollback: rollback
+          ? { attempted: rollback.attempted, fullyReverted: rollback.fullyReverted }
+          : null,
+        budgetExceeded,
+        costBudget: costBudgetLimits,
+        costSummary: {
+          mode: costSummary.mode,
+          totalEntries: costSummary.totalEntries,
+          chargedEntries: costSummary.chargedEntries,
+          blockedEntries: costSummary.blockedEntries,
+        },
+      }),
+      resultHash: replayEventHash({
+        finalStatus,
+        stepStatuses: stepResults.map((entry) => entry.status),
+        executionSignature,
+        costBudget: costBudgetLimits,
+        budgetExceeded,
+        costSummary: {
+          mode: costSummary.mode,
+          totalEntries: costSummary.totalEntries,
+          chargedEntries: costSummary.chargedEntries,
+          blockedEntries: costSummary.blockedEntries,
+        },
+      }),
+      policy: null,
+      permission: null,
+      charge: null,
+      error: null,
+      notes: {
+        final: true,
+        planSignature,
+        executionSignature,
+        costSummary: {
+          mode: costSummary.mode,
+          totalEntries: costSummary.totalEntries,
+          chargedEntries: costSummary.chargedEntries,
+          blockedEntries: costSummary.blockedEntries,
+          budgetExceeded,
+        },
+        rollback: rollback
+          ? { attempted: rollback.attempted, fullyReverted: rollback.fullyReverted }
+          : null,
+      },
+      executionSignature,
+      source: 'agentic_execute_plan',
+      agentic: true,
+    });
+
+    return {
+      generatedAt: new Date().toISOString(),
+      engine: 'stateset-icommerce',
+      tool: 'agentic_execute_plan',
+      requestId: executionRequestId,
+      sessionId: executionSessionId,
+      dryRun,
+      stopOnFailure,
+      rollbackOnFailure,
+      totalSteps: normalizedSteps.length,
+      completedSteps,
+      failedSteps,
+      finalStatus,
+      steps: stepResults,
+      rollback,
+      planSignature,
+      executionSignature,
+      costBudget: costBudgetLimits,
+      budgetExceeded,
+      budgetViolations,
+      costSummary,
+    };
+  };
+
+  const evaluatePolicy = async (toolName, params, extra, policyDomain = null) => {
+    if (!policyEngineInstance) return { allowed: true, params };
+
+    await policyLoad;
+
+    const domain = policyDomain || inferPolicyDomain(toolName);
+    const policyContext = {
+      domain,
+      tool: toolName,
+      params,
+      allowApply,
+      requestId: extra?.requestId || null,
+      sessionId: extra?.sessionId || null,
+    };
+
+    let result;
+    try {
+      result = await policyEngineInstance.evaluate(domain, policyContext);
+    } catch (error) {
+      if (telemetry) {
+        telemetry.logCustomEvent('policy_evaluation_failed', {
+          tool: toolName,
+          domain,
+          error: error.message,
+        });
+      }
+      return { allowed: true, params };
+    }
+
+    const actions = Array.isArray(result?.actions) ? result.actions : [];
+    const notifyActions = actions.filter((action) => action?.type === 'notify');
+
+    let transformedParams = params;
+    for (const action of actions) {
+      if (action?.type === 'transform') {
+        transformedParams = applyPolicyTransform(transformedParams, action.transform);
+      }
+    }
+
+    if (telemetry) {
+      telemetry.logCustomEvent('policy_evaluation', {
+        tool: toolName,
+        domain,
+        allowed: !result?.shouldDeny,
+        actionCount: actions.length,
+        actionTypes: actions.map((action) => action?.type).filter(Boolean),
+      });
+    }
+
+    if (notifyActions.length > 0) {
+      for (const action of notifyActions) {
+        if (telemetry) {
+          telemetry.logCustomEvent('policy_notify', {
+            tool: toolName,
+            domain,
+            message: action.notification?.message || action.message || null,
+          });
+        }
+      }
+    }
+
+    if (result?.shouldDeny) {
+      const reason = actions
+        .filter((action) => action?.type === 'deny')
+        .map((action) => action?.reason || action?.metadata?.reason || 'Tool denied by policy')
+        .filter(Boolean)
+        .join('; ');
+
+      return {
+        allowed: false,
+        params: transformedParams,
+        reason: reason || 'Tool denied by policy',
+        actions,
+        domain,
+        evaluation: result,
+      };
+    }
+
+    return {
+      allowed: true,
+      params: transformedParams,
+      actions,
+      domain,
+      evaluation: result,
+    };
   };
 
   // ---------------------------------------------------------------------------
@@ -413,71 +2788,158 @@ export function createStatesetMcpServer({
   // Tool wrapper — adds hooks, permission checks, treasury, and telemetry
   // ---------------------------------------------------------------------------
 
-  const wrapTool = (name, description, schema, handler) => {
+  const wrapTool = (name, description, schema, handler, policyDomain = null) => {
     return sdkTool(name, description, schema, async (args, extra) => {
+      const startedAt = Date.now();
       let nextArgs = args;
-
-      if (hookRunner?.hasHooks?.('before_tool_call')) {
-        const hookResult = await hookRunner.run('before_tool_call', {
+      let policy = null;
+      let permission = null;
+      let charge = null;
+      const logEvent = async (status, payload = {}) => {
+        await addAgenticReplayEvent({
+          eventId: randomUUID(),
           tool: name,
-          params: nextArgs,
-          allowApply,
-          requestId: extra?.requestId,
-          sessionId: extra?.sessionId,
+          status,
+          requestId: extra?.requestId || null,
+          sessionId: extra?.sessionId || null,
+          policyDomain: policyDomain || inferPolicyDomain(name),
+          occurredAt: new Date().toISOString(),
+          elapsedMs: Date.now() - startedAt,
+          params: compactReplayValue(payload?.params || args || {}),
+          paramsHash: replayEventHash(payload?.params || args || {}),
+          result: payload?.result,
+          resultHash: replayEventHash(payload?.result || {}),
+          policy: compactReplayValue(payload?.policy || null),
+          permission: compactReplayValue(payload?.permission || null),
+          charge: compactReplayValue(payload?.charge || null),
+          error: payload?.error || null,
+          notes: compactReplayValue(payload?.notes || null),
+          source: 'mcp_server',
+          agentic: true,
         });
-        if (hookResult?.params) nextArgs = hookResult.params;
-        if (hookResult?.blocked || hookResult?.allowed === false) {
+      };
+      const baseToolContext = {
+        tool: name,
+        args,
+        requestId: extra?.requestId,
+        sessionId: extra?.sessionId,
+      };
+
+      try {
+        if (hookRunner?.hasHooks?.('before_tool_call')) {
+          const hookResult = await hookRunner.run('before_tool_call', {
+            tool: baseToolContext.tool,
+            params: nextArgs,
+            allowApply,
+            requestId: baseToolContext.requestId,
+            sessionId: baseToolContext.sessionId,
+          });
+          if (hookResult?.params) nextArgs = hookResult.params;
+          if (hookResult?.blocked || hookResult?.allowed === false) {
+            const payload = {
+              error: hookResult?.reason || 'Tool execution blocked by hook',
+              tool: name,
+            };
+            await logEvent('blocked', {
+              params: nextArgs,
+              error: payload.error,
+              notes: {
+                hook: {
+                  allowed: hookResult?.allowed,
+                  reason: hookResult?.reason || null,
+                  blocked: true,
+                },
+              },
+            });
+            return {
+              content: [{ type: 'text', text: JSON.stringify(payload) }],
+              isError: true,
+            };
+          }
+        }
+
+        policy = await evaluatePolicy(name, nextArgs, extra, policyDomain);
+        if (!policy.allowed) {
+          const payload = {
+            error: policy.reason || 'Tool execution blocked by policy',
+            tool: name,
+            policy: {
+              domain: policy.domain,
+              actions: policy.actions || [],
+              evaluation: policy.evaluation || null,
+            },
+          };
+          await logEvent('policy_block', {
+            params: nextArgs,
+            policy: payload.policy,
+            error: payload.error,
+          });
+          return {
+            content: [{ type: 'text', text: JSON.stringify(payload) }],
+            isError: true,
+          };
+        }
+
+        nextArgs = policy.params;
+
+        permission = await checkPermission(name, nextArgs);
+        if (!permission.allowed) {
+          const payload = {
+            error: permission.reason || 'Permission denied',
+            tool: name,
+          };
+          if (permission.preview) {
+            payload.preview = true;
+            if (permission.wouldDo) {
+              payload.wouldDo = permission.wouldDo;
+            }
+            await logEvent('preview', {
+              params: nextArgs,
+              permission,
+              policy,
+              error: payload.error,
+            });
+          } else {
+            await logEvent('permission_block', {
+              params: nextArgs,
+              permission,
+              policy,
+              error: payload.error,
+            });
+          }
+          return {
+            content: [{ type: 'text', text: JSON.stringify(payload) }],
+            isError: true,
+          };
+        }
+
+        charge = await maybeChargeForTool(name, extra);
+        if (charge?.blocked) {
+          await logEvent('treasury_block', {
+            params: nextArgs,
+            permission,
+            charge: {
+              blocked: charge.blocked,
+              reason: charge.reason || null,
+            },
+            error: charge.reason || 'Treasury charge blocked',
+          });
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify({
-                  error: hookResult?.reason || 'Tool execution blocked by hook',
+                  error: charge.reason || 'Treasury charge blocked',
                   tool: name,
+                  charge,
                 }),
               },
             ],
             isError: true,
           };
         }
-      }
 
-      const permission = await checkPermission(name, nextArgs);
-      if (!permission.allowed) {
-        const payload = {
-          error: permission.reason || 'Permission denied',
-          tool: name,
-        };
-        if (permission.preview) {
-          payload.preview = true;
-          if (permission.wouldDo) {
-            payload.wouldDo = permission.wouldDo;
-          }
-        }
-        return {
-          content: [{ type: 'text', text: JSON.stringify(payload) }],
-          isError: true,
-        };
-      }
-
-      const charge = await maybeChargeForTool(name, extra);
-      if (charge?.blocked) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: charge.reason || 'Treasury charge blocked',
-                tool: name,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const wrapped = wrapWithTelemetry(name, handler);
-      try {
+        const wrapped = wrapWithTelemetry(name, handler);
         const result = await wrapped(nextArgs, extra);
         if (hookRunner?.hasHooks?.('after_tool_call')) {
           await hookRunner.run('after_tool_call', {
@@ -488,6 +2950,17 @@ export function createStatesetMcpServer({
             sessionId: extra?.sessionId,
           });
         }
+        await logEvent('success', {
+          params: nextArgs,
+          permission,
+          charge,
+          result: compactReplayValue(result),
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+          },
+        });
         return result;
       } catch (error) {
         if (hookRunner?.hasHooks?.('after_tool_call')) {
@@ -499,6 +2972,17 @@ export function createStatesetMcpServer({
             sessionId: extra?.sessionId,
           });
         }
+        await logEvent('error', {
+          params: nextArgs,
+          permission,
+          charge,
+          policy: {
+            allowed: policy.allowed,
+            domain: policy.domain,
+            actions: policy.actions || [],
+          },
+          error: error.message,
+        });
         throw error;
       }
     });
@@ -520,6 +3004,10 @@ export function createStatesetMcpServer({
     buildAuditContext,
     buildTreasuryIdentityMetadata,
     agentConfig,
+    getAgenticRuntimeContract,
+    executeAgenticPlan,
+    simulateAgenticPlan,
+    getAgenticReplayLog: listAgenticReplayEvents,
   };
 
   /**
@@ -529,6 +3017,8 @@ export function createStatesetMcpServer({
    */
   const adaptTool = (toolDef) => {
     const { name, description, inputSchema, handler } = toolDef;
+    const policyDomain =
+      toolDef?.policyDomain || TOOL_DOMAIN_BY_TOOL_NAME[name] || inferPolicyDomain(name);
 
     return wrapTool(name, description, inputSchema, async (args, extra) => {
       try {

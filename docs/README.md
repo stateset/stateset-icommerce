@@ -2,6 +2,10 @@
 
 This directory contains the mdBook source for StateSet iCommerce.
 
+Related planning docs:
+
+- [Agentic Commerce Baseline](./AGENTIC_COMMERCE_BASELINE.md)
+
 ## Build locally
 
 ```bash

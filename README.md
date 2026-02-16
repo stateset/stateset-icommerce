@@ -35,6 +35,7 @@ npm run check                # root quality checks
 
 | Feature | Description |
 |---------|-------------|
+| **Policy Runtime** | Policy-driven tool guardrails (allow/deny/transform) with optional domain inference and configurable policy store |
 | **A2A Payments** | Direct agent-to-agent transfers (USDC, USDT, ssUSD, DAI) across SET Chain, Base, Ethereum, Arbitrum |
 | **A2A Quotes** | Request → provide → accept/decline → fulfill negotiation flow |
 | **A2A Subscriptions** | Recurring inter-agent billing with trial periods, pause/resume, weekly-to-annual intervals |
@@ -1372,6 +1373,7 @@ let commerce = Commerce::builder()
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...  # Required for AI mode
+export STATESET_POLICY_DIR=./.stateset  # Optional policy set directory (defaults to <db-path>/.stateset)
 stateset --db ./store.db "list customers"
 ```
 

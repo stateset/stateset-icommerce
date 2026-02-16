@@ -1194,9 +1194,10 @@ Options:
 stateset-x402-mcp [options]
 
 Options:
-  --config-dir <path>  Config directory (default: .stateset)
-  --help               Show help
-  --version            Show version
+  --config-dir <path>   Config directory (default: .stateset)
+  --policy-dir <path>   Policy directory (default: STATESET_POLICY_DIR or .stateset)
+  --help                Show help
+  --version             Show version
 ```
 
 ## Error Handling
